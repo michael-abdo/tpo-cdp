@@ -1,0 +1,36 @@
+# TPO Mini CDP — Development Rules
+
+Hiring assessment for The Pour Over. **Source of truth: `../TPO_Developer_Assessment.pdf`** (requirement IDs: `../design/00`). Deadline and submission: `../design/13`. The design docs in `../design/` are kept outside the repo; their final versions become README sections (13).
+
+This file holds HOW we work. WHAT we build lives in `../design/`, one home per fact — the index of homes is `00 §Document index`. Read the owning doc before touching an area. Never restate a spec here; point to it.
+
+## Stack
+Decided in 09 D-02..D-06, D-23 (Claude only, confirmed), D-24 (mirror the consulting repo's gateway; deviations listed there). Canonical module layout: 03 §Module layout. Project lives on local disk at `/Users/Mike/hiring/TPO/CDP`.
+
+## Non-negotiables (rule → home; each has a test in 08)
+- NO MOCK OR DUMMY DATA: only `data/*.csv` and real webhook events; constructed test payloads only as 09 D-11 allows.
+- TODAY and the wall-clock allow-list: 02 §Time.
+- One normalization implementation and the list of every location: 02 §Normalization.
+- Never drop a row: 02 §Quarantine; import is the seed step in 11 §Seed, not a UI upload.
+- Definitions are written once and rendered everywhere: 02 §Derived "One runtime source".
+- Unsubscribed default and export rule: 02 §Defaults.
+- Webhook auth is header-only over raw bytes; idempotency, ordering, stitching, stub profiles: 04 §Webhook, 01 §Identity resolution, 02 §Linking.
+- Events for demos are sent with `scripts/send-webhook.ts` through the real endpoint (11 §Verify); if the parked test-event panel is ever built it must do the same (04).
+- The model never sees PII; the only request builder is pure; the scanner blocks, never degrades; audit is awaited: 05, enforcement layers 03 §Gateway layers.
+- Tools are data (09 D-41): every tool is an `assistant_tools` row; the loader validates every enabled row at load and fails loud (03 layer 3). Never register a tool only in code.
+- What is and isn't cached: 03 §No-restart guarantee.
+- Auth scope and open paths: 04 §Auth. SQL: bound params everywhere except Gate 3 (03 layer 8). Secrets never in code, logs, errors or audit: 04 §Error envelope, 10.
+
+## Fail fast, fail loud, fail safely
+- **Fast:** `assertBindings(env)` on the first request names any missing secret (list: 11 §Deploy); `ANTHROPIC_API_KEY` is probed on the first assistant call. The seed validates CSV headers before writing.
+- **Loud:** every webhook rejection, gate block, model failure and audit-write failure is logged with its reason (contract: the 03 §Gateway layers table and 04 error tables). No empty `catch {}`. No silent retries.
+- **Safe:** remote seed/reset safeguards: 11 §Reset. Seed and runtime write limits: 11 §Seed. Never drop tables outside a migration. No destructive actions in the hosted UI (09 D-13).
+
+## How to work (S5, A8, A9)
+- Use Claude Code heavily — they ask for it — but understand every line; the Loom and the audit test comprehension.
+- Log every AI mistake as it happens in `docs/ai-log.md` (date, ask, what was wrong, how caught, fix). The Loom cites only real entries.
+- Small, honest commits, one concern each, never squashed.
+- No TODOs, stubs, hardcoded values or mocks in product code; unfinished → README "Known gaps".
+- `npm test` and `npm run typecheck` before every commit (scripts: 11 §Scripts). Reuse before creating; port origin modules by hand (03), never fork.
+- The repo contains exactly three `.md` files: this one, `README.md`, `docs/ai-log.md`. This file is committed as process evidence; the self-audit runs on the repo exactly as submitted (09 D-29, 11 §Self-audit step).
+- Build only what 16 §MVP scope lists; work in the order of 16 §Day by day; parked items only per 16 §If time remains.

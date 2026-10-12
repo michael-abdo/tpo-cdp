@@ -1,0 +1,11 @@
+# AI usage log
+
+Built in Claude Code throughout. Each entry: what was asked, what the AI got wrong, how it was caught, the fix. Entries are written the day they happen.
+
+## 2026-10-12 — scaffold
+
+- **Asked:** scaffold with `npm create cloudflare@latest --framework=react`. **Wrong:** the AI assumed `--lang=ts` covers the template's "variant" prompt; it doesn't, and the CLI needs a TTY, so the command hung three different ways (flags, piped stdin, `script`). **Caught:** no files produced. **Fix:** plain Vite `react-ts` template plus `@cloudflare/vite-plugin`, which is what the Cloudflare template wraps.
+- **Asked:** install the Cloudflare vitest plugin. **Wrong:** the AI let npm resolve `vitest` to 3.2.7 even though `@cloudflare/vitest-plugin` 1.4.0 declares `peerDependencies: vitest ^4.1 || ^5`. **Caught:** by reading the plugin's `package.json` before writing config. **Fix:** pinned `vitest ^5.0.4`; npm 10.9 then failed with an internal resolver error (`Cannot read properties of null (reading 'edgesOut')`) on this peer set, so installs use `--legacy-peer-deps`, documented in the README.
+- **Asked:** run the first test on vitest 5. **Wrong:** the AI trusted the plugin's `peerDependencies` (`^4.1 || ^5`) and used vitest 5.0.4; the runner failed with `no such file or directory, readAll node_modules/.vitest-cache/…` — vitest 5's new module-runner cache layout isn't handled by `@cloudflare/vitest-plugin` 1.4.0 yet. **Caught:** first `npm test`. **Fix:** vitest 4.1.11, the plugin's primary target; 2/2 tests pass.
+- **Asked:** type the injected `TEST_MIGRATIONS` binding. **Wrong:** augmented `ProvidedEnv` in `cloudflare:test` (the old documented approach); the generated `worker-configuration.d.ts` now types `env` as `Cloudflare.Env`. **Caught:** `tsc -b`. **Fix:** `declare global { namespace Cloudflare { interface Env { … } } }`.
+- **Asked:** write the vitest config. **Checked rather than assumed:** `applyD1Migrations` is exported from `cloudflare:test` (not the plugin package) and takes the migrations array that `readD1Migrations` produces on the Node side; `SELF` is still exported (marked deprecated in favour of `cloudflare:workers` `exports`). The local workerd supports `compatibility_date` up to 2026-10-06, so that is the date in `wrangler.jsonc`.
