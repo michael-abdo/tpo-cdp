@@ -1,0 +1,33 @@
+// Cloudflare Worker config — design: 03 §Module layout, 11 §Deploy.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tpo-cdp",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // The SPA is served from static assets; the Worker runs first only for API, webhook and health paths.
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/webhooks/*", "/health"]
+  },
+
+  // D1 is the only data store (01). database_id is filled after `wrangler d1 create cdp` (11 §Deploy);
+  // local dev and tests use a local SQLite file and ignore the id.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cdp",
+      "database_id": "set-by-wrangler-d1-create",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Rate limits (04 §Auth). Workers Rate Limiting only supports 10 s or 60 s periods;
+  // the assistant's per-hour limit is enforced from ai_audit rows instead.
+  "ratelimits": [
+    { "name": "WEBHOOK_LIMITER", "namespace_id": "1001", "simple": { "limit": 300, "period": 60 } },
+    { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
+  ]
+}
