@@ -1,0 +1,42 @@
+/**
+ * The one normalization implementation (design 02 §Normalization, 09 D-26, A2).
+ *
+ * Every place that folds an email or a source value imports from here; the list of
+ * callers is kept in 02 §Normalization, and T-NORM-3 fails if anything else lowercases
+ * an email or if SQL does it with LOWER(. SQL and the browser never normalize.
+ */
+
+/** Pattern an email must match after folding; anything else is quarantined (02 §Quarantine). */
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
+/**
+ * `trim()` then `toLowerCase()`, nothing else: no plus-stripping, no Gmail dot removal (D-26).
+ * Returns `null` when the folded value does not look like an address.
+ */
+export function normalizeEmail(raw: string): string | null {
+  const email = raw.trim().toLowerCase()
+  return EMAIL_PATTERN.test(email) ? email : null
+}
+
+/** The canonical source names (02 §Normalization). `twitter` folds to `x`. */
+export const CANONICAL_SOURCES = [
+  'instagram',
+  'facebook',
+  'referral',
+  'google',
+  'direct',
+  'podcast',
+  'x',
+] as const
+
+export type CanonicalSource = (typeof CANONICAL_SOURCES)[number]
+
+/**
+ * Trim, lowercase, then `twitter → x`. Unknown values pass through lowercased so that an
+ * unexpected source is visible in the data rather than silently dropped. Blank → `null`.
+ */
+export function canonicalSource(raw: string): string | null {
+  const source = raw.trim().toLowerCase()
+  if (source === '') return null
+  return source === 'twitter' ? 'x' : source
+}
