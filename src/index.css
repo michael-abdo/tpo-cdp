@@ -1,1 +1,46 @@
 @import "tailwindcss";
+
+/* 06 §UI principles 7–8 (09 D-45): Tailwind defaults, one neutral palette + one blue accent. */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* One clear, consistent focus ring for every interactive element (principle 7). */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--color-blue-600);
+    outline-offset: 2px;
+  }
+
+  /* <summary> gets our own chevron (components.tsx), not the browser triangle. */
+  summary {
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  button:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+}
+
+/* Respect reduced motion (principle 7). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
