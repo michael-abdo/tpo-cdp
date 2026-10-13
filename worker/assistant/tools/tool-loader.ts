@@ -9,8 +9,16 @@
 //     (unknown keywords are refused, so a typo such as "requred" fails here, not at call time)
 //   - builtin rows: `execution_config.handler_name` names a handler in the registry
 //     (builtin-handlers.ts), and the schema declares no property the handler does not read
-//   - `query` and `passthrough` rows are refused by name: their executors are not built yet
-//     (`query` comes with Gate 2/3, 16 Friday; `passthrough` is parked, 16)
+//   - query rows (03 row 9, "a question type as a row without a deploy"): `execution_config` is
+//     `{ sql, param_mapping, format? }`. `sql` is a SELECT template over the v_* views with
+//     `:name` placeholders; `param_mapping` maps each input field to one placeholder (01: "input
+//     field → :param"). The template's placeholders become positional `?` in the order they
+//     appear (09 D-45), each bound from the input field mapped to it. Checked here: every
+//     placeholder is mapped, every mapping is used, every mapped field is a declared property
+//     with a scalar type, every declared property is mapped, and the rewritten SQL passes Gate 2's
+//     validateSqlAgainstViews against the views' PRAGMA columns and Gate 3's read-only checks with
+//     that many bound values. A broken row therefore fails at load, not when the model calls it
+//   - `passthrough` rows are refused by name: their executor is parked (16)
 // No enabled row → 500 `no_tools` (04).
 //
 // Cache (03 §No-restart): the enabled rows are read on every request, a few small rows; the
@@ -20,7 +28,10 @@
 
 import { ApiError } from '../../auth/middleware'
 import type { ModelTool } from '../build-request'
-import { BUILTIN_HANDLERS, type BuiltinHandler } from './builtin-handlers'
+import { validateSqlAgainstViews } from '../gates/gate2-tool-authorizer'
+import { GateDenied, readOnlySelect } from '../gates/gate3-readonly-sql'
+import { type ViewSchema, viewSchemas } from '../schema-context'
+import { BUILTIN_HANDLERS, type BuiltinHandler, queryHandler, type QueryTemplate } from './builtin-handlers'
 
 /** An assistant_tools row as D1 returns it (01; JSON columns still text). */
 export interface ToolRow {
@@ -38,9 +49,12 @@ export interface LoadedTool {
   id: string
   name: string
   definition: ModelTool
-  handlerType: 'builtin'
+  handlerType: 'builtin' | 'query'
+  /** The registry name for a builtin row; the row's own name for a query row. */
   handlerName: string
   handler: BuiltinHandler
+  /** Set for a query row: its template rewritten to positional `?` and the input field bound to each. */
+  query?: QueryTemplate
 }
 
 export interface LoadedTools {
@@ -124,6 +138,148 @@ function parseJson(text: string, column: string, problems: string[]): unknown {
   }
 }
 
+// ── query rows ───────────────────────────────────────────────────────────────────────────
+
+/** The execution_config keys a query row may use (01; `format` is documented only, as in the origin). */
+const QUERY_CONFIG_KEYS = new Set(['sql', 'param_mapping', 'format'])
+
+/** A placeholder as written in a template and in param_mapping's values: a colon and a name. */
+const PLACEHOLDER = /^:[A-Za-z_][A-Za-z0-9_]*$/
+
+/** JSON Schema types a bound value may have: D1 binds text, numbers and null (booleans as 1/0). */
+const SCALAR_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'null'])
+
+/**
+ * The template with every `:name` outside a string, quoted name or comment replaced by `?`, and
+ * the names in the order they appear (09 D-45). Any other text is left as written, so whatever
+ * Gate 2 and Gate 3 refuse in a model's SQL they refuse here too. Pure.
+ */
+export function rewritePlaceholders(sql: string): { sql: string; placeholders: string[] } {
+  const placeholders: string[] = []
+  let out = ''
+  let i = 0
+  /** Copies up to and including `close`, or to the end when it is missing (the lexer then refuses it). */
+  const copyThrough = (close: string, from: number) => {
+    const at = sql.indexOf(close, from)
+    const end = at === -1 ? sql.length : at + close.length
+    out += sql.slice(i, end)
+    i = end
+  }
+  while (i < sql.length) {
+    const ch = sql[i]
+    if (ch === "'") {
+      // '' inside a string is an escaped quote: the string goes on.
+      let end = i + 1
+      for (;;) {
+        const at = sql.indexOf("'", end)
+        if (at === -1) {
+          end = sql.length
+          break
+        }
+        if (sql[at + 1] === "'") {
+          end = at + 2
+          continue
+        }
+        end = at + 1
+        break
+      }
+      out += sql.slice(i, end)
+      i = end
+    } else if (ch === '"' || ch === '`') {
+      copyThrough(ch, i + 1)
+    } else if (ch === '[') {
+      copyThrough(']', i + 1)
+    } else if (ch === '-' && sql[i + 1] === '-') {
+      copyThrough('\n', i + 2)
+    } else if (ch === '/' && sql[i + 1] === '*') {
+      copyThrough('*/', i + 2)
+    } else if (ch === ':' && /[A-Za-z_]/.test(sql[i + 1] ?? '')) {
+      const name = /^:[A-Za-z_][A-Za-z0-9_]*/.exec(sql.slice(i))![0]
+      placeholders.push(name)
+      out += '?'
+      i += name.length
+    } else {
+      out += ch
+      i += 1
+    }
+  }
+  return { sql: out, placeholders }
+}
+
+/** True when a property's schema allows only scalars, which a placeholder can be bound to. */
+function scalarProperty(schema: unknown): boolean {
+  if (!isObject(schema)) return false
+  if (schema.type !== undefined) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type]
+    if (!types.every((t) => typeof t === 'string' && SCALAR_TYPES.has(t))) return false
+  }
+  if (Array.isArray(schema.enum)) {
+    return schema.enum.every((v) => v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+  }
+  return schema.type !== undefined
+}
+
+/** A query row's template, checked (03 row 3); undefined with `problems` filled when it is broken. */
+function queryTemplate(
+  config: Record<string, unknown>,
+  schema: Record<string, unknown>,
+  views: readonly ViewSchema[],
+  problems: string[],
+): QueryTemplate | undefined {
+  const before = problems.length
+  for (const key of Object.keys(config)) {
+    if (!QUERY_CONFIG_KEYS.has(key)) problems.push(`execution_config uses unsupported key "${key}" (a query row takes sql, param_mapping, format)`)
+  }
+  const sql = config.sql
+  if (typeof sql !== 'string' || sql.trim() === '') problems.push('execution_config.sql must be a non-empty SELECT template')
+  const mapping = config.param_mapping
+  if (!isObject(mapping)) problems.push('execution_config.param_mapping must be an object of input field → :param ({} when the template has none)')
+  if (typeof sql !== 'string' || sql.trim() === '' || !isObject(mapping)) return undefined
+
+  const properties = isObject(schema.properties) ? schema.properties : {}
+  const fieldByPlaceholder = new Map<string, string>()
+  for (const [field, placeholder] of Object.entries(mapping)) {
+    if (typeof placeholder !== 'string' || !PLACEHOLDER.test(placeholder)) {
+      problems.push(`execution_config.param_mapping.${field} must be a placeholder such as ":${field}", got ${JSON.stringify(placeholder)}`)
+      continue
+    }
+    if (fieldByPlaceholder.has(placeholder)) {
+      problems.push(`execution_config.param_mapping maps both ${fieldByPlaceholder.get(placeholder)} and ${field} to ${placeholder}`)
+      continue
+    }
+    fieldByPlaceholder.set(placeholder, field)
+    if (!Object.hasOwn(properties, field)) problems.push(`execution_config.param_mapping maps ${field}, which input_schema does not declare`)
+    else if (!scalarProperty(properties[field])) {
+      problems.push(`input_schema.properties.${field} must be a string, number, integer, boolean or null to be bound to ${placeholder}`)
+    }
+  }
+  const unmapped = Object.keys(properties).filter((p) => !Object.hasOwn(mapping, p))
+  if (unmapped.length > 0) problems.push(`input_schema declares ${unmapped.join(', ')}, which param_mapping does not bind`)
+
+  const rewritten = rewritePlaceholders(sql)
+  const used = new Set(rewritten.placeholders)
+  for (const placeholder of used) {
+    if (!fieldByPlaceholder.has(placeholder)) problems.push(`execution_config.sql uses ${placeholder}, which param_mapping does not map to an input field`)
+  }
+  for (const [placeholder, field] of fieldByPlaceholder) {
+    if (!used.has(placeholder)) problems.push(`execution_config.param_mapping maps ${field} to ${placeholder}, which execution_config.sql never uses`)
+  }
+  // Gate 2 (views, columns, write words, the wall clock) and Gate 3 (read-only, one statement,
+  // LIMIT, one bound value per `?`), the same checks a model's query_sql passes (03 rows 7-8).
+  // Both run, so the error lists every problem of the row at once.
+  const gates = [() => validateSqlAgainstViews(rewritten.sql, views), () => readOnlySelect(rewritten.sql, rewritten.placeholders.length)]
+  for (const gate of gates) {
+    try {
+      gate()
+    } catch (err) {
+      if (!(err instanceof GateDenied)) throw err
+      problems.push(...err.problems.map((p) => `execution_config.sql fails ${err.gate}: ${p}`))
+    }
+  }
+  if (problems.length > before) return undefined
+  return { sql: rewritten.sql, inputs: rewritten.placeholders.map((p) => fieldByPlaceholder.get(p)!) }
+}
+
 /** 500 tool_config_error naming the row (03 row 3, 04). */
 export class ToolConfigError extends ApiError {
   readonly row: string
@@ -136,8 +292,11 @@ export class ToolConfigError extends ApiError {
   }
 }
 
-/** Validates one enabled row; throws ToolConfigError listing every problem. Pure. */
-export function validateToolRow(row: ToolRow): LoadedTool {
+/**
+ * Validates one enabled row; throws ToolConfigError listing every problem. Pure: `views` are the
+ * v_* views with their PRAGMA columns (schema-context.ts), which a query row's SQL is checked against.
+ */
+export function validateToolRow(row: ToolRow, views: readonly ViewSchema[]): LoadedTool {
   const label = typeof row.name === 'string' && row.name !== '' ? row.name : `id ${row.id}`
   const problems: string[] = []
   if (!TOOL_NAME.test(row.name)) problems.push('name must be 1-64 letters, digits, "_" or "-"')
@@ -153,6 +312,7 @@ export function validateToolRow(row: ToolRow): LoadedTool {
 
   let handlerName = ''
   let handler: BuiltinHandler | undefined
+  let query: QueryTemplate | undefined
   if (row.handler_type === 'builtin') {
     const name = isObject(config) ? config.handler_name : undefined
     if (typeof name !== 'string' || !Object.hasOwn(BUILTIN_HANDLERS, name)) {
@@ -164,8 +324,16 @@ export function validateToolRow(row: ToolRow): LoadedTool {
       const unread = properties.filter((p) => !handler!.inputKeys.includes(p))
       if (unread.length > 0) problems.push(`input_schema declares ${unread.join(', ')}, which handler ${name} does not read`)
     }
-  } else if (row.handler_type === 'query' || row.handler_type === 'passthrough') {
-    problems.push(`handler_type ${row.handler_type} has no executor in this build`)
+  } else if (row.handler_type === 'query') {
+    if (isObject(config)) {
+      query = queryTemplate(config, isObject(schema) ? schema : {}, views, problems)
+      if (query !== undefined) {
+        handlerName = row.name
+        handler = queryHandler(row.name, query)
+      }
+    }
+  } else if (row.handler_type === 'passthrough') {
+    problems.push('handler_type passthrough has no executor in this build')
   } else {
     problems.push(`handler_type ${JSON.stringify(row.handler_type)} is not builtin, query or passthrough`)
   }
@@ -175,16 +343,17 @@ export function validateToolRow(row: ToolRow): LoadedTool {
     id: row.id,
     name: row.name,
     definition: { name: row.name, description: row.description, input_schema: schema as ModelTool['input_schema'] },
-    handlerType: 'builtin',
+    handlerType: row.handler_type === 'query' ? 'query' : 'builtin',
     handlerName,
     handler,
+    ...(query === undefined ? {} : { query }),
   }
 }
 
 /** Validates the enabled rows in order; the first failing row stops the load. Pure. */
-export function toLoadedTools(rows: readonly ToolRow[]): LoadedTools {
+export function toLoadedTools(rows: readonly ToolRow[], views: readonly ViewSchema[]): LoadedTools {
   if (rows.length === 0) throw new ApiError(500, 'no_tools', 'The assistant has no enabled tools, so it cannot answer. Run `npm run tools:seed`.')
-  const tools = rows.map(validateToolRow)
+  const tools = rows.map((row) => validateToolRow(row, views))
   return { tools, definitions: tools.map((t) => t.definition), byName: new Map(tools.map((t) => [t.name, t])) }
 }
 
@@ -200,7 +369,9 @@ export async function loadTools(db: D1Database): Promise<LoadedTools> {
     .all<ToolRow>()
   const key = JSON.stringify(results)
   if (cached !== undefined && cached.key === key) return cached.tools
-  const tools = toLoadedTools(results)
+  // The views are read only when a row needs them; their columns are cached per isolate (03 row 4).
+  const views = results.some((row) => row.handler_type === 'query') ? await viewSchemas(db) : []
+  const tools = toLoadedTools(results, views)
   cached = { key, tools }
   return tools
 }

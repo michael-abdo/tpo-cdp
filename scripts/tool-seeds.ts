@@ -18,12 +18,19 @@
  * - `query_sql` names only the views 01 §PII-free views defines (the draft listed views that do not
  *   exist) and states the rules Gates 2 and 3 enforce, so the model can write a query that passes
  *   them the first time (03 rows 7-8). Its input is exactly the draft's `sql` and `explanation`.
- * - `describe_schema`, the `query` row and `open_segment` are not seeded here: the `query`
- *   handler type comes in its own unit (16, Friday); `describe_schema` and the `passthrough`
- *   type are not in 16 §MVP scope.
+ * - `pages_new_subscribers_hit_first` is the one `query` row (03 row 9, 09 D-41, 16 §MVP scope):
+ *   the live proof that a question type is a row, not a deploy. It answers the brief's "which
+ *   pages do new subscribers hit first?" (R5.2): the first page of each new subscriber (02
+ *   §Derived `new_subscriber`, 09 D-36), counted by page. Its window is rendered from TODAY when
+ *   this file loads (`NEW_SUBSCRIBER_WINDOW`) and checked against `DEFINITIONS.new_subscriber.fn`,
+ *   so the row's dates cannot drift from the definition. Its one input,
+ *   `include_unsubscribed`, is bound through param_mapping; absent, the template keeps the
+ *   unsubscribed default (02 §Defaults).
+ * - `describe_schema` and `open_segment` are not seeded: neither they nor the `passthrough` type
+ *   are in 16 §MVP scope.
  */
 
-import { DEFINITIONS } from '../shared/derive'
+import { addDays, DEFINITIONS, type DateWindow, lastNDays } from '../shared/derive'
 import type { SqlValue } from '../worker/ingest/sql'
 
 export interface ToolSeed {
@@ -34,6 +41,19 @@ export interface ToolSeed {
   executionConfig: Record<string, unknown>
   sortOrder: number
 }
+
+/**
+ * The `new_subscriber` window as dates (02 §Derived: TODAY − 30 .. TODAY). Fails at load unless
+ * `DEFINITIONS.new_subscriber.fn` holds both ends and neither day outside them.
+ */
+export const NEW_SUBSCRIBER_WINDOW: DateWindow = (() => {
+  const window = lastNDays(30)
+  const isNew = DEFINITIONS.new_subscriber.fn
+  if (!isNew(window.from) || !isNew(window.to) || isNew(addDays(window.from, -1)) || isNew(addDays(window.to, 1))) {
+    throw new Error(`tool-seeds: ${window.from}..${window.to} is not the new_subscriber window of shared/derive.ts`)
+  }
+  return window
+})()
 
 export const TOOL_SEEDS: readonly ToolSeed[] = [
   {
@@ -145,6 +165,35 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
     handlerType: 'builtin',
     executionConfig: { handler_name: 'query_sql' },
     sortOrder: 30,
+  },
+  {
+    name: 'pages_new_subscribers_hit_first',
+    description:
+      'Which pages new subscribers hit first: for every new subscriber, the first page of their first tracked site ' +
+      'visit, counted by page, most common first. ' +
+      `New subscriber (signup_date ${NEW_SUBSCRIBER_WINDOW.from} to ${NEW_SUBSCRIBER_WINDOW.to}): ${DEFINITIONS.new_subscriber.doc} ` +
+      'A row with an empty first_page counts the new subscribers with no tracked site visit. ' +
+      'Active subscribers only unless include_unsubscribed is true. Say the window and the definition in the answer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include_unsubscribed: {
+          type: 'boolean',
+          description: 'Default false. true only when the teammate asks to include unsubscribed subscribers.',
+        },
+      },
+    },
+    handlerType: 'query',
+    executionConfig: {
+      sql:
+        'SELECT first_page, count(*) AS new_subscribers FROM v_profiles ' +
+        `WHERE signup_date BETWEEN '${NEW_SUBSCRIBER_WINDOW.from}' AND '${NEW_SUBSCRIBER_WINDOW.to}' ` +
+        "AND (status = 'active' OR :include_unsubscribed = 1) " +
+        'GROUP BY first_page ORDER BY new_subscribers DESC, first_page',
+      param_mapping: { include_unsubscribed: ':include_unsubscribed' },
+      format: 'markdown_table',
+    },
+    sortOrder: 40,
   },
 ]
 

@@ -181,7 +181,7 @@ beforeAll(async () => {
 describe('tool loader (03 row 3, 09 D-41)', () => {
   it('loads the seeded rows in sort_order as Anthropic tools, verbatim', async () => {
     const loaded = await loadTools(env.DB)
-    expect(loaded.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql'])
+    expect(loaded.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql', 'pages_new_subscribers_hit_first'])
     expect(loaded.definitions[0]).toEqual({ name: 'segment', description: TOOL_SEEDS[0].description, input_schema: TOOL_SEEDS[0].inputSchema })
     expect(await loadTools(env.DB)).toBe(loaded) // unchanged rows: the validated set is reused
   })
@@ -189,11 +189,11 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
   it('re-reads the table per request, so a disabled row drops out with no deploy', async () => {
     await env.DB.prepare("UPDATE assistant_tools SET enabled = 0 WHERE name = 'aggregate'").run()
     try {
-      expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment', 'query_sql'])
+      expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment', 'query_sql', 'pages_new_subscribers_hit_first'])
     } finally {
       await env.DB.prepare("UPDATE assistant_tools SET enabled = 1 WHERE name = 'aggregate'").run()
     }
-    expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql'])
+    expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql', 'pages_new_subscribers_hit_first'])
   })
 
   it('refuses a bad row loudly, naming it, and no rows at all as no_tools', () => {
@@ -206,20 +206,20 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
       execution_config: '{"handler_name":"segment"}',
       sort_order: 10,
     }
-    expect(validateToolRow(good).handlerName).toBe('segment')
+    expect(validateToolRow(good, []).handlerName).toBe('segment')
     const cases: Array<[Partial<ToolRow>, string]> = [
       [{ execution_config: '{"handler_name":"segmnet"}' }, 'is not a builtin handler'],
       [{ input_schema: '{"type":"object","properties":{"status":{"type":"array"}},"requred":["status"]}' }, 'unsupported keyword "requred"'],
       [{ input_schema: '{"type":"object","properties":{"pages_viewed":{"type":"string"}}}' }, 'which handler segment does not read'],
       [{ input_schema: '{"type":"array"}' }, '"type": "object"'],
       [{ input_schema: 'not json' }, 'input_schema is not JSON'],
-      [{ handler_type: 'query' }, 'handler_type query has no executor'],
+      [{ handler_type: 'passthrough' }, 'handler_type passthrough has no executor'],
       [{ name: 'bad name!' }, 'name must be'],
     ]
     for (const [patch, problem] of cases) {
       let error: unknown
       try {
-        validateToolRow({ ...good, ...patch })
+        validateToolRow({ ...good, ...patch }, [])
       } catch (err) {
         error = err
       }
@@ -228,7 +228,7 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
       expect((error as ToolConfigError).code).toBe('tool_config_error')
       expect((error as ToolConfigError).message).toContain(problem)
     }
-    expect(() => toLoadedTools([])).toThrow(expect.objectContaining({ code: 'no_tools', status: 500 }))
+    expect(() => toLoadedTools([], [])).toThrow(expect.objectContaining({ code: 'no_tools', status: 500 }))
   })
 })
 

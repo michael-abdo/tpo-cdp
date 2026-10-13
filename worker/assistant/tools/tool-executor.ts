@@ -1,18 +1,24 @@
 // Tool execution (design 03 §Gateway layers rows 7-9; 07 §H "execute … scan result"). Origin:
 // palisade lib/chat/tool-executor.ts L46-132 (14 §2.3, §4 "adapt"): dispatch on handler_type to
-// a static registry, a generic error to the model instead of a stack. Changes:
+// a static registry, a generic error to the model instead of a stack. Dispatch by handler_type
+// (03 row 9): a `builtin` row runs the registry handler it names (builtin-handlers.ts); a `query`
+// row runs its own SQL template over the v_* views with its param_mapping inputs bound as
+// parameters, through Gate 2 and Gate 3 (queryHandler, 09 D-41); `passthrough` is parked and the
+// loader refuses it. The loader resolves each row to its handler once (tool-loader.ts), so both
+// types run through `tool.handler.run` below, with the same gates, scan and audit. Changes:
 //   - every call passes Gate 2's authorizeToolCall first (gates/gate2-tool-authorizer.ts): a name
 //     that is not a loaded tool is denied and audited as `blocked` with UNKNOWN_TOOL_ERROR; an
 //     input that fails the row's input_schema is denied before any handler runs (09 D-24)
-//   - a Gate 2 or Gate 3 refusal (GateDenied, from authorizeToolCall or from query_sql's SQL
-//     checks) goes back to the model once as an error result and is audited as `kind=blocked`
+//   - a Gate 2 or Gate 3 refusal (GateDenied, from authorizeToolCall or from the SQL checks of
+//     query_sql or a query row) goes back to the model once as an error result and is audited as `kind=blocked`
 //     with `gate2_denied: …` / `gate3_denied: …` and, for SQL, the SQL as sent (03 row 11)
 //   - every result is framed as untrusted data (format-results.ts) and scanned with
 //     assertNoPII before it enters the conversation; a hit aborts the request (05 §Scanner)
-//   - every call writes an awaited ai_audit row (03 row 11); query_sql rows carry the SQL that ran
+//   - every call writes an awaited ai_audit row (03 row 11); query_sql and query-row calls carry the
+//     SQL that ran
 //   - input the handler rejects, or a query the database refuses, goes back to the model once as
 //     an error result (is_error), so it can correct the call within the iteration cap; any other
-//     failure (a D1 error outside query_sql, a broken row) is audited and thrown: fail loud, no
+//     failure (a D1 error outside Gate 3's run, a broken row) is audited and thrown: fail loud, no
 //     silent retry (CLAUDE.md)
 //   - every error text is scanned before it is logged, stored or sent, since it may quote what
 //     the model wrote (05 §Scanner "logging")

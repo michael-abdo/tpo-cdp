@@ -24,6 +24,14 @@
 //   the v_* views, which select pkey and visitor_hash (both pk_ keys, 05 §Pseudonymous key) and
 //   no PII column (01 §PII denylist), so its rows reference subjects by pk_ keys only (T-AI-2);
 //   the executor's scan is the second, independent check (05 §Scanner).
+//
+// `queryHandler` is not in the registry: it runs an assistant_tools row of handler_type `query`
+// (03 row 9, 09 D-41), the way Growth adds a question type as a row with no deploy. The loader
+// has already checked the row's template and rewritten its `:name` placeholders to `?`
+// (tool-loader.ts); here each `?` is bound from the input field mapped to it, never spliced into
+// the text, and the SQL goes through Gate 2's validateSqlAgainstViews and Gate 3's
+// runReadOnlySelect exactly like query_sql. Like query_sql it reads only the v_* views, so its
+// rows reference subjects by pk_ keys only (T-AI-8), and the executor scans the result.
 
 import { z } from 'zod'
 import { TODAY } from '../../../shared/config'
@@ -34,7 +42,7 @@ import { isIsoDate, SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../ing
 import type { SqlValue } from '../../ingest/sql'
 import { PREVIEW_DEFAULT_LIMIT } from '../../routes/segments'
 import { validateSqlAgainstViews } from '../gates/gate2-tool-authorizer'
-import { runReadOnlySelect, SqlRunError } from '../gates/gate3-readonly-sql'
+import { type ReadOnlyResult, runReadOnlySelect, SqlRunError } from '../gates/gate3-readonly-sql'
 import { viewSchemas } from '../schema-context'
 import {
   type CompiledModelSegment,
@@ -363,6 +371,27 @@ const aggregateHandler: BuiltinHandler = {
 
 const QuerySqlInput = z.object({ sql: z.string().min(1), explanation: z.string().min(1) }).strict()
 
+/** Rows keyed by column name; a query naming two columns alike goes back to the model to fix. */
+function namedRows(result: ReadOnlyResult): ResultRow[] {
+  const duplicates = result.columns.filter((c, i) => result.columns.indexOf(c) !== i)
+  if (duplicates.length > 0) {
+    throw new ToolInputError([`two result columns are named ${[...new Set(duplicates)].join(', ')}; give each column its own name with AS`], {
+      sql: result.sql,
+    })
+  }
+  return result.rows.map((cells) => Object.fromEntries(result.columns.map((c, i) => [c, cells[i]])) as ResultRow)
+}
+
+/** Gate 3 runs the SQL once; a database refusal goes back to the model as query_failed. */
+async function runChecked(db: D1Database, sql: string, params: readonly SqlValue[] = []): Promise<ReadOnlyResult> {
+  try {
+    return await runReadOnlySelect(db, sql, params)
+  } catch (err) {
+    if (err instanceof SqlRunError) throw new ToolInputError([err.message], { code: 'query_failed', sql: err.sql })
+    throw err
+  }
+}
+
 const querySqlHandler: BuiltinHandler = {
   inputKeys: Object.keys(QuerySqlInput.shape),
   async run(db, input) {
@@ -373,20 +402,8 @@ const querySqlHandler: BuiltinHandler = {
     const { sql, explanation } = parsed.data
     // Gate 2 (throws GateDenied) against the views' PRAGMA columns, then Gate 3, which runs it once.
     validateSqlAgainstViews(sql, await viewSchemas(db))
-    let result
-    try {
-      result = await runReadOnlySelect(db, sql)
-    } catch (err) {
-      if (err instanceof SqlRunError) throw new ToolInputError([err.message], { code: 'query_failed', sql: err.sql })
-      throw err
-    }
-    const duplicates = result.columns.filter((c, i) => result.columns.indexOf(c) !== i)
-    if (duplicates.length > 0) {
-      throw new ToolInputError([`two result columns are named ${[...new Set(duplicates)].join(', ')}; give each column its own name with AS`], {
-        sql: result.sql,
-      })
-    }
-    const rows = result.rows.map((cells) => Object.fromEntries(result.columns.map((c, i) => [c, cells[i]])) as ResultRow)
+    const result = await runChecked(db, sql)
+    const rows = namedRows(result)
     return {
       tool: 'query_sql',
       columns: result.columns,
@@ -402,6 +419,57 @@ const querySqlHandler: BuiltinHandler = {
       sql: result.sql,
     }
   },
+}
+
+// ── query rows ───────────────────────────────────────────────────────────────────────────
+
+/** A query row's template as the loader checked it (tool-loader.ts). */
+export interface QueryTemplate {
+  /** The row's SQL with every `:name` placeholder rewritten to `?` (09 D-45). */
+  sql: string
+  /** The input field bound to each `?`, in order; a field used twice appears twice. */
+  inputs: readonly string[]
+}
+
+/** One input value as D1 binds it: absent → NULL, a boolean → 1 or 0 (SQLite has no boolean). */
+function boundValue(field: string, value: unknown): SqlValue {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'boolean') return value ? 1 : 0
+  if (typeof value === 'string' || typeof value === 'number') return value
+  // The loader allows only scalar properties and Gate 2 checked the input against them.
+  throw new Error(`query row: input ${field} is ${typeof value}, which no placeholder can take`)
+}
+
+/**
+ * The handler for one `query` row (03 row 9): binds the mapped inputs to the template's `?`
+ * markers and runs it through Gate 2 and Gate 3. `name` is the row's name.
+ */
+export function queryHandler(name: string, template: QueryTemplate): BuiltinHandler {
+  const inputKeys = [...new Set(template.inputs)]
+  return {
+    inputKeys,
+    async run(db, input) {
+      const params = template.inputs.map((field) => boundValue(field, input[field]))
+      // The loader ran Gate 2 on this text already; it runs again here so a query row's SQL
+      // never reaches D1 without both gates in the same call (03 rows 7-8).
+      validateSqlAgainstViews(template.sql, await viewSchemas(db))
+      const result = await runChecked(db, template.sql, params)
+      const rows = namedRows(result)
+      return {
+        tool: name,
+        columns: result.columns,
+        rows,
+        total_rows: rows.length,
+        summary: {
+          inputs: Object.fromEntries(inputKeys.map((field) => [field, input[field] ?? null])),
+          rows: rows.length,
+          row_limit: result.limit,
+          may_have_more_rows: rows.length === result.limit,
+        },
+        sql: result.sql,
+      }
+    },
+  }
 }
 
 /** Handler names an assistant_tools `builtin` row may use (03 row 9). */
