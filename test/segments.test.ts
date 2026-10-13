@@ -17,14 +17,18 @@ import { realCsvs, seedDatabase } from './helpers/seed'
 // - source "Instagram" is the raw spelling in subscribers.csv (925 rows); the API folds it.
 // - error-path inputs: status "unsubscribe" is a removal from a real value per 09 D-47 (the last
 //   character of "unsubscribed" removed); filter key "pages_viewed" is not data at all but a
-//   parked filter key named in 04 §/api/segments/preview, which this build must reject.
-// - the source value "instagram' OR '1'='1" is an injection probe string (08 T-SEG-3), not
-//   business data: it must bind as a value and match nothing.
+//   parked filter key named in 04 §/api/segments/preview, which this build must reject. Its value
+//   16 is the "16 distinct pages" of 02 §Counts (web_events.csv); only the key is under test.
+// - the source value "x') OR ('a'='a" is an injection probe string (08 T-SEG-3), not business data:
+//   inlined as IN ('…') it would close the list and match every active subscriber; bound, it
+//   matches nothing and never reaches sql_shape.
 
-const PRESET = { source: ['instagram'], days_since_open_gte: 30, include_never_opened: true }
+const PRESET = { source: ['instagram'], days_since_open_gte: 30, include_never_opened: true } as const
+/** The 04 §/api/segments/export.csv column list, written out here rather than read from the code under test. */
+const EXPORT_HEADER = ['email', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app']
 const PRESET_COUNT = 177
 const UNSUBSCRIBED_INSTAGRAM = 93
-const INJECTION_PROBE = "instagram' OR '1'='1"
+const INJECTION_PROBE = "x') OR ('a'='a"
 
 interface PreviewBody {
   count: number
@@ -77,10 +81,14 @@ async function exportRecords(filters: unknown): Promise<string[][]> {
 }
 
 /** The brief's rule over the ingested CSV, in TypeScript: status, canonical source, days_since_open >= N or never opened. */
-function independentCount(status: readonly string[]): number {
+function independentCount(status: readonly string[], includeNeverOpened: boolean = PRESET.include_never_opened): number {
   const { subscribers } = ingestSubscribers(realCsvs().subscribers)
   return [...subscribers.values()].filter(
-    (s) => status.includes(s.status) && s.source === 'instagram' && noOpenInDays(s.last_open_date, 30, true),
+    (s) =>
+      status.includes(s.status) &&
+      s.source !== null &&
+      (PRESET.source as readonly string[]).includes(s.source) &&
+      noOpenInDays(s.last_open_date, PRESET.days_since_open_gte, includeNeverOpened),
   ).length
 }
 
@@ -101,7 +109,7 @@ describe('T-SEG-1 the brief preset matches 02 §Counts and an independent count'
     for (const row of body.rows) {
       expect(row.status).toBe('active')
       expect(row.source).toBe('instagram')
-      expect(noOpenInDays(row.last_open_date, 30, true)).toBe(true)
+      expect(noOpenInDays(row.last_open_date, PRESET.days_since_open_gte, PRESET.include_never_opened)).toBe(true)
       expect(row.email).toContain('@')
       expect(typeof row.has_app).toBe('boolean')
     }
@@ -114,11 +122,7 @@ describe('T-SEG-1 the brief preset matches 02 §Counts and an independent count'
 
   it('without include_never_opened, never-openers are excluded', async () => {
     const withoutNever = await preview({ ...PRESET, include_never_opened: false })
-    const { subscribers } = ingestSubscribers(realCsvs().subscribers)
-    const expected = [...subscribers.values()].filter(
-      (s) => s.status === 'active' && s.source === 'instagram' && noOpenInDays(s.last_open_date, 30, false),
-    ).length
-    expect(withoutNever.count).toBe(expected)
+    expect(withoutNever.count).toBe(independentCount(['active'], false))
     expect(withoutNever.count).toBeLessThan(PRESET_COUNT)
   })
 
@@ -158,8 +162,8 @@ describe('T-SEG-2 hidden unsubscribed (02 §Defaults)', () => {
 describe('T-SEG-3 export follows the segment and binds every value', () => {
   it('header is the exact 04 column list and every row carries a status', async () => {
     const [header, ...rows] = await exportRecords(PRESET)
-    expect(header).toEqual(['email', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app'])
-    expect(header).toEqual([...SEGMENT_COLUMNS])
+    expect(header).toEqual(EXPORT_HEADER)
+    expect([...SEGMENT_COLUMNS]).toEqual(EXPORT_HEADER)
     expect(rows).toHaveLength(PRESET_COUNT)
     for (const row of rows) {
       expect(row).toHaveLength(header.length)
@@ -179,8 +183,12 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     const body = await preview({ source: [INJECTION_PROBE] })
     expect(body.count).toBe(0)
     expect(body.rows).toEqual([])
+    expect(body.sql_shape).toContain('s.source IN (?)')
+    expect(body.sql_shape).not.toContain("'a'='a")
+    // Inlined, the probe would match every active subscriber; that set is not empty.
+    expect((await preview({})).count).toBeGreaterThan(0)
     const [header, ...rows] = await exportRecords({ source: [INJECTION_PROBE] })
-    expect(header).toEqual([...SEGMENT_COLUMNS])
+    expect(header).toEqual(EXPORT_HEADER)
     expect(rows).toEqual([])
   })
 })
@@ -188,7 +196,7 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
 describe('segment request errors', () => {
   it('an unknown filter key is 400 invalid_filters', async () => {
     for (const path of ['preview', 'export.csv']) {
-      const res = await post(path, { filters: { ...PRESET, pages_viewed: 3 } })
+      const res = await post(path, { filters: { ...PRESET, pages_viewed: 16 } })
       expect(res.status).toBe(400)
       const body = await res.json<{ error: string; details: string[] }>()
       expect(body.error).toBe('invalid_filters')

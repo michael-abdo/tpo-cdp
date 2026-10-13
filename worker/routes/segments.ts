@@ -27,20 +27,28 @@ export const PREVIEW_MAX_LIMIT = 1000
 const PREVIEW_KEYS = ['filters', 'limit']
 const EXPORT_KEYS = ['filters']
 
+/** A 400 invalid_body, logged with its reason first (fail loud). */
+function invalidBody(route: string, message: string, details: string[]): ApiError {
+  console.warn(JSON.stringify({ at: route, outcome: 'invalid_body', details }))
+  return new ApiError(400, 'invalid_body', message, details)
+}
+
 /** The JSON body as an object holding only `allowed` keys, or 400 invalid_body. */
 async function readBody(req: Request, route: string, allowed: readonly string[]): Promise<Record<string, unknown>> {
+  let parseError: string | undefined
   const body: unknown = await req.json().catch((err: unknown) => {
     // The error's class name only: a JSON SyntaxError message quotes the body.
-    console.warn(JSON.stringify({ at: route, outcome: 'invalid_body', error: err instanceof Error ? err.name : 'unknown' }))
+    parseError = err instanceof Error ? err.name : 'unknown'
     return undefined
   })
   const shape = `Send a JSON object with only ${allowed.map((k) => `"${k}"`).join(' and ')}.`
+  if (parseError !== undefined) throw invalidBody(route, shape, [`body is not JSON: ${parseError}`])
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new ApiError(400, 'invalid_body', shape)
+    throw invalidBody(route, shape, ['body is not a JSON object'])
   }
   const unknown = Object.keys(body).filter((k) => !allowed.includes(k))
   if (unknown.length > 0) {
-    throw new ApiError(400, 'invalid_body', shape, unknown.map((k) => `unknown field: ${k}`))
+    throw invalidBody(route, shape, unknown.map((k) => `unknown field: ${k}`))
   }
   return body as Record<string, unknown>
 }
@@ -57,10 +65,11 @@ function filtersFrom(body: Record<string, unknown>, route: string): SegmentFilte
   }
 }
 
-function previewLimit(value: unknown): number {
+function previewLimit(value: unknown, route: string): number {
   if (value === undefined) return PREVIEW_DEFAULT_LIMIT
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > PREVIEW_MAX_LIMIT) {
-    throw new ApiError(400, 'invalid_body', `limit must be a whole number from 1 to ${PREVIEW_MAX_LIMIT}.`)
+    const message = `limit must be a whole number from 1 to ${PREVIEW_MAX_LIMIT}.`
+    throw invalidBody(route, message, [message])
   }
   return value
 }
@@ -97,7 +106,7 @@ export const segmentRoutes = new Hono<AppEnv>()
 segmentRoutes.post('/segments/preview', async (c) => {
   const body = await readBody(c.req.raw, 'segments/preview', PREVIEW_KEYS)
   const filters = filtersFrom(body, 'segments/preview')
-  const limit = previewLimit(body.limit)
+  const limit = previewLimit(body.limit, 'segments/preview')
   const segment = compileSegment(filters)
   const db = c.env.DB
   const [count, hidden_unsubscribed, rows] = await Promise.all([
