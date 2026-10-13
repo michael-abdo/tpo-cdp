@@ -72,7 +72,7 @@ interface WebEventRow {
   utm_source: string | null
 }
 
-const notFound = () => new ApiError(404, 'not_found', 'No profile matches that email or app user id.')
+const notFound = () => new ApiError(404, 'not_found', 'No profile matches that email or id.')
 
 /** At most one row, or a loud error: the 04 shape holds one of each per profile. Never names the key (PII). */
 function single<T>(rows: T[], what: string): T | null {

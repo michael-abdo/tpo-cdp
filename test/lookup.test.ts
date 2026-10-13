@@ -214,7 +214,7 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
       const text = await res.text()
       expect(JSON.parse(text)).toEqual({
         error: 'not_found',
-        message: 'No profile matches that email or app user id.',
+        message: 'No profile matches that email or id.',
       })
       expect(text).not.toContain('joy')
       expect(text).not.toContain('ceed')
@@ -222,7 +222,7 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
   })
 
   it('404 not_found for a blank or missing q and for one that is neither an email nor u_… (04 lists only 404)', async () => {
-    const notFound = { error: 'not_found', message: 'No profile matches that email or app user id.' }
+    const notFound = { error: 'not_found', message: 'No profile matches that email or id.' }
     for (const q of ['', '   ', 'joy.hall830']) {
       const res = await lookup(q)
       expect(res.status, JSON.stringify(q)).toBe(404)
@@ -287,7 +287,7 @@ describe('T-API-1 lookup by pk_, d_ and v_ resolve the same profile as the email
     for (const q of [pkey.slice(0, -1), 'd_4b21e', 'v_c9e136fd6', 'v_569d3a387c']) {
       const res = await lookup(q)
       expect(res.status, q).toBe(404)
-      expect(await res.json()).toEqual({ error: 'not_found', message: 'No profile matches that email or app user id.' })
+      expect(await res.json()).toEqual({ error: 'not_found', message: 'No profile matches that email or id.' })
     }
   })
 })

@@ -37,7 +37,8 @@ import { eventIdPool, sendWebhook } from './helpers/webhook'
 //   or swapped in for a "."; they test escaping, not data, and introduce no business value (09 D-47).
 // - Fuzzy lookup (09 D-59, T-API-4), each a removal or swap within a real value (09 D-47):
 //   "joy.hal830@protonmail.com" (one "l" removed from joy.hall830's address), "joyhall830" (the
-//   "." removed), "joyh" (a 4-character cut of "joy.hall830" with its "." removed; no email
+//   "." removed), "joyhal830" (the "." and one "l" removed: distance 2 with a length gap of exactly
+//   2; no row contains it), "joyh" (a 4-character cut of "joy.hall830" with its "." removed; no email
 //   contains it), "appser17" (the "u" removed from appuser17@gmail.com, app_users.csv:6; within
 //   distance 2 of 13 app-only addresses), "appuser1" (a cut of the same, contained in 11 of them),
 //   "appus" and "appu" (5- and 4-character cuts), "yj" ("joy" with "o" removed and the rest swapped).
@@ -233,6 +234,8 @@ describe('fuzzy helper (worker/lookup/fuzzy.ts, 09 D-59)', () => {
     expect(FUZZY_MAX_DISTANCE).toBe(2)
     expect(emailDistance('joy.hal830@protonmail.com', 'joy.hall830@protonmail.com')).toBe(1)
     expect(emailDistance('joyhall830', 'joy.hall830@protonmail.com')).toBe(1)
+    // Two letters dropped: the lengths differ by exactly 2, so the length pre-check must keep it.
+    expect(emailDistance('joyhal830', 'joy.hall830@protonmail.com')).toBe(2)
     expect(emailDistance('joy.hall830', 'joy.hall830@protonmail.com')).toBe(0)
     expect(emailDistance('joy.hall524', 'joy.hall830@protonmail.com')).toBeNull()
   })
@@ -249,8 +252,8 @@ describe('fuzzy helper (worker/lookup/fuzzy.ts, 09 D-59)', () => {
     const rows = ['appuser7', 'appuser1', 'appuser13', 'appuser17', 'appuser12', 'appuser10', 'appuser11'].map(
       (local) => ({ email: `${local}@gmail.com` }),
     )
-    // "appuser1@" sorts after "appuser19@" ("@" > "9"), as ORDER BY email_norm does; a locale
-    // comparison would put it second.
+    // "appuser1@" sorts after "appuser10@".."appuser13@" ("@" > the digits), as ORDER BY
+    // email_norm does; a locale comparison would put it second.
     expect(nearestEmails('appser17', rows)).toEqual([
       { email: 'appuser17@gmail.com', distance: 1 },
       { email: 'appuser10@gmail.com', distance: 2 },
@@ -287,8 +290,18 @@ describe('T-API-4 fuzzy lookup (did_you_mean)', () => {
     expect(body.did_you_mean).toContainEqual(await suggestion('joy.hall830@protonmail.com', 'subscriber', 1))
   })
 
+  it('joyhal830 (two letters dropped) → joy.hall830 among did_you_mean at distance 2', async () => {
+    const body = await found('joyhal830')
+    expect(body.matches).toEqual([])
+    expect(body.did_you_mean).toContainEqual(await suggestion('joy.hall830@protonmail.com', 'subscriber', 2))
+  })
+
   it('a 4-character miss → did_you_mean []', async () => {
     expect(await found('joyh')).toEqual({ q: 'joyh', matches: [], truncated: false, did_you_mean: [] })
+    // The shortest stored local part has 8 characters, so no real fragment under 6 characters is
+    // within 2 of anything and the data alone cannot show the length gate. Pin that the route
+    // gates on wantsSuggestions (tested above), not on an empty match list alone.
+    expect(lookupSource).toContain('if (wantsSuggestions(q, matches.length))')
   })
 
   it('a fragment with a partial match → did_you_mean [], though suggestions exist for it', async () => {
