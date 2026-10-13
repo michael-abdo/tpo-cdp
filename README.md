@@ -130,7 +130,99 @@ Every derived value has exactly one home, `shared/derive.ts` (`DEFINITIONS`): th
 
 ## Webhook
 
-_Lands with `POST /webhooks/app` (Wed)._
+`POST /webhooks/app` takes one app event per request, in exactly the brief's shape:
+
+```json
+{"event_id":"evt_9f3a1c","event":"read_story","user_id":"u_2b6447a3","device_id":"d_4b21e8","timestamp":"2026-09-28T14:22:05Z","properties":{"story":"supreme-court-ruling-explained"}}
+```
+
+`event` is one of `app_open`, `read_story`, `link_click`, `login`. `user_id` may be `null` or absent. `timestamp` is the event time: it orders the timeline, may be hours old, and is never used for auth. The body may be at most 64 KB, and any string inside `properties` at most 200 characters.
+
+**Auth: two headers, no cookie.**
+
+| Header | Value |
+|---|---|
+| `X-Webhook-Timestamp` | unix seconds when this request was sent |
+| `X-Webhook-Signature` | `v1=` + hex HMAC-SHA256(`WEBHOOK_SECRET`, `<X-Webhook-Timestamp>.<raw body bytes>`) |
+
+The server checks the signature on the raw bytes before it parses any JSON, with a constant-time compare, and refuses a header timestamp more than 300 seconds from its clock.
+
+**Retries must re-sign with a fresh header timestamp**, as Stripe and others do. A request captured more than 5 minutes ago is refused as stale by design, while the body it carries can be any age. Re-sending an `event_id` that is already stored is safe: the answer is `200 {"accepted":true,"duplicate":true}` and the first write wins.
+
+| Code | When |
+|---|---|
+| 202 | stored; the body names the user and profile key the event resolves to, or `null` |
+| 200 | `event_id` already stored (duplicate) |
+| 400 `invalid_event` | schema failure; `details` names each field |
+| 401 `bad_signature` · `stale_timestamp` · `missing_headers` | auth failure; the reason is logged server-side |
+| 413 · 415 · 429 | body over 64 KB · not `application/json` · over 300 requests a minute |
+
+**Signing examples.** Each sends the brief's sample event. Set `URL` (e.g. `http://localhost:5173`) and `WEBHOOK_SECRET` in the environment first.
+
+curl + openssl:
+
+```bash
+BODY='{"event_id":"evt_9f3a1c","event":"read_story","user_id":"u_2b6447a3","device_id":"d_4b21e8","timestamp":"2026-09-28T14:22:05Z","properties":{"story":"supreme-court-ruling-explained"}}'
+TS=$(date +%s)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')
+curl -sS -X POST "$URL/webhooks/app" \
+  -H 'Content-Type: application/json' \
+  -H "X-Webhook-Timestamp: $TS" \
+  -H "X-Webhook-Signature: v1=$SIG" \
+  --data-binary "$BODY"
+```
+
+Node 20+ (save as `sign.mjs`, run `node sign.mjs`):
+
+```js
+import { createHmac } from 'node:crypto'
+
+const body = JSON.stringify({
+  event_id: 'evt_9f3a1c', event: 'read_story', user_id: 'u_2b6447a3', device_id: 'd_4b21e8',
+  timestamp: '2026-09-28T14:22:05Z', properties: { story: 'supreme-court-ruling-explained' },
+})
+const ts = String(Math.floor(Date.now() / 1000))
+const sig = 'v1=' + createHmac('sha256', process.env.WEBHOOK_SECRET).update(`${ts}.${body}`).digest('hex')
+const res = await fetch(`${process.env.URL}/webhooks/app`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'X-Webhook-Timestamp': ts, 'X-Webhook-Signature': sig },
+  body, // sign and send the same bytes
+})
+console.log(res.status, await res.text())
+```
+
+Python 3 (standard library only):
+
+```python
+import hashlib, hmac, json, os, time, urllib.error, urllib.request
+
+body = json.dumps({
+    "event_id": "evt_9f3a1c", "event": "read_story", "user_id": "u_2b6447a3", "device_id": "d_4b21e8",
+    "timestamp": "2026-09-28T14:22:05Z", "properties": {"story": "supreme-court-ruling-explained"},
+}, separators=(",", ":")).encode()
+ts = str(int(time.time()))
+sig = "v1=" + hmac.new(os.environ["WEBHOOK_SECRET"].encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
+req = urllib.request.Request(os.environ["URL"] + "/webhooks/app", data=body, method="POST", headers={
+    "Content-Type": "application/json", "X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
+try:
+    with urllib.request.urlopen(req) as res:
+        print(res.status, res.read().decode())
+except urllib.error.HTTPError as err:  # 4xx/5xx arrive here
+    print(err.code, err.read().decode())
+```
+
+**From this repo:** `npm run webhook:send` (`scripts/send-webhook.ts`) signs with `WEBHOOK_SECRET` from `.dev.vars` (never printed), POSTs, and prints the status and the response body.
+
+```bash
+npm run webhook:send -- --event app_open                                # 202: anonymous, on a new device
+npm run webhook:send -- --again                                         # 200 duplicate: same event_id, re-signed
+npm run webhook:send -- --event login --user u_2b6447a3 --same-device   # 202: the device's earlier event now resolves to julia.evans230
+npm run webhook:send -- --event app_open --url https://tpo-cdp.michaelabdo-mail.workers.dev
+```
+
+Flags: `--event`, `--user` (absent = anonymous), `--device` or `--same-device` (default: a new device), `--again`, `--url` (default `http://localhost:5173`). New events are timestamped TODAY (2026-09-28) at the current UTC time of day.
+
+**Identity at read time.** An event with a `user_id` belongs to that user. An anonymous event belongs to its device's most recent user by event time (`device_identity`, updated by every identified event), so a `login` attaches the device's anonymous events whether it arrives before or after them, with no replay; lookup and `/events` tag them "stitched". A device shared by several users gives all its anonymous events to the most recent one, the documented miss. `/events` lists the last 20 events, newest first, with the profile each one resolves to.
 
 ## PII design
 

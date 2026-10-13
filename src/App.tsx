@@ -1,4 +1,4 @@
-// Routes for Tuesday's screens (06 §Navigation): /login, / (Overview), /lookup, /segments.
+// Routes for the screens built so far (06 §Navigation): /login, / (Overview), /lookup, /segments, /events.
 // Every page except /login sits under the top bar; the session itself is checked by the API,
 // whose 401 sends the browser back to /login (src/api.ts).
 
@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from 'react-router'
 import { TODAY } from '../shared/config'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
+import EventsPage from './pages/EventsPage'
 import LoginPage from './pages/LoginPage'
 import LookupPage from './pages/LookupPage'
 import OverviewPage from './pages/OverviewPage'
@@ -15,6 +16,7 @@ const NAV = [
   { to: '/', label: 'Overview' },
   { to: '/lookup', label: 'Lookup' },
   { to: '/segments', label: 'Segments' },
+  { to: '/events', label: 'Events' },
 ] as const
 
 function TopBar() {
@@ -79,6 +81,7 @@ export default function App() {
         <Route index element={<OverviewPage />} />
         <Route path="lookup" element={<LookupPage />} />
         <Route path="segments" element={<SegmentsPage />} />
+        <Route path="events" element={<EventsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

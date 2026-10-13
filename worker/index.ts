@@ -3,6 +3,7 @@ import { TODAY } from '../shared/config'
 import { loginRoutes } from './auth/login'
 import { ApiError, requireJson, requireSession } from './auth/middleware'
 import { type AppEnv, assertBindings, MissingBindingsError } from './env'
+import { eventRoutes } from './routes/events'
 import { lookupRoutes } from './routes/lookup'
 import { overviewRoutes } from './routes/overview'
 import { segmentRoutes } from './routes/segments'
@@ -41,6 +42,7 @@ app.route('/api', loginRoutes)
 app.route('/api', overviewRoutes)
 app.route('/api', lookupRoutes)
 app.route('/api', segmentRoutes)
+app.route('/api', eventRoutes)
 
 // POST /webhooks/app sits outside /api/*, so neither the session guard nor requireJson's
 // mount applies: HMAC headers are its only auth (04 §Auth, §Webhook).

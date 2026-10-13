@@ -45,6 +45,24 @@ export interface Lookup {
   } | null
 }
 
+/** One row of GET /api/events/recent, resolved at read time (01 §Identity resolution). */
+export interface RecentEvent {
+  event_id: string
+  event: string
+  device_id: string
+  event_ts: string
+  received_at: string
+  user_id: string | null
+  attached_via: 'direct' | 'login_stitch' | null
+  pkey: string | null
+  email: string | null
+}
+
+/** GET /api/events/recent */
+export interface RecentEvents {
+  events: RecentEvent[]
+}
+
 /** The filters object of POST /api/segments/preview and export.csv. */
 export interface SegmentFilters {
   status: SubscriberStatus[]
