@@ -12,7 +12,7 @@
  * - `aggregate` takes `status` and `source` lists like the segment filters, so "Instagram signups"
  *   and the unsubscribed default (02 §Defaults) mean the same thing in both tools. Its metrics
  *   are the ones builtin-handlers.ts computes over the v_* views. The draft's
- *   `engagement_buckets` is not seeded (09 D-55): 02 §Derived defines no buckets, and bucket
+ *   `engagement_buckets` is not seeded (09 D-56): 02 §Derived defines no buckets, and bucket
  *   edges in SQL would be a second formula (D-46). "Most engaged" is the segment tool's
  *   ranking instead: its rows come out by stored engagement_score, highest first.
  * - `query_sql`, `describe_schema`, the `query` row and `open_segment` are not seeded here:

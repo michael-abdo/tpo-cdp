@@ -260,7 +260,7 @@ export interface CompiledModelSegment {
 /**
  * The same filters compiled over v_profiles, the only relation this SQL names (05 §Exactly what
  * the model receives, "Structural"). Rows come out most engaged first: the stored
- * engagement_score descending, pkey breaking ties (09 D-55, D-46: an ORDER BY on the stored
+ * engagement_score descending, pkey breaking ties (09 D-56, D-46: an ORDER BY on the stored
  * column, no formula). That is the path for "our most engaged readers" (R5.2); the builder keeps
  * its email order (04). status IN (…) drops the profiles that have no subscriber row.
  */

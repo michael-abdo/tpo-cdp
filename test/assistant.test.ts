@@ -513,7 +513,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(pkeys).toHaveLength(100)
 
     // After: the UI payload carries subscribers of the builder's segment, as emails. The tool's
-    // rows come most engaged first (09 D-55), so they are members of the builder's 177, not its
+    // rows come most engaged first (09 D-56), so they are members of the builder's 177, not its
     // first 100 in email order.
     const hydrated = rehydrate(result, await loadEmailsByPkey(env.DB, pkeys))
     expect(hydrated.table?.columns[0]).toBe('email')
@@ -665,7 +665,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(respond({ modelText: null, outputs: [seg, cold], capped: true }).result.table?.rows).toEqual([{ cold: 147 }])
   })
 
-  it('"our most engaged readers": the segment tool lists the highest stored engagement scores first (09 D-55)', async () => {
+  it('"our most engaged readers": the segment tool lists the highest stored engagement scores first (09 D-56)', async () => {
     const cookie = await loginCookie()
     // Independent of the tool's SQL: the scores of active subscribers, from the tables, highest first.
     const { results } = await env.DB.prepare(
