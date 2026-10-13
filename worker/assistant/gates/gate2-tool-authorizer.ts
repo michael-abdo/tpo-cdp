@@ -11,6 +11,10 @@
 //   - a relation is a view named by a bare word or a `(SELECT …)` subquery; a parenthesized
 //     table or join (`FROM (subscribers)`) and a string used as a table name (`FROM 'subscribers'`,
 //     which SQLite accepts) are denied, so no hidden table is read under a subquery's alias
+//   - a relation position is found from the SQL's shape, never from an alias: every JOIN starts a
+//     relation, a FROM list ends only at a keyword that cannot be an alias, and `IN <name>` (SQLite
+//     reads a table there) is denied, so the model writes `IN (…)`; WINDOW is denied, since a
+//     named window's name is no view column and `AS window` would otherwise look like a clause
 //   - the wall clock is denied (02 §Time): 'now', CURRENT_DATE/TIME/TIMESTAMP, and any date
 //     function whose time value is missing or computed (`date()`, `strftime('%Y')`,
 //     `date('n'||'ow')`), since SQLite reads the clock for those; the time value must be a date
@@ -26,6 +30,7 @@
 // Problems may quote a property name or an identifier the model wrote; the executor scans the
 // error with the PII guard before the model, a log line or the audit row sees it.
 
+import { TODAY } from '../../../shared/config'
 import { PII_COLUMNS } from '../../../shared/pii'
 import type { ViewSchema } from '../schema-context'
 import type { LoadedTool, LoadedTools } from '../tools/tool-loader'
@@ -131,11 +136,16 @@ export function authorizeToolCall(tools: LoadedTools, call: { name: string; inpu
 
 // ── validateSqlAgainstViews ──────────────────────────────────────────────────────────────
 
-/** Write and statement keywords (03 row 7); Gate 3 refuses PRAGMA, ATTACH, DETACH and WITH again on its own. */
+/**
+ * Write and statement keywords (03 row 7); Gate 3 refuses PRAGMA, ATTACH, DETACH and WITH again on
+ * its own. Plus WINDOW: a named window's name is no view column, so a WINDOW clause never passed
+ * the column check, and as an alias (`FROM v_funnel AS window`) it used to end the FROM list
+ * early and hide the next JOIN or comma relation from the view check.
+ */
 const DENIED_WORDS = new Set([
   'INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'UPSERT', 'DROP', 'ALTER', 'CREATE', 'TRUNCATE', 'RENAME',
   'ATTACH', 'DETACH', 'PRAGMA', 'VACUUM', 'REINDEX', 'ANALYZE', 'BEGIN', 'COMMIT', 'ROLLBACK',
-  'SAVEPOINT', 'RELEASE', 'GRANT', 'REVOKE', 'WITH', 'RECURSIVE', 'TRIGGER', 'INDEX', 'VALUES',
+  'SAVEPOINT', 'RELEASE', 'GRANT', 'REVOKE', 'WITH', 'RECURSIVE', 'TRIGGER', 'INDEX', 'VALUES', 'WINDOW',
 ])
 
 /** The wall clock; business dates use TODAY (02 §Time), which the system prompt gives the model. */
@@ -190,8 +200,8 @@ const EXPRESSION_END_KEYWORDS = new Set(['END', 'NULL', 'TRUE', 'FALSE', 'ISNULL
 
 const COMPOUND = new Set(['UNION', 'INTERSECT', 'EXCEPT'])
 
-/** After FROM at the same depth, these words end the list of relations. */
-const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT', 'WINDOW'])
+/** After FROM at the same depth, these words end the list of relations. All are KEYWORDS, so none can be an alias. */
+const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT'])
 
 const PII = new Set<string>(PII_COLUMNS)
 
@@ -203,7 +213,12 @@ export interface ValidatedSql {
 const isWord = (t: SqlToken | undefined, word?: string): t is SqlToken =>
   t !== undefined && t.kind === 'word' && (word === undefined || t.text.toUpperCase() === word)
 const isPunct = (t: SqlToken | undefined, text: string): boolean => t !== undefined && t.kind === 'punct' && t.text === text
-const isName = (t: SqlToken | undefined): t is SqlToken => isWord(t) && !KEYWORDS.has(t.text.toUpperCase())
+/** A word that can name a column, view or alias: not a keyword, a denied word or the wall clock. */
+const isName = (t: SqlToken | undefined): t is SqlToken => {
+  if (!isWord(t)) return false
+  const upper = t.text.toUpperCase()
+  return !KEYWORDS.has(upper) && !DENIED_WORDS.has(upper) && !WALL_CLOCK_WORDS.has(upper)
+}
 
 /**
  * Gate 2's SQL check (03 row 7). Pure: `views` are the `v_*` views with their PRAGMA columns
@@ -229,7 +244,8 @@ export function validateSqlAgainstViews(sql: string, views: readonly ViewSchema[
     else if (isPunct(t, ')')) closing.set(open.pop()!, i)
   })
 
-  // Pass 1: relations (after FROM, JOIN, or a comma in a FROM list), their aliases, and column aliases.
+  // Pass 1: relations (after FROM, JOIN, or a comma in a FROM list), their aliases, and column
+  // aliases; `IN <name>`, which SQLite reads as a table, is denied here.
   /** Name or alias → the view it reads; null for a subquery's alias. */
   const relations = new Map<string, ViewSchema | null>()
   const read = new Set<ViewSchema>()
@@ -251,10 +267,16 @@ export function validateSqlAgainstViews(sql: string, views: readonly ViewSchema[
     if (isPunct(t, ')')) inFrom.delete(t.depth + 1)
     if (t.kind !== 'word' && !isPunct(t, ',')) continue
     const upper = t.text.toUpperCase()
-    if (t.kind === 'word' && FROM_LIST_END.has(upper)) inFrom.delete(t.depth)
-    if (t.kind === 'word' && upper === 'FROM') inFrom.add(t.depth)
+    if (t.kind === 'word' && !named.has(i) && FROM_LIST_END.has(upper)) inFrom.delete(t.depth)
+    // Every JOIN is inside a FROM list, whatever came before it.
+    if (t.kind === 'word' && (upper === 'FROM' || upper === 'JOIN')) inFrom.add(t.depth)
+    if (t.kind === 'word' && upper === 'IN' && !isPunct(tokens[i + 1], '(')) {
+      // `x IN subscribers` (or IN an alias named after a table) reads that table in SQLite.
+      problems.push(`IN must be followed by "(": write IN (value, …) or IN (SELECT … FROM a view), never IN a table or alias; only these views may be read: ${allowed}`)
+      if (isWord(tokens[i + 1])) named.add(i + 1)
+    }
     const startsRelation = upper === 'FROM' || upper === 'JOIN' || (t.text === ',' && inFrom.has(t.depth))
-    if (startsRelation && inFrom.has(t.depth)) {
+    if (startsRelation) {
       const next = tokens[i + 1]
       const where = t.text === ',' ? 'after a comma in FROM' : `after ${upper}`
       if (isPunct(next, '(')) {
@@ -387,7 +409,7 @@ function dateTimeValueProblems(
       else args.at(-1)!.push(tokens[j])
     }
     const arg = args[position]
-    const need = `use a date literal counted from TODAY (e.g. '2026-09-28') or a stored date column (${listed})`
+    const need = `use a date literal counted from TODAY (e.g. '${TODAY}') or a stored date column (${listed})`
     if (arg === undefined || arg.length === 0) {
       problems.push(`${call} without a time value reads the wall clock; ${need}`)
       return

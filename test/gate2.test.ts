@@ -68,11 +68,48 @@ async function auditRows(traceId: string) {
   ).results
 }
 
-async function runTool(name: string, input: unknown) {
+async function runTool(name: string, input: unknown, db: D1Database = env.DB) {
   const trace = await startTrace(env.DB)
-  const executed = await executeToolCall({ db: env.DB, trace, tools: await loadTools(env.DB) }, { id: `toolu_${name}`, name, input })
+  const executed = await executeToolCall({ db, trace, tools: await loadTools(env.DB) }, { id: `toolu_${name}`, name, input })
   return { executed, rows: await auditRows(trace.traceId) }
 }
+
+/** env.DB, recording every SQL text the tool prepares. */
+function recordingDb(): { db: D1Database; prepared: string[] } {
+  const prepared: string[] = []
+  const db = new Proxy(env.DB, {
+    get(target, prop) {
+      if (prop === 'prepare') {
+        return (query: string) => {
+          prepared.push(query)
+          return target.prepare(query)
+        }
+      }
+      const value: unknown = Reflect.get(target, prop)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return { db, prepared }
+}
+
+/**
+ * Hidden-table probes that a v_* alias or a column alias used to carry past the relation check:
+ * an alias named WINDOW ended the FROM list early, and `IN <name>` reads a table in SQLite.
+ */
+const ALIAS_PROBES: Array<[string, RegExp]> = [
+  ['SELECT count(*) AS n FROM v_source_app_conversion AS window JOIN subscribers ON 1 = 1', /^subscribers is not one of the views/],
+  ['SELECT count(*) AS n FROM v_source_app_conversion window JOIN subscribers ON 1 = 1', /^subscribers is not one of the views/],
+  ['SELECT count(*) AS n, 1 AS app_users FROM v_funnel AS window JOIN app_users ON 1 = 1', /^app_users is not one of the views/],
+  ['SELECT count(*) AS n, 1 AS app_users FROM v_funnel AS window, app_users', /^app_users is not one of the views/],
+  ['SELECT request_json AS request_json, 1 AS ai_audit FROM v_profiles AS window JOIN ai_audit ON 1 = 1', /^ai_audit is not one of the views/],
+  ["SELECT count(*) AS n FROM v_profiles profiles WHERE (pkey, pkey, 'subscriber', engagement_score, signup_date) IN profiles", /^IN must be followed by "\("/],
+  ['SELECT count(*) AS n FROM v_profiles app_users WHERE (app_users.pkey, 1, 2, 3) IN app_users', /^IN must be followed by "\("/],
+  ['SELECT count(*) AS n FROM v_web_events web_visitors WHERE (1, 2, 3, 4, 5, 6, 7) IN web_visitors', /^IN must be followed by "\("/],
+  ['SELECT count(*) AS n FROM v_profiles quarantine WHERE (1, 2, 3, 4, 5, 6) NOT IN quarantine', /^IN must be followed by "\("/],
+  ['SELECT count(*) AS profiles FROM v_profiles WHERE pkey IN profiles', /^IN must be followed by "\("/],
+  ["SELECT count(*) AS n FROM v_profiles WHERE pkey IN 'subscribers'", /^IN must be followed by "\("/],
+  ['SELECT count(*) AS n FROM v_profiles WHERE pkey IN main.subscribers', /^IN must be followed by "\("/],
+]
 
 describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
   it('reads the v_* allowlist from PRAGMA: exactly the views of 01, none with a PII column', () => {
@@ -119,6 +156,10 @@ describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
       // SQLite also takes a string as a table name after FROM or JOIN.
       ["SELECT * FROM 'subscribers'", /^after FROM, write a view name plainly or \(SELECT …\), not a string or quoted name/],
       ["SELECT p.pkey FROM v_profiles p JOIN 'app_users' u ON 1 = 1", /^after JOIN, write a view name plainly or \(SELECT …\)/],
+      // The allowlist is the views' exact names, not a v_ prefix.
+      ['SELECT pkey FROM v_profiles_raw', /^v_profiles_raw is not one of the views/],
+      // An alias or IN form must not carry a table past the check.
+      ...ALIAS_PROBES,
     ]
     for (const [sql, problem] of probes) {
       const denied = gate2(sql)
@@ -143,6 +184,10 @@ describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
     expect(gate2("UPDATE v_profiles SET status = 'active'")?.problems).toContain('UPDATE is not allowed: only a read-only SELECT over the views')
     expect(gate2('WITH s AS (SELECT pkey FROM v_profiles) SELECT pkey FROM s')?.problems).toContain(
       'WITH is not allowed: only a read-only SELECT over the views',
+    )
+    expect(gate2('PRAGMA table_info(subscribers)')?.problems).toContain('PRAGMA is not allowed: only a read-only SELECT over the views')
+    expect(gate2('SELECT source, count(*) OVER w AS n FROM v_profiles WINDOW w AS (PARTITION BY source)')?.problems).toContain(
+      'WINDOW is not allowed: only a read-only SELECT over the views',
     )
     expect(gate2('SELECT load_extension(pkey) AS x FROM v_profiles')?.problems).toEqual(['the function load_extension() is not allowed'])
     expect(gate2("SELECT count(*) AS n FROM v_profiles WHERE last_open_date < date('now', '-30 days')")?.problems).toEqual([
@@ -348,7 +393,10 @@ describe('query_sql through Gates 2 and 3 (03 rows 7-9)', () => {
   it('a query the database refuses goes back once, sanitized, as a query_failed tool_call error', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const sql = 'SELECT source, count(*) AS n FROM v_profiles GROUP BY'
-    const { executed, rows } = await runTool('query_sql', { sql, explanation: 'broken group by' })
+    const { db, prepared } = recordingDb()
+    const { executed, rows } = await runTool('query_sql', { sql, explanation: 'broken group by' }, db)
+    // One attempt: the query is prepared once and not retried.
+    expect(prepared.filter((q) => q.startsWith(sql))).toEqual([`${sql} LIMIT 100`])
     expect(executed.output).toBeNull()
     expect(executed.result.is_error).toBe(true)
     const content = String(executed.result.content)
@@ -366,7 +414,7 @@ describe('query_sql through Gates 2 and 3 (03 rows 7-9)', () => {
     expect(String(executed.result.content)).toContain('No rows.')
   })
 
-  it('a hidden table in parentheses or the wall clock in a date function is refused before D1, with a blocked gate2 row', async () => {
+  it('a hidden table in parentheses, behind an alias or after IN, or the wall clock in a date function is refused before D1, with a blocked gate2 row', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const probes = [
       'SELECT count(*) AS subscribers FROM (subscribers)',
@@ -375,9 +423,13 @@ describe('query_sql through Gates 2 and 3 (03 rows 7-9)', () => {
       'SELECT * FROM (ai_audit) ai_audit',
       "SELECT * FROM 'subscribers'",
       "SELECT count(*) AS n FROM v_profiles WHERE status = 'active' AND last_open_date < date()",
+      ...ALIAS_PROBES.map(([sql]) => sql),
     ]
     for (const sql of probes) {
-      const { executed, rows } = await runTool('query_sql', { sql, explanation: 'probe' })
+      const { db, prepared } = recordingDb()
+      const { executed, rows } = await runTool('query_sql', { sql, explanation: 'probe' }, db)
+      // Nothing ran: the probe was never prepared (the views' PRAGMA columns are cached by schema-context.ts).
+      expect(prepared.filter((q) => q.startsWith(sql)), sql).toEqual([])
       expect(executed.output, sql).toBeNull()
       expect(executed.result.is_error, sql).toBe(true)
       expect(rows, sql).toEqual([expect.objectContaining({ kind: 'blocked', status: 'blocked', tool_name: 'query_sql', sql, row_count: null })])

@@ -23,6 +23,7 @@
  *   type are not in 16 §MVP scope.
  */
 
+import { DEFINITIONS } from '../shared/derive'
 import type { SqlValue } from '../worker/ingest/sql'
 
 export interface ToolSeed {
@@ -130,7 +131,7 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
       'written plainly without quotes; every computed column is named with AS; dates are literals counted from TODAY ' +
       '(never \'now\' or CURRENT_DATE); date(), datetime(), julianday() and strftime() take a \'YYYY-MM-DD\' literal or a ' +
       'date column (signup_date, last_open_date, cold_since, app_created_at, event_ts) as their time value, never ' +
-      'nothing or an expression. "Cold" is the stored cold_since <= TODAY and engagement is the stored ' +
+      `nothing or an expression. "Cold" is the stored ${DEFINITIONS.cold.formula} and engagement is the stored ` +
       'engagement_score; never re-derive them. At most 100 rows come back: a missing or larger LIMIT becomes LIMIT 100. ' +
       'Exclude unsubscribed profiles (status = \'active\') unless the teammate asks for them. Never show the SQL to the user.',
     inputSchema: {
