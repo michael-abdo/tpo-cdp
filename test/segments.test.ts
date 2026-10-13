@@ -143,7 +143,7 @@ describe('T-SEG-2 hidden unsubscribed (02 §Defaults)', () => {
   it('equals the independent count of unsubscribed rows matching every other filter', async () => {
     const active = await preview(PRESET)
     expect(active.hidden_unsubscribed).toBe(independentCount(['unsubscribed']))
-    expect(active.hidden_unsubscribed).toBeGreaterThan(0)
+    expect(active.hidden_unsubscribed).toBe(55) // 02 §Counts, 09 D-51
   })
 
   it('adding unsubscribed to status raises the count by exactly hidden_unsubscribed', async () => {

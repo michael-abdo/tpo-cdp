@@ -5,7 +5,7 @@ Hiring assessment for The Pour Over. **Source of truth: `../TPO_Developer_Assess
 This file holds HOW we work. WHAT we build lives in `../design/`, one home per fact — the index of homes is `00 §Document index`. Read the owning doc before touching an area. Never restate a spec here; point to it.
 
 ## Stack
-Decided in 09 D-02..D-06, D-23 (Claude only, confirmed), D-24 (mirror the consulting repo's gateway; deviations listed there). Canonical module layout: 03 §Module layout. Project lives on local disk at `/Users/Mike/hiring/TPO/CDP`.
+Decided in 09 D-02..D-06, D-23 (Claude only, confirmed), D-24 (mirror the consulting repo's gateway; deviations listed there). Canonical module layout: 03 §Module layout. Project lives in the `CDP/` folder of the private workspace repo (see `../design/17`).
 
 ## Non-negotiables (rule → home; each has a test in 08)
 - NO MOCK OR DUMMY DATA: only `data/*.csv` and real webhook events; constructed webhook payloads only as 09 D-11 allows, and error-path test inputs derived from real rows only as 09 D-47 allows (never an invented email, name, source, status or date).
