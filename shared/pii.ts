@@ -25,8 +25,9 @@ export type PiiColumn = (typeof PII_COLUMNS)[number]
 export const EMAIL_REGEX = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 
 /**
- * A raw app user, device or web visitor id (`u_`, `d_`, `v_` followed by hex; the data has
- * `u_2b6447a3`, `d_4b21e8`, `v_c9e136fd6d`). At least 6 hex chars and word-bounded, so
+ * A raw app user, device or web visitor id (`u_`, `d_`, `v_` followed by hex; data/*.csv has
+ * `u_2b6447a3` and `v_c9e136fd6d`, the brief's sample webhook has device `d_4b21e8`, the
+ * shortest seen). At least 6 hex chars and word-bounded, so
  * ordinary words and `pk_` keys do not match. No `g` flag, as above.
  */
 export const RAW_ID_REGEX = /\b[udv]_[0-9a-f]{6,}\b/i

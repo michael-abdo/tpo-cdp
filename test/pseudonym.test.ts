@@ -1,17 +1,23 @@
+/// <reference types="node" />
 import { env } from 'cloudflare:test'
+import { createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { EMAIL_REGEX, PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
 import { pkeyForEmail, pkeyForUnknownUser, visitorHash } from '../shared/pseudonym'
 
-// 05 §Pseudonymous key, 01 §PII denylist, 09 D-17. Inputs are real rows from data/*.csv
-// (the 02 demo subjects and the second app user). The secret comes from .dev.vars and is
-// never printed: assertions compare keys, not the secret.
+// 05 §Pseudonymous key, 01 §PII denylist, 09 D-17. Emails, user ids and visitor ids are
+// real values from data/*.csv (the 02 demo subjects, the second app user, and
+// u_3380b6e6's raw spelling in app_users.csv:8 / web_events.csv:4849). The one exception
+// is the device id d_4b21e8, from the brief's sample webhook (04 §Webhook, 09 D-11). The
+// secret comes from .dev.vars and is never printed: assertions compare keys, not the secret.
 
 const KEY_FORMAT = /^pk_[0-9a-f]{16}$/
 const JOY = 'joy.hall830@protonmail.com'
 const JULIA = 'julia.evans230@gmail.com'
 const JOY_USER = 'u_ceed5f12'
 const JOY_VISITOR = 'v_c9e136fd6d'
+const PAUL_VISITOR = 'v_9ebac87cb4'
+const PAUL_RAW = 'PAUL.GARCIA558@GMAIL.COM'
 
 function secret(): string {
   const value = env.PII_KEY_SECRET
@@ -37,11 +43,23 @@ describe('pseudonymous keys (05 §Pseudonymous key)', () => {
     expect(await pkeyForUnknownUser(secret(), JOY_USER)).not.toBe(
       await pkeyForUnknownUser(secret(), 'u_2b6447a3'),
     )
+    expect(await visitorHash(secret(), JOY_VISITOR)).not.toBe(await visitorHash(secret(), PAUL_VISITOR))
   })
 
-  it('a different secret gives a different key', async () => {
+  it('a different secret gives a different key, for every derivation', async () => {
     const other = `${secret()}:rotated`
     expect(await pkeyForEmail(secret(), JOY)).not.toBe(await pkeyForEmail(other, JOY))
+    expect(await pkeyForUnknownUser(secret(), JOY_USER)).not.toBe(await pkeyForUnknownUser(other, JOY_USER))
+    expect(await visitorHash(secret(), JOY_VISITOR)).not.toBe(await visitorHash(other, JOY_VISITOR))
+  })
+
+  it('matches pk_ + first 16 hex of HMAC-SHA256 with the exact user:/visitor: prefixes', async () => {
+    // Independent reference: node:crypto (nodejs_compat), not the WebCrypto code under test.
+    const reference = (message: string) =>
+      'pk_' + createHmac('sha256', secret()).update(message).digest('hex').slice(0, 16)
+    expect(await pkeyForEmail(secret(), JOY)).toBe(reference(JOY))
+    expect(await pkeyForUnknownUser(secret(), JOY_USER)).toBe(reference(`user:${JOY_USER}`))
+    expect(await visitorHash(secret(), JOY_VISITOR)).toBe(reference(`visitor:${JOY_VISITOR}`))
   })
 
   it('the email, user: and visitor: derivations differ for the same string', async () => {
@@ -61,10 +79,9 @@ describe('pseudonymous keys (05 §Pseudonymous key)', () => {
   })
 
   it('a raw spelling is refused rather than keyed twice, and the error does not echo it', async () => {
-    const raw = ' Joy.Hall830@ProtonMail.com '
-    const attempt = pkeyForEmail(secret(), raw)
+    const attempt = pkeyForEmail(secret(), PAUL_RAW)
     await expect(attempt).rejects.toThrow(/already normalized/)
-    await expect(attempt).rejects.not.toThrow(/joy/i)
+    await expect(attempt).rejects.not.toThrow(/paul/i)
   })
 })
 
@@ -82,7 +99,10 @@ describe('PII denylist and patterns (01 §PII denylist, 05 §Scanner)', () => {
   })
 
   it('EMAIL_REGEX finds an email inside serialized JSON, case-insensitively', () => {
-    expect(EMAIL_REGEX.test(JSON.stringify({ who: 'Joy.Hall830@ProtonMail.com' }))).toBe(true)
+    const payload = JSON.stringify({ who: PAUL_RAW })
+    expect(EMAIL_REGEX.test(payload)).toBe(true)
+    // No g flag: a second call on the same string must still match (no lastIndex state).
+    expect(EMAIL_REGEX.test(payload)).toBe(true)
     expect(EMAIL_REGEX.test(JSON.stringify({ page: '/news/church-attendance-study' }))).toBe(false)
   })
 
