@@ -1,0 +1,339 @@
+// The static registry of builtin tool handlers (design 03 §Gateway layers row 9; 14 §2.3, §4
+// "builtin-handlers.ts: replace"). An assistant_tools row with handler_type `builtin` names one
+// of these by `execution_config.handler_name`; the loader refuses a row that names anything else
+// (tool-loader.ts, 09 D-41). The rows themselves are data (scripts/tool-seeds.ts); this file only
+// holds the code they may point at. `query_sql` joins the registry with Gate 2/3 (16, Friday).
+//
+// Every handler returns pk_ keys, never an email or a raw id (05 §Strategy). The executor scans
+// each result before the model sees it (tool-executor.ts, 03 row 9).
+//
+// - `segment` takes exactly the 04 §/api/segments/preview filters object and reuses
+//   worker/segments/compile.ts and the preview route's count functions, so its count is the
+//   builder's by construction (T-AI-3). compile.ts reads tables (its rows carry the email the
+//   UI shows); this handler wraps that SQL and selects only profiles.pkey plus the non-PII
+//   columns, so the email never leaves the database. That is the one tool read that is not over a
+//   v_* view; the scanner on the result (05 §Scanner) is the second control.
+// - `aggregate` reads only v_* views. Every value is a bound parameter; every SQL fragment
+//   comes from the fixed METRICS table below, never from the input. Cold comparisons use the
+//   `DEFINITIONS.cold.sql` fragment from shared/derive.ts, the one runtime source (02 §Derived).
+
+import { z } from 'zod'
+import { TODAY } from '../../../shared/config'
+import { DEFINITIONS, type DefinitionKey } from '../../../shared/derive'
+import { canonicalSource } from '../../../shared/normalize'
+import { ApiError } from '../../auth/middleware'
+import { isIsoDate, SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../ingest/quarantine'
+import type { SqlValue } from '../../ingest/sql'
+import { countSegment, hiddenUnsubscribed, PREVIEW_DEFAULT_LIMIT } from '../../routes/segments'
+import { compileSegment, FILTER_KEYS, parseFilters, type SegmentFilters } from '../../segments/compile'
+
+export type Cell = string | number | boolean | null
+export type ResultRow = Record<string, Cell>
+
+/** One tool's result: the full rows kept server-side for the UI table (04, 09 D-42) and a summary for the model. */
+export interface ToolOutput {
+  tool: string
+  columns: string[]
+  rows: ResultRow[]
+  /** How many rows the result describes; for a segment, its count, of which `rows` holds the first ones. */
+  total_rows: number
+  /** Shown to the model as JSON: counts, the filters and window applied, the definitions used. */
+  summary: Record<string, unknown>
+  /** Set by the segment handler: the filters as validated and the builder's count. */
+  segment?: { filters: SegmentFilters; count: number }
+}
+
+/** Input the model sent that the handler cannot run. Goes back to the model as an error result, not a 500. */
+export class ToolInputError extends Error {
+  readonly problems: readonly string[]
+  constructor(problems: readonly string[]) {
+    super(`invalid tool input: ${problems.join('; ')}`)
+    this.name = 'ToolInputError'
+    this.problems = problems
+  }
+}
+
+export interface BuiltinHandler {
+  /** The only input keys the handler reads; a row's input_schema may declare no others (tool-loader.ts). */
+  inputKeys: readonly string[]
+  run(db: D1Database, input: Record<string, unknown>): Promise<ToolOutput>
+}
+
+/** `DEFINITIONS.cold.sql` with its `:today` turned into a positional `?`; fails at load if derive.ts changes shape. */
+const COLD_SQL = (() => {
+  const parts = DEFINITIONS.cold.sql.split(':today')
+  if (parts.length !== 2) throw new Error(`builtin-handlers: DEFINITIONS.cold.sql must hold exactly one :today, got ${JSON.stringify(DEFINITIONS.cold.sql)}`)
+  return parts.join('?')
+})()
+
+function placeholders(n: number): string {
+  return Array.from({ length: n }, () => '?').join(', ')
+}
+
+// ── segment ──────────────────────────────────────────────────────────────────────────────
+
+const SEGMENT_COLUMNS = ['pkey', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app']
+
+interface SegmentKeyRow {
+  pkey: string | null
+  status: string
+  source: string | null
+  signup_date: string
+  last_open_date: string | null
+  engagement_score: number | null
+  has_app: number
+}
+
+function segmentDefinitions(filters: SegmentFilters): DefinitionKey[] {
+  const used: DefinitionKey[] = []
+  if (filters.days_since_open_gte !== undefined) used.push('no_open_in_days', 'days_since_open')
+  if (filters.has_app !== null) used.push('has_app')
+  return used
+}
+
+const segmentHandler: BuiltinHandler = {
+  inputKeys: FILTER_KEYS,
+  async run(db, input) {
+    let filters: SegmentFilters
+    try {
+      filters = parseFilters(input)
+    } catch (err) {
+      if (err instanceof ApiError) throw new ToolInputError((err.details ?? [err.message]).map(String))
+      throw err
+    }
+    const segment = compileSegment(filters)
+    // The builder's own SQL, wrapped: only the pkey and non-PII columns come out (file header).
+    const keyed = db
+      .prepare(
+        `SELECT p.pkey, seg.status, seg.source, seg.signup_date, seg.last_open_date, seg.engagement_score, seg.has_app
+         FROM (${segment.sql}) seg LEFT JOIN profiles p ON p.email_norm = seg.email
+         ORDER BY seg.email LIMIT ?`,
+      )
+      .bind(...segment.params, PREVIEW_DEFAULT_LIMIT)
+      .all<SegmentKeyRow>()
+    const [count, hidden, { results }] = await Promise.all([countSegment(db, segment), hiddenUnsubscribed(db, filters), keyed])
+    const rows = results.map((row): ResultRow => {
+      if (row.pkey === null || row.engagement_score === null) {
+        throw new Error('segment tool: a subscriber row has no profile (02 §Linking)')
+      }
+      return { ...row, has_app: row.has_app === 1 }
+    })
+    return {
+      tool: 'segment',
+      columns: SEGMENT_COLUMNS,
+      rows,
+      total_rows: count,
+      summary: {
+        count,
+        hidden_unsubscribed: hidden,
+        filters,
+        rows_listed: rows.length,
+        definitions_used: segmentDefinitions(filters),
+      },
+      segment: { filters, count },
+    }
+  },
+}
+
+// ── aggregate ────────────────────────────────────────────────────────────────────────────
+
+const METRIC_NAMES = ['subscribers', 'cold', 'went_cold', 'source_to_app', 'visitor_to_subscriber', 'app_events'] as const
+const GROUP_NAMES = ['none', 'source', 'signup_month', 'cold_month', 'first_page', 'utm_source', 'event'] as const
+type MetricName = (typeof METRIC_NAMES)[number]
+type GroupName = (typeof GROUP_NAMES)[number]
+
+interface MetricSpec {
+  relation: 'v_profiles' | 'v_funnel' | 'v_app_events'
+  /** Subscriber metrics take status (default active, 02 §Defaults) and source; the others take neither. */
+  subscriberFilters: boolean
+  /** The aggregate columns, fixed SQL. */
+  select: string
+  /** group_by value → the SQL expression it groups on. `none` is always allowed. */
+  groups: Partial<Record<Exclude<GroupName, 'none'>, string>>
+  /** The date the window applies to; null = the metric takes no window. */
+  windowOn: string | null
+  windowRequired: boolean
+  /** Applies the `cold` definition as of TODAY. */
+  coldOnly: boolean
+  definitions: DefinitionKey[]
+}
+
+const METRICS: Record<MetricName, MetricSpec> = {
+  subscribers: {
+    relation: 'v_profiles',
+    subscriberFilters: true,
+    select: 'count(*) AS subscribers',
+    groups: { source: 'source', signup_month: 'substr(signup_date, 1, 7)' },
+    windowOn: 'signup_date',
+    windowRequired: false,
+    coldOnly: false,
+    definitions: [],
+  },
+  cold: {
+    relation: 'v_profiles',
+    subscriberFilters: true,
+    select: 'count(*) AS cold',
+    groups: { source: 'source', cold_month: 'substr(cold_since, 1, 7)' },
+    windowOn: null,
+    windowRequired: false,
+    coldOnly: true,
+    definitions: ['cold', 'cold_since'],
+  },
+  went_cold: {
+    relation: 'v_profiles',
+    subscriberFilters: true,
+    select: 'count(*) AS went_cold',
+    groups: { source: 'source', cold_month: 'substr(cold_since, 1, 7)' },
+    windowOn: 'cold_since',
+    windowRequired: true,
+    coldOnly: true,
+    definitions: ['went_cold_in', 'cold_since'],
+  },
+  source_to_app: {
+    relation: 'v_profiles',
+    subscriberFilters: true,
+    select:
+      'count(*) AS subscribers, sum(app_after_signup) AS with_app_after_signup, ' +
+      'round(CAST(sum(app_after_signup) AS REAL) / count(*), 4) AS rate',
+    groups: { source: 'source', signup_month: 'substr(signup_date, 1, 7)' },
+    windowOn: 'signup_date',
+    windowRequired: false,
+    coldOnly: false,
+    definitions: ['app_after_signup'],
+  },
+  visitor_to_subscriber: {
+    relation: 'v_funnel',
+    subscriberFilters: false,
+    select: 'sum(visitors) AS visitors, sum(subscribed) AS subscribed, round(CAST(sum(subscribed) AS REAL) / sum(visitors), 4) AS rate',
+    groups: { first_page: 'first_page', utm_source: 'first_utm_source' },
+    windowOn: null,
+    windowRequired: false,
+    coldOnly: false,
+    definitions: [],
+  },
+  app_events: {
+    relation: 'v_app_events',
+    subscriberFilters: false,
+    select: 'count(*) AS events',
+    groups: { event: 'event' },
+    windowOn: 'substr(event_ts, 1, 10)',
+    windowRequired: false,
+    coldOnly: false,
+    definitions: [],
+  },
+}
+
+const isoDate = z.string().refine(isIsoDate, 'must be a YYYY-MM-DD calendar date')
+
+const AggregateInput = z
+  .object({
+    metric: z.enum(METRIC_NAMES),
+    group_by: z.enum(GROUP_NAMES).optional(),
+    status: z.array(z.enum(SUBSCRIBER_STATUSES)).min(1).optional(),
+    source: z.array(z.string()).min(1).optional(),
+    window_from: isoDate.optional(),
+    window_to: isoDate.optional(),
+  })
+  .strict()
+
+type AggregateArgs = z.infer<typeof AggregateInput>
+
+interface AggregatePlan {
+  sql: string
+  params: SqlValue[]
+  group: GroupName
+  status: SubscriberStatus[] | null
+  source: string[] | null
+  window: { from: string; to: string } | null
+  spec: MetricSpec
+}
+
+/** Validates the input against the metric and builds one bound SELECT. Pure; exported for tests. */
+export function planAggregate(input: unknown): AggregatePlan {
+  const parsed = AggregateInput.safeParse(input)
+  if (!parsed.success) {
+    throw new ToolInputError(parsed.error.issues.map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`))
+  }
+  const args: AggregateArgs = parsed.data
+  const spec = METRICS[args.metric]
+  const problems: string[] = []
+  const group = args.group_by ?? 'none'
+  const groupExpr = group === 'none' ? null : (spec.groups[group] ?? null)
+  if (group !== 'none' && groupExpr === null) {
+    problems.push(`group_by ${group} does not apply to ${args.metric}; use ${['none', ...Object.keys(spec.groups)].join(', ')}`)
+  }
+  if (!spec.subscriberFilters && (args.status !== undefined || args.source !== undefined)) {
+    problems.push(`status and source do not apply to ${args.metric}`)
+  }
+  let source: string[] | null = null
+  if (args.source !== undefined) {
+    const canonical = args.source.map(canonicalSource)
+    if (canonical.some((s) => s === null)) problems.push('source values must not be blank')
+    else source = [...new Set(canonical as string[])]
+  }
+  const hasFrom = args.window_from !== undefined
+  if (hasFrom !== (args.window_to !== undefined)) problems.push('give both window_from and window_to, or neither')
+  if (hasFrom && spec.windowOn === null) problems.push(`${args.metric} takes no window`)
+  if (!hasFrom && spec.windowRequired) problems.push(`${args.metric} needs window_from and window_to`)
+  if (hasFrom && args.window_to !== undefined && args.window_from! > args.window_to) problems.push('window_from is after window_to')
+  if (problems.length > 0) throw new ToolInputError(problems)
+
+  const where: string[] = []
+  const params: SqlValue[] = []
+  const status = spec.subscriberFilters ? [...new Set(args.status ?? (['active'] as SubscriberStatus[]))] : null
+  if (status !== null) {
+    where.push(`status IN (${placeholders(status.length)})`)
+    params.push(...status)
+  }
+  if (source !== null) {
+    where.push(`source IN (${placeholders(source.length)})`)
+    params.push(...source)
+  }
+  const window = hasFrom ? { from: args.window_from!, to: args.window_to! } : null
+  if (window !== null && spec.windowOn !== null) {
+    where.push(`${spec.windowOn} BETWEEN ? AND ?`)
+    params.push(window.from, window.to)
+  }
+  if (spec.coldOnly) {
+    where.push(COLD_SQL)
+    params.push(TODAY)
+  }
+  const whereSql = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`
+  const sql =
+    groupExpr === null
+      ? `SELECT ${spec.select} FROM ${spec.relation}${whereSql}`
+      : `SELECT ${groupExpr} AS ${group}, ${spec.select} FROM ${spec.relation}${whereSql} GROUP BY 1 ORDER BY 1`
+  return { sql, params, group, status, source, window, spec }
+}
+
+const aggregateHandler: BuiltinHandler = {
+  inputKeys: Object.keys(AggregateInput.shape),
+  async run(db, input) {
+    const plan = planAggregate(input)
+    const { results } = await db.prepare(plan.sql).bind(...plan.params).all<ResultRow>()
+    const columns = results.length > 0 ? Object.keys(results[0]) : []
+    const metric = (input as { metric: MetricName }).metric
+    return {
+      tool: 'aggregate',
+      columns,
+      rows: results,
+      total_rows: results.length,
+      summary: {
+        metric,
+        group_by: plan.group,
+        ...(plan.status === null ? {} : { status: plan.status }),
+        ...(plan.source === null ? {} : { source: plan.source }),
+        window: plan.window,
+        ...(plan.spec.coldOnly ? { today: TODAY } : {}),
+        definitions_used: plan.spec.definitions,
+        rows: results.length,
+      },
+    }
+  },
+}
+
+/** Handler names an assistant_tools `builtin` row may use (03 row 9). */
+export const BUILTIN_HANDLERS: Readonly<Record<string, BuiltinHandler>> = {
+  segment: segmentHandler,
+  aggregate: aggregateHandler,
+}

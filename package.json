@@ -17,6 +17,7 @@
     "db:seed:local": "tsx scripts/csv2sql.ts && for f in seed/*.sql; do npx wrangler d1 execute cdp --local --file=$f || exit 1; done",
     "db:seed:remote": "tsx scripts/db-remote.ts --seed",
     "db:reset:remote": "tsx scripts/db-remote.ts --reset",
+    "tools:seed": "tsx scripts/seed-assistant-tools.ts",
     "webhook:send": "tsx scripts/send-webhook.ts"
   },
   "dependencies": {

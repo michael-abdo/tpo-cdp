@@ -1,0 +1,49 @@
+// POST /api/assistant (04 §POST /api/assistant; R5). Mounted at /api behind requireJson and
+// requireSession (04 §Auth), so `c.get('session')` is the verified session. Single-shot: the
+// body is exactly {question} (multi-turn history is parked, 09 D-34). The layers themselves are
+// worker/assistant/route.ts.
+
+import { Hono } from 'hono'
+import { ApiError } from '../auth/middleware'
+import type { AppEnv } from '../env'
+import { anthropicTransport, type MessagesTransport } from '../assistant/loop'
+import { answerQuestion } from '../assistant/route'
+
+function invalidBody(details: string[]): ApiError {
+  console.warn(JSON.stringify({ at: 'assistant', outcome: 'invalid_body', details }))
+  return new ApiError(400, 'invalid_body', 'Send a JSON object with only "question", a string.', details)
+}
+
+async function readQuestion(req: Request): Promise<string> {
+  let parseError: string | undefined
+  const body: unknown = await req.json().catch((err: unknown) => {
+    // The error's class name only: a JSON SyntaxError message quotes the body.
+    parseError = err instanceof Error ? err.name : 'unknown'
+    return undefined
+  })
+  if (parseError !== undefined) throw invalidBody([`body is not JSON: ${parseError}`])
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw invalidBody(['body is not a JSON object'])
+  const unknown = Object.keys(body).filter((k) => k !== 'question')
+  if (unknown.length > 0) throw invalidBody(unknown.map((k) => `unknown field: ${k}`))
+  const question = (body as { question?: unknown }).question
+  if (typeof question !== 'string' || question.trim() === '') throw invalidBody(['question must be a non-empty string'])
+  return question
+}
+
+/**
+ * The route, with the model transport factory as a parameter (09 D-54): worker/index.ts mounts
+ * `assistantRoutes()` with the direct Anthropic transport; tests mount it with a transport
+ * written in the test file.
+ */
+export function assistantRoutes(transportFor: (apiKey: string) => MessagesTransport = anthropicTransport): Hono<AppEnv> {
+  const routes = new Hono<AppEnv>()
+  routes.post('/assistant', async (c) => {
+    const question = await readQuestion(c.req.raw)
+    const response = await answerQuestion(
+      { db: c.env.DB, apiKey: c.env.ANTHROPIC_API_KEY, transportFor, sessionSub: c.get('session').sub },
+      question,
+    )
+    return c.json(response)
+  })
+  return routes
+}

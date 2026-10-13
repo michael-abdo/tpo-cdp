@@ -78,7 +78,8 @@ export function toSegmentRow(raw: RawSegmentRow): SegmentRow {
   return { ...raw, engagement_score: raw.engagement_score, has_app: raw.has_app === 1 }
 }
 
-const FILTER_KEYS = ['status', 'source', 'days_since_open_gte', 'include_never_opened', 'has_app'] as const
+/** Every filter key 04 defines; the assistant's segment tool row may name only these (tools/tool-loader.ts). */
+export const FILTER_KEYS = ['status', 'source', 'days_since_open_gte', 'include_never_opened', 'has_app'] as const
 
 const DEFAULT_STATUS: SubscriberStatus[] = ['active']
 
