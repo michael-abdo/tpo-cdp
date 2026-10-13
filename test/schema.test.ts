@@ -1,0 +1,148 @@
+import { env } from 'cloudflare:test'
+import { describe, expect, it } from 'vitest'
+import { appAfterSignup, coldSince, engagementScore } from '../shared/derive'
+import { normalizeEmail } from '../shared/normalize'
+import { PII_COLUMNS } from '../shared/pii'
+import { pkeyForEmail, visitorHash } from '../shared/pseudonym'
+
+// Schema from migrations/ as applied by test/setup.ts: 01 §Tables, §PII-free views, §PII
+// denylist; 09 D-46. T-PII-2 (08). The round-trip uses the real demo subject from 02 §Counts:
+// subscribers.csv:902, app_users.csv:303 and her first web_events.csv row (line 5400).
+
+const TABLES = [
+  'profiles',
+  'subscribers',
+  'web_visitors',
+  'web_events',
+  'app_users',
+  'app_events',
+  'device_identity',
+  'import_runs',
+  'quarantine',
+  'assistant_tools',
+  'ai_audit',
+]
+
+const VIEW_COLUMNS: Record<string, string[]> = {
+  v_profiles: [
+    'pkey',
+    'kind',
+    'signup_date',
+    'status',
+    'source',
+    'last_open_date',
+    'cold_since',
+    'engagement_score',
+    'has_app',
+    'app_created_at',
+    'app_after_signup',
+    'first_page',
+    'first_utm_source',
+  ],
+  v_web_events: ['pkey', 'visitor_hash', 'page', 'event_ts', 'utm_source'],
+  v_app_events: ['pkey', 'event', 'event_ts', 'story', 'link'],
+  v_funnel: ['first_page', 'first_utm_source', 'visitors', 'subscribed'],
+  v_source_app_conversion: ['source', 'subscribers', 'with_app_after_signup', 'rate'],
+}
+
+function secret(): string {
+  const value = env.PII_KEY_SECRET
+  if (!value) throw new Error('PII_KEY_SECRET missing from .dev.vars; the test cannot run')
+  return value
+}
+
+async function columnsOf(relation: string): Promise<string[]> {
+  const { results } = await env.DB.prepare(`PRAGMA table_info(${relation})`).all<{ name: string }>()
+  return results.map((row) => row.name)
+}
+
+async function relationsOfType(type: 'table' | 'view'): Promise<string[]> {
+  const { results } = await env.DB.prepare('SELECT name FROM sqlite_master WHERE type = ?')
+    .bind(type)
+    .all<{ name: string }>()
+  return results.map((row) => row.name)
+}
+
+describe('schema (01 §Tables)', () => {
+  it('every table in 01 exists, and there is no sessions table', async () => {
+    const tables = await relationsOfType('table')
+    for (const table of TABLES) expect(tables).toContain(table)
+    expect(tables).not.toContain('sessions')
+  })
+
+  it('the views are exactly the five in 01 §PII-free views', async () => {
+    expect((await relationsOfType('view')).sort()).toEqual(Object.keys(VIEW_COLUMNS).sort())
+  })
+})
+
+describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
+  it('T-PII-2: no view exposes a PII_COLUMNS column', async () => {
+    const pii = new Set<string>(PII_COLUMNS)
+    for (const view of Object.keys(VIEW_COLUMNS)) {
+      const leaked = (await columnsOf(view)).filter((column) => pii.has(column))
+      expect(leaked, view).toEqual([])
+    }
+  })
+
+  it('every view has exactly the columns 01 lists, in order', async () => {
+    for (const [view, columns] of Object.entries(VIEW_COLUMNS)) {
+      expect(await columnsOf(view), view).toEqual(columns)
+    }
+  })
+
+  it('a real subscriber round-trips through v_profiles by pkey, with stored derived values', async () => {
+    const emailRaw = 'joy.hall830@protonmail.com'
+    const emailNorm = normalizeEmail(emailRaw)
+    if (emailNorm === null) throw new Error('demo email failed normalization')
+    const pkey = await pkeyForEmail(secret(), emailNorm)
+    const signupDate = '2026-09-02'
+    const lastOpenDate = '2026-09-22'
+    const appCreatedAt = '2026-09-03'
+    // Computed by the one runtime source (D-46), never in SQL. This test database holds no
+    // app_events or web_events rows for her, so both activity counts are 0 here.
+    const storedColdSince = coldSince(lastOpenDate, signupDate)
+    const storedScore = engagementScore({
+      last_open_date: lastOpenDate,
+      app_events_last_30d: 0,
+      site_visits_last_30d: 0,
+    })
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO subscribers (email_norm, email_raw, signup_date, status, source, last_open_date, cold_since, merged_count)
+         VALUES (?, ?, ?, 'active', 'instagram', ?, ?, 1)`,
+      ).bind(emailNorm, emailRaw, signupDate, lastOpenDate, storedColdSince),
+      env.DB.prepare(
+        `INSERT INTO profiles (pkey, email_norm, kind, engagement_score, created_at) VALUES (?, ?, 'subscriber', ?, ?)`,
+      ).bind(pkey, emailNorm, storedScore, signupDate),
+      env.DB.prepare(
+        `INSERT INTO app_users (user_id, email_norm, created_at, from_csv) VALUES ('u_ceed5f12', ?, ?, 1)`,
+      ).bind(emailNorm, appCreatedAt),
+      env.DB.prepare(
+        `INSERT INTO web_visitors (visitor_id, visitor_hash, email_norm, first_seen_ts, first_page, first_utm_source)
+         VALUES ('v_c9e136fd6d', ?, ?, '2026-09-02T16:19:04Z', '/', 'instagram')`,
+      ).bind(await visitorHash(secret(), 'v_c9e136fd6d'), emailNorm),
+    ])
+
+    const { results } = await env.DB.prepare('SELECT * FROM v_profiles WHERE pkey = ?').bind(pkey).all()
+    expect(results).toEqual([
+      {
+        pkey,
+        kind: 'subscriber',
+        signup_date: signupDate,
+        status: 'active',
+        source: 'instagram',
+        last_open_date: lastOpenDate,
+        cold_since: '2026-10-22',
+        engagement_score: storedScore,
+        has_app: 1,
+        app_created_at: appCreatedAt,
+        app_after_signup: appAfterSignup(appCreatedAt, signupDate) ? 1 : 0,
+        first_page: '/',
+        first_utm_source: 'instagram',
+      },
+    ])
+    expect(results[0]?.app_after_signup).toBe(1)
+    expect(storedColdSince).toBe('2026-10-22')
+  })
+})
