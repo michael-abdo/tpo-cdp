@@ -11,11 +11,10 @@
 
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
-import { TODAY } from '../../shared/config'
 import { DEFINITIONS } from '../../shared/derive'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../worker/ingest/quarantine'
-import { ApiError, errorMessage, postJson, request } from '../api'
+import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
   Button,
@@ -30,27 +29,13 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDate } from '../format'
+import { COLUMN_LABEL, sourceLabel, statusLabel } from '../labels'
 import type { SegmentFilters, SegmentPreview, SegmentRow } from '../types'
 
 /** Rows a preview asks for; the full segment is what Export CSV is for. */
 const PREVIEW_LIMIT = 100
 /** Rows shown before "Show all … in preview" (principle 2: the rest is one click away). */
 const FIRST_ROWS = 10
-
-/** Display words for the stored values; the values sent to the API stay as they are. */
-const SOURCE_LABEL: Record<string, string> = {
-  instagram: 'Instagram',
-  facebook: 'Facebook',
-  referral: 'Referral',
-  google: 'Google',
-  direct: 'Direct',
-  podcast: 'Podcast',
-  x: 'X',
-}
-const STATUS_LABEL: Record<string, string> = { active: 'Active', unsubscribed: 'Unsubscribed' }
-
-const sourceLabel = (s: string | null) => (s === null ? 'Unknown' : (SOURCE_LABEL[s] ?? s))
-const statusLabel = (s: string) => STATUS_LABEL[s] ?? s
 
 /** The form's state: strings and flags as the inputs hold them, turned into 04 filters on submit. */
 interface Form {
@@ -118,12 +103,12 @@ const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? 
 
 /** The table's columns: a column whose every row would repeat the filter is left out (principle 5). */
 function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
-  const cols: Column<SegmentRow>[] = [{ header: 'Email', cell: (r) => <span className="break-all">{r.email}</span> }]
-  if (filters.status.length > 1) cols.push({ header: 'Status', cell: (r) => statusLabel(r.status) })
-  if (filters.source?.length !== 1) cols.push({ header: 'Signed up from', cell: (r) => sourceLabel(r.source) })
+  const cols: Column<SegmentRow>[] = [{ header: COLUMN_LABEL.email, cell: (r) => <span className="break-all">{r.email}</span> }]
+  if (filters.status.length > 1) cols.push({ header: COLUMN_LABEL.status, cell: (r) => statusLabel(r.status) })
+  if (filters.source?.length !== 1) cols.push({ header: COLUMN_LABEL.source, cell: (r) => sourceLabel(r.source) })
   cols.push(
-    { header: 'Last opened', cell: (r) => (r.last_open_date === null ? 'Never opened' : humanDate(r.last_open_date)) },
-    { header: 'Engagement', cell: (r) => `${fmt(r.engagement_score)} / 100`, numeric: true },
+    { header: COLUMN_LABEL.last_open_date, cell: (r) => (r.last_open_date === null ? 'Never opened' : humanDate(r.last_open_date)) },
+    { header: COLUMN_LABEL.engagement_score, cell: (r) => `${fmt(r.engagement_score)} / 100`, numeric: true },
   )
   return cols
 }
@@ -131,9 +116,9 @@ function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
 function RowDetails({ row }: { row: SegmentRow }) {
   return (
     <dl className="space-y-1">
-      <Field label="Signed up">{humanDate(row.signup_date)}</Field>
-      <Field label="Signed up from">{sourceLabel(row.source)}</Field>
-      <Field label="Uses the app">{row.has_app ? 'Yes' : 'No'}</Field>
+      <Field label={COLUMN_LABEL.signup_date}>{humanDate(row.signup_date)}</Field>
+      <Field label={COLUMN_LABEL.source}>{sourceLabel(row.source)}</Field>
+      <Field label={COLUMN_LABEL.has_app}>{row.has_app ? 'Yes' : 'No'}</Field>
     </dl>
   )
 }
@@ -186,13 +171,7 @@ export default function SegmentsPage() {
     setExporting(true)
     setExportError(null)
     try {
-      const res = await request('/api/segments/export.csv', { method: 'POST', body: { filters } })
-      const url = URL.createObjectURL(await res.blob())
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `readers-to-email-${TODAY}.csv`
-      link.click()
-      URL.revokeObjectURL(url)
+      await downloadSegmentCsv(filters)
     } catch (err) {
       setExportError(errorMessage(err))
     } finally {

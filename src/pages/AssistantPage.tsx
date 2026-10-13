@@ -4,15 +4,16 @@
 // "Open in builder", which loads its filters on /segments. A partial result says so. Level 2 "How
 // this answer was worked out": the window, the filters and the definitions used, in words, with the
 // definitions' plain text from DEFINITIONS (02 §Derived "one runtime source"); Technical details:
-// the raw names, the result type and the trace id. Every answer links to its trace on /audit
-// ("what the AI saw", 05 §Proof surfaces). The request takes 5–20 s (04), shown as a short text
+// the raw names, the result type and the trace id. Column and filter names show in the words
+// /segments uses (src/labels.ts, principle 4); a segment answer also offers Export CSV (06
+// §/assistant). Every answer links to its trace on /audit ("what the AI saw", 05 §Proof surfaces). The request takes 5–20 s (04), shown as a short text
 // state. Errors show the 04 envelope's message; the 503 for a missing key names the hosted URL.
 // Single-shot: there is no conversation history (09 D-34).
 
 import { type FormEvent, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { DEFINITIONS, type DefinitionKey } from '../../shared/derive'
-import { ApiError, errorMessage, postJson } from '../api'
+import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
   Button,
@@ -28,7 +29,8 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDate } from '../format'
-import type { AssistantCell, AssistantResponse } from '../types'
+import { columnLabel, filterLabel, sourceLabel, statusLabel } from '../labels'
+import type { AssistantCell, AssistantResponse, SegmentFilters } from '../types'
 
 /** The brief's three example questions, verbatim (R5.2). */
 const BRIEF_QUESTIONS = [
@@ -56,28 +58,39 @@ const DEFINITION_LABEL: Record<DefinitionKey, string> = {
 /** Rows shown before "Show all …" (principle 2: the rest is one click away). */
 const FIRST_ROWS = 10
 
-/** A raw column or filter name as words: `went_cold` → `Went cold`. The raw name stays in Technical details. */
-function words(name: string): string {
-  const spaced = name.replace(/_/g, ' ').trim()
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
-}
-
 const fmt = (n: number) => n.toLocaleString('en-US')
 
-function cellText(value: AssistantCell): string {
-  if (value === null) return 'None'
+/** A table cell in words, with the same display rules /segments uses for the same columns. */
+function cellText(column: string, value: AssistantCell): string {
+  if (value === null) {
+    if (column === 'last_open_date') return 'Never opened'
+    if (column === 'source') return 'Unknown'
+    return 'None'
+  }
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
-  if (typeof value === 'number') return fmt(value)
+  if (typeof value === 'number') {
+    if (column === 'engagement_score') return `${fmt(value)} / 100`
+    if (column === 'rate') return `${(value * 100).toLocaleString('en-US', { maximumFractionDigits: 1 })}%`
+    return fmt(value)
+  }
+  if (column === 'source') return sourceLabel(value)
+  if (column === 'status') return statusLabel(value)
+  if (column === 'signup_date' || column === 'last_open_date') return humanDate(value)
   return value
 }
 
-/** A filter value in words: lists joined, true/false as Yes/No, null as Any. */
-function filterValue(value: unknown): string {
-  if (Array.isArray(value)) return value.map((v) => filterValue(v)).join(', ')
+/** A filter value in words: lists joined, true/false as Yes/No, null as Any; sources and statuses as on /segments. */
+function filterValue(key: string, value: unknown): string {
+  if (Array.isArray(value)) return value.map((v) => filterValue(key, v)).join(', ')
   if (value === null) return 'Any'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
-  if (typeof value === 'number') return fmt(value)
-  if (typeof value === 'string') return value
+  if (typeof value === 'number') return key === 'days_since_open_gte' ? `${fmt(value)} days` : fmt(value)
+  if (typeof value === 'string') {
+    if (key === 'source') return sourceLabel(value)
+    if (key === 'status') return statusLabel(value)
+    if (key === 'window_from' || key === 'window_to') return humanDate(value)
+    return value
+  }
   return JSON.stringify(value)
 }
 
@@ -107,8 +120,8 @@ function ResultTable({ table }: { table: NonNullable<AssistantResponse['table']>
   const rows = table.rows.map((row, i) => ({ row, i }))
   const shown = showAll ? rows : rows.slice(0, FIRST_ROWS)
   const columns: Column<(typeof rows)[number]>[] = table.columns.map((name) => ({
-    header: words(name),
-    cell: ({ row }) => <span className="break-words">{cellText(row[name] ?? null)}</span>,
+    header: columnLabel(name),
+    cell: ({ row }) => <span className="break-words">{cellText(name, row[name] ?? null)}</span>,
     numeric: rows.length > 0 && rows.every(({ row }) => typeof row[name] === 'number'),
   }))
   if (rows.length === 0) return <p className="text-sm text-gray-600">The table has no rows.</p>
@@ -124,6 +137,22 @@ function ResultTable({ table }: { table: NonNullable<AssistantResponse['table']>
 
 function Result({ data }: { data: AssistantResponse }) {
   const navigate = useNavigate()
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  async function exportCsv(filters: SegmentFilters) {
+    setExporting(true)
+    setExportError(null)
+    try {
+      await downloadSegmentCsv(filters)
+    } catch (err) {
+      console.error('assistant: export failed', err)
+      setExportError(errorMessage(err))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const filters = Object.entries(data.filters_applied)
   const hasHow = data.window !== null || filters.length > 0 || data.definitions_used.length > 0
   return (
@@ -143,17 +172,23 @@ function Result({ data }: { data: AssistantResponse }) {
       )}
 
       {data.segment !== null && (
-        <div className="flex flex-wrap items-center gap-3 rounded bg-gray-50 p-3">
-          <p className="font-medium text-gray-900">
-            {data.segment.count === 1 ? '1 reader matches' : `${fmt(data.segment.count)} readers match`}
-          </p>
-          <Button
-            variant="primary"
-            onClick={() => navigate('/segments', { state: { filters: data.segment?.filters } })}
-          >
-            Open in builder
-          </Button>
-          <span className="text-sm text-gray-600">See the full list there and download it.</span>
+        <div className="space-y-2 rounded bg-gray-50 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="font-medium text-gray-900">
+              {data.segment.count === 1 ? '1 reader matches' : `${fmt(data.segment.count)} readers match`}
+            </p>
+            <Button
+              variant="primary"
+              onClick={() => navigate('/segments', { state: { filters: data.segment?.filters } })}
+            >
+              Open in builder
+            </Button>
+            <Button onClick={() => data.segment !== null && void exportCsv(data.segment.filters)} disabled={exporting}>
+              {exporting ? 'Preparing download…' : 'Export CSV'}
+            </Button>
+          </div>
+          <p className="text-sm text-gray-600">The builder shows the full list; Export CSV downloads it.</p>
+          {exportError !== null && <ErrorLine message={exportError} next="Press Export CSV to try again." />}
         </div>
       )}
 
@@ -179,8 +214,8 @@ function Result({ data }: { data: AssistantResponse }) {
             </Field>
           )}
           {filters.map(([name, value]) => (
-            <Field key={name} label={words(name)}>
-              {filterValue(value)}
+            <Field key={name} label={filterLabel(name)}>
+              {filterValue(name, value)}
             </Field>
           ))}
         </dl>
@@ -249,6 +284,7 @@ export default function AssistantPage() {
       const data = await postJson<AssistantResponse>('/api/assistant', { question: asked })
       if (id === latest.current) setState({ status: 'ok', question: asked, data })
     } catch (err) {
+      console.error('assistant: request failed', err)
       if (id === latest.current) {
         setState({
           status: 'error',

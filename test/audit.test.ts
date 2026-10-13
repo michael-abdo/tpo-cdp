@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, toolSeedInsert } from '../scripts/tool-seeds'
 import { MODEL } from '../worker/assistant/build-request'
 import { SQL_DISCARD_ERROR } from '../worker/assistant/route'
+import { planAggregate, ToolInputError } from '../worker/assistant/tools/builtin-handlers'
 import { UNKNOWN_TOOL_ERROR } from '../worker/assistant/tools/tool-executor'
 import type { MessagesTransport } from '../worker/assistant/loop'
 import { requireJson, requireSession } from '../worker/auth/middleware'
@@ -12,6 +13,8 @@ import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
 import { assistantRoutes } from '../worker/routes/assistant'
 import { AUDIT_DEFAULT_LIMIT, AUDIT_MAX_LIMIT } from '../worker/routes/audit'
+import { FILTER_KEYS, MODEL_SEGMENT_COLUMNS } from '../worker/segments/compile'
+import { COLUMN_LABEL, columnLabel, FILTER_LABEL, filterLabel } from '../src/labels'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
@@ -488,5 +491,55 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
     const { audit_id: traceId } = await res.json<{ audit_id: string }>()
     expect(midway).toMatchObject({ trace_id: traceId, outcome: 'unfinished', status: 'success', model_calls: 1, tool_calls: 1 })
     expect(await line(traceId, cookie)).toMatchObject({ outcome: 'answered', status: 'success', model_calls: 2 })
+  })
+})
+
+describe('/assistant shows plain words for every column and filter a tool can return (06 §UI principles 4)', () => {
+  const aggregateSchema = TOOL_SEEDS.find((t) => t.name === 'aggregate')!.inputSchema as {
+    properties: { metric: { enum: string[] }; group_by: { enum: string[] } }
+  }
+
+  /** Every output column the aggregate tool can produce: each metric × each group it accepts. */
+  function aggregateColumns(): Set<string> {
+    const columns = new Set<string>()
+    for (const metric of aggregateSchema.properties.metric.enum) {
+      for (const group_by of aggregateSchema.properties.group_by.enum) {
+        const input = { metric, group_by, window_from: '2026-09-01', window_to: '2026-09-30' }
+        let sql: string
+        try {
+          sql = planAggregate(input).sql
+        } catch (err) {
+          try {
+            sql = planAggregate({ metric, group_by }).sql
+          } catch {
+            expect(err).toBeInstanceOf(ToolInputError)
+            continue
+          }
+        }
+        for (const [, alias] of sql.matchAll(/\bAS (\w+)/g)) if (alias !== 'REAL') columns.add(alias)
+      }
+    }
+    return columns
+  }
+
+  it('the segment rows, the re-hydrated email column and every aggregate column have a label', () => {
+    const aggregate = aggregateColumns()
+    // Sanity: the enumeration reached the metric columns and the group columns.
+    expect(aggregate).toContain('went_cold')
+    expect(aggregate).toContain('first_page')
+    for (const name of [...MODEL_SEGMENT_COLUMNS, 'email', ...aggregate]) {
+      expect(Object.keys(COLUMN_LABEL), name).toContain(name)
+    }
+  })
+
+  it('every segment filter key has a label, worded as on /segments', () => {
+    for (const key of FILTER_KEYS) {
+      expect(Object.keys(FILTER_LABEL), key).toContain(key)
+    }
+    // Principle 4's own examples; the fallback words() would give 'Engagement score' and 'Has app'.
+    expect(columnLabel('engagement_score')).toBe('Engagement')
+    expect(columnLabel('has_app')).toBe('Uses the app')
+    expect(filterLabel('has_app')).toBe('Uses the app')
+    expect(filterLabel('days_since_open_gte')).toBe("Haven't opened an email in at least")
   })
 })

@@ -2,6 +2,9 @@
 // path hands control to the registered sign-in redirect, and any other failure surfaces the
 // 04 §Error envelope's `message`. The browser never normalizes input (02 §Normalization).
 
+import { TODAY } from '../shared/config'
+import type { SegmentFilters } from './types'
+
 /** A failed API call: the HTTP status and the envelope's `error` code and `message`. */
 export class ApiError extends Error {
   readonly status: number
@@ -60,6 +63,20 @@ export async function getJson<T>(path: string): Promise<T> {
 
 export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await request(path, { method: 'POST', body })).json() as Promise<T>
+}
+
+/**
+ * Export CSV (04 §Segments: POST /api/segments/export.csv) for these filters, saved as a download.
+ * One home for /segments and the segment answer on /assistant (06 §/assistant "Export").
+ */
+export async function downloadSegmentCsv(filters: SegmentFilters): Promise<void> {
+  const res = await request('/api/segments/export.csv', { method: 'POST', body: { filters } })
+  const url = URL.createObjectURL(await res.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `readers-to-email-${TODAY}.csv`
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 /** The thrown value's message for display: the envelope's message for an ApiError. */

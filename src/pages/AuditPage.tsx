@@ -112,7 +112,11 @@ function stepSummary(row: AuditRow): string {
     : `Found ${fmt(row.row_count)} ${row.row_count === 1 ? 'row' : 'rows'}.`
 }
 
-/** Occurrences of `needle` in `text`, ignoring case. */
+/**
+ * Occurrences of `needle` in `text`, ignoring case. A display search over stored, already-redacted
+ * audit text, run in the browser and sent nowhere, so it is not the input normalization that
+ * 02 §Normalization ("The browser never normalizes") forbids for values sent to the API.
+ */
 function occurrences(text: string | null, needle: string): number {
   if (text === null || needle === '') return 0
   const hay = text.toLowerCase()
