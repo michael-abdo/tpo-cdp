@@ -25,7 +25,7 @@ npm install --legacy-peer-deps      # the flag installs package-lock.json exactl
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
 npm run db:migrate:local            # the three migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
-npm test                            # 26 files, 519 tests in workerd against a local D1; no network
+npm test                            # 26 files, 521 tests in workerd against a local D1; no network
 npm run dev                         # http://localhost:5173; sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
@@ -373,7 +373,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 26 files, 519 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 26 files, 521 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -390,7 +390,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 | T-GATE-1..2, T-AI-2 | `gate1.test.ts`, `gate2.test.ts` | Gate 1 patterns and redaction; Gate 2/3 read-only SQL over views only |
 | T-AI-1, T-AI-8 | `tools.test.ts` | tool rows load or fail loud; `query` rows bind in order |
 | T-AI-3..5 | `assistant.test.ts` | typed results, audit rows per trace, no SQL in answer text |
-| T-INS-1..3 | `insights.test.ts` | the four Growth panels; `going_cold_risk` checked row by row on the seeded subscribers |
+| T-INS-1..3 | `insights.test.ts` | the four Growth panels; `going_cold_risk` checked row by row on the seeded subscribers; each data-quality check made to count one gap by editing real rows (09 D-47), and the import/quarantine disagreement answering 500 |
 | — | `audit.test.ts`, `health.test.ts`, `overview.test.ts`, `pseudonym.test.ts` | the audit API and /audit's words for blocked steps, the D-58 screen of `filters_applied`, `/health`, Overview numbers, key derivation |
 | — | `ui/assistant-result.test.ts` | "Ask a question" rendered: no model-written SQL in `filters_applied` reaches the page (typed by `tsconfig.ui-test.json`, DOM and JSX) |
 | — | `ui/audit-step.test.ts` | /audit rendered: a Gate 2 or Gate 3 block shows its own sentence in words, not the generic one |

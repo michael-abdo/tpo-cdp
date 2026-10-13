@@ -10,7 +10,7 @@ import { CANONICAL_SOURCES, canonicalSource, normalizeEmail } from '../shared/no
 import type { DataQualityCheckKey as UiCheckKey } from '../src/types'
 import { sanitizeQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
 import { parseCsv } from '../worker/ingest/csv'
-import { DATA_QUALITY_CHECKS, type DataQuality } from '../worker/insights/data-quality'
+import { DATA_QUALITY_CHECKS, type DataQuality, type DataQualityCheckKey } from '../worker/insights/data-quality'
 import type { Funnel } from '../worker/insights/funnel'
 import type { GoingCold } from '../worker/insights/going-cold'
 import type { SourceAppConversion } from '../worker/insights/source-app'
@@ -186,7 +186,9 @@ describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
     const explains = [body.total.explain, ...body.by_source.map((r) => r.explain)]
     explains.forEach(expectAskable)
     expect(new Set(explains).size).toBe(explains.length)
-    for (const row of body.by_source) expect(row.explain).toContain(`"${row.source}"`)
+    for (const row of body.by_source) {
+      expect(row.explain).toContain(row.source === null ? 'no signup source recorded' : `"${row.source}"`)
+    }
     // The panel counts every status, so the question must ask the assistant to as well (02 §Defaults).
     for (const e of explains) expect(e).toContain('including unsubscribed')
   })
@@ -336,7 +338,9 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
     explains.forEach(expectAskable)
     expect(new Set(explains).size).toBe(explains.length)
     for (const e of explains) expect(e).toContain('going_cold_risk')
-    for (const row of body.by_source) expect(row.explain).toContain(`"${row.source}"`)
+    for (const row of body.by_source) {
+      expect(row.explain).toContain(row.source === null ? 'no signup source recorded' : `"${row.source}"`)
+    }
     expect(body.hidden_unsubscribed.explain).toContain('unsubscribed')
   })
 })
@@ -436,5 +440,88 @@ describe('T-INS-3 GET /api/insights/data-quality', () => {
         : false
       : false = true
     expect(sameKeys).toBe(true)
+  })
+
+  // On the seed three checks are 0, so the tests above cannot tell a working check from one that
+  // always says 0. Here each gap is made once by editing real rows (09 D-47): a removed source, the
+  // raw spelling `twitter` (it occurs in data/web_events.csv; ingest folds it to `x`) stored as if
+  // normalization had been skipped, and a copy of a real page view that has no UTM. Every edit is
+  // undone in `finally`, so the seed-count tests keep their numbers.
+  it('each check counts a gap made from real rows, and only its own: +1 each, page views +1 (09 D-47)', async () => {
+    const web = parseCsv(webCsv)
+    const utmColumn = column(web, 'utm_source')
+    expect(web.rows.some((row) => row[utmColumn] === 'twitter')).toBe(true)
+    expect(CANONICAL_SOURCES).not.toContain('twitter')
+
+    const checks = async () => {
+      const body = await (await get('data-quality')).json<DataQuality>()
+      return Object.fromEntries(body.checks.map((c) => [c.key, { count: c.count, of: c.of }])) as Record<
+        DataQualityCheckKey,
+        { count: number; of: number }
+      >
+    }
+    const before = await checks()
+    const { results: subs } = await env.DB.prepare(
+      'SELECT email_norm, source FROM subscribers WHERE source IS NOT NULL ORDER BY email_norm LIMIT 2',
+    ).all<{ email_norm: string; source: string }>()
+    const tagged = await env.DB.prepare('SELECT id, utm_source FROM web_events WHERE utm_source IS NOT NULL ORDER BY id LIMIT 1').first<{
+      id: number
+      utm_source: string
+    }>()
+    const untagged = await env.DB.prepare('SELECT visitor_id, page, event_ts FROM web_events WHERE utm_source IS NULL ORDER BY id LIMIT 1').first<{
+      visitor_id: string
+      page: string
+      event_ts: string
+    }>()
+    const [noSource, rawSource] = subs
+    if (noSource === undefined || rawSource === undefined || tagged === null || untagged === null) {
+      throw new Error('insights test: the seed has no rows to edit')
+    }
+
+    let copiedId: number | undefined
+    try {
+      const [, , , copy] = await env.DB.batch([
+        env.DB.prepare('UPDATE subscribers SET source = NULL WHERE email_norm = ?').bind(noSource.email_norm),
+        env.DB.prepare("UPDATE subscribers SET source = 'twitter' WHERE email_norm = ?").bind(rawSource.email_norm),
+        env.DB.prepare("UPDATE web_events SET utm_source = 'twitter' WHERE id = ?").bind(tagged.id),
+        env.DB.prepare('INSERT INTO web_events (visitor_id, page, event_ts, utm_source) VALUES (?, ?, ?, NULL)').bind(
+          untagged.visitor_id,
+          untagged.page,
+          untagged.event_ts,
+        ),
+      ])
+      copiedId = copy?.meta.last_row_id
+      const plus = (k: DataQualityCheckKey, count: number, of: number) => ({ count: before[k].count + count, of: before[k].of + of })
+      expect(await checks()).toEqual({
+        subscribers_without_source: plus('subscribers_without_source', 1, 0),
+        subscribers_unexpected_source: plus('subscribers_unexpected_source', 1, 0),
+        page_views_without_utm: plus('page_views_without_utm', 1, 1),
+        page_views_unexpected_utm: plus('page_views_unexpected_utm', 1, 1),
+        app_users_not_on_list: plus('app_users_not_on_list', 0, 0),
+      })
+    } finally {
+      await env.DB.batch([
+        env.DB.prepare('UPDATE subscribers SET source = ? WHERE email_norm = ?').bind(noSource.source, noSource.email_norm),
+        env.DB.prepare('UPDATE subscribers SET source = ? WHERE email_norm = ?').bind(rawSource.source, rawSource.email_norm),
+        env.DB.prepare('UPDATE web_events SET utm_source = ? WHERE id = ?').bind(tagged.utm_source, tagged.id),
+        env.DB.prepare('DELETE FROM web_events WHERE id = ?').bind(copiedId ?? -1),
+      ])
+    }
+    expect(await checks()).toEqual(before)
+  })
+
+  it('fails loud with a 500 when import_runs and quarantine disagree on how many rows were set aside', async () => {
+    await env.DB.prepare("UPDATE import_runs SET quarantined = quarantined + 1 WHERE file = 'subscribers'").run()
+    try {
+      const res = await get('data-quality')
+      expect(res.status).toBe(500)
+      expect(await res.json()).toEqual({
+        error: 'internal_error',
+        message: 'Something went wrong on the server. The error has been logged.',
+      })
+    } finally {
+      await env.DB.prepare("UPDATE import_runs SET quarantined = quarantined - 1 WHERE file = 'subscribers'").run()
+    }
+    expect((await get('data-quality')).status).toBe(200)
   })
 })
