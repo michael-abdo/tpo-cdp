@@ -17,5 +17,6 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["worker", "shared", "test", "worker-configuration.d.ts"]
+  "include": ["worker", "shared", "test", "worker-configuration.d.ts"],
+  "exclude": ["test/ui"]
 }

@@ -6,7 +6,7 @@ A mini customer data platform built for The Pour Over's Full-Stack Developer ass
 
 One Cloudflare Worker serves a React/Vite SPA from static assets and a Hono API, with Cloudflare D1 (SQLite) as the only data store. The three CSVs are converted by `scripts/csv2sql` into literal-value seed SQL that `wrangler d1 execute` loads after the schema migrations, normalizing emails once at ingest and writing merge/quarantine counts to `import_runs`. Live app events arrive at `POST /webhooks/app`, are verified by HMAC, inserted idempotently by `event_id`, and resolved to profiles at read time, so lookup and segments see them immediately. The AI assistant is a gated tool loop: Claude only ever receives PII-free views and tool results, subjects are referenced by pseudonymous keys, and emails are re-attached server-side after the model answers. Every model request is scanned before it leaves and written to `ai_audit`, which the UI shows.
 
-Code layout: `worker/` (the Hono API: `auth/`, `webhooks/`, `identity/`, `ingest/`, `segments/`, `insights/`, `routes/`, `assistant/`), `src/` (the React screens), `shared/` (code both sides use: `TODAY`, normalization, definitions, pseudonyms, the PII column list), `migrations/`, `scripts/`, `test/`, `data/` (the three CSVs, never edited).
+Code layout: `worker/` (the Hono API: `auth/`, `webhooks/`, `identity/`, `ingest/`, `segments/`, `insights/`, `routes/`, `assistant/`), `src/` (the React screens), `shared/` (code both sides use: `TODAY`, normalization, definitions, pseudonyms, the PII column list, the D-58 SQL-sign check), `migrations/`, `scripts/`, `test/`, `data/` (the three CSVs, never edited).
 
 ## Live app and how to sign in
 
@@ -389,7 +389,8 @@ Calls I made where the brief left room, each with the decision-log number it has
 | T-AI-1, T-AI-8 | `tools.test.ts` | tool rows load or fail loud; `query` rows bind in order |
 | T-AI-3..5 | `assistant.test.ts` | typed results, audit rows per trace, no SQL in answer text |
 | T-INS-1..2 | `insights.test.ts` | the two Growth panels |
-| — | `audit.test.ts`, `health.test.ts`, `overview.test.ts`, `pseudonym.test.ts` | the audit API, `/health`, Overview numbers, key derivation |
+| — | `audit.test.ts`, `health.test.ts`, `overview.test.ts`, `pseudonym.test.ts` | the audit API and /audit's words for blocked steps, the D-58 screen of `filters_applied`, `/health`, Overview numbers, key derivation |
+| — | `ui/assistant-result.test.ts` | "Ask a question" rendered: no model-written SQL in `filters_applied` reaches the page (typed by `tsconfig.ui-test.json`, DOM and JSX) |
 
 ## Known gaps
 

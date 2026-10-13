@@ -16,7 +16,8 @@ import { AUDIT_DEFAULT_LIMIT, AUDIT_MAX_LIMIT } from '../worker/routes/audit'
 import { FILTER_KEYS, MODEL_SEGMENT_COLUMNS } from '../worker/segments/compile'
 import { COLUMN_LABEL, columnLabel, FILTER_LABEL, filterLabel } from '../src/labels'
 import { FILTERS_HIDDEN_MESSAGE, filtersAppliedView } from '../src/filters-applied'
-import auditPageSource from '../src/pages/AuditPage.tsx?raw'
+import { BLOCK_REASON, BLOCKED_FALLBACK, blockReason } from '../src/block-reason'
+import type { AssistantResponse } from '../src/types'
 import { sqlSign as sharedSqlSign } from '../shared/sql-sign'
 import { sqlSign } from '../worker/assistant/respond'
 import { GateDenied } from '../worker/assistant/gates/gate3-readonly-sql'
@@ -611,30 +612,67 @@ describe("/assistant screens the model's filters_applied with the D-58 check bef
       expect(Object.keys(view).sort()).toEqual(['message', 'sign', 'status'])
     })
   }
+
+  /** POST /api/assistant with the recorded went-cold answer, its final block's filters_applied replaced. */
+  async function answerWithFilters(filtersApplied: Record<string, unknown>): Promise<AssistantResponse> {
+    const cookie = await loginCookie()
+    const { transport } = scripted([aggregateTurn, finalTurn({ ...WENT_COLD_BLOCK, filters_applied: filtersApplied })])
+    const res = await ask(transport, cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(200)
+    return res.json<AssistantResponse>()
+  }
+
+  it('the server passes filters_applied through as the model wrote it, so the page is the screen (test/ui/assistant-result.test.ts)', async () => {
+    const clean = await answerWithFilters(REAL)
+    expect(clean.filters_applied).toEqual(REAL)
+    expect(filtersAppliedView(clean.filters_applied).status).toBe('shown')
+    const withSql = await answerWithFilters({ ...REAL, query: SQL })
+    expect(withSql.filters_applied).toEqual({ ...REAL, query: SQL })
+    expect(filtersAppliedView(withSql.filters_applied).status).toBe('hidden')
+  })
 })
 
 describe('/audit names every blocked step in words (06 §UI principles 4)', () => {
-  // The codes AuditPage.tsx BLOCK_REASON matches by prefix, read from its source.
-  const block = /const BLOCK_REASON[\s\S]*?\n\]\n/.exec(auditPageSource)?.[0] ?? ''
-  const codes = [...block.matchAll(/\[\s*'(\w+)',/g)].map((m) => m[1])
+  // Every blocked-row error the worker writes, as "<code>: <detail>": the constants where the writer
+  // exports one, the code prefix where it builds the string inline (worker/assistant writers).
+  const written: Array<[string, string]> = [
+    ['gate1', 'gate1: question is empty'],
+    ['blocked_pii', 'blocked_pii: email in model_output'],
+    ['sql_in_output', `${SQL_DISCARD_ERROR} (1)`],
+    ['rate_limited', 'rate_limited: x'],
+    ['assistant_unavailable', 'assistant_unavailable: x'],
+    ['no_tools', 'no_tools: x'],
+    ['tool_config_error', 'tool_config_error: x'],
+    ['unknown_tool', UNKNOWN_TOOL_ERROR],
+    // tool-executor.ts deny(): `${denial.gate}_denied: ${problems}`, for both gates.
+    ['gate2_denied', `${new GateDenied('gate2', ['x']).gate}_denied: x`],
+    ['gate3_denied', `${new GateDenied('gate3', ['x']).gate}_denied: x`],
+  ]
+  const sentence = new Map(BLOCK_REASON)
 
-  it('every blocked-row error the worker writes starts with a code the page has words for', () => {
-    const written = [
-      'gate1: ',
-      'blocked_pii: ',
-      SQL_DISCARD_ERROR,
-      'rate_limited: ',
-      'assistant_unavailable: ',
-      'no_tools: ',
-      'tool_config_error: ',
-      UNKNOWN_TOOL_ERROR,
-      // tool-executor.ts deny(): `${denial.gate}_denied: …`, for both gates.
-      ...(['gate2', 'gate3'] as const).map((gate) => `${new GateDenied(gate, ['x']).gate}_denied: `),
-    ]
-    for (const error of written) {
-      expect(codes.some((code) => error.startsWith(code)), error).toBe(true)
+  it("each written error gets its own code's sentence, never the generic one", () => {
+    for (const [code, error] of written) {
+      expect(sentence.has(code), code).toBe(true)
+      expect(blockReason(error), error).toBe(sentence.get(code))
+      expect(blockReason(error), error).not.toBe(BLOCKED_FALLBACK)
     }
-    expect(codes).toContain('gate2_denied')
-    expect(codes).toContain('gate3_denied')
+  })
+
+  it('Gate 2 and Gate 3 blocks say in words what was refused, each differently', () => {
+    const gate2 = blockReason('gate2_denied: input.source: not one of the allowed values')
+    const gate3 = blockReason('gate3_denied: more than one statement')
+    expect(gate2).toBe(
+      'The AI asked a data tool for something it may not read, or in a form the tool does not accept, so the call was refused and the AI was told why.',
+    )
+    expect(gate3).toBe(
+      "The AI's database query was not one plain read-only question, so it was refused before it ran and the AI was told why.",
+    )
+    // Every sentence is distinct, so no two codes read the same on /audit.
+    expect(new Set(BLOCK_REASON.map(([, words]) => words)).size).toBe(BLOCK_REASON.length)
+  })
+
+  it('an error with no known code, or none, falls back to the generic sentence', () => {
+    expect(blockReason(null)).toBe(BLOCKED_FALLBACK)
+    expect(blockReason('model_error: x')).toBe(BLOCKED_FALLBACK)
   })
 })

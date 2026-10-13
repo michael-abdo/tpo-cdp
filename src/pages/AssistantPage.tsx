@@ -107,7 +107,7 @@ function ResultTable({ table }: { table: NonNullable<AssistantResponse['table']>
   )
 }
 
-function Result({ data }: { data: AssistantResponse }) {
+export function Result({ data }: { data: AssistantResponse }) {
   const navigate = useNavigate()
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
