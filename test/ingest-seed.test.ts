@@ -4,9 +4,10 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import appCsv from '../data/app_users.csv?raw'
 import subscribersCsv from '../data/subscribers.csv?raw'
 import webCsv from '../data/web_events.csv?raw'
-import { engagementScore } from '../shared/derive'
-import { PII_COLUMNS } from '../shared/pii'
-import { pkeyForEmail } from '../shared/pseudonym'
+import { DEFINITIONS, engagementScore } from '../shared/derive'
+import { CANONICAL_SOURCES } from '../shared/normalize'
+import { PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
+import { pkeyForEmail, visitorHash } from '../shared/pseudonym'
 import { classifyAppRow, ingestApp, APP_COLUMNS } from '../worker/ingest/app'
 import { parseCsv } from '../worker/ingest/csv'
 import { buildSeed, type Seed, type SeedCsvs } from '../worker/ingest/link'
@@ -25,6 +26,8 @@ import { classifyWebRow, csvTimestampToIso, ingestWeb, WEB_COLUMNS } from '../wo
 // - web invalid_email: that row's email replaced by "@gmail.com" (subscribers.csv:1788).
 // - app missing_field: the created_at of real app line 303 emptied.
 // - app invalid_email: that row's email replaced by "not-an-email" (subscribers.csv:1750).
+// - import report: the whole real seed rebuilt with web line 5421 date-only and app line 303
+//   set to "not-an-email" (the two edits above), to check both reach the emitted quarantine SQL.
 
 const JOY = 'joy.hall830@protonmail.com'
 const JULIA = 'julia.evans230@gmail.com'
@@ -42,10 +45,13 @@ function csvs(): SeedCsvs {
 
 let seed: Seed
 let files: SeedFile[]
+// import_runs.ran_at is the wall-clock time the seed ran (02 §Time allow-list, 09 D-48); the
+// test stands in for the seed script, so it takes the clock the same way.
+const RAN_AT = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
 
 beforeAll(async () => {
   seed = await buildSeed(csvs(), secret())
-  files = seedSql(seed, new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'))
+  files = seedSql(seed, RAN_AT)
   for (const file of files) {
     await env.DB.batch(file.statements.map((s) => env.DB.prepare(s)))
   }
@@ -130,6 +136,16 @@ describe('T-ING-1 the emitted seed loads and its counts equal 02 §Counts', () =
     expect(await count('SELECT count(*) AS n FROM web_events WHERE utm_source IS NULL')).toBe(8030)
     expect(await count("SELECT count(*) AS n FROM web_events WHERE utm_source = 'x'")).toBe(50)
     expect(await count("SELECT count(*) AS n FROM web_events WHERE utm_source = 'twitter'")).toBe(0)
+    // web_visitors.first_utm_source feeds v_profiles and v_funnel and is canonical too.
+    expect(await count("SELECT count(*) AS n FROM web_visitors WHERE first_utm_source = 'twitter'")).toBe(0)
+    expect(
+      await count("SELECT count(*) AS n FROM web_visitors WHERE first_utm_source = 'x'"),
+    ).toBeGreaterThan(0)
+    const { results } = await env.DB.prepare(
+      'SELECT DISTINCT first_utm_source AS s FROM web_visitors WHERE first_utm_source IS NOT NULL',
+    ).all<{ s: string }>()
+    const canonical: readonly string[] = CANONICAL_SOURCES
+    expect(results.map((r) => r.s).filter((v) => !canonical.includes(v))).toEqual([])
   })
 
   it('web timestamps are stored as ISO-8601 UTC', async () => {
@@ -200,6 +216,19 @@ describe('T-ING-5 web → subscriber linking (02 §Linking 2–3, D-08)', () => 
         subscribeTs,
       ),
     ).toBe(3)
+  })
+
+  it('visitor_hash is visitorHash(PII_KEY_SECRET, visitor_id); no raw v_ id reaches v_web_events', async () => {
+    expect(
+      await env.DB.prepare('SELECT visitor_hash FROM web_visitors WHERE visitor_id = ?')
+        .bind('v_c9e136fd6d')
+        .first('visitor_hash'),
+    ).toBe(await visitorHash(secret(), 'v_c9e136fd6d'))
+    const { results } = await env.DB.prepare('SELECT DISTINCT visitor_hash FROM v_web_events').all<{
+      visitor_hash: string
+    }>()
+    expect(results).toHaveLength(2028)
+    expect(results.filter((r) => RAW_ID_REGEX.test(r.visitor_hash))).toEqual([])
   })
 
   it('1,144 linked visitors have pre-signup views, 1,930 events in all', async () => {
@@ -283,6 +312,53 @@ describe('profiles through v_profiles (02 §Derived, §Counts demo subjects; D-4
     ).toBe('2026-09-02') // 09 D-44: signup_date
   })
 
+  it('every subscriber profile is created_at signup_date (09 D-44), whatever the app date', async () => {
+    expect(
+      await count(
+        'SELECT count(*) AS n FROM profiles p JOIN subscribers s ON s.email_norm = p.email_norm WHERE p.created_at <> s.signup_date',
+      ),
+    ).toBe(0)
+    // julia's app (2026-08-22) predates her signup, so an earlier-of rule would show here.
+    expect(
+      await env.DB.prepare('SELECT created_at FROM profiles WHERE email_norm = ?')
+        .bind(JULIA)
+        .first('created_at'),
+    ).toBe('2026-09-13')
+  })
+
+  it('engagement_score counts only site visits in the last 30 days relative to TODAY (D-46)', async () => {
+    // An independent oracle: count each profile's events by date inside DEFINITIONS.last_n_days(30)
+    // and score them with engagementScore (app events are 0 at seed).
+    const window = DEFINITIONS.last_n_days.fn(30)
+    const { results: visits } = await env.DB.prepare(
+      'SELECT pkey, sum(CASE WHEN substr(event_ts, 1, 10) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS in_window, ' +
+        'count(*) AS all_time FROM v_web_events WHERE pkey IS NOT NULL GROUP BY pkey',
+    )
+      .bind(window.from, window.to)
+      .all<{ pkey: string; in_window: number; all_time: number }>()
+    const byPkey = new Map(visits.map((v) => [v.pkey, v]))
+    const { results: profiles } = await env.DB.prepare(
+      'SELECT pkey, last_open_date, engagement_score FROM v_profiles',
+    ).all<{ pkey: string; last_open_date: string | null; engagement_score: number }>()
+    expect(profiles).toHaveLength(2930)
+    const scoreWith = (p: (typeof profiles)[number], siteVisits: number) =>
+      engagementScore({
+        last_open_date: p.last_open_date,
+        app_events_last_30d: 0,
+        site_visits_last_30d: siteVisits,
+      })
+    const wrong = profiles.filter(
+      (p) => p.engagement_score !== scoreWith(p, byPkey.get(p.pkey)?.in_window ?? 0),
+    )
+    expect(wrong).toEqual([])
+    // The window matters on this data: counting every event would change some stored scores.
+    const windowMatters = profiles.filter((p) => {
+      const v = byPkey.get(p.pkey)
+      return v !== undefined && scoreWith(p, v.all_time) !== scoreWith(p, v.in_window)
+    })
+    expect(windowMatters.length).toBeGreaterThan(0)
+  })
+
   it('julia.evans230: app before signup is not a conversion, and she has no web history', async () => {
     const row = await env.DB.prepare('SELECT * FROM v_profiles WHERE pkey = ?')
       .bind(await pkeyForEmail(secret(), JULIA))
@@ -362,5 +438,66 @@ describe('web and app rows fail fast on headers and are quarantined, never dropp
     expect(result.quarantined).toEqual([
       { line_no: 303, reason: 'invalid_email', raw_row: 'u_ceed5f12,not-an-email,2026-09-03' },
     ])
+  })
+
+  it('web and app quarantine rows reach the emitted import report and import_runs (seedSql → D1)', async () => {
+    const w = web()
+    const webRows = w.rows.map((r) => [...r])
+    webRows[w.lineNos.indexOf(5421)][2] = '2026-09-02'
+    const a = app()
+    const appRows = a.rows.map((r) => [...r])
+    appRows[a.lineNos.indexOf(303)][1] = 'not-an-email'
+    const edited = await buildSeed(
+      {
+        subscribers: parseCsv(subscribersCsv),
+        web_events: { ...w, rows: webRows },
+        app_users: { ...a, rows: appRows },
+      },
+      secret(),
+    )
+    const reportOf = (fs: SeedFile[]) => fs.find((f) => f.name === '0004_import_report.sql')!
+    // Storage is per test file, not per test, so the real report is put back whatever happens.
+    const loadReport = (f: SeedFile) =>
+      env.DB.batch([
+        env.DB.prepare('DELETE FROM quarantine'),
+        env.DB.prepare('DELETE FROM import_runs'),
+        ...f.statements.map((st) => env.DB.prepare(st)),
+      ])
+    await loadReport(reportOf(seedSql(edited, RAN_AT)))
+    try {
+      const { results: runs } = await env.DB.prepare(
+        'SELECT file, rows_in, rows_out, merged, quarantined FROM import_runs ORDER BY id',
+      ).all()
+      expect(runs).toEqual([
+        { file: 'subscribers', rows_in: 2995, rows_out: 2900, merged: 85, quarantined: 10 },
+        { file: 'web_events', rows_in: 10000, rows_out: 9999, merged: 0, quarantined: 1 },
+        { file: 'app_users', rows_in: 930, rows_out: 929, merged: 0, quarantined: 1 },
+      ])
+      const { results: rows } = await env.DB.prepare(
+        'SELECT q.file, r.file AS run_file, q.line_no, q.reason, q.raw_row FROM quarantine q ' +
+          "JOIN import_runs r ON r.id = q.run_id WHERE q.file <> 'subscribers' ORDER BY q.id",
+      ).all()
+      expect(rows).toEqual([
+        {
+          file: 'web_events',
+          run_file: 'web_events',
+          line_no: 5421,
+          reason: 'bad_date',
+          raw_row: `v_c9e136fd6d,/subscribe,2026-09-02,,${JOY}`,
+        },
+        {
+          file: 'app_users',
+          run_file: 'app_users',
+          line_no: 303,
+          reason: 'invalid_email',
+          raw_row: 'u_ceed5f12,not-an-email,2026-09-03',
+        },
+      ])
+      expect(await count('SELECT count(*) AS n FROM quarantine')).toBe(12)
+    } finally {
+      await loadReport(reportOf(files))
+    }
+    expect(await count('SELECT count(*) AS n FROM quarantine')).toBe(10)
+    expect(await count('SELECT sum(quarantined) AS n FROM import_runs')).toBe(10)
   })
 })

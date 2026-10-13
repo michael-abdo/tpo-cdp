@@ -8,6 +8,9 @@
  * exits non-zero. The pipeline itself is pure (worker/ingest/link.ts, sql.ts); this file only
  * reads and writes files. PII_KEY_SECRET comes from the environment or, failing that, from
  * the one PII_KEY_SECRET line of .dev.vars; its value is never printed.
+ *
+ * import_runs.ran_at is the one wall-clock read here: when this script ran, which 02 §Time's
+ * allow-list permits (09 D-48). Business dates use TODAY via shared/derive.ts.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -64,6 +67,7 @@ async function main(): Promise<void> {
 
   const secret = piiKeySecret()
   const seed = await buildSeed(csvs, secret)
+  // Wall clock for import_runs.ran_at only (02 §Time allow-list, 09 D-48).
   const ranAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   const files = seedSql(seed, ranAt)
 

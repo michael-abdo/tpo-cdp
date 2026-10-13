@@ -67,9 +67,10 @@ No duplicate pair in the data disagrees on any field, so these rules are covered
 2. Web to subscriber: the email on a `/subscribe` row matches a subscriber. That visitor's whole history, before and after signup, is attributed to the profile, which is how "which pages do new subscribers hit first?" can be answered.
 3. Visitors without a `/subscribe` email get no profile. They stay in the funnel view.
 4. A webhook `user_id` that no app user has creates an app user with no email and an `unknown_user_stub` profile when it arrives. It is never dropped.
-5. App account direction: an app account counts as converted from the newsletter only if it was created on a later day than the signup.
+5. Anonymous app events (no `user_id`) are resolved when they are read, not when they are stored: the device's most recent user by event time, then that user's email, then the profile.
+6. App account direction: an app account counts as converted from the newsletter only if it was created on a later day than the signup.
 
-Each subscriber and each `app_only` email gets one profile with a keyed pseudonymous `pkey`. `created_at` is the signup date for a subscriber and the app account date for an app-only profile. `cold_since` and `engagement_score` are computed by `shared/derive.ts` when they are written, and stored. At seed time a profile has no app events yet.
+Each subscriber and each `app_only` email gets one profile with a keyed pseudonymous `pkey`. `created_at` is the signup date for a subscriber and the app account date for an app-only profile. `cold_since` and `engagement_score` are computed by `shared/derive.ts` when they are written, and stored. At seed time a profile has no app events yet. A visitor's first page, first UTM source and first-seen time all come from its earliest event, and the first UTM source is empty when that event had none.
 
 **Known edge cases, not handled**
 
