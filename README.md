@@ -16,7 +16,34 @@ npm test
 
 ## Deploy
 
-_Lands with the first deploy (Tue)._
+Live: **https://tpo-cdp.michaelabdo-mail.workers.dev** (behind the site password, which comes with the submission).
+
+Enable Workers Paid (Workers & Pages → Plans) before seeding: one seed writes about 55,000 D1 rows, and the free plan caps writes at 100,000 rows a day.
+
+```bash
+npx wrangler login                                   # once
+npx wrangler d1 create cdp                           # put the printed database_id in wrangler.jsonc
+for NAME in SITE_PASSWORD SESSION_SECRET WEBHOOK_SECRET PII_KEY_SECRET; do
+  grep "^$NAME=" .dev.vars | cut -d= -f2- | npx wrangler secret put $NAME   # value piped, never echoed
+done
+npm run db:migrate:remote
+npm run db:seed:remote                               # type "cdp" at the prompt; refuses a database that already holds seed rows
+npm run deploy                                       # build + wrangler deploy
+```
+
+`ANTHROPIC_API_KEY` goes up the same way with the assistant; nothing deployed so far reads it.
+
+Re-seed from scratch: `npm run db:reset:remote` (type `cdp`). It drops every table and view, re-applies the migrations and seeds again, so it also wipes webhook events and audit rows. The hosted UI has no destructive action.
+
+Verify:
+
+```bash
+URL=https://tpo-cdp.michaelabdo-mail.workers.dev
+curl $URL/health                                     # {"ok":true,"db":true,"today":"2026-09-28"}
+# POST /api/login {"password": …} → 204 + cookie; then, with the cookie:
+#   GET  /api/lookup?q=joy.hall830@protonmail.com   → 200, her pkey, app user u_ceed5f12, 9 web views
+#   POST /api/segments/preview, the brief's preset (active, instagram, no open in 30 days, never-opened included) → count 177
+```
 
 ## Architecture
 
