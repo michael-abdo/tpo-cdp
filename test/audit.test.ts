@@ -40,6 +40,7 @@ const SUMMARY_KEYS = [
   'model_calls',
   'outcome',
   'question',
+  'reached_ai',
   'started_at',
   'status',
   'tokens_in',
@@ -68,6 +69,7 @@ interface Summary {
   trace_id: string
   started_at: string
   question: string | null
+  reached_ai: boolean
   outcome: string
   status: string
   model_calls: number
@@ -297,6 +299,7 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
     expect(traces).toHaveLength(1)
     expect(traces[0]).toMatchObject({
       question: null,
+      reached_ai: false,
       outcome: 'blocked',
       status: 'blocked',
       model_calls: 0,
@@ -393,6 +396,20 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
     return rows.map((r) => `${r.kind}/${r.status}`)
   }
 
+  it('the first AI reply holds an email → blocked before its row is written: no question stored, but reached_ai', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    // A real subscriber email (data/subscribers.csv) planted in the model's reply (09 D-47).
+    const { transport } = scripted([
+      () => message([{ type: 'text', text: 'Try joy.hall830@protonmail.com.', citations: null }], 'end_turn'),
+    ])
+    const res = await ask(transport, cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(500)
+    const traceId = await lastTrace()
+    expect(await rowKinds(traceId, cookie)).toEqual(['blocked/blocked'])
+    expect(await line(traceId, cookie)).toMatchObject({ question: null, reached_ai: true, model_calls: 0 })
+  })
+
   it('the model service refuses the call → 502: outcome failed, status error, the question was sent', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
@@ -404,6 +421,7 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
     expect(await rowKinds(traceId, cookie)).toEqual(['model_request/error'])
     expect(await line(traceId, cookie)).toMatchObject({
       question: 'how many Instagram signups went cold last month?',
+      reached_ai: true,
       outcome: 'failed',
       status: 'error',
       model_calls: 1,

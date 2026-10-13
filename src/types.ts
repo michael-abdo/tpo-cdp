@@ -133,6 +133,8 @@ export interface AuditTraceSummary {
   started_at: string
   /** The redacted question the model received; null when no model call was made. */
   question: string | null
+  /** The question was sent to the AI (a model call was stored, or its reply was blocked). */
+  reached_ai: boolean
   /** How the request ended, from its last row. */
   outcome: AuditOutcome
   /** The most severe row status. */

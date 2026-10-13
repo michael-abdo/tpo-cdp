@@ -257,7 +257,9 @@ function TraceView({ traceId }: { traceId: string }) {
         question !== null
           ? `“${question}”`
           : firstModel === undefined
-            ? 'This request stopped before anything was sent to the AI.'
+            ? rows.some((r) => r.kind === 'blocked' && (r.error ?? '').endsWith(' in model_output'))
+              ? 'This question was sent to the AI, but its reply was blocked, so the question was not stored.'
+              : 'This request stopped before anything was sent to the AI.'
             : 'The question could not be read from what was stored; see the first step.',
       )}
       <p className="text-sm text-gray-600">
@@ -311,7 +313,7 @@ function traceColumns(): Column<AuditTraceSummary>[] {
       header: 'Question',
       cell: (t) => (
         <Link to={`/audit/${t.trace_id}`} className={`${linkClass} break-words`}>
-          {t.question ?? 'Stopped before it reached the AI'}
+          {t.question ?? (t.reached_ai ? 'Sent to the AI; its reply was blocked, so the question was not stored' : 'Stopped before it reached the AI')}
         </Link>
       ),
     },

@@ -46,8 +46,13 @@ export interface AuditTraceSummary {
   trace_id: string
   /** created_at of the trace's first row (wall clock, UTC). */
   started_at: string
-  /** The redacted question the model received; null when no model call was made. */
+  /** The redacted question the model received; null when no model_request row was stored. */
   question: string | null
+  /**
+   * True when the question was sent to the AI: a model_request row exists, or the AI's reply was
+   * blocked by the PII scanner before its row was written (loop.ts guards model_output first).
+   */
+  reached_ai: boolean
   /** How the request ended (traceOutcome). */
   outcome: AuditOutcome
   /** The most severe row status: blocked if any row is blocked, else error if any row is an error, else success. */
@@ -114,6 +119,8 @@ WITH traces AS (
               WHEN sum(status = 'error') > 0 THEN 'error'
               ELSE 'success' END AS status,
          sum(kind = 'model_request') AS model_calls,
+         (sum(kind = 'model_request') > 0
+          OR sum(kind = 'blocked' AND error LIKE '% in model_output') > 0) AS reached_ai,
          sum(kind = 'tool_call') AS tool_calls,
          coalesce(sum(tokens_in), 0) AS tokens_in,
          coalesce(sum(tokens_out), 0) AS tokens_out
@@ -122,7 +129,7 @@ WITH traces AS (
   ORDER BY started_at DESC, first_rowid DESC
   LIMIT ?
 )
-SELECT t.trace_id, t.started_at, t.status, t.model_calls, t.tool_calls, t.tokens_in, t.tokens_out,
+SELECT t.trace_id, t.started_at, t.status, t.reached_ai, t.model_calls, t.tool_calls, t.tokens_in, t.tokens_out,
        (SELECT CASE json_type(a.request_json, '$.messages[0].content')
                  WHEN 'text' THEN json_extract(a.request_json, '$.messages[0].content') END
         FROM ai_audit a
@@ -146,11 +153,14 @@ export const auditRoutes = new Hono<AppEnv>()
 
 auditRoutes.get('/audit', async (c) => {
   const limit = auditLimit(c.req.query('limit'))
-  const { results } = await c.env.DB.prepare(LIST_SQL).bind(limit).all<Omit<AuditTraceSummary, 'outcome'> & LastRow>()
+  const { results } = await c.env.DB.prepare(LIST_SQL)
+    .bind(limit)
+    .all<Omit<AuditTraceSummary, 'outcome' | 'reached_ai'> & { reached_ai: number } & LastRow>()
   const traces: AuditTraceSummary[] = results.map((r) => ({
     trace_id: r.trace_id,
     started_at: r.started_at,
     question: r.question,
+    reached_ai: r.reached_ai === 1,
     outcome: traceOutcome(r),
     status: r.status,
     model_calls: r.model_calls,
