@@ -20,8 +20,13 @@ describe('T-NORM-1 normalizeEmail', () => {
     // Regex-clause fixtures, not business data: these strings are never presented as real
     // emails and none can pass the regex (09 D-47 spirit). Each one fails a weakened pattern:
     expect(normalizeEmail('a@b')).toBeNull() // dropping the required `\.` before the TLD
-    expect(normalizeEmail('a@b@c.com')).toBeNull() // allowing `@` in either part
+    expect(normalizeEmail('a@b@c.com')).toBeNull() // allowing `@` in the local part or the domain before the dot
     expect(normalizeEmail('a b@c.com')).toBeNull() // allowing whitespace inside the local part
+    expect(normalizeEmail('a@b c.com')).toBeNull() // allowing whitespace in the domain before the dot
+    expect(normalizeEmail('a@b.c d')).toBeNull() // dropping the `$` anchor, or allowing whitespace in the TLD
+    expect(normalizeEmail('a@b.c@d')).toBeNull() // dropping the `$` anchor, or allowing `@` in the TLD
+    expect(normalizeEmail('a@b.')).toBeNull() // allowing an empty TLD (`*` for `+` after the dot)
+    expect(normalizeEmail('a@.com')).toBeNull() // allowing an empty domain before the dot (`*` for `+` after the @)
   })
 
   it('changes nothing but case: plus tags and dots stay (D-26)', () => {
@@ -79,6 +84,7 @@ describe('T-NORM-3 single implementation', () => {
     expect(Object.keys(sources)).toContain('../shared/normalize.ts')
     expect(Object.keys(sources)).toContain('../worker/index.ts')
     expect(Object.keys(migrations)).toContain('../migrations/0001_core.sql')
+    expect(Object.keys(migrations)).toContain('../migrations/0002_views.sql')
   })
 
   it('no file outside shared/normalize.ts lowercases an email', () => {
