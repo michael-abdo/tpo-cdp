@@ -1,5 +1,6 @@
 import { SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { TODAY } from '../shared/config'
 import { noOpenInDays } from '../shared/derive'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
 import { SEGMENT_COLUMNS } from '../worker/segments/compile'
@@ -14,9 +15,9 @@ import { realCsvs, seedDatabase } from './helpers/seed'
 // filters in TypeScript with shared/derive.ts noOpenInDays, not with SQL.
 // Inputs and where they come from:
 // - source "Instagram" is the raw spelling in subscribers.csv (925 rows); the API folds it.
-// - error-path inputs per 09 D-47, each a removal from a real value: status "unsubscribe" (the
-//   last character of "unsubscribed" removed) and filter key "pages_viewed" (a parked filter
-//   named in 04, not a filter this build accepts).
+// - error-path inputs: status "unsubscribe" is a removal from a real value per 09 D-47 (the last
+//   character of "unsubscribed" removed); filter key "pages_viewed" is not data at all but a
+//   parked filter key named in 04 §/api/segments/preview, which this build must reject.
 // - the source value "instagram' OR '1'='1" is an injection probe string (08 T-SEG-3), not
 //   business data: it must bind as a value and match nothing.
 
@@ -95,7 +96,8 @@ describe('T-SEG-1 the brief preset matches 02 §Counts and an independent count'
     expect(body.rows).toHaveLength(100)
     expect(body.sql_shape).toContain('s.status IN (?)')
     expect(body.sql_shape).toContain('julianday(?) - julianday(last_open_date) >= ?')
-    expect(body.sql_shape).not.toMatch(/instagram|2026-09-28|'active'/)
+    expect(body.sql_shape).not.toContain(TODAY)
+    expect(body.sql_shape).not.toMatch(/instagram|'active'/)
     for (const row of body.rows) {
       expect(row.status).toBe('active')
       expect(row.source).toBe('instagram')
