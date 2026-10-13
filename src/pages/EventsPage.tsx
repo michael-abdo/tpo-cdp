@@ -244,7 +244,7 @@ export default function EventsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Recent app events"
-        purpose={`The last 20 events the app sent, newest first. The list updates itself every ${POLL_SECONDS} seconds while this tab is open. These times are live, so they can be later than the date in the top bar.`}
+        purpose={`The last 20 events the app sent, newest first. The list updates itself every ${POLL_SECONDS} seconds while this tab is in view. These times are live, so they can be later than the date in the top bar.`}
         action={
           <Button variant="primary" onClick={refresh} disabled={shown === null || refreshing}>
             {refreshing ? 'Refreshing…' : 'Refresh'}

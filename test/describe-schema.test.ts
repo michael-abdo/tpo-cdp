@@ -62,14 +62,20 @@ describe('describe_schema: v_* view names and PRAGMA columns only (16 parked ite
     const names = [...new Set(output.rows.map((r) => r.view as string))]
     expect(names.every((n) => n.startsWith('v_'))).toBe(true)
     expect(names.sort()).toEqual([...expected.keys()].sort())
+    const content = executed.result.content as string
+    // The model sees only the first rows of the table (format-results.ts MODEL_ROW_CAP), so the
+    // summary carries every view's full column list: it must be the PRAGMA columns, in order.
+    expect(Object.keys(output.summary.views as Record<string, string[]>).sort()).toEqual([...expected.keys()].sort())
     for (const [view, columns] of expected) {
       expect(output.rows.filter((r) => r.view === view).map((r) => ({ name: r.column, type: r.type }))).toEqual(columns)
-      expect((output.summary.views as Record<string, string[]>)[view]).toHaveLength(columns.length)
+      const described = columns.map((c) => (c.type === '' ? c.name : `${c.name} ${c.type}`))
+      expect((output.summary.views as Record<string, string[]>)[view]).toEqual(described)
+      // ...and the string the model receives names every one of them.
+      for (const entry of described) expect(content).toContain(JSON.stringify(entry))
     }
     expect(output.rows.some((r) => (PII_COLUMNS as readonly string[]).includes(r.column as string))).toBe(false)
 
     // No row of any view: the seeded views hold pk_ keys, and none appears anywhere in the result.
-    const content = executed.result.content as string
     expect(PKEY_VALUE.test(content)).toBe(false)
     expect(PKEY_VALUE.test(JSON.stringify(output.rows))).toBe(false)
     const known = await loadKnownEmails(env.DB)
@@ -95,5 +101,14 @@ describe('describe_schema: v_* view names and PRAGMA columns only (16 parked ite
     expect(audit).toHaveLength(1)
     expect(audit[0]).toMatchObject({ kind: 'tool_call', status: 'error', tool_name: 'describe_schema' })
     expect(audit[0].error).toMatch(/^invalid_input: /)
+  })
+
+  it('refuses a part of a view name: only an exact v_* name selects a view', async () => {
+    for (const view of ['v_', 'v_prof']) {
+      const { executed } = await run({ view })
+      expect(executed.output).toBeNull()
+      expect(executed.result.is_error).toBe(true)
+      expect(executed.result.content).toContain(`view must be one of ${[...expected.keys()].join(', ')}`)
+    }
   })
 })
