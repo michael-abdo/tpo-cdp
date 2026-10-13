@@ -181,7 +181,7 @@ beforeAll(async () => {
 describe('tool loader (03 row 3, 09 D-41)', () => {
   it('loads the seeded rows in sort_order as Anthropic tools, verbatim', async () => {
     const loaded = await loadTools(env.DB)
-    expect(loaded.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate'])
+    expect(loaded.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql'])
     expect(loaded.definitions[0]).toEqual({ name: 'segment', description: TOOL_SEEDS[0].description, input_schema: TOOL_SEEDS[0].inputSchema })
     expect(await loadTools(env.DB)).toBe(loaded) // unchanged rows: the validated set is reused
   })
@@ -189,11 +189,11 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
   it('re-reads the table per request, so a disabled row drops out with no deploy', async () => {
     await env.DB.prepare("UPDATE assistant_tools SET enabled = 0 WHERE name = 'aggregate'").run()
     try {
-      expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment'])
+      expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment', 'query_sql'])
     } finally {
       await env.DB.prepare("UPDATE assistant_tools SET enabled = 1 WHERE name = 'aggregate'").run()
     }
-    expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment', 'aggregate'])
+    expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql'])
   })
 
   it('refuses a bad row loudly, naming it, and no rows at all as no_tools', () => {

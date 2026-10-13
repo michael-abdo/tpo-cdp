@@ -2,7 +2,8 @@
 // "builtin-handlers.ts: replace"). An assistant_tools row with handler_type `builtin` names one
 // of these by `execution_config.handler_name`; the loader refuses a row that names anything else
 // (tool-loader.ts, 09 D-41). The rows themselves are data (scripts/tool-seeds.ts); this file only
-// holds the code they may point at. `query_sql` joins the registry with Gate 2/3 (16, Friday).
+// holds the code they may point at. The executor has already passed every call through Gate 2's
+// authorizeToolCall (input_schema) before a handler runs (tool-executor.ts, 03 row 7).
 //
 // Every handler returns pk_ keys, never an email or a raw id (05 §Strategy). The executor scans
 // each result before the model sees it (tool-executor.ts, 03 row 9).
@@ -17,6 +18,12 @@
 // - `aggregate` also reads only v_* views. Every value is a bound parameter; every SQL fragment
 //   comes from the fixed METRICS table below, never from the input. Cold comparisons use the
 //   `DEFINITIONS.cold.sql` fragment from shared/derive.ts, the one runtime source (02 §Derived).
+// - `query_sql` runs one SELECT the model wrote (the origin's query_data, 14 §1.2, §4.2): Gate 2's
+//   validateSqlAgainstViews (views only, no write keywords, PRAGMA-checked columns), then Gate 3's
+//   runReadOnlySelect (SELECT only, one statement, LIMIT ≤ 100, one attempt). It can read only
+//   the v_* views, which select pkey and visitor_hash (both pk_ keys, 05 §Pseudonymous key) and
+//   no PII column (01 §PII denylist), so its rows reference subjects by pk_ keys only (T-AI-2);
+//   the executor's scan is the second, independent check (05 §Scanner).
 
 import { z } from 'zod'
 import { TODAY } from '../../../shared/config'
@@ -26,6 +33,9 @@ import { ApiError } from '../../auth/middleware'
 import { isIsoDate, SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../ingest/quarantine'
 import type { SqlValue } from '../../ingest/sql'
 import { PREVIEW_DEFAULT_LIMIT } from '../../routes/segments'
+import { validateSqlAgainstViews } from '../gates/gate2-tool-authorizer'
+import { runReadOnlySelect, SqlRunError } from '../gates/gate3-readonly-sql'
+import { viewSchemas } from '../schema-context'
 import {
   type CompiledModelSegment,
   compileModelSegment,
@@ -50,15 +60,25 @@ export interface ToolOutput {
   summary: Record<string, unknown>
   /** Set by the segment handler: the filters as validated and the builder's count. */
   segment?: { filters: SegmentFilters; count: number }
+  /** Set by query_sql: the SQL that ran, LIMIT forced (ai_audit.sql, 01). */
+  sql?: string
 }
 
-/** Input the model sent that the handler cannot run. Goes back to the model as an error result, not a 500. */
+/**
+ * Input the model sent that the handler cannot run, or a query the database refused. Goes back
+ * to the model once as an error result, not a 500. `code` heads the ai_audit error.
+ */
 export class ToolInputError extends Error {
   readonly problems: readonly string[]
-  constructor(problems: readonly string[]) {
+  readonly code: 'invalid_input' | 'query_failed'
+  /** The SQL concerned, for ai_audit.sql; null when the call ran none. */
+  readonly sql: string | null
+  constructor(problems: readonly string[], options: { code?: 'invalid_input' | 'query_failed'; sql?: string } = {}) {
     super(`invalid tool input: ${problems.join('; ')}`)
     this.name = 'ToolInputError'
     this.problems = problems
+    this.code = options.code ?? 'invalid_input'
+    this.sql = options.sql ?? null
   }
 }
 
@@ -339,8 +359,54 @@ const aggregateHandler: BuiltinHandler = {
   },
 }
 
+// ── query_sql ────────────────────────────────────────────────────────────────────────────
+
+const QuerySqlInput = z.object({ sql: z.string().min(1), explanation: z.string().min(1) }).strict()
+
+const querySqlHandler: BuiltinHandler = {
+  inputKeys: Object.keys(QuerySqlInput.shape),
+  async run(db, input) {
+    const parsed = QuerySqlInput.safeParse(input)
+    if (!parsed.success) {
+      throw new ToolInputError(parsed.error.issues.map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`))
+    }
+    const { sql, explanation } = parsed.data
+    // Gate 2 (throws GateDenied) against the views' PRAGMA columns, then Gate 3, which runs it once.
+    validateSqlAgainstViews(sql, await viewSchemas(db))
+    let result
+    try {
+      result = await runReadOnlySelect(db, sql)
+    } catch (err) {
+      if (err instanceof SqlRunError) throw new ToolInputError([err.message], { code: 'query_failed', sql: err.sql })
+      throw err
+    }
+    const duplicates = result.columns.filter((c, i) => result.columns.indexOf(c) !== i)
+    if (duplicates.length > 0) {
+      throw new ToolInputError([`two result columns are named ${[...new Set(duplicates)].join(', ')}; give each column its own name with AS`], {
+        sql: result.sql,
+      })
+    }
+    const rows = result.rows.map((cells) => Object.fromEntries(result.columns.map((c, i) => [c, cells[i]])) as ResultRow)
+    return {
+      tool: 'query_sql',
+      columns: result.columns,
+      rows,
+      total_rows: rows.length,
+      summary: {
+        explanation,
+        rows: rows.length,
+        row_limit: result.limit,
+        // At the limit the query may have matched more rows than it returned.
+        may_have_more_rows: rows.length === result.limit,
+      },
+      sql: result.sql,
+    }
+  },
+}
+
 /** Handler names an assistant_tools `builtin` row may use (03 row 9). */
 export const BUILTIN_HANDLERS: Readonly<Record<string, BuiltinHandler>> = {
   segment: segmentHandler,
   aggregate: aggregateHandler,
+  query_sql: querySqlHandler,
 }

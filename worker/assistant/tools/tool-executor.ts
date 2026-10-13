@@ -1,27 +1,40 @@
-// Tool execution (design 03 §Gateway layers row 9; 07 §H "execute … scan result"). Origin:
+// Tool execution (design 03 §Gateway layers rows 7-9; 07 §H "execute … scan result"). Origin:
 // palisade lib/chat/tool-executor.ts L46-132 (14 §2.3, §4 "adapt"): dispatch on handler_type to
 // a static registry, a generic error to the model instead of a stack. Changes:
+//   - every call passes Gate 2's authorizeToolCall first (gates/gate2-tool-authorizer.ts): a name
+//     that is not a loaded tool is denied and audited as `blocked` with UNKNOWN_TOOL_ERROR; an
+//     input that fails the row's input_schema is denied before any handler runs (09 D-24)
+//   - a Gate 2 or Gate 3 refusal (GateDenied, from authorizeToolCall or from query_sql's SQL
+//     checks) goes back to the model once as an error result and is audited as `kind=blocked`
+//     with `gate2_denied: …` / `gate3_denied: …` and, for SQL, the SQL as sent (03 row 11)
 //   - every result is framed as untrusted data (format-results.ts) and scanned with
 //     assertNoPII before it enters the conversation; a hit aborts the request (05 §Scanner)
-//   - every call writes an awaited ai_audit `tool_call` row (03 row 11)
-//   - a name that is not a loaded tool is denied and audited as `blocked` (14 §4); the full
-//     Gate 2 authorizer with server-side input_schema validation comes with query_sql (16, Friday).
-//     Until then each builtin validates its own input and rejects anything it does not read.
-//   - input the handler rejects goes back to the model once as an error result (is_error), so it
-//     can correct the call within the iteration cap; any other failure (a D1 error, a broken
-//     row) is audited and thrown: fail loud, no silent retry (CLAUDE.md)
+//   - every call writes an awaited ai_audit row (03 row 11); query_sql rows carry the SQL that ran
+//   - input the handler rejects, or a query the database refuses, goes back to the model once as
+//     an error result (is_error), so it can correct the call within the iteration cap; any other
+//     failure (a D1 error outside query_sql, a broken row) is audited and thrown: fail loud, no
+//     silent retry (CLAUDE.md)
+//   - every error text is scanned before it is logged, stored or sent, since it may quote what
+//     the model wrote (05 §Scanner "logging")
 
 import type Anthropic from '@anthropic-ai/sdk'
 import type { AuditTrace } from '../audit/ai-audit'
+import { authorizeToolCall } from '../gates/gate2-tool-authorizer'
+import { GateDenied } from '../gates/gate3-readonly-sql'
 import { guardPayload } from '../gates/pii-guard'
 import { type ToolOutput, ToolInputError } from './builtin-handlers'
 import { formatToolError, formatToolOutput } from './format-results'
-import type { LoadedTools } from './tool-loader'
+import type { LoadedTool, LoadedTools } from './tool-loader'
 
 /** The ai_audit error of a tool name the model invented; the loop goes on (worker/routes/audit.ts reads it). */
 export const UNKNOWN_TOOL_ERROR = 'unknown_tool: the model called a tool that is not loaded'
 /** The ai_audit error of a tool that threw; the request ends in a 500 (worker/routes/audit.ts reads it). */
 export const TOOL_FAILED_ERROR = 'tool_failed'
+
+/** True for the ai_audit error of a Gate 2/3 refusal; the loop goes on (worker/routes/audit.ts reads it). */
+export function isGateDenialError(error: string | null): boolean {
+  return error !== null && (error.startsWith('gate2_denied: ') || error.startsWith('gate3_denied: '))
+}
 
 export interface ToolCall {
   id: string
@@ -42,31 +55,49 @@ export interface ToolContext {
   tools: LoadedTools
 }
 
+/** A Gate 2 or Gate 3 refusal: scanned, logged, audited as blocked, and sent to the model as an error. */
+async function deny(ctx: ToolContext, call: ToolCall, tool: LoadedTool, denial: GateDenied, started: number): Promise<ExecutedCall> {
+  const content = formatToolError(tool.name, denial.problems)
+  await guardPayload(ctx.trace, content, 'tool_result', tool.name)
+  console.warn(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, tool_name: tool.name, outcome: `${denial.gate}_denied`, problems: denial.problems }))
+  await ctx.trace.write({
+    kind: 'blocked',
+    status: 'blocked',
+    tool_name: tool.name,
+    latency_ms: Date.now() - started,
+    request_json: call.input,
+    response_json: content,
+    sql: denial.sql,
+    error: `${denial.gate}_denied: ${denial.problems.join('; ')}`,
+  })
+  return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
+}
+
 /** Runs one tool_use block and returns its tool_result. Throws on a PII hit or an unexpected failure. */
 export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise<ExecutedCall> {
-  const tool = ctx.tools.byName.get(call.name)
-  if (tool === undefined) {
+  const started = Date.now() // wall clock for ai_audit.latency_ms only (02 §Time allow-list)
+  const authorization = authorizeToolCall(ctx.tools, call) // Gate 2 (03 row 7)
+  if (!authorization.allowed && authorization.reason === 'unknown_tool') {
     // The name came from the model; it is neither logged nor stored, only that it was unknown.
     console.error(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, error: 'unknown_tool' }))
     await ctx.trace.write({ kind: 'blocked', status: 'blocked', error: UNKNOWN_TOOL_ERROR })
     const content = formatToolError('unknown', ['there is no tool with that name; use only the tools provided'])
     return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
   }
+  if (!authorization.allowed) {
+    return deny(ctx, call, authorization.tool, new GateDenied('gate2', authorization.problems.map((p) => `input_schema: ${p}`)), started)
+  }
+  const { tool, input } = authorization
 
-  const started = Date.now() // wall clock for ai_audit.latency_ms only (02 §Time allow-list)
   let output: ToolOutput
   try {
-    if (typeof call.input !== 'object' || call.input === null || Array.isArray(call.input)) {
-      throw new ToolInputError(['the tool input must be a JSON object'])
-    }
-    output = await tool.handler.run(ctx.db, call.input as Record<string, unknown>)
+    output = await tool.handler.run(ctx.db, input)
   } catch (err) {
+    if (err instanceof GateDenied) return deny(ctx, call, tool, err, started)
     if (err instanceof ToolInputError) {
-      // The input came in a model response that already passed the scanner (loop.ts), so problems
-      // that quote it hold no PII; they are logged like every other refusal (CLAUDE.md "Loud").
-      console.warn(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, tool_name: tool.name, outcome: 'invalid_input', problems: err.problems }))
       const content = formatToolError(tool.name, err.problems)
       await guardPayload(ctx.trace, content, 'tool_result', tool.name)
+      console.warn(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, tool_name: tool.name, outcome: err.code, problems: err.problems }))
       await ctx.trace.write({
         kind: 'tool_call',
         status: 'error',
@@ -74,7 +105,8 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
         latency_ms: Date.now() - started,
         request_json: call.input,
         response_json: content,
-        error: `invalid_input: ${err.problems.join('; ')}`,
+        sql: err.sql,
+        error: `${err.code}: ${err.problems.join('; ')}`,
       })
       return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
     }
@@ -94,6 +126,7 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
     latency_ms: Date.now() - started,
     request_json: call.input,
     response_json: content,
+    sql: output.sql ?? null,
     row_count: output.total_rows,
   })
   return { result: { type: 'tool_result', tool_use_id: call.id, content }, output }

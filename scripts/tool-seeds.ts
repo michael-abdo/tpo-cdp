@@ -15,9 +15,12 @@
  *   `engagement_buckets` is not seeded (09 D-56): 02 §Derived defines no buckets, and bucket
  *   edges in SQL would be a second formula (D-46). "Most engaged" is the segment tool's
  *   ranking instead: its rows come out by stored engagement_score, highest first.
- * - `query_sql`, `describe_schema`, the `query` row and `open_segment` are not seeded here:
- *   `query_sql` and the `query` handler type come with Gate 2/3 (16, Friday); `describe_schema`
- *   and the `passthrough` type are not in 16 §MVP scope.
+ * - `query_sql` names only the views 01 §PII-free views defines (the draft listed views that do not
+ *   exist) and states the rules Gates 2 and 3 enforce, so the model can write a query that passes
+ *   them the first time (03 rows 7-8). Its input is exactly the draft's `sql` and `explanation`.
+ * - `describe_schema`, the `query` row and `open_segment` are not seeded here: the `query`
+ *   handler type comes in its own unit (16, Friday); `describe_schema` and the `passthrough`
+ *   type are not in 16 §MVP scope.
  */
 
 import type { SqlValue } from '../worker/ingest/sql'
@@ -116,6 +119,28 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
     handlerType: 'builtin',
     executionConfig: { handler_name: 'aggregate' },
     sortOrder: 20,
+  },
+  {
+    name: 'query_sql',
+    description:
+      'Run ONE read-only SQLite SELECT over the PII-free views v_profiles, v_web_events, v_app_events, v_funnel and ' +
+      'v_source_app_conversion (columns in the system prompt). Subjects appear only as pk_… keys. Use only when ' +
+      'segment and aggregate cannot answer. The server refuses the query unless: it starts with SELECT; it is one ' +
+      'statement with no ";"; it has no WITH, PRAGMA, ATTACH or comments; it reads only those views and their columns, ' +
+      'written plainly without quotes; every computed column is named with AS; dates are literals counted from TODAY ' +
+      '(never \'now\' or CURRENT_DATE). At most 100 rows come back: a missing or larger LIMIT becomes LIMIT 100. ' +
+      'Exclude unsubscribed profiles (status = \'active\') unless the teammate asks for them. Never show the SQL to the user.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sql: { type: 'string', minLength: 1, description: 'A single read-only SELECT over the v_* views above.' },
+        explanation: { type: 'string', minLength: 1, description: 'One line: what the query answers.' },
+      },
+      required: ['sql', 'explanation'],
+    },
+    handlerType: 'builtin',
+    executionConfig: { handler_name: 'query_sql' },
+    sortOrder: 30,
   },
 ]
 

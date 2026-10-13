@@ -6,8 +6,9 @@
 //     row; null when the request stopped before any model call, e.g. at Gate 1), how the request
 //     ended (`outcome`, read from the trace's last row: see traceOutcome), the most severe row
 //     status, the number of model and tool rows, and the tokens summed over the trace. Outcome and
-//     status differ on purpose: a D-58 discard, an unknown tool or an invalid tool input writes a
-//     blocked or error row and the request still answers 200, so the worst row is not the result
+//     status differ on purpose: a D-58 discard, an unknown tool, a Gate 2/3 refusal or an invalid
+//     tool input writes a blocked or error row and the request still answers 200, so the worst row
+//     is not the result
 //   - one trace: every ai_audit row of the trace in write order, each field as stored. request_json
 //     is the exact payload sent after the scanner (the writer refuses a row that fails the PII
 //     scan), so nothing here can hold an email; the re-hydrated result is never stored (05
@@ -17,7 +18,7 @@
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
 import { SQL_DISCARD_ERROR } from '../assistant/route'
-import { TOOL_FAILED_ERROR, UNKNOWN_TOOL_ERROR } from '../assistant/tools/tool-executor'
+import { isGateDenialError, TOOL_FAILED_ERROR, UNKNOWN_TOOL_ERROR } from '../assistant/tools/tool-executor'
 import type { AppEnv } from '../env'
 
 /** Traces the list returns when the request names no limit. */
@@ -36,7 +37,7 @@ export type AuditStatus = 'success' | 'error' | 'blocked'
  *                           missing key, tool loading, the PII scanner)
  *   failed                  the last row is a failed model call or a tool that threw: 502 or 500
  *   unfinished              the last row is a step the loop goes on from (a tool call, an unknown
- *                           tool, an invalid tool input): the request is still running, or it
+ *                           tool, a Gate 2/3 refusal, an invalid tool input): the request is still running, or it
  *                           stopped on an error that wrote no row
  */
 export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished'
@@ -104,7 +105,7 @@ export function traceOutcome({ last_kind: kind, last_status: status, last_error:
   // The discard row names its sign after the fixed text: "<SQL_DISCARD_ERROR> (select_line)".
   if (kind === 'blocked' && error !== null && error.startsWith(SQL_DISCARD_ERROR)) return 'answered_text_replaced'
   if (kind === 'model_request' && status === 'success') return 'answered'
-  if (status === 'blocked') return error === UNKNOWN_TOOL_ERROR ? 'unfinished' : 'blocked'
+  if (status === 'blocked') return error === UNKNOWN_TOOL_ERROR || isGateDenialError(error) ? 'unfinished' : 'blocked'
   if (status === 'error') return kind === 'model_request' || error === TOOL_FAILED_ERROR ? 'failed' : 'unfinished'
   return 'unfinished'
 }
