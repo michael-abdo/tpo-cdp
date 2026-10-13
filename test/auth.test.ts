@@ -75,6 +75,7 @@ function probeApp(): Hono<AppEnv> {
   const probe = new Hono<AppEnv>()
   probe.use('/api/*', requireSession)
   probe.get('/api/probe', (c) => c.json({ sub: c.get('session').sub }))
+  probe.post('/api/probe', (c) => c.json({ sub: c.get('session').sub, method: 'POST' }))
   probe.onError(onError)
   return probe
 }
@@ -167,6 +168,29 @@ describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
     expect(((await signedIn.json()) as { error: string }).error).toBe('not_found')
 
     expect((await SELF.fetch(`${BASE}/health`)).status).toBe(200)
+  })
+
+  it('the guard covers POSTs too: only POST /api/login and POST /api/logout are open', async () => {
+    // A signed-out JSON POST to a protected path is 401, never 404 (the mutant that opened every
+    // POST would let future segment exports and assistant calls through without a session).
+    const anonymous = await SELF.fetch(`${BASE}/api/overview`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })
+    expect(anonymous.status).toBe(401)
+    expect(((await anonymous.json()) as { error: string }).error).toBe('unauthorized')
+
+    const cookie = await loginCookie()
+    const signedIn = await SELF.fetch(`${BASE}/api/overview`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: '{}' })
+    expect(signedIn.status).toBe(404)
+    expect(((await signedIn.json()) as { error: string }).error).toBe('not_found')
+
+    // The open set is POST-only: an anonymous GET to /api/login is guarded like any other path.
+    expect((await SELF.fetch(`${BASE}/api/login`)).status).toBe(401)
+
+    // Same on the test-local app, where a POST route actually exists past the guard.
+    const probeAnonymous = await probeApp().fetch(new Request(`${BASE}/api/probe`, { method: 'POST', headers: JSON_HEADERS, body: '{}' }), env)
+    expect(probeAnonymous.status).toBe(401)
+    const probeSignedIn = await probeApp().fetch(new Request(`${BASE}/api/probe`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: '{}' }), env)
+    expect(probeSignedIn.status).toBe(200)
+    expect(((await probeSignedIn.json()) as { method: string }).method).toBe('POST')
   })
 
   it('the cookie signature is HMAC-SHA256 keyed by SESSION_SECRET over the payload part', async () => {
