@@ -5,10 +5,11 @@
 // this answer was worked out": the window, the filters and the definitions used, in words, with the
 // definitions' plain text from DEFINITIONS (02 §Derived "one runtime source"); Technical details:
 // the raw names, the result type and the trace id. The filters are the model's own words, so they
-// pass the D-58 check first and are hidden whole on any sign of SQL (src/filters-applied.ts). Column and filter names show in the words
-// /segments uses (src/labels.ts, principle 4); a segment answer also offers Export CSV (06
-// §/assistant). Every answer links to its trace on /audit ("what the AI saw", 05 §Proof surfaces). The request takes 5–20 s (04), shown as a short text
-// state. Errors show the 04 envelope's message; the 503 for a missing key names the hosted URL.
+// pass the D-58 check first and are hidden whole on any sign of SQL (src/filters-applied.ts).
+// Column and filter names show in the words /segments uses (src/labels.ts, principle 4); a segment
+// answer also offers Export CSV (06 §/assistant). Every answer links to its trace on /audit ("what
+// the AI saw", 05 §Proof surfaces). The request takes 5–20 s (04), shown as a short text state.
+// Errors show the 04 envelope's message; the 503 for a missing key names the hosted URL.
 // Single-shot: there is no conversation history (09 D-34). "Explain this" on /growth opens this page
 // with ?q=<question> (09 D-39): the box is filled in and nothing is sent until the reader presses Ask.
 

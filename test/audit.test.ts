@@ -597,10 +597,14 @@ describe("/assistant screens the model's filters_applied with the D-58 check bef
     ['a line-start SELECT inside a value', { ...REAL, note: 'counted with\nSELECT count(*)' }],
     ['a ```sql fence in a value', { ...REAL, note: '```sql\nSELECT 1\n```' }],
     ['SQL as a key', { ...REAL, [SQL]: true }],
-    ['select in one key, from in a later value', { select: 'pkey', ...REAL, where: 'from v_profiles' }],
+    // No window_* key here: "window_from" would itself supply a whole-word "from" ("_" is a boundary).
+    ['select in one key, from in a later value', { status: ['active'], 'columns to select': ['pkey'], where: 'from v_profiles' }],
     ['SQL in a nested array', { ...REAL, steps: [['first', SQL]] }],
     ['a zero-width space inside the keyword', { ...REAL, query: 'SEL\u200BECT email_norm FROM subscribers' }],
   ]
+  it('the select-in-a-key case needs its later from: without it the same filters show', () => {
+    expect(filtersAppliedView({ status: ['active'], 'columns to select': ['pkey'] }).status).toBe('shown')
+  })
   for (const [name, filters] of shapes) {
     it(`${name} → hidden whole, at both levels, with a sentence in words`, () => {
       const view = filtersAppliedView(filters)
