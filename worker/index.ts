@@ -4,6 +4,7 @@ import { loginRoutes } from './auth/login'
 import { ApiError, requireJson, requireSession } from './auth/middleware'
 import { type AppEnv, assertBindings, MissingBindingsError } from './env'
 import { assistantRoutes } from './routes/assistant'
+import { auditRoutes } from './routes/audit'
 import { eventRoutes } from './routes/events'
 import { lookupRoutes } from './routes/lookup'
 import { overviewRoutes } from './routes/overview'
@@ -44,6 +45,8 @@ app.route('/api', overviewRoutes)
 app.route('/api', lookupRoutes)
 app.route('/api', segmentRoutes)
 app.route('/api', eventRoutes)
+// GET /api/audit?limit= and /api/audit/:trace_id: the ai_audit viewer, session only (04, 05 §Proof surfaces).
+app.route('/api', auditRoutes)
 // POST /api/assistant: session + 100 calls/hour/session (04 §Auth); the model is called directly (09 D-03).
 app.route('/api', assistantRoutes())
 

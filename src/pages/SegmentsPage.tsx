@@ -6,8 +6,11 @@
 // (02 §Derived "one runtime source"), raw names and the placeholders-only SQL shape. Status
 // defaults to active; the response's hidden_unsubscribed is shown in words when it is above 0.
 // The form sends what the inputs hold (02 §Normalization): labels below are display maps only.
+// A segment answer from /assistant arrives as router state {filters} ("Open in builder", 06
+// §/assistant): the form takes those filters and previews them once, so the count is the builder's.
 
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router'
 import { TODAY } from '../../shared/config'
 import { DEFINITIONS } from '../../shared/derive'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
@@ -75,6 +78,23 @@ const FOOTER_DEFINITIONS = [
 /** The CSV's columns as the export writes them (04 §Segments). */
 const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
 
+/** 04 filters as the form holds them; toFilters(toForm(f)) previews the same readers as f. */
+function toForm(f: SegmentFilters): Form {
+  return {
+    status: f.status.length === 1 ? f.status[0] : 'all',
+    sources: f.source ?? [],
+    days: f.days_since_open_gte === undefined ? '' : String(f.days_since_open_gte),
+    includeNeverOpened: f.days_since_open_gte !== undefined && f.include_never_opened,
+    hasApp: f.has_app === null ? 'any' : f.has_app ? 'yes' : 'no',
+  }
+}
+
+/** Router state set by "Open in builder" on /assistant. */
+function openedFilters(state: unknown): SegmentFilters | null {
+  if (typeof state !== 'object' || state === null || !('filters' in state)) return null
+  return (state as { filters: SegmentFilters }).filters
+}
+
 /** The 04 filters object; a days value the server would reject is still sent, so its 400 message shows. */
 function toFilters(form: Form): SegmentFilters {
   const days = form.days.trim()
@@ -119,7 +139,9 @@ function RowDetails({ row }: { row: SegmentRow }) {
 }
 
 export default function SegmentsPage() {
-  const [form, setForm] = useState<Form>(DEFAULT_FORM)
+  const location = useLocation()
+  const opened = openedFilters(location.state)
+  const [form, setForm] = useState<Form>(() => (opened === null ? DEFAULT_FORM : toForm(opened)))
   const [result, setResult] = useState<Result | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -141,6 +163,14 @@ export default function SegmentsPage() {
       })
     }
   }
+
+  // Filters opened from /assistant preview once per navigation (location.key), StrictMode included.
+  const previewedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (opened === null || previewedFor.current === location.key) return
+    previewedFor.current = location.key
+    void preview(toForm(opened))
+  }, [opened, location.key])
 
   function submit(e: FormEvent) {
     e.preventDefault()

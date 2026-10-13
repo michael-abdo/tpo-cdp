@@ -1,4 +1,5 @@
-// Routes for the screens built so far (06 §Navigation): /login, / (Overview), /lookup, /segments, /events.
+// Routes for the screens built so far (06 §Navigation): /login, / (Overview), /lookup, /segments, /events,
+// /assistant and /audit (with /audit/:traceId for one trace).
 // Every page except /login sits under the top bar; the session itself is checked by the API,
 // whose 401 sends the browser back to /login (src/api.ts).
 // Shell a11y (06 §UI principles 7): "Skip to content" link, aria-current on the nav, focus moves to
@@ -10,6 +11,8 @@ import { TODAY } from '../shared/config'
 import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
 import { ErrorLine } from './components'
+import AssistantPage from './pages/AssistantPage'
+import AuditPage from './pages/AuditPage'
 import EventsPage from './pages/EventsPage'
 import LoginPage from './pages/LoginPage'
 import LookupPage from './pages/LookupPage'
@@ -22,6 +25,8 @@ const NAV = [
   { to: '/lookup', label: 'Find a reader' },
   { to: '/segments', label: 'Build a list' },
   { to: '/events', label: 'App events' },
+  { to: '/assistant', label: 'Ask a question' },
+  { to: '/audit', label: 'AI audit log' },
 ] as const
 
 const APP_NAME = 'TPO Mini CDP'
@@ -51,8 +56,9 @@ function TopBar() {
     }
   }
 
+  // Only Overview needs `end`: on /audit/:traceId, "AI audit log" stays marked as the current page.
   const links = NAV.map((item) => (
-    <NavLink key={item.to} to={item.to} end className={navClass}>
+    <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
       {item.label}
     </NavLink>
   ))
@@ -124,7 +130,7 @@ function Shell() {
   const focusedFor = useRef(pathname)
 
   useEffect(() => {
-    const page = NAV.find((item) => item.to === pathname)
+    const page = NAV.find((item) => item.to === pathname || (item.to !== '/' && pathname.startsWith(`${item.to}/`)))
     document.title = page ? `${page.label} · ${APP_NAME}` : APP_NAME
     if (focusedFor.current === pathname) return
     focusedFor.current = pathname
@@ -168,6 +174,9 @@ export default function App() {
         <Route path="lookup" element={<LookupPage />} />
         <Route path="segments" element={<SegmentsPage />} />
         <Route path="events" element={<EventsPage />} />
+        <Route path="assistant" element={<AssistantPage />} />
+        <Route path="audit" element={<AuditPage />} />
+        <Route path="audit/:traceId" element={<AuditPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
