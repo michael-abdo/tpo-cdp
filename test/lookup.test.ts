@@ -25,8 +25,9 @@ import { eventIdPool, sendWebhook } from './helpers/webhook'
 // - joy's pk_ key (derived), her visitor v_c9e136fd6d (web_events.csv, 02 §Counts) and the
 //   brief's sample device d_4b21e8 (09 D-11), named by a webhook from u_ceed5f12.
 // - the stub u_2b6447a (julia's id with its last character removed, as T-WH-6 uses), sent on
-//   the same device first with the same timestamp, so joy's later arrival is the device's
-//   current user (09 D-43: an equal event_ts overwrites).
+//   the same device AFTER joy but with an earlier event_ts (2026-06-30 20:45:52,
+//   web_events.csv:3, as T-WH-7 uses), so the device's current user is joy by event_ts
+//   (01 §Identity resolution, 09 D-43), not the stub that arrived last.
 // - v_569d3a387c (web_events.csv:13), an anonymous visitor: no /subscribe email, no profile.
 // - 404 inputs per 09 D-47, each a real id with its last character removed: joy's pk_ key,
 //   "d_4b21e" and "v_c9e136fd6" (none occurs in data/*.csv or in a sent event).
@@ -244,21 +245,33 @@ describe('T-API-1 lookup by pk_, d_ and v_ resolve the same profile as the email
   const SAMPLE_DEVICE = 'd_4b21e8'
   const STUB = 'u_2b6447a'
 
+  // Joy first at the brief's sample time (09 D-11), then the stub on the same device at an
+  // earlier real time (web_events.csv:3): arrival order and event_ts order disagree.
+  const SENT: [user_id: string, timestamp: string][] = [
+    ['u_ceed5f12', '2026-09-28T14:22:05Z'],
+    [STUB, '2026-06-30T20:45:52Z'],
+  ]
+
   beforeAll(async () => {
     const nextEventId = eventIdPool()
-    // One timestamp for both, from the brief's sample event (09 D-11); the later arrival wins.
-    for (const user_id of [STUB, 'u_ceed5f12']) {
+    for (const [user_id, timestamp] of SENT) {
       const res = await sendWebhook(
-        JSON.stringify({
-          event_id: nextEventId(),
-          event: 'read_story',
-          user_id,
-          device_id: SAMPLE_DEVICE,
-          timestamp: '2026-09-28T14:22:05Z',
-        }),
+        JSON.stringify({ event_id: nextEventId(), event: 'read_story', user_id, device_id: SAMPLE_DEVICE, timestamp }),
       )
       expect(res.status, user_id).toBe(202)
     }
+  })
+
+  it('a device names the user of its latest event_ts, not of the event that arrived last', async () => {
+    const lastArrived = await env.DB.prepare(
+      'SELECT user_id FROM app_events WHERE device_id = ? AND user_id IS NOT NULL ORDER BY received_at DESC, rowid DESC LIMIT 1',
+    )
+      .bind(SAMPLE_DEVICE)
+      .first<string>('user_id')
+    expect(lastArrived).toBe(STUB)
+    const byDevice = await found(SAMPLE_DEVICE)
+    expect(byDevice.profile.email).toBe(JOY)
+    expect(byDevice.app).toMatchObject({ user_id: 'u_ceed5f12' })
   })
 
   it('joy by pk_, by her device and by her visitor id: the same body as by email', async () => {
