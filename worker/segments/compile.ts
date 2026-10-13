@@ -3,8 +3,10 @@
 // a bound `?`, TODAY included, so the SQL text is its own placeholders-only `sql_shape`. The
 // days-since-open comparison is the `DEFINITIONS.days_since_open.sql` fragment from
 // shared/derive.ts, never a re-typed formula. Source values are canonicalized by
-// shared/normalize.ts, never by SQL (02 §Normalization). The SQL reads tables, not v_* views:
-// segment rows carry the email, which the UI may see (03 §Request flows).
+// shared/normalize.ts, never by SQL (02 §Normalization). The builder's SQL reads tables, not
+// v_* views: its rows carry the email, which the UI may see (03 §Other request flows). The
+// assistant's segment tool compiles the same filters, through the same WHERE builder, over
+// v_profiles only (`compileModelSegment`), so the model's tool never reads a table.
 
 import { TODAY } from '../../shared/config'
 import { DEFINITIONS } from '../../shared/derive'
@@ -176,42 +178,97 @@ function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(', ')
 }
 
+/** How one relation spells the columns a segment's WHERE reads. */
+interface SegmentRelation {
+  /** A column of the subscriber row (status, source, last_open_date) as this relation names it. */
+  column(name: 'status' | 'source' | 'last_open_date'): string
+  /** True exactly when the subscriber has an app account. */
+  hasApp: string
+}
+
+/** The builder's relation: tables, so its rows can carry the email the UI shows (03 §Other request flows). */
+const TABLES: SegmentRelation = {
+  column: (name) => `s.${name}`,
+  hasApp: 'EXISTS (SELECT 1 FROM app_users a WHERE a.email_norm = s.email_norm)',
+}
+
+/** The assistant's relation: v_profiles only, the view 01 §PII-free views lets the model read. */
+const MODEL_VIEW: SegmentRelation = {
+  column: (name) => name,
+  hasApp: '(has_app = 1)',
+}
+
+/**
+ * The one filter → WHERE translation, used by the builder and the assistant's segment tool, so
+ * both apply the same rules to the same filter object (T-AI-3 pins equal counts).
+ */
+function segmentWhere(filters: SegmentFilters, rel: SegmentRelation): { where: string; params: SqlValue[] } {
+  const where: string[] = []
+  const params: SqlValue[] = []
+
+  where.push(`${rel.column('status')} IN (${placeholders(filters.status.length)})`)
+  params.push(...filters.status)
+
+  if (filters.source !== undefined) {
+    where.push(`${rel.column('source')} IN (${placeholders(filters.source.length)})`)
+    params.push(...filters.source)
+  }
+
+  if (filters.days_since_open_gte !== undefined) {
+    // 02 §Derived: days_since_open >= N; never-openers only with the toggle, regardless of signup age.
+    const lastOpen = rel.column('last_open_date')
+    const opened = `(${lastOpen} IS NOT NULL AND ${DAYS_SINCE_OPEN_SQL} >= ?)`
+    params.push(TODAY, filters.days_since_open_gte)
+    where.push(filters.include_never_opened ? `(${opened} OR ${lastOpen} IS NULL)` : opened)
+  }
+
+  if (filters.has_app !== null) {
+    where.push(`${filters.has_app ? '' : 'NOT '}${rel.hasApp}`)
+  }
+  return { where: where.join(' AND '), params }
+}
+
 /**
  * Compiles validated filters to one bound SELECT. Every subscriber has a profile (seed,
  * 02 §Linking); the LEFT JOIN keeps a subscriber without one in the count, and the row
  * readers fail loud on its missing score instead of the row vanishing.
  */
 export function compileSegment(filters: SegmentFilters): CompiledSegment {
-  const where: string[] = []
-  const params: SqlValue[] = []
-
-  where.push(`s.status IN (${placeholders(filters.status.length)})`)
-  params.push(...filters.status)
-
-  if (filters.source !== undefined) {
-    where.push(`s.source IN (${placeholders(filters.source.length)})`)
-    params.push(...filters.source)
-  }
-
-  if (filters.days_since_open_gte !== undefined) {
-    // 02 §Derived: days_since_open >= N; never-openers only with the toggle, regardless of signup age.
-    const opened = `(s.last_open_date IS NOT NULL AND ${DAYS_SINCE_OPEN_SQL} >= ?)`
-    params.push(TODAY, filters.days_since_open_gte)
-    where.push(filters.include_never_opened ? `(${opened} OR s.last_open_date IS NULL)` : opened)
-  }
-
-  if (filters.has_app !== null) {
-    where.push(`${filters.has_app ? '' : 'NOT '}EXISTS (SELECT 1 FROM app_users a WHERE a.email_norm = s.email_norm)`)
-  }
-
+  const { where, params } = segmentWhere(filters, TABLES)
   const sql = [
     'SELECT s.email_norm AS email, s.status, s.source, s.signup_date, s.last_open_date, p.engagement_score,',
-    'EXISTS (SELECT 1 FROM app_users a WHERE a.email_norm = s.email_norm) AS has_app',
+    `${TABLES.hasApp} AS has_app`,
     'FROM subscribers s LEFT JOIN profiles p ON p.email_norm = s.email_norm',
-    `WHERE ${where.join(' AND ')}`,
+    `WHERE ${where}`,
     'ORDER BY s.email_norm',
   ].join(' ')
   return { sql, params, sql_shape: sql }
+}
+
+/** Columns of a segment row as the assistant's segment tool returns it: the pkey in place of the email. */
+export const MODEL_SEGMENT_COLUMNS = ['pkey', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app'] as const
+
+/** The assistant's segment: the same filters over v_profiles, keyed by pkey (05 §Strategy). */
+export interface CompiledModelSegment {
+  /** The segment's rows, MODEL_SEGMENT_COLUMNS in order, by pkey; the caller appends `LIMIT ?`. */
+  rowsSql: string
+  /** `SELECT count(*) AS n` over the same rows. */
+  countSql: string
+  params: SqlValue[]
+}
+
+/**
+ * The same filters compiled over v_profiles, the only relation this SQL names (05 §Exactly what
+ * the model receives, "Structural"). v_profiles has no email, so rows come out in pkey order, not
+ * the builder's email order; status IN (…) drops the profiles that have no subscriber row.
+ */
+export function compileModelSegment(filters: SegmentFilters): CompiledModelSegment {
+  const { where, params } = segmentWhere(filters, MODEL_VIEW)
+  return {
+    rowsSql: `SELECT ${MODEL_SEGMENT_COLUMNS.join(', ')} FROM v_profiles WHERE ${where} ORDER BY pkey`,
+    countSql: `SELECT count(*) AS n FROM v_profiles WHERE ${where}`,
+    params,
+  }
 }
 
 /**

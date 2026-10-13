@@ -48,7 +48,7 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
     return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
   }
 
-  const started = Date.now() // ai_audit.latency_ms is operational metadata (02 §Time: ai_audit timestamps)
+  const started = Date.now() // wall clock for ai_audit.latency_ms only (02 §Time allow-list)
   let output: ToolOutput
   try {
     if (typeof call.input !== 'object' || call.input === null || Array.isArray(call.input)) {
@@ -57,6 +57,9 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
     output = await tool.handler.run(ctx.db, call.input as Record<string, unknown>)
   } catch (err) {
     if (err instanceof ToolInputError) {
+      // The input came in a model response that already passed the scanner (loop.ts), so problems
+      // that quote it hold no PII; they are logged like every other refusal (CLAUDE.md "Loud").
+      console.warn(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, tool_name: tool.name, outcome: 'invalid_input', problems: err.problems }))
       const content = formatToolError(tool.name, err.problems)
       await guardPayload(ctx.trace, content, 'tool_result', tool.name)
       await ctx.trace.write({

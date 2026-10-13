@@ -95,7 +95,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     const request = buildModelRequest({ views: input.views, tools: input.tools.definitions, question: input.question, rounds })
     await guardPayload(input.trace, request, 'model_request')
 
-    const started = Date.now() // ai_audit.latency_ms, operational metadata (02 §Time)
+    const started = Date.now() // wall clock for ai_audit.latency_ms only (02 §Time allow-list)
     let response: Anthropic.Message
     try {
       response = await input.transport(request)

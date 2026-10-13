@@ -7,13 +7,13 @@
 // Every handler returns pk_ keys, never an email or a raw id (05 §Strategy). The executor scans
 // each result before the model sees it (tool-executor.ts, 03 row 9).
 //
-// - `segment` takes exactly the 04 §/api/segments/preview filters object and reuses
-//   worker/segments/compile.ts and the preview route's count functions, so its count is the
-//   builder's by construction (T-AI-3). compile.ts reads tables (its rows carry the email the
-//   UI shows); this handler wraps that SQL and selects only profiles.pkey plus the non-PII
-//   columns, so the email never leaves the database. That is the one tool read that is not over a
-//   v_* view; the scanner on the result (05 §Scanner) is the second control.
-// - `aggregate` reads only v_* views. Every value is a bound parameter; every SQL fragment
+// - `segment` takes exactly the 04 §/api/segments/preview filters object, parsed by the builder's
+//   parseFilters and compiled by the builder's WHERE translation (compileModelSegment in
+//   worker/segments/compile.ts) over v_profiles, so it reads only a PII-free view (05 §Exactly
+//   what the model receives, "Structural"; 07 §H) and applies the builder's rules. Its count and
+//   hidden-unsubscribed count equal the builder's (T-AI-3 pins 177 / 55). Rows come out in pkey
+//   order, since the view holds no email.
+// - `aggregate` also reads only v_* views. Every value is a bound parameter; every SQL fragment
 //   comes from the fixed METRICS table below, never from the input. Cold comparisons use the
 //   `DEFINITIONS.cold.sql` fragment from shared/derive.ts, the one runtime source (02 §Derived).
 
@@ -24,8 +24,16 @@ import { canonicalSource } from '../../../shared/normalize'
 import { ApiError } from '../../auth/middleware'
 import { isIsoDate, SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../ingest/quarantine'
 import type { SqlValue } from '../../ingest/sql'
-import { countSegment, hiddenUnsubscribed, PREVIEW_DEFAULT_LIMIT } from '../../routes/segments'
-import { compileSegment, FILTER_KEYS, parseFilters, type SegmentFilters } from '../../segments/compile'
+import { PREVIEW_DEFAULT_LIMIT } from '../../routes/segments'
+import {
+  type CompiledModelSegment,
+  compileModelSegment,
+  FILTER_KEYS,
+  hiddenUnsubscribedFilters,
+  MODEL_SEGMENT_COLUMNS,
+  parseFilters,
+  type SegmentFilters,
+} from '../../segments/compile'
 
 export type Cell = string | number | boolean | null
 export type ResultRow = Record<string, Cell>
@@ -72,16 +80,20 @@ function placeholders(n: number): string {
 
 // ── segment ──────────────────────────────────────────────────────────────────────────────
 
-const SEGMENT_COLUMNS = ['pkey', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app']
-
 interface SegmentKeyRow {
-  pkey: string | null
+  pkey: string
   status: string
   source: string | null
   signup_date: string
   last_open_date: string | null
-  engagement_score: number | null
+  engagement_score: number
   has_app: number
+}
+
+async function countModelSegment(db: D1Database, segment: CompiledModelSegment): Promise<number> {
+  const n = await db.prepare(segment.countSql).bind(...segment.params).first<number>('n')
+  if (n === null) throw new Error('segment tool: count(*) returned no row')
+  return n
 }
 
 function segmentDefinitions(filters: SegmentFilters): DefinitionKey[] {
@@ -101,26 +113,20 @@ const segmentHandler: BuiltinHandler = {
       if (err instanceof ApiError) throw new ToolInputError((err.details ?? [err.message]).map(String))
       throw err
     }
-    const segment = compileSegment(filters)
-    // The builder's own SQL, wrapped: only the pkey and non-PII columns come out (file header).
-    const keyed = db
-      .prepare(
-        `SELECT p.pkey, seg.status, seg.source, seg.signup_date, seg.last_open_date, seg.engagement_score, seg.has_app
-         FROM (${segment.sql}) seg LEFT JOIN profiles p ON p.email_norm = seg.email
-         ORDER BY seg.email LIMIT ?`,
-      )
-      .bind(...segment.params, PREVIEW_DEFAULT_LIMIT)
-      .all<SegmentKeyRow>()
-    const [count, hidden, { results }] = await Promise.all([countSegment(db, segment), hiddenUnsubscribed(db, filters), keyed])
+    const segment = compileModelSegment(filters)
+    const hiddenFilters = hiddenUnsubscribedFilters(filters)
+    const [count, hidden, { results }] = await Promise.all([
+      countModelSegment(db, segment),
+      hiddenFilters === null ? 0 : countModelSegment(db, compileModelSegment(hiddenFilters)),
+      db.prepare(`${segment.rowsSql} LIMIT ?`).bind(...segment.params, PREVIEW_DEFAULT_LIMIT).all<SegmentKeyRow>(),
+    ])
     const rows = results.map((row): ResultRow => {
-      if (row.pkey === null || row.engagement_score === null) {
-        throw new Error('segment tool: a subscriber row has no profile (02 §Linking)')
-      }
+      if (row.has_app !== 0 && row.has_app !== 1) throw new Error(`segment tool: has_app must be 0 or 1, got ${JSON.stringify(row.has_app)}`)
       return { ...row, has_app: row.has_app === 1 }
     })
     return {
       tool: 'segment',
-      columns: SEGMENT_COLUMNS,
+      columns: [...MODEL_SEGMENT_COLUMNS],
       rows,
       total_rows: count,
       summary: {

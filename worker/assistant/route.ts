@@ -18,6 +18,7 @@
 // written to ai_audit)"): Gate 1, the scanner, the executor and the loop write their own rows;
 // this file writes the rate-limit, missing-key and tool-loading rows.
 
+import { HOSTED_URL } from '../../shared/config'
 import { ApiError } from '../auth/middleware'
 import { type AuditTrace, startTrace } from './audit/ai-audit'
 import { enforceGate1 } from './gates/gate1-input-sanitizer'
@@ -30,9 +31,6 @@ import { loadTools, type LoadedTools } from './tools/tool-loader'
 
 /** 09 D-40. */
 export const ASSISTANT_CALLS_PER_HOUR = 100
-
-/** The hosted deployment (README), named by the 503 so a local run without a key has somewhere to go (11). */
-export const HOSTED_URL = 'https://tpo-cdp.michaelabdo-mail.workers.dev'
 
 export interface AssistantDeps {
   db: D1Database
@@ -51,7 +49,7 @@ export interface AssistantResponse extends AssistantResult {
 
 /** Assistant calls this session made in the last hour: distinct traces, not counting rate-limited ones. */
 export async function callsInLastHour(db: D1Database, sessionSub: string): Promise<number> {
-  // Wall clock: the window is over ai_audit.created_at, itself a wall-clock column (02 §Time).
+  // Wall clock: the per-session one-hour window over ai_audit.created_at (02 §Time allow-list; 09 D-40).
   const since = new Date(Date.now() - 3_600_000).toISOString()
   const n = await db
     .prepare(
