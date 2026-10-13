@@ -859,6 +859,26 @@ describe('T-AI-5: the teammate-facing text never contains a ```sql block or a SE
     ['inline backticks over two lines', 'There are 46; I used `SELECT pkey\nFROM subscribers` for it.', 'There are 46; I used for it.'],
     ['a WITH … AS ( statement', 'WITH cold AS (SELECT pkey FROM v_profiles) SELECT count(*) FROM cold; There are 46.', 'There are 46.'],
     ['two statements in one block', 'There are 46. SELECT 1 FROM v_profiles; and select pkey from v_funnel; done.', 'There are 46. and done.'],
+    // The H2b review: a blank line between SELECT and FROM split the statement into two blocks.
+    ['a blank line between SELECT and FROM', 'I ran SELECT count(*)\n\nFROM v_profiles;\n\nThere are 46.', 'I ran\n\nThere are 46.'],
+    [
+      'an indented block with blank lines between its clauses',
+      "I ran:\n\n    SELECT count(*)\n\n    FROM v_profiles\n\n    WHERE source = 'instagram';\n\nThere are 46.",
+      'I ran:\n\nThere are 46.',
+    ],
+    ['list items, one clause each, no ;', "I ran:\n\n- SELECT count(*)\n\n- FROM v_profiles\n\n- WHERE source = 'instagram'\n\nThere are 46.", 'I ran:\n\nThere are 46.'],
+    ['lower case over blank lines, no ;', "There are 46. select email\n\nfrom v_profiles\n\nwhere source = 'instagram'\n\nDone.", 'There are 46.\n\nDone.'],
+    ['lower case, a plain table name, no ;', 'There are 46. select email from subscribers', 'There are 46.'],
+    ['lower case, a plain table name, then WHERE', "There are 46. select email from subscribers where status = 'active' and more.", 'There are 46.'],
+    ['an alias before WHERE', "There are 46. select email from subscribers s where s.status = 'active'", 'There are 46.'],
+    // Pins the capitals rule and the select-list marks: each is the only SQL sign in its shape.
+    ['all-caps keywords over "the" and a plain word', 'There are 46. SELECT pkey FROM the profiles', 'There are 46.'],
+    ['SQL marks in a lower-case select list over "the"', 'There are 46. I ran select count(*) from the profiles view.', 'There are 46. I ran'],
+    ['a view name followed by English punctuation', 'There are 46. I ran select pkey from v_profiles, then counted.', 'There are 46. I ran'],
+    ['a ; inside a quoted string does not end the cut', "There are 46. SELECT pkey FROM v_profiles WHERE source = 'a;b' AND status = 'active'; Done.", 'There are 46. Done.'],
+    ['one statement over two adjacent inline spans', 'I ran `SELECT count(*)` `FROM v_profiles`\n\nThere are 46.', 'I ran\n\nThere are 46.'],
+    ['a tilde fence', 'There are 46.\n~~~sql\nSELECT 1 FROM v_profiles\n~~~\nDone.', 'There are 46.\n\nDone.'],
+    ['a fence that never closes', 'There are 46.\n```sql\nSELECT 1 FROM v_profiles', 'There are 46.'],
   ]
   for (const [shape, sql, kept] of shapes) {
     it(`cuts a SELECT statement: ${shape}`, () => {
@@ -878,13 +898,35 @@ describe('T-AI-5: the teammate-facing text never contains a ```sql block or a SE
     })
   }
 
-  it('keeps prose that only uses the word "select", even with "from the …" after it', () => {
+  it('a statement that is the whole text leaves nothing, and respond() says no usable answer', () => {
+    const sql = 'SELECT count(*)\n\nFROM v_profiles;'
+    expect(removeSql(sql)).toEqual({ text: '', removed: true })
+    expect(respond({ modelText: sql, outputs: [], capped: false }).result.text).toBe('The assistant did not return a usable answer.')
+  })
+
+  it('keeps prose that only uses the word "select", even with "from …" after it', () => {
     for (const plain of [
       'Select a segment in the builder to export it.',
       'You can select readers from the builder, then export them from the list.',
       'To narrow it, select a source and a status.',
+      // The H2b review: "from" + a source or a time was cut as if it were a table.
+      'To build it, select subscribers from Instagram who have not opened in 30 days.',
+      'Select readers from Instagram, then export them.',
+      'You can select readers from Facebook or Instagram.',
+      'Select readers who signed up from last month.',
+      'Select a segment.\n\nMost of the 46 came from Instagram.',
+      'Select a segment. Most of them came from subscribers.',
+      // A sentence ends inside the select list, so this SELECT is prose even though "from subscribers" ends a line.
+      'Select a segment. Its readers come from subscribers\n\nThen export them.',
     ]) {
       expect(removeSql(plain)).toEqual({ text: plain, removed: false })
+      const inBlock = respond({
+        modelText: finalText('prose', { type: 'answer', text: plain, window: null, filters_applied: {}, definitions_used: [] }),
+        outputs: [],
+        capped: false,
+      })
+      expect(inBlock.notes.sqlRemoved).toBe(false)
+      expect(inBlock.result.text).toBe(plain)
     }
   })
 })
