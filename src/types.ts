@@ -25,6 +25,14 @@ export interface LookupSearch {
     status: SubscriberStatus | null
   }[]
   truncated: boolean
+  /** Near spellings (09 D-59), only when `matches` is empty; `[]` otherwise. */
+  did_you_mean: {
+    pkey: string
+    email: string
+    kind: Lookup['profile']['kind']
+    /** Damerau–Levenshtein distance, 1 or 2. */
+    distance: number
+  }[]
 }
 
 /** GET /api/lookup?q= */

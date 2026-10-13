@@ -1,9 +1,10 @@
 import { env, SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { pkeyForEmail } from '../shared/pseudonym'
+import { pkeyForEmail, pkeyForUnknownUser } from '../shared/pseudonym'
 import { csvTimestampToIso } from '../worker/ingest/web'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
+import { eventIdPool, sendWebhook } from './helpers/webhook'
 
 // GET /api/lookup (04 §/api/lookup, 06 §/lookup; R2, R1.2), T-API-1 and the lookup half of
 // T-ING-5 (08). The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts) and no
@@ -19,6 +20,16 @@ import { piiKeySecret, seedDatabase } from './helpers/seed'
 // Error-path inputs per 09 D-47, each a removal from a real value: "joy.hall83@protonmail.com"
 // and "u_ceed5f1" (last character removed; neither occurs in data/*.csv), and "joy.hall830"
 // (the domain removed, so it is not an email).
+// Lookup by pk_, d_ and v_ (T-API-1, 16 §If time remains 3), in the last describe because it
+// sends webhooks and storage persists across this file's tests:
+// - joy's pk_ key (derived), her visitor v_c9e136fd6d (web_events.csv, 02 §Counts) and the
+//   brief's sample device d_4b21e8 (09 D-11), named by a webhook from u_ceed5f12.
+// - the stub u_2b6447a (julia's id with its last character removed, as T-WH-6 uses), sent on
+//   the same device first with the same timestamp, so joy's later arrival is the device's
+//   current user (09 D-43: an equal event_ts overwrites).
+// - v_569d3a387c (web_events.csv:13), an anonymous visitor: no /subscribe email, no profile.
+// - 404 inputs per 09 D-47, each a real id with its last character removed: joy's pk_ key,
+//   "d_4b21e" and "v_c9e136fd6" (none occurs in data/*.csv or in a sent event).
 
 const JOY = 'joy.hall830@protonmail.com'
 const JULIA = 'julia.evans230@gmail.com'
@@ -226,6 +237,58 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     const res = await lookup(JOY, {})
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ error: 'unauthorized', message: 'Sign in to continue.' })
+  })
+})
+
+describe('T-API-1 lookup by pk_, d_ and v_ resolve the same profile as the email', () => {
+  const SAMPLE_DEVICE = 'd_4b21e8'
+  const STUB = 'u_2b6447a'
+
+  beforeAll(async () => {
+    const nextEventId = eventIdPool()
+    // One timestamp for both, from the brief's sample event (09 D-11); the later arrival wins.
+    for (const user_id of [STUB, 'u_ceed5f12']) {
+      const res = await sendWebhook(
+        JSON.stringify({
+          event_id: nextEventId(),
+          event: 'read_story',
+          user_id,
+          device_id: SAMPLE_DEVICE,
+          timestamp: '2026-09-28T14:22:05Z',
+        }),
+      )
+      expect(res.status, user_id).toBe(202)
+    }
+  })
+
+  it('joy by pk_, by her device and by her visitor id: the same body as by email', async () => {
+    const byEmail = await found(JOY)
+    expect(byEmail.app).toMatchObject({ user_id: 'u_ceed5f12', devices: [SAMPLE_DEVICE] })
+    expect(byEmail.app!.events).toHaveLength(1)
+    const pkey = await pkeyForEmail(piiKeySecret(), JOY)
+    expect(byEmail.profile.pkey).toBe(pkey)
+    for (const q of [pkey, SAMPLE_DEVICE, 'v_c9e136fd6d', ` ${pkey} `]) expect(await found(q), q).toEqual(byEmail)
+  })
+
+  it('a stub by its pk_ key: the same body as by its u_ id', async () => {
+    const pkey = await pkeyForUnknownUser(piiKeySecret(), STUB)
+    const byUser = await found(STUB)
+    expect(byUser.profile).toMatchObject({ pkey, kind: 'unknown_user_stub', email: null })
+    expect(byUser.app).toMatchObject({ user_id: STUB, from_csv: false })
+    expect(await found(pkey)).toEqual(byUser)
+  })
+
+  it('404 not_found for an unknown pk_, d_ or v_ and for an anonymous visitor', async () => {
+    const pkey = await pkeyForEmail(piiKeySecret(), JOY)
+    const anonymous = await env.DB.prepare('SELECT email_norm FROM web_visitors WHERE visitor_id = ?')
+      .bind('v_569d3a387c')
+      .first<{ email_norm: string | null }>()
+    expect(anonymous).toEqual({ email_norm: null })
+    for (const q of [pkey.slice(0, -1), 'd_4b21e', 'v_c9e136fd6', 'v_569d3a387c']) {
+      const res = await lookup(q)
+      expect(res.status, q).toBe(404)
+      expect(await res.json()).toEqual({ error: 'not_found', message: 'No profile matches that email or app user id.' })
+    }
   })
 })
 

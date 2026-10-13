@@ -1,17 +1,23 @@
 // GET /api/lookup?q= (04 §/api/lookup, 06 §/lookup; R2, R1.2, R4.9).
-// q is an app user_id when it starts with "u_", otherwise an email, normalized here and only
-// here (02 §Normalization lists this file; the browser sends raw input). One profile, four
-// sections, each null when absent. Stored derived columns are read as stored (09 D-46);
-// app_after_signup comes from shared/derive.ts, never from SQL. Identity resolution for app
-// events is worker/identity/resolve.ts. Nothing is cached (03 §No-restart). 04 defines one error
-// for this route: any q that names no profile (blank, missing, neither u_… nor a valid email, or
-// simply unknown) is 404 not_found.
+// q is an id when it starts with u_, pk_, d_ or v_ (resolveQuery), otherwise an email, normalized here and
+// only here (02 §Normalization lists this file; the browser sends raw input). The ids (16 §If
+// time remains 3): `u_…` an app user; `pk_…` a profile key (a stub's user is found by deriving
+// each email-less user's key, 02 §Linking 4); `d_…` a device, which names its current user
+// through device_identity (01 §Identity resolution: the most recent user by event_ts, 09 D-43);
+// `v_…` a website visitor, which names the profile its /subscribe email linked (02 §Linking 2).
+// One profile, four sections, each null when absent. Stored derived columns are read as stored
+// (09 D-46); app_after_signup comes from shared/derive.ts, never from SQL. Identity resolution
+// for app events is worker/identity/resolve.ts. Nothing is cached (03 §No-restart). 04 defines
+// one error for this route: any q that names no profile (blank, missing, neither an id nor a
+// valid email, simply unknown, an anonymous visitor or a device no identified event has named)
+// is 404 not_found.
 //
 // GET /api/lookup/search?q= (04 §/api/lookup/search, 06 §/lookup Partial lookup; 09 D-52) is
 // the search box's candidate list. The fragment is folded by normalizeQueryFragment, the one
 // home for query normalization; SQL compares it with the stored email_norm and never folds
-// (no SQL case folding). It returns emails, so it is never an assistant tool (05). Fuzzy matching is
-// parked (16 §If time remains 3).
+// (no SQL case folding). It returns emails, so it is never an assistant tool (05). When it finds
+// nothing for a long enough fragment it adds `did_you_mean` (09 D-59), computed in the Worker by
+// worker/lookup/fuzzy.ts over every stored email_norm (no SQL extension).
 
 import { Hono } from 'hono'
 import { appAfterSignup, hasApp } from '../../shared/derive'
@@ -20,8 +26,15 @@ import { pkeyForUnknownUser } from '../../shared/pseudonym'
 import { ApiError } from '../auth/middleware'
 import { type AppEnv, requireSecret } from '../env'
 import { devicesForUser, resolveUserEvents } from '../identity/resolve'
+import { nearestEmails, wantsSuggestions } from '../lookup/fuzzy'
 
 const USER_ID_PREFIX = 'u_'
+const PROFILE_KEY_PREFIX = 'pk_'
+const DEVICE_ID_PREFIX = 'd_'
+const VISITOR_ID_PREFIX = 'v_'
+
+const PROFILE_COLUMNS = 'SELECT pkey, email_norm, kind, engagement_score FROM profiles'
+const APP_USER_COLUMNS = 'SELECT user_id, email_norm, created_at, from_csv FROM app_users'
 
 interface ProfileRow {
   pkey: string
@@ -70,41 +83,85 @@ function single<T>(rows: T[], what: string): T | null {
 
 async function profileByEmail(db: D1Database, emailNorm: string): Promise<ProfileRow | null> {
   const { results } = await db
-    .prepare('SELECT pkey, email_norm, kind, engagement_score FROM profiles WHERE email_norm = ?')
+    .prepare(`${PROFILE_COLUMNS} WHERE email_norm = ?`)
     .bind(emailNorm)
     .all<ProfileRow>()
   return single(results, 'profiles')
 }
 
-/** Finds the profile and, when q named one, the app user; null when nothing matches. */
-async function resolveQuery(
-  env: AppEnv['Bindings'],
-  q: string,
-): Promise<{ profile: ProfileRow; appUser: AppUserRow | null } | null> {
+interface Found {
+  profile: ProfileRow
+  /** The app user, when the id named one or the profile is a stub; an email profile's is re-read by its email. */
+  appUser: AppUserRow | null
+}
+
+/** The profile a known app user belongs to; null when no app user has this id. */
+async function foundForUser(env: AppEnv['Bindings'], userId: string): Promise<Found | null> {
   const db = env.DB
-  if (q.startsWith(USER_ID_PREFIX)) {
-    const appUser = await db
-      .prepare('SELECT user_id, email_norm, created_at, from_csv FROM app_users WHERE user_id = ?')
-      .bind(q)
-      .first<AppUserRow>()
-    if (appUser === null) return null
-    if (appUser.email_norm !== null) {
-      const profile = await profileByEmail(db, appUser.email_norm)
-      if (profile === null) throw new Error('lookup: an app user with an email has no profile')
-      return { profile, appUser }
-    }
-    // A webhook-created user with no email: its stub profile is keyed by the user id (02 §Linking 4).
-    const pkey = await pkeyForUnknownUser(requireSecret(env, 'PII_KEY_SECRET'), appUser.user_id)
-    const profile = await db
-      .prepare('SELECT pkey, email_norm, kind, engagement_score FROM profiles WHERE pkey = ?')
-      .bind(pkey)
-      .first<ProfileRow>()
-    if (profile === null) throw new Error('lookup: an app user without an email has no stub profile')
+  const appUser = await db.prepare(`${APP_USER_COLUMNS} WHERE user_id = ?`).bind(userId).first<AppUserRow>()
+  if (appUser === null) return null
+  if (appUser.email_norm !== null) {
+    const profile = await profileByEmail(db, appUser.email_norm)
+    if (profile === null) throw new Error('lookup: an app user with an email has no profile')
     return { profile, appUser }
   }
-  const emailNorm = normalizeEmail(q)
+  // A webhook-created user with no email: its stub profile is keyed by the user id (02 §Linking 4).
+  const pkey = await pkeyForUnknownUser(requireSecret(env, 'PII_KEY_SECRET'), appUser.user_id)
+  const profile = await db.prepare(`${PROFILE_COLUMNS} WHERE pkey = ?`).bind(pkey).first<ProfileRow>()
+  if (profile === null) throw new Error('lookup: an app user without an email has no stub profile')
+  return { profile, appUser }
+}
+
+/** A profile by its key. A stub's key is one-way, so its user is found by deriving each email-less user's key. */
+async function foundForProfileKey(env: AppEnv['Bindings'], pkey: string): Promise<Found | null> {
+  const db = env.DB
+  const profile = await db.prepare(`${PROFILE_COLUMNS} WHERE pkey = ?`).bind(pkey).first<ProfileRow>()
+  if (profile === null) return null
+  if (profile.email_norm !== null) return { profile, appUser: null }
+  const secret = requireSecret(env, 'PII_KEY_SECRET')
+  const { results } = await db.prepare(`${APP_USER_COLUMNS} WHERE email_norm IS NULL`).all<AppUserRow>()
+  const owners: AppUserRow[] = []
+  for (const user of results) if ((await pkeyForUnknownUser(secret, user.user_id)) === pkey) owners.push(user)
+  const appUser = single(owners, 'app_users')
+  if (appUser === null) throw new Error('lookup: a stub profile has no app user without an email')
+  return { profile, appUser }
+}
+
+/** A device's current user (01 §Identity resolution); null when no identified event has named one. */
+async function foundForDevice(env: AppEnv['Bindings'], deviceId: string): Promise<Found | null> {
+  const userId = await env.DB.prepare('SELECT user_id FROM device_identity WHERE device_id = ?')
+    .bind(deviceId)
+    .first<string>('user_id')
+  if (userId === null) return null
+  const found = await foundForUser(env, userId)
+  if (found === null) throw new Error('lookup: a device names a user with no app_users row')
+  return found
+}
+
+/** The profile a visitor's /subscribe email linked (02 §Linking 2); null for an unknown or anonymous visitor. */
+async function foundForVisitor(env: AppEnv['Bindings'], visitorId: string): Promise<Found | null> {
+  const db = env.DB
+  const visitor = await db.prepare('SELECT email_norm FROM web_visitors WHERE visitor_id = ?')
+    .bind(visitorId)
+    .first<{ email_norm: string | null }>()
+  if (visitor === null || visitor.email_norm === null) return null
+  const profile = await profileByEmail(db, visitor.email_norm)
+  if (profile === null) throw new Error('lookup: a linked web visitor has no profile')
+  return { profile, appUser: null }
+}
+
+/** Finds the profile and, for a stub, its app user; null when nothing matches. */
+async function resolveQuery(env: AppEnv['Bindings'], raw: string): Promise<Found | null> {
+  // trim() only so ' u_…' is still an id; ids are matched as stored, and the email branch
+  // normalizes the raw value itself.
+  const id = raw.trim()
+  if (id.startsWith(USER_ID_PREFIX)) return foundForUser(env, id)
+  if (id.startsWith(PROFILE_KEY_PREFIX)) return foundForProfileKey(env, id)
+  if (id.startsWith(DEVICE_ID_PREFIX)) return foundForDevice(env, id)
+  if (id.startsWith(VISITOR_ID_PREFIX)) return foundForVisitor(env, id)
+  const emailNorm = normalizeEmail(raw)
   if (emailNorm === null) return null
-  const profile = await profileByEmail(db, emailNorm)
+  const profile = await profileByEmail(env.DB, emailNorm)
   return profile === null ? null : { profile, appUser: null }
 }
 
@@ -112,10 +169,7 @@ async function resolveQuery(
 export const lookupRoutes = new Hono<AppEnv>()
 
 lookupRoutes.get('/lookup', async (c) => {
-  // trim() only so ' u_…' is still a user id; the email branch normalizes the raw value itself.
-  const raw = c.req.query('q') ?? ''
-  const q = raw.trim()
-  const found = await resolveQuery(c.env, q.startsWith(USER_ID_PREFIX) ? q : raw)
+  const found = await resolveQuery(c.env, c.req.query('q') ?? '')
   if (found === null) throw notFound()
   const { profile } = found
   const db = c.env.DB
@@ -136,7 +190,7 @@ lookupRoutes.get('/lookup', async (c) => {
         )
         .bind(profile.email_norm),
       db
-        .prepare('SELECT user_id, email_norm, created_at, from_csv FROM app_users WHERE email_norm = ?')
+        .prepare(`${APP_USER_COLUMNS} WHERE email_norm = ?`)
         .bind(profile.email_norm),
     ])
     subscriber = single(subs.results as SubscriberRow[], 'subscribers')
@@ -287,5 +341,13 @@ lookupRoutes.get('/lookup/search', async (c) => {
   if (new Set(matches.map((m) => m.pkey)).size !== matches.length) {
     throw new Error('lookup/search: one profile matched twice; the 04 shape lists each profile once')
   }
-  return c.json({ q, matches, truncated: results.length > SEARCH_LIMIT })
+  // 09 D-59: suggestions only when nothing matched a long enough fragment; `[]` otherwise (04).
+  let didYouMean: { pkey: string; email: string; kind: ProfileRow['kind']; distance: number }[] = []
+  if (wantsSuggestions(q, matches.length)) {
+    const { results: emails } = await db
+      .prepare('SELECT pkey, email_norm AS email, kind FROM profiles WHERE email_norm IS NOT NULL')
+      .all<{ pkey: string; email: string; kind: ProfileRow['kind'] }>()
+    didYouMean = nearestEmails(q, emails).map(({ pkey, email, kind, distance }) => ({ pkey, email, kind, distance }))
+  }
+  return c.json({ q, matches, truncated: results.length > SEARCH_LIMIT, did_you_mean: didYouMean })
 })

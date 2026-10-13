@@ -6,12 +6,24 @@
 // falls back to the suggestions on 404. The raw input is sent unchanged and the server alone
 // folds it (02 §Normalization: the browser never normalizes): this file never trims or
 // lowercases, a 400 query_too_short just means "no list yet" (test/lookup-search.test.ts pins it).
+// Fuzzy lookup (06 §/lookup, 09 D-59): when the list is empty the API may send did_you_mean,
+// shown as "Did you mean …?" links under the no-match text. Find also takes a pk_, d_ or v_ id
+// (04 §/api/lookup); level 1 names only email and app id, the rest sits in a collapsed note.
 // Disclosure (06 §UI principles 2): level 1 = who, status, signup, last open and one summary per
 // column; "Details" per column = visit / event lists; "Technical details" = ids, keys, merge
 // counts, second-precise UTC times, raw field values and formulas.
 
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import {
+  type FocusEvent,
+  type FormEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
+import { Link, useSearchParams } from 'react-router'
 import { DEFINITIONS, isCold } from '../../shared/derive'
 import { QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
 import { ApiError, errorMessage, getJson } from '../api'
@@ -302,6 +314,7 @@ function AppActivity({
 }
 
 type Match = LookupSearch['matches'][number]
+type Suggestion = LookupSearch['did_you_mean'][number]
 
 /** The exact lookup's answer; a 404 is kept apart because it opens the suggestion fallback. */
 type ExactState =
@@ -418,12 +431,49 @@ function SuggestionList({
   )
 }
 
+/** A plain left click opens the reader here; with a modifier the browser opens a new tab and this page stays. */
+function plainClick(e: MouseEvent): boolean {
+  return e.button === 0 && !e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey
+}
+
+/**
+ * The "Did you mean …?" links (06 §/lookup, 09 D-59). Real links, so they open in a new tab too.
+ * mousedown keeps focus in the search box, so its blur never closes the list under the pointer.
+ */
+function DidYouMean({ suggestions, onPick }: { suggestions: Suggestion[]; onPick: (email: string) => void }) {
+  const link = (s: Suggestion) => (
+    <Link
+      to={{ search: `?${new URLSearchParams({ q: s.email })}` }}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={(e) => plainClick(e) && onPick(s.email)}
+      className="inline-flex min-h-6 items-center break-all font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900"
+    >
+      {s.email}
+    </Link>
+  )
+  if (suggestions.length === 1) {
+    return <p className="text-sm text-gray-800">Did you mean {link(suggestions[0])}?</p>
+  }
+  return (
+    <div className="space-y-1 text-sm text-gray-800">
+      <p>Did you mean one of these?</p>
+      <ul className="space-y-0.5">
+        {suggestions.map((s) => (
+          <li key={s.pkey}>{link(s)}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export default function LookupPage() {
   const [params, setParams] = useSearchParams()
   const q = params.get('q')
   const [input, setInput] = useState(q ?? '')
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
+  /** The no-match block: focus moving into it (Tab to a "Did you mean" link) keeps the list open. */
+  const nearbyRef = useRef<HTMLDivElement>(null)
   const fragment = useDebounced(input, SUGGEST_DEBOUNCE_MS)
   const suggestions = useSuggestions(
     open && searchable(fragment) ? `/api/lookup/search?q=${encodeURIComponent(fragment)}` : null,
@@ -464,6 +514,19 @@ export default function LookupPage() {
     go(lookupKey(match))
   }
 
+  /** A "Did you mean" link: the Link sets ?q=, so only the box and the list follow it here. */
+  function pickNearby(email: string) {
+    setInput(email)
+    setOpen(false)
+    setActive(-1)
+  }
+
+  function onBlur(e: FocusEvent<HTMLInputElement>) {
+    const to = e.relatedTarget
+    if (to instanceof Node && nearbyRef.current?.contains(to)) return
+    setOpen(false)
+  }
+
   function submit(e: FormEvent) {
     e.preventDefault()
     setActive(-1)
@@ -497,6 +560,8 @@ export default function LookupPage() {
   const suggested = suggestions?.status === 'ok' ? suggestions.data : null
   const listboxShown = suggested !== null && suggested.matches.length > 0
   const zeroMatches = suggested !== null && suggested.matches.length === 0
+  // The API sends did_you_mean only with no matches (04); the guard keeps the UI to 06 regardless.
+  const nearby = zeroMatches ? suggested.did_you_mean : []
   // A 404 with no list to fall back to (fragment too short) means nothing was searched.
   const noFallback = !searchable(q ?? '') || suggestions?.status === 'too_short'
   const notFound = state?.status === 'not_found' ? state : null
@@ -507,8 +572,10 @@ export default function LookupPage() {
   let messageVisible = false
   if (suggested !== null) {
     if (zeroMatches) {
-      message = NO_MATCH
-      messageVisible = true
+      // With near spellings the no-match line is drawn above the links, and the live region reads both.
+      message =
+        nearby.length === 0 ? NO_MATCH : `${NO_MATCH}. Did you mean ${nearby.map((m) => m.email).join(' or ')}?`
+      messageVisible = nearby.length === 0
     } else {
       const lead = notFound !== null ? `${notFound.message} Did you mean one of these? ` : ''
       const more = suggested.truncated ? ', more if you keep typing' : ''
@@ -521,7 +588,9 @@ export default function LookupPage() {
     message = `Showing profile for ${result.profile.email ?? 'an app user with no email on file'}.`
   }
   // The one-click first step (principle 6): on the empty page and after a search that found nobody.
-  const showExample = (state === null && !listShown) || (notFound !== null && (zeroMatches || !listShown))
+  // Near spellings are the better next step, so the example steps aside for them (principle 5).
+  const showExample =
+    nearby.length === 0 && ((state === null && !listShown) || (notFound !== null && (zeroMatches || !listShown)))
 
   return (
     <div className="space-y-5">
@@ -548,7 +617,7 @@ export default function LookupPage() {
               setActive(-1)
             }}
             onKeyDown={onKeyDown}
-            onBlur={() => setOpen(false)}
+            onBlur={onBlur}
             placeholder={`e.g. ${EXAMPLE}`}
             className="min-h-9 w-full min-w-0 rounded border border-gray-400 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-500"
           />
@@ -561,6 +630,28 @@ export default function LookupPage() {
             Type a reader's email or app id (starts with u_), or just part of it. Suggestions appear after{' '}
             {QUERY_FRAGMENT_MIN_LENGTH} letters.
           </p>
+        )}
+        {result === null && (
+          <Disclosure label="More ways to find a reader">
+            <p className="text-sm text-gray-700">
+              Find also opens a reader from a profile key, a device id or a website visitor id, copied from a
+              profile's Technical details. Suggestions search emails and app ids only.
+            </p>
+            <TechnicalDetails>
+              <dl className="space-y-1">
+                <Field label="Profile key">
+                  <span className="font-mono">pk_…</span>
+                </Field>
+                <Field label="Device id">
+                  <span className="font-mono">d_…</span> (the device's most recent app user)
+                </Field>
+                <Field label="Website visitor id">
+                  <span className="font-mono">v_…</span> (visitors who signed up)
+                </Field>
+              </dl>
+              <p>Ids are matched exactly as stored.</p>
+            </TechnicalDetails>
+          </Disclosure>
         )}
       </form>
 
@@ -575,6 +666,12 @@ export default function LookupPage() {
         )}
         {state?.status === 'loading' && <Loading label="Looking up…" />}
         {state?.status === 'error' && <ErrorLine message={state.message} />}
+        {nearby.length > 0 && (
+          <div ref={nearbyRef} className="space-y-1">
+            <p className="text-sm text-gray-600">{NO_MATCH}</p>
+            <DidYouMean suggestions={nearby} onPick={pickNearby} />
+          </div>
+        )}
         <Announcer message={message} visible={messageVisible} />
         {showExample && <Button onClick={() => go(EXAMPLE)}>Try an example: {EXAMPLE}</Button>}
       </div>
