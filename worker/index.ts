@@ -6,6 +6,7 @@ import { type AppEnv, assertBindings, MissingBindingsError } from './env'
 import { lookupRoutes } from './routes/lookup'
 import { overviewRoutes } from './routes/overview'
 import { segmentRoutes } from './routes/segments'
+import { webhookRoutes } from './routes/webhook'
 
 /**
  * The one renderer of the 04 §Error envelope {error, message, details?}. Bodies never carry
@@ -40,6 +41,10 @@ app.route('/api', loginRoutes)
 app.route('/api', overviewRoutes)
 app.route('/api', lookupRoutes)
 app.route('/api', segmentRoutes)
+
+// POST /webhooks/app sits outside /api/*, so neither the session guard nor requireJson's
+// mount applies: HMAC headers are its only auth (04 §Auth, §Webhook).
+app.route('/webhooks', webhookRoutes)
 
 // Open path (04 §Auth). Reports whether D1 answers and which "today" the app is running with.
 app.get('/health', async (c) => {
