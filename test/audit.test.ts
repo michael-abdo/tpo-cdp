@@ -4,6 +4,8 @@ import { Hono } from 'hono'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, toolSeedInsert } from '../scripts/tool-seeds'
 import { MODEL } from '../worker/assistant/build-request'
+import { SQL_DISCARD_ERROR } from '../worker/assistant/route'
+import { UNKNOWN_TOOL_ERROR } from '../worker/assistant/tools/tool-executor'
 import type { MessagesTransport } from '../worker/assistant/loop'
 import { requireJson, requireSession } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
@@ -33,6 +35,7 @@ const WENT_COLD_AUGUST = {
 
 const SUMMARY_KEYS = [
   'model_calls',
+  'outcome',
   'question',
   'started_at',
   'status',
@@ -62,6 +65,7 @@ interface Summary {
   trace_id: string
   started_at: string
   question: string | null
+  outcome: string
   status: string
   model_calls: number
   tool_calls: number
@@ -111,49 +115,53 @@ function message(content: Anthropic.ContentBlock[], stop_reason: Anthropic.StopR
   }
 }
 
-/** The recorded two-step answer to the brief's first question: the aggregate tool, then the final block. */
-function wentColdTransport() {
+/** One recorded model turn: the transport calls it with the request it was sent. */
+type Turn = (request: Anthropic.MessageCreateParamsNonStreaming) => Anthropic.Message | Promise<Anthropic.Message>
+
+/** A transport that answers call n with turns[n - 1] and keeps every request it was sent. */
+function scripted(turns: Turn[]) {
   const requests: Anthropic.MessageCreateParamsNonStreaming[] = []
-  const block = {
-    type: 'answer',
-    text: '46 active Instagram signups went cold in August 2026.',
-    window: { from: '2026-08-01', to: '2026-08-31' },
-    filters_applied: { status: ['active'], source: ['instagram'] },
-    definitions_used: ['went_cold_in', 'last_month'],
-  }
-  const responses = [
-    () =>
-      message(
-        [
-          {
-            type: 'tool_use',
-            id: 'toolu_cold',
-            name: 'aggregate',
-            input: WENT_COLD_AUGUST,
-            caller: { type: 'direct' },
-          },
-        ],
-        'tool_use',
-      ),
-    () =>
-      message(
-        [
-          {
-            type: 'text',
-            text: `46 went cold.\n\n\`\`\`json\n${JSON.stringify(block)}\n\`\`\``,
-            citations: null,
-          },
-        ],
-        'end_turn',
-      ),
-  ]
   const transport: MessagesTransport = async (request) => {
     requests.push(structuredClone(request))
-    const next = responses[requests.length - 1]
+    const next = turns[requests.length - 1]
     if (next === undefined) throw new Error(`audit test transport: no response for call ${requests.length}`)
-    return next()
+    return next(request)
   }
   return { transport, requests }
+}
+
+function toolUse(id: string, name: string, input: unknown): Anthropic.ContentBlock {
+  return { type: 'tool_use', id, name, input, caller: { type: 'direct' } }
+}
+
+/** The final turn: a sentence and the 04 json block. */
+function finalTurn(block: Record<string, unknown>): Turn {
+  return () =>
+    message(
+      [{ type: 'text', text: `46 went cold.\n\n\`\`\`json\n${JSON.stringify(block)}\n\`\`\``, citations: null }],
+      'end_turn',
+    )
+}
+
+/** The typed block of the recorded answer to the brief's first question. */
+const WENT_COLD_BLOCK = {
+  type: 'answer',
+  text: '46 active Instagram signups went cold in August 2026.',
+  window: { from: '2026-08-01', to: '2026-08-31' },
+  filters_applied: { status: ['active'], source: ['instagram'] },
+  definitions_used: ['went_cold_in', 'last_month'],
+}
+
+const aggregateTurn: Turn = () => message([toolUse('toolu_cold', 'aggregate', WENT_COLD_AUGUST)], 'tool_use')
+
+/** The recorded two-step answer to the brief's first question: the aggregate tool, then the final block. */
+function wentColdTransport() {
+  return scripted([aggregateTurn, finalTurn(WENT_COLD_BLOCK)])
+}
+
+/** The model service refuses the call, as Anthropic does for a key it rejects. */
+const refusedTurn: Turn = () => {
+  throw new Error('upstream 400 invalid_request_error')
 }
 
 /** The production middleware and assistant route, with a transport from this file. */
@@ -227,6 +235,7 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
     expect(line).toMatchObject({
       trace_id: traceId,
       question: 'how many Instagram signups like [email] went cold last month?',
+      outcome: 'answered',
       status: 'success',
       model_calls: 2,
       tool_calls: 1,
@@ -285,6 +294,7 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
     expect(traces).toHaveLength(1)
     expect(traces[0]).toMatchObject({
       question: null,
+      outcome: 'blocked',
       status: 'blocked',
       model_calls: 0,
       tool_calls: 0,
@@ -306,8 +316,14 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
     const never: MessagesTransport = async () => {
       throw new Error('unreachable')
     }
-    for (let i = 0; i < 21; i += 1)
+    // Each trace's id in write order (D1's rowid), so same-millisecond starts are checked too.
+    const written: string[] = []
+    for (let i = 0; i < 21; i += 1) {
       expect((await ask(never, cookie, 'DROP TABLE subscribers')).status).toBe(400)
+      const last = await env.DB.prepare('SELECT trace_id FROM ai_audit ORDER BY rowid DESC LIMIT 1').first<string>('trace_id')
+      if (last === null) throw new Error('audit test: no ai_audit row after a Gate 1 block')
+      written.push(last)
+    }
 
     const all =
       (await env.DB.prepare('SELECT count(DISTINCT trace_id) AS n FROM ai_audit').first<number>('n')) ?? 0
@@ -316,6 +332,7 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
     expect(byDefault.traces).toHaveLength(20)
     const started = byDefault.traces.map((t) => t.started_at)
     expect([...started].sort().reverse()).toEqual(started)
+    expect(byDefault.traces.map((t) => t.trace_id)).toEqual(written.slice(1).reverse())
     const firstTwo = await (await get('/api/audit?limit=2', cookie)).json<{ traces: Summary[] }>()
     expect(firstTwo.traces.map((t) => t.trace_id)).toEqual(
       byDefault.traces.slice(0, 2).map((t) => t.trace_id),
@@ -346,5 +363,130 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
         message: 'There is no audit trace with this id.',
       })
     }
+  })
+})
+
+// The list's two result fields (worker/routes/audit.ts): `outcome` is how the request ended, read
+// from its last row; `status` is the most severe row. They part when a step is blocked or fails
+// and the request still answers 200 (a D-58 discard, an unknown tool), and when the request fails
+// after a blocked step. Each trace here is written by a real assistant call.
+describe('GET /api/audit: outcome is how the request ended, status is the worst row', () => {
+  async function line(traceId: string, cookie: string): Promise<Summary> {
+    const { traces } = await (await get('/api/audit?limit=100', cookie)).json<{ traces: Summary[] }>()
+    const found = traces.find((t) => t.trace_id === traceId)
+    if (found === undefined) throw new Error(`audit test: trace ${traceId} is not listed`)
+    return found
+  }
+
+  /** The id of the trace the last assistant call wrote (an error body carries no audit_id). */
+  async function lastTrace(): Promise<string> {
+    const id = await env.DB.prepare('SELECT trace_id FROM ai_audit ORDER BY rowid DESC LIMIT 1').first<string>('trace_id')
+    if (id === null) throw new Error('audit test: no ai_audit row')
+    return id
+  }
+
+  async function rowKinds(traceId: string, cookie: string): Promise<string[]> {
+    const { rows } = await (await get(`/api/audit/${traceId}`, cookie)).json<{ rows: Row[] }>()
+    return rows.map((r) => `${r.kind}/${r.status}`)
+  }
+
+  it('the model service refuses the call → 502: outcome failed, status error, the question was sent', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const { transport } = scripted([refusedTurn])
+    const res = await ask(transport, cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(502)
+    expect((await res.json<{ error: string }>()).error).toBe('model_error')
+    const traceId = await lastTrace()
+    expect(await rowKinds(traceId, cookie)).toEqual(['model_request/error'])
+    expect(await line(traceId, cookie)).toMatchObject({
+      question: 'how many Instagram signups went cold last month?',
+      outcome: 'failed',
+      status: 'error',
+      model_calls: 1,
+      tool_calls: 0,
+      tokens_in: 0,
+      tokens_out: 0,
+    })
+  })
+
+  it('a D-58 discard → 200 with the server sentence: outcome answered_text_replaced, status blocked', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const { transport } = scripted([
+      aggregateTurn,
+      finalTurn({ ...WENT_COLD_BLOCK, text: '46 went cold:\nSELECT pkey\nFROM v_profiles;' }),
+    ])
+    const res = await ask(transport, cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(200)
+    const { audit_id: traceId } = await res.json<{ audit_id: string }>()
+    const { rows } = await (await get(`/api/audit/${traceId}`, cookie)).json<{ rows: Row[] }>()
+    expect(rows.map((r) => `${r.kind}/${r.status}`)).toEqual([
+      'model_request/success',
+      'tool_call/success',
+      'model_request/success',
+      'blocked/blocked',
+    ])
+    expect(rows[3].error?.startsWith(SQL_DISCARD_ERROR)).toBe(true)
+    expect(await line(traceId, cookie)).toMatchObject({
+      outcome: 'answered_text_replaced',
+      status: 'blocked',
+      model_calls: 2,
+      tool_calls: 1,
+    })
+  })
+
+  it('an unknown tool the model recovers from → 200: outcome answered, status blocked', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const { transport } = scripted([
+      () => message([toolUse('toolu_nope', 'no_such_tool', {})], 'tool_use'),
+      aggregateTurn,
+      finalTurn(WENT_COLD_BLOCK),
+    ])
+    const res = await ask(transport, cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(200)
+    const { audit_id: traceId } = await res.json<{ audit_id: string }>()
+    const { rows } = await (await get(`/api/audit/${traceId}`, cookie)).json<{ rows: Row[] }>()
+    expect(rows.map((r) => `${r.kind}/${r.status}`)).toEqual([
+      'model_request/success',
+      'blocked/blocked',
+      'model_request/success',
+      'tool_call/success',
+      'model_request/success',
+    ])
+    expect(rows[1].error).toBe(UNKNOWN_TOOL_ERROR)
+    expect(await line(traceId, cookie)).toMatchObject({ outcome: 'answered', status: 'blocked', model_calls: 3, tool_calls: 1 })
+  })
+
+  it('a blocked step, then the model service fails → 502: outcome failed, status blocked (worst row, not last)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const { transport } = scripted([() => message([toolUse('toolu_nope', 'no_such_tool', {})], 'tool_use'), refusedTurn])
+    const res = await ask(transport, cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(502)
+    const traceId = await lastTrace()
+    expect(await rowKinds(traceId, cookie)).toEqual(['model_request/success', 'blocked/blocked', 'model_request/error'])
+    expect(await line(traceId, cookie)).toMatchObject({ outcome: 'failed', status: 'blocked', model_calls: 2, tool_calls: 0 })
+  })
+
+  it('a request still running is listed as unfinished, then answered once it ends', async () => {
+    const cookie = await loginCookie()
+    let midway: Summary | null = null
+    const { transport } = scripted([
+      aggregateTurn,
+      async (request) => {
+        // The tool row is written and the second model call is in flight: read the list now.
+        const { traces } = await (await get('/api/audit?limit=1', cookie)).json<{ traces: Summary[] }>()
+        midway = traces[0]
+        expect(request.messages).toHaveLength(3)
+        return finalTurn(WENT_COLD_BLOCK)(request)
+      },
+    ])
+    const res = await ask(transport, cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(200)
+    const { audit_id: traceId } = await res.json<{ audit_id: string }>()
+    expect(midway).toMatchObject({ trace_id: traceId, outcome: 'unfinished', status: 'success', model_calls: 1, tool_calls: 1 })
+    expect(await line(traceId, cookie)).toMatchObject({ outcome: 'answered', status: 'success', model_calls: 2 })
   })
 })

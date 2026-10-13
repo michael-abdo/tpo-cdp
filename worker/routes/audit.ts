@@ -3,8 +3,11 @@
 // ai_audit (01), the rows worker/assistant/audit/ai-audit.ts wrote:
 //   - the list: the latest assistant traces, newest first, one line each: when it started, the
 //     redacted question as the model received it (messages[0] of the trace's first model_request
-//     row; null when the request stopped before any model call, e.g. at Gate 1), the most severe
-//     row status, the number of model and tool rows, and the tokens summed over the trace
+//     row; null when the request stopped before any model call, e.g. at Gate 1), how the request
+//     ended (`outcome`, read from the trace's last row: see traceOutcome), the most severe row
+//     status, the number of model and tool rows, and the tokens summed over the trace. Outcome and
+//     status differ on purpose: a D-58 discard, an unknown tool or an invalid tool input writes a
+//     blocked or error row and the request still answers 200, so the worst row is not the result
 //   - one trace: every ai_audit row of the trace in write order, each field as stored. request_json
 //     is the exact payload sent after the scanner (the writer refuses a row that fails the PII
 //     scan), so nothing here can hold an email; the re-hydrated result is never stored (05
@@ -13,6 +16,8 @@
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
+import { SQL_DISCARD_ERROR } from '../assistant/route'
+import { TOOL_FAILED_ERROR, UNKNOWN_TOOL_ERROR } from '../assistant/tools/tool-executor'
 import type { AppEnv } from '../env'
 
 /** Traces the list returns when the request names no limit. */
@@ -22,6 +27,20 @@ export const AUDIT_MAX_LIMIT = 100
 
 export type AuditStatus = 'success' | 'error' | 'blocked'
 
+/**
+ * How a request ended, from the last row its trace holds:
+ *   answered                the last row is a successful model call: the request returned 200
+ *                           (the iteration cap and a malformed block also end here, as partial)
+ *   answered_text_replaced  the last row is the D-58 discard: 200 with the server sentence
+ *   blocked                 the last row is a refusal that ended the request (Gate 1, rate limit,
+ *                           missing key, tool loading, the PII scanner)
+ *   failed                  the last row is a failed model call or a tool that threw: 502 or 500
+ *   unfinished              the last row is a step the loop goes on from (a tool call, an unknown
+ *                           tool, an invalid tool input): the request is still running, or it
+ *                           stopped on an error that wrote no row
+ */
+export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished'
+
 /** One line of GET /api/audit. */
 export interface AuditTraceSummary {
   trace_id: string
@@ -29,7 +48,9 @@ export interface AuditTraceSummary {
   started_at: string
   /** The redacted question the model received; null when no model call was made. */
   question: string | null
-  /** blocked if any row is blocked, else error if any row is an error, else success. */
+  /** How the request ended (traceOutcome). */
+  outcome: AuditOutcome
+  /** The most severe row status: blocked if any row is blocked, else error if any row is an error, else success. */
   status: AuditStatus
   model_calls: number
   tool_calls: number
@@ -66,6 +87,23 @@ function auditLimit(raw: string | undefined): number {
   return n
 }
 
+/** The fields of a trace's last row that decide its outcome. */
+interface LastRow {
+  last_kind: AuditRowOut['kind']
+  last_status: AuditStatus
+  last_error: string | null
+}
+
+/** How the request ended, from its trace's last row (AuditOutcome). */
+export function traceOutcome({ last_kind: kind, last_status: status, last_error: error }: LastRow): AuditOutcome {
+  // The discard row names its sign after the fixed text: "<SQL_DISCARD_ERROR> (select_line)".
+  if (kind === 'blocked' && error !== null && error.startsWith(SQL_DISCARD_ERROR)) return 'answered_text_replaced'
+  if (kind === 'model_request' && status === 'success') return 'answered'
+  if (status === 'blocked') return error === UNKNOWN_TOOL_ERROR ? 'unfinished' : 'blocked'
+  if (status === 'error') return kind === 'model_request' || error === TOOL_FAILED_ERROR ? 'failed' : 'unfinished'
+  return 'unfinished'
+}
+
 // Traces ordered by their first row; min(rowid) breaks a same-millisecond tie in write order.
 const LIST_SQL = `
 WITH traces AS (
@@ -90,8 +128,11 @@ SELECT t.trace_id, t.started_at, t.status, t.model_calls, t.tool_calls, t.tokens
         FROM ai_audit a
         WHERE a.trace_id = t.trace_id AND a.kind = 'model_request'
         ORDER BY a.created_at, a.rowid
-        LIMIT 1) AS question
+        LIMIT 1) AS question,
+       l.kind AS last_kind, l.status AS last_status, l.error AS last_error
 FROM traces t
+JOIN ai_audit l ON l.rowid = (SELECT a.rowid FROM ai_audit a WHERE a.trace_id = t.trace_id
+                              ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1)
 ORDER BY t.started_at DESC, t.first_rowid DESC`
 
 const TRACE_SQL = `
@@ -105,11 +146,12 @@ export const auditRoutes = new Hono<AppEnv>()
 
 auditRoutes.get('/audit', async (c) => {
   const limit = auditLimit(c.req.query('limit'))
-  const { results } = await c.env.DB.prepare(LIST_SQL).bind(limit).all<AuditTraceSummary>()
+  const { results } = await c.env.DB.prepare(LIST_SQL).bind(limit).all<Omit<AuditTraceSummary, 'outcome'> & LastRow>()
   const traces: AuditTraceSummary[] = results.map((r) => ({
     trace_id: r.trace_id,
     started_at: r.started_at,
     question: r.question,
+    outcome: traceOutcome(r),
     status: r.status,
     model_calls: r.model_calls,
     tool_calls: r.tool_calls,

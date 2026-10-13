@@ -124,12 +124,18 @@ export interface AssistantResponse {
 
 export type AuditStatus = 'success' | 'error' | 'blocked'
 
+/** How a request ended (worker/routes/audit.ts AuditOutcome and traceOutcome). */
+export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished'
+
 /** One line of GET /api/audit?limit= (worker/routes/audit.ts AuditTraceSummary). */
 export interface AuditTraceSummary {
   trace_id: string
   started_at: string
   /** The redacted question the model received; null when no model call was made. */
   question: string | null
+  /** How the request ended, from its last row. */
+  outcome: AuditOutcome
+  /** The most severe row status. */
   status: AuditStatus
   model_calls: number
   tool_calls: number

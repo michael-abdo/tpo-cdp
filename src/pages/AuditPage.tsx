@@ -28,7 +28,14 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDateTime, utc } from '../format'
-import type { AuditList, AuditRow, AuditStatus, AuditTrace, AuditTraceSummary } from '../types'
+import type {
+  AuditList,
+  AuditOutcome,
+  AuditRow,
+  AuditStatus,
+  AuditTrace,
+  AuditTraceSummary,
+} from '../types'
 import { type GetState, useGet } from '../useGet'
 
 /** Questions the list shows (04 allows 1–100). */
@@ -39,8 +46,21 @@ const linkClass =
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 
-/** A trace's result in words (the most severe row status). */
-const TRACE_STATUS: Record<AuditStatus, string> = { success: 'Answered', error: 'Failed', blocked: 'Blocked' }
+/** How a request ended, in words (worker/routes/audit.ts traceOutcome). */
+const TRACE_OUTCOME: Record<AuditOutcome, string> = {
+  answered: 'Answered',
+  answered_text_replaced: "Answered (the AI's wording was replaced)",
+  blocked: 'Blocked',
+  failed: 'Failed',
+  unfinished: 'Not finished',
+}
+
+/** A trace's result: how it ended, plus a note when an earlier step was blocked or failed and it still answered. */
+function traceResult(t: AuditTraceSummary): string {
+  const ended = TRACE_OUTCOME[t.outcome]
+  if (t.outcome !== 'answered' || t.status === 'success') return ended
+  return `${ended} (a step ${t.status === 'blocked' ? 'was blocked' : 'failed'} on the way)`
+}
 /** One step's result in words. */
 const STEP_STATUS: Record<AuditStatus, string> = { success: 'Done', error: 'Failed', blocked: 'Blocked' }
 
@@ -230,12 +250,17 @@ function TraceView({ traceId }: { traceId: string }) {
   return (
     <div className="space-y-6">
       {header(
-        question === null ? 'This request stopped before anything was sent to the AI.' : `“${question}”`,
+        question !== null
+          ? `“${question}”`
+          : firstModel === undefined
+            ? 'This request stopped before anything was sent to the AI.'
+            : 'The question could not be read from what was stored; see the first step.',
       )}
       <p className="text-sm text-gray-600">
         {fmt(rows.length)} stored {rows.length === 1 ? 'step' : 'steps'}, started{' '}
         {humanDateTime(rows[0].created_at)}. An email in the question is replaced by [email] before anything
-        is sent or stored.
+        is sent or stored. Emails are put back into the answer only on the page that asked, so the answer
+        with emails is never stored and is not shown here.
       </p>
 
       <div className="space-y-1 rounded border border-gray-200 p-4">
@@ -286,7 +311,7 @@ function traceColumns(): Column<AuditTraceSummary>[] {
         </Link>
       ),
     },
-    { header: 'Result', cell: (t) => TRACE_STATUS[t.status] },
+    { header: 'Result', cell: traceResult },
     { header: 'Tokens used', cell: (t) => fmt(t.tokens_in + t.tokens_out), numeric: true },
   ]
 }

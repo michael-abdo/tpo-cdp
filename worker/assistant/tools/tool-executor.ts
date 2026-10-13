@@ -18,6 +18,11 @@ import { type ToolOutput, ToolInputError } from './builtin-handlers'
 import { formatToolError, formatToolOutput } from './format-results'
 import type { LoadedTools } from './tool-loader'
 
+/** The ai_audit error of a tool name the model invented; the loop goes on (worker/routes/audit.ts reads it). */
+export const UNKNOWN_TOOL_ERROR = 'unknown_tool: the model called a tool that is not loaded'
+/** The ai_audit error of a tool that threw; the request ends in a 500 (worker/routes/audit.ts reads it). */
+export const TOOL_FAILED_ERROR = 'tool_failed'
+
 export interface ToolCall {
   id: string
   name: string
@@ -43,7 +48,7 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
   if (tool === undefined) {
     // The name came from the model; it is neither logged nor stored, only that it was unknown.
     console.error(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, error: 'unknown_tool' }))
-    await ctx.trace.write({ kind: 'blocked', status: 'blocked', error: 'unknown_tool: the model called a tool that is not loaded' })
+    await ctx.trace.write({ kind: 'blocked', status: 'blocked', error: UNKNOWN_TOOL_ERROR })
     const content = formatToolError('unknown', ['there is no tool with that name; use only the tools provided'])
     return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
   }
@@ -75,7 +80,7 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
     }
     const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
     console.error(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, tool_name: tool.name, error: 'tool_failed', reason }))
-    await ctx.trace.write({ kind: 'tool_call', status: 'error', tool_name: tool.name, latency_ms: Date.now() - started, error: 'tool_failed' })
+    await ctx.trace.write({ kind: 'tool_call', status: 'error', tool_name: tool.name, latency_ms: Date.now() - started, error: TOOL_FAILED_ERROR })
     throw err
   }
 
