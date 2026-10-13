@@ -45,7 +45,7 @@ curl $URL/health                                     # {"ok":true,"db":true,"tod
 #   POST /api/segments/preview, the brief's preset (active, instagram, no open in 30 days, never-opened included) → count 177
 ```
 
-Live webhook check (the Wednesday checkpoint). First, before any event, note the `{"source":["instagram"],"has_app":true}` preview: count 245, and julia.evans230 has `engagement_score` 28. Then:
+Live webhook check (the Wednesday checkpoint). First, before any event, note the `{"filters":{"source":["instagram"],"has_app":true},"limit":1000}` preview: count 245, and julia.evans230 has `engagement_score` 28. Then:
 
 ```bash
 # run these two back to back: --again re-sends the body in .wrangler/send-webhook-last.json, which any webhook:send in between (even to localhost) overwrites
@@ -54,11 +54,11 @@ npm run webhook:send -- --url $URL --event read_story --again             # expe
 # with the cookie:
 #   GET  /api/lookup?q=u_2b6447a3        → the read_story event in julia.evans230's app timeline
 #   GET  /api/events/recent              → the event listed, resolved to her profile
-#   POST /api/segments/preview {"source":["instagram"],"has_app":true}
-#        → julia's engagement_score rises above 28 with no re-import (what T-WH-10 pins); the count should stay 245, because no filter reads webhook data (see Known gaps; no test pins the count)
+#   POST /api/segments/preview {"filters":{"source":["instagram"],"has_app":true},"limit":1000}
+#        → julia's engagement_score in the rows rises above 28 with no re-import (what T-WH-10 pins); the count stays 245, because no filter reads webhook data (09 D-53)
 ```
 
-Status on 2026-10-13: the worker at this URL still runs the first-deploy build, which has no webhook route (`POST /webhooks/app` → 404). The 245 / 28 baseline and the 177 preset count (hidden_unsubscribed 55) above were observed live again on 2026-10-13. The webhook lines are expected results, not live results yet: the score rise is what T-WH-10 pins in tests, and the 245 count is the design reading, not a test pin. They become live after `npm run deploy` ships the webhook build; then replace this line with the observed codes, count and score.
+Observed live on 2026-10-13 after deploying the webhook build (version a4dc6b0c): baseline count 245, julia.evans230 score 28 → `webhook:send --event read_story --user u_2b6447a3` 202 (resolved to her pkey) → `--again` 200 duplicate → lookup shows the event in her app timeline (attached_via direct) → `/api/events/recent` lists it first → preview count 245, her score 31.
 
 ## Architecture
 
@@ -254,7 +254,7 @@ _Filled from the decision log as areas land._
 
 ## Known gaps
 
-- **A webhook event cannot change a segment count.** The plan (08 T-WH-10, the 16 Wednesday checkpoint) says "a segment count changes after an event". No segment filter reads anything a webhook writes: `status`, `source` and `last_open_date` come from `subscribers.csv`, and `has_app` needs an `app_users` row with an email, while a webhook only creates `app_users` rows with no email (stub users). What an event does change in a segment is the stored `engagement_score` of its rows (09 D-46), with no re-import. T-WH-10 pins that score rise, not a count change.
+- **A webhook event cannot change a segment count.** The plan first said "a segment count changes after an event" (08 T-WH-10, the 16 Wednesday checkpoint); 09 D-53 reworded both to what the design actually does. No segment filter reads anything a webhook writes: `status`, `source` and `last_open_date` come from `subscribers.csv`, and `has_app` needs an `app_users` row with an email, while a webhook only creates `app_users` rows with no email (stub users). What an event does change in a segment is the stored `engagement_score` of its rows (09 D-46), with no re-import. T-WH-10 pins that score rise, not a count change.
 
 The rest is written at freeze (Sun).
 

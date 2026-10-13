@@ -115,3 +115,7 @@ Built in Claude Code throughout. Each entry: what was asked, what the AI got wro
 ## 2026-10-13 — W3 review fixes
 
 - **Asked:** re-read the live step-7 baseline (`{"source":["instagram"],"has_app":true}` preview: count, julia.evans230's engagement_score) and the brief's preset count. **Wrong:** the AI's first live `POST /api/segments/preview` sent the filters as the top-level body and guessed the response fields, so both previews printed `count: null`. 04 and the T-WH-10 helper send `{filters, limit}` and read `rows[].email` / `rows[].engagement_score`. **Caught:** the AI's own read of the null output, then of `preview()` in `test/events.test.ts`. **Fix:** the re-run used `{filters, limit: 1000}` and read 177 (hidden_unsubscribed 55) and 245 / 28. These were read-only requests, so nothing live changed.
+
+## 2026-10-13 — W3 live proof (operator tick)
+
+- **Asked:** a README live webhook check. **Wrong:** commit c54ddab said T-WH-10 pins "count stays 245"; the test pins only the score rise. The same block also sent the preview filters at the top level of the body, which 04 rejects as `unknown field: source`. **Caught:** the adversarial review of W3. **Fix:** 336d66e reworded the T-WH-10 claim; this commit corrects the body to `{filters, limit}` and replaces the expected-results line with what the live worker returned after deploy (202, 200 duplicate, lookup, feed, score 28 → 31, count 245).
