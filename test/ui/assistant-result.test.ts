@@ -76,4 +76,18 @@ describe("/assistant renders the model's filters_applied only through the D-58 s
       expect(text, name).toContain(data.text)
     })
   }
+
+  it('the known false positive (README Known gaps): the word select before the window_* keys hides the block', () => {
+    const { text } = render(answer({ note: 'select readers', ...REAL }))
+    expect(text).toContain(FILTERS_HIDDEN_MESSAGE)
+    expect(text).not.toContain('Signed up from')
+  })
+
+  it('hidden filters with no time period and no definitions still give the sentence, not "names no … filters"', () => {
+    const data: AssistantResponse = { ...answer({ query: SQL }), window: null, definitions_used: [] }
+    const { html, text } = render(data)
+    expect(html).not.toContain('email_norm')
+    expect(text).toContain(FILTERS_HIDDEN_MESSAGE)
+    expect(text).not.toContain('The answer names no time period, filters or definitions.')
+  })
 })
