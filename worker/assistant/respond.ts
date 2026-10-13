@@ -79,18 +79,24 @@ const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
 
 // T-AI-5 by rejection, not stripping (09 D-58). Every Unicode format character (\p{Cf}: U+00AD soft
 // hyphen, U+200B-U+200D zero-width, U+2060 word joiner, U+FEFF and the rest) is invisible, so the
-// signs are checked on two NFKC-folded copies (fullwidth letters become ASCII) and either one
-// matching discards the text:
-//   - DELETED: format characters removed, so one inside a keyword cannot split it ("sel\u200Bect");
-//   - SPACED: format characters turned into spaces, so one between a keyword and the next word
-//     cannot glue them out of a whole-word match ("SELECT\u200Bemail", "SELECT\u2063email").
+// signs are checked on several copies of the text and any one matching discards it:
+//   - LISTED: D-58 as written. Only its six characters are deleted; every other format character
+//     becomes a space (a separator either way, since a format character is not a letter or digit;
+//     the space also lets a "```\u2063sql" fence match). Checked raw and NFKC-folded. The raw copy
+//     makes the whole check a true superset of D-58: NFKC can turn a separator into letters
+//     ("\u338F", the kg square, becomes "kg") and so glue it to a keyword.
+//   - DELETED, NFKC: every format character removed, so an unlisted one inside a keyword cannot
+//     split it ("sel\u2063ect").
+//   - SPACED, NFKC: every format character turned into a space, so a listed one between a keyword
+//     and the next word cannot glue them out of a whole-word match ("SELECT\u200Bemail").
 // A word boundary is a letter or digit boundary, not \b, so "_" (markdown emphasis or an
 // identifier) cannot hide a keyword: "_select_ email _from_ users" and "select_email from users"
 // are discarded. Any one sign discards the whole text; there is no English exemption, so
 // "select a segment from the builder" is discarded too (accepted by D-58). Wider than D-58's
-// wording in the safe direction only: all format characters, NFKC, "_", and any non-letter
-// prefix before a line-start SELECT (list markers, emphasis, digits as well as indentation,
-// blockquote marks and backticks).
+// wording in the safe direction only: the LISTED raw copy is D-58 itself, and the other copies,
+// NFKC, "_", and any non-letter prefix before a line-start SELECT (list markers, emphasis, digits
+// as well as indentation, blockquote marks and backticks) can only add discards.
+const LISTED_FORMAT_CHARS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/gu
 const FORMAT_CHARS = /\p{Cf}/gu
 export type SqlSign = 'sql_fence' | 'select_line' | 'select_from'
 const NOT_WORD_BEFORE = '(?<![\\p{L}\\p{N}])'
@@ -106,12 +112,20 @@ const SQL_SIGNS: ReadonlyArray<[SqlSign, RegExp]> = [
 
 /** The first D-58 sign of SQL in `text`, or null. Pure; exported for tests. */
 export function sqlSign(text: string): SqlSign | null {
-  const copies = [text.replace(FORMAT_CHARS, ''), text.replace(FORMAT_CHARS, ' ')].map((copy) => copy.normalize('NFKC'))
+  const listed = text.replace(LISTED_FORMAT_CHARS, '').replace(FORMAT_CHARS, ' ')
+  const copies = [
+    listed,
+    listed.normalize('NFKC'),
+    text.replace(FORMAT_CHARS, '').normalize('NFKC'),
+    text.replace(FORMAT_CHARS, ' ').normalize('NFKC'),
+  ]
   for (const [sign, pattern] of SQL_SIGNS) if (copies.some((copy) => pattern.test(copy))) return sign
   return null
 }
 
-/** The server's own sentence for a discarded text, built from the typed result (09 D-58). */
+/** The server's own sentence for a discarded text, built from the typed result (09 D-58). D-58 gives
+ * "177 readers match." as an example; a count of 1 reads "1 reader matches." so the sentence stays
+ * grammatical. A table result with no table gets the answer sentence (see respond()). */
 export function discardSentence(type: OutputType, count: number | null): string {
   if (type === 'segment') {
     if (count === null) throw new Error('discardSentence: a segment result has a count')

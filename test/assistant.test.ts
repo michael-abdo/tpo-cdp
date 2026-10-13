@@ -871,6 +871,21 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     shapes.push([`${name} between from and the table`, `There are 46. select email from${char}users`])
     shapes.push([`${name} between SELECT and the column, line start`, `SELECT${char}email FROM users`])
   }
+  // A listed character inside a keyword and an unlisted one at its edge: deleting both glues the
+  // keyword to the next word, spacing both splits it, so only the LISTED copy (D-58 as written:
+  // delete the six, keep the rest as separators) catches these (H2c review of e1a62c4).
+  shapes.push(
+    ['U+200B inside select, U+2063 after it', 'There are 46. sel\u200Bect\u2063email from users'],
+    ['U+200B inside from, U+2063 after it', 'There are 46. select email fr\u200Bom\u2063users'],
+    ['U+2063 before select, U+00AD inside it', 'x\u2063sel\u00ADect pkey from v_profiles'],
+    ['U+200B inside SELECT, U+2062 after it', 'There are 46. SEL\u200BECT\u2062email FROM users'],
+    // NFKC would turn the kg square (a symbol, so a separator) into the letters "kg": the raw LISTED copy.
+    ['the kg square before select, U+2063 after it', 'There are 46. \u338Fselect\u2063email from users'],
+    // Fullwidth letters with the same mix: the NFKC-folded LISTED copy.
+    ['fullwidth select with U+200B inside, U+2063 after it', 'There are 46. ｓｅｌ\u200Bｅｃｔ\u2063email from users'],
+    // An unlisted format character inside a keyword: the DELETED copy.
+    ['U+2063 inside select', 'There are 46. sel\u2063ect pkey from v_profiles'],
+  )
   // "_" is not a word boundary for D-58: markdown emphasis and identifiers cannot hide a keyword.
   shapes.push(
     ['underscore emphasis, line start', '_SELECT_ email _FROM_ users'],
@@ -924,6 +939,10 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
       'Most of the 46 came from Instagram.',
       'The selection came from Instagram.',
       'Selected readers came from Instagram, and 46 went cold.',
+      // D-58 is select followed by from: from before select is kept.
+      'Most came from Instagram; select a source to narrow it.',
+      // A word that only ends in "select" is not the word select.
+      'We preselect readers from Instagram.',
       'There are 46.\n```\n46\n```',
       // Kept text is the original, not the checked copy: no NFKC fold, no format character removed.
       'Café readers: ４６ went cold\u200B in August.',
@@ -997,6 +1016,8 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     ])
     expect(rows[3].error).toBe(`${SQL_DISCARD_ERROR} (select_line)`)
     expect(rows[3].error).toContain('D-58')
+    // The discarded model text is never stored in the discard row.
+    expect(rows[3]).toMatchObject({ request_json: null, response_json: null })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('"sql_discarded":"select_line"'))
     warn.mockRestore()
   })
