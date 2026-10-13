@@ -45,6 +45,20 @@ curl $URL/health                                     # {"ok":true,"db":true,"tod
 #   POST /api/segments/preview, the brief's preset (active, instagram, no open in 30 days, never-opened included) → count 177
 ```
 
+Live webhook check (the Wednesday checkpoint). First, before any event, note the `{"source":["instagram"],"has_app":true}` preview: count 245, and julia.evans230 has `engagement_score` 28. Then:
+
+```bash
+npm run webhook:send -- --url $URL --event read_story --user u_2b6447a3   # expect 202, resolves to julia.evans230
+npm run webhook:send -- --url $URL --event read_story --again             # expect 200 {"accepted":true,"duplicate":true}
+# with the cookie:
+#   GET  /api/lookup?q=u_2b6447a3        → the read_story event in julia.evans230's app timeline
+#   GET  /api/events/recent              → the event listed, resolved to her profile
+#   POST /api/segments/preview {"source":["instagram"],"has_app":true}
+#        → count stays 245 and julia's engagement_score rises above 28, with no re-import (T-WH-10; see Known gaps)
+```
+
+Status on 2026-10-13: the worker at this URL still runs the first-deploy build, which has no webhook route (`POST /webhooks/app` → 404). The 245 / 28 baseline and the 177 preset count above are observed live. The webhook lines show the results the tests pin, not live results yet; they become live after `npm run deploy` ships the webhook build.
+
 ## Architecture
 
 One Cloudflare Worker serves a React/Vite SPA from static assets and a Hono API, with Cloudflare D1 (SQLite) as the only data store. The three CSVs are converted by `scripts/csv2sql` into literal-value seed SQL that `wrangler d1 execute` loads after the schema migrations, normalizing emails once at ingest and writing merge/quarantine counts to `import_runs`. Live app events arrive at `POST /webhooks/app`, are verified by HMAC, inserted idempotently by `event_id`, and resolved to profiles at read time, so lookup and segments see them immediately. The AI assistant is a gated tool loop: Claude only ever receives PII-free views and tool results, subjects are referenced by pseudonymous keys, and emails are re-attached server-side after the model answers. Every model request is scanned before it leaves and written to `ai_audit`, which the UI shows.
@@ -239,7 +253,9 @@ _Filled from the decision log as areas land._
 
 ## Known gaps
 
-_Written at freeze (Sun)._
+- **A webhook event cannot change a segment count.** The plan (08 T-WH-10, the 16 Wednesday checkpoint) says "a segment count changes after an event". No segment filter reads anything a webhook writes: `status`, `source` and `last_open_date` come from `subscribers.csv`, and `has_app` needs an `app_users` row with an email, while a webhook only creates `app_users` rows with no email (stub users). What an event does change in a segment is the stored `engagement_score` of its rows (09 D-46), with no re-import. T-WH-10 pins that score rise, not a count change.
+
+The rest is written at freeze (Sun).
 
 ## Known security gaps
 
