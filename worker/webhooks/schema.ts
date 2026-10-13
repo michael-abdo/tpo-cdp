@@ -13,14 +13,15 @@ export const ID_MAX_CHARS = 64
 export const PROPERTY_VALUE_MAX_CHARS = 200
 
 const EVENT_TIMESTAMP =
-  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:([Zz])|([+-])(\d{2}):?(\d{2}))?$/
+  /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?)?$/
 
 /**
  * An ISO-8601 event time parsed leniently and normalized to UTC `YYYY-MM-DDTHH:MM:SSZ`, the same
- * form the seed stores (02 §Time, 09 D-38): `Z`, a `±HH:MM`/`±HHMM` offset, or no zone (= UTC);
- * `T` or a space between date and time. Fractional seconds are accepted and dropped, so every
- * stored event_ts has one width and sorts as text. Returns null for anything else, including
- * dates that do not exist on the calendar.
+ * form the seed stores (02 §Time, 09 D-38): `Z`, a `±HH:MM`/`±HHMM`/`±HH` offset, or no zone
+ * (= UTC); `T` or a space between date and time. Fractional seconds are accepted and dropped, so
+ * every stored event_ts has one width and sorts as text. Returns null for anything else, including
+ * dates that do not exist on the calendar and a date with no time of day (an event time needs one;
+ * accepting it would invent midnight).
  */
 export function normalizeEventTimestamp(value: string): string | null {
   const m = EVENT_TIMESTAMP.exec(value)
@@ -33,10 +34,42 @@ export function normalizeEventTimestamp(value: string): string | null {
   if (new Date(local).toISOString().slice(0, 10) !== `${y}-${mo}-${d}`) return null
   let offsetMinutes = 0
   if (sign !== undefined) {
-    if (Number(oh) > 23 || Number(om) > 59) return null
-    offsetMinutes = (sign === '-' ? -1 : 1) * (Number(oh) * 60 + Number(om))
+    const offsetHours = Number(oh)
+    const offsetMins = om === undefined ? 0 : Number(om)
+    if (offsetHours > 23 || offsetMins > 59) return null
+    offsetMinutes = (sign === '-' ? -1 : 1) * (offsetHours * 60 + offsetMins)
   }
   return new Date(local - offsetMinutes * 60_000).toISOString().slice(0, 19) + 'Z'
+}
+
+/**
+ * The deepest `properties` nesting the store accepts, the object itself counting as 1: the
+ * json_valid CHECK on app_events.properties (0001_core.sql) fails past SQLite's JSON_MAX_DEPTH of
+ * 1000, so a deeper value would turn a sender's mistake into a 500 instead of a 400.
+ */
+export const PROPERTIES_MAX_DEPTH = 1000
+
+/**
+ * The first rule a properties object breaks, or null: a string anywhere in it (a value, an array
+ * item or a nested object's value) over PROPERTY_VALUE_MAX_CHARS, or nesting past
+ * PROPERTIES_MAX_DEPTH. Walks with an explicit stack, so a deeply nested body cannot overflow the
+ * call stack. Keys are the sender's own text and are never part of the message.
+ */
+function propertiesProblem(properties: Record<string, unknown>): string | null {
+  const stack: { value: unknown; depth: number }[] = [{ value: properties, depth: 1 }]
+  while (stack.length > 0) {
+    const { value, depth } = stack.pop()!
+    if (typeof value === 'string') {
+      if (value.length > PROPERTY_VALUE_MAX_CHARS)
+        return `properties strings must be at most ${PROPERTY_VALUE_MAX_CHARS} characters`
+      continue
+    }
+    if (typeof value !== 'object' || value === null) continue
+    if (depth > PROPERTIES_MAX_DEPTH) return `properties must nest at most ${PROPERTIES_MAX_DEPTH} levels`
+    for (const child of Array.isArray(value) ? value : Object.values(value))
+      stack.push({ value: child, depth: depth + 1 })
+  }
+  return null
 }
 
 const id = (field: string) =>
@@ -68,14 +101,14 @@ const eventSchema = z.object({
       }
       return normalized
     }),
+  // 04: "properties object or absent; any string value > 200 chars → 400" (09 D-22). Any JSON
+  // value may sit inside the object; the cap reaches nested strings so nesting cannot dodge it.
   properties: z
-    .record(
-      z.string(),
-      z.string({ error: 'properties values must be strings' }).max(PROPERTY_VALUE_MAX_CHARS, {
-        error: `properties values must be at most ${PROPERTY_VALUE_MAX_CHARS} characters`,
-      }),
-      { error: 'properties must be an object' },
-    )
+    .record(z.string(), z.unknown(), { error: 'properties must be an object' })
+    .superRefine((value, ctx) => {
+      const problem = propertiesProblem(value)
+      if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
+    })
     .optional(),
 })
 
@@ -86,7 +119,8 @@ export interface WebhookEvent {
   user_id: string | null
   device_id: string
   timestamp: string
-  properties: Record<string, string> | null
+  /** The sender's JSON object, unchanged; null when absent. */
+  properties: Record<string, unknown> | null
 }
 
 /** One entry of the 400 `details` list. `allowed` is set on the `event` entry. */

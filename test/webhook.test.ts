@@ -1,5 +1,6 @@
 import { env, SELF } from 'cloudflare:test'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { TODAY } from '../shared/config'
 import { pkeyForEmail, pkeyForUnknownUser } from '../shared/pseudonym'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
@@ -12,13 +13,17 @@ import {
   webhookSecret,
 } from './helpers/webhook'
 
-// POST /webhooks/app (04 §Webhook; 07 §A–C, §G): T-WH-1..8, 11, 12 (08). The test D1 holds the
-// real seed of data/*.csv (test/helpers/seed.ts). Expected identities: 02 §Counts.
+// POST /webhooks/app (04 §Webhook; 07 §A–C, §G): T-WH-1..8, 11, 12 (08), plus the stored
+// engagement_score recompute on every stored event (09 D-46). The test D1 holds the real seed of
+// data/*.csv (test/helpers/seed.ts). Expected identities: 02 §Counts. Expected scores: the 02
+// §Derived formula, written out in expectedScore() independently of shared/derive.ts, over the
+// stored last_open_date and site visits.
 // Inputs and where they come from (09 D-11: brief-shaped payloads built from real ids):
 // - BRIEF_SAMPLE is the brief's payload, byte for byte as 04 §Webhook body quotes it.
 // - user ids are real app_users.csv rows: u_2b6447a3 (line 2, julia.evans230@gmail.com),
 //   u_ceed5f12 (line 303, joy.hall830@protonmail.com), u_baba14aa (line 3), u_3380b6e6 (line 8),
-//   u_c0d06d19 (line 7), u_f2411d1c (line 9), u_e9edbf48 (line 10). The unknown user ids
+//   u_c0d06d19 (line 7), u_f2411d1c (line 9), u_e9edbf48 (line 10), u_38e852b0 (line 11,
+//   sarah.edwards657@gmail.com), u_f1cad5ce (line 15, eli.clark874@icloud.com). The unknown user ids
 //   u_2b6447a and u_3380b6e are real ids with the last character removed (09 D-47); neither
 //   occurs in data/*.csv.
 // - device ids: d_4b21e8 is the brief's; the others are `d_` + the hex of a real user id.
@@ -28,7 +33,10 @@ import {
 //   offset, and real web_events.csv times (lines 2 and 3, 2026-06-30 20:11:42 and 20:45:52).
 //   T-WH-7's "6 hours old" time is taken from the wall clock, as 08 asks.
 // - property values are real page slugs from web_events.csv (/news/supreme-court-ruling-explained,
-//   /news/church-attendance-study); the over-long value repeats the brief's slug and cuts it.
+//   /news/church-attendance-study); the over-long value repeats the brief's slug and cuts it. The
+//   keys are `story` (the brief's) and `link`, the two keys v_app_events reads (0002_views.sql).
+//   Non-string property values are the brief's slug re-shaped (in an object, in an array) or
+//   removed (null); the nesting-depth cases wrap the brief's slug in empty arrays.
 // - the wrong secret is WEBHOOK_SECRET with its last character removed; "not-an-email" is a
 //   real subscribers.csv value used as a non-JSON body. Secrets are never printed.
 
@@ -41,6 +49,10 @@ const ISO_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
 
 const nextEventId = eventIdPool()
 let cookie: string
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 beforeAll(async () => {
   await seedDatabase()
@@ -101,6 +113,42 @@ async function lookup(
     headers: { cookie },
   })
   return { status: res.status, body: await res.json() }
+}
+
+const DAY_MS = 86_400_000
+/** Whole days from `from` to `to`, by their date parts. */
+const days = (from: string, to: string) =>
+  (Date.parse(to.slice(0, 10)) - Date.parse(from.slice(0, 10))) / DAY_MS
+
+/**
+ * 02 §Derived engagement_score, written out here rather than imported, over the stored inputs of
+ * the profile with `email` (null for a stub: no opens, no site visits): recency from
+ * subscribers.last_open_date, site visits = the profile's web events dated TODAY − 30 .. TODAY.
+ * `appEvents` is what the caller expects to count.
+ */
+async function expectedScore(email: string | null, appEvents: number): Promise<number> {
+  let recency = 0
+  let site = 0
+  if (email !== null) {
+    const lastOpen = await env.DB.prepare('SELECT last_open_date FROM subscribers WHERE email_norm = ?')
+      .bind(email)
+      .first<string | null>('last_open_date')
+    if (lastOpen !== null) recency = 50 * Math.max(0, 1 - Math.max(0, days(lastOpen, TODAY)) / 30)
+    const { results } = await env.DB.prepare(
+      `SELECT we.event_ts FROM web_events we JOIN web_visitors wv ON wv.visitor_id = we.visitor_id
+        WHERE wv.email_norm = ?`,
+    )
+      .bind(email)
+      .all<{ event_ts: string }>()
+    site = results.filter((r) => days(r.event_ts, TODAY) >= 0 && days(r.event_ts, TODAY) <= 30).length
+  }
+  return Math.round(recency + 25 * Math.min(1, appEvents / 10) + 25 * Math.min(1, site / 5))
+}
+
+function storedScore(pkey: string): Promise<number | null> {
+  return env.DB.prepare('SELECT engagement_score FROM profiles WHERE pkey = ?')
+    .bind(pkey)
+    .first<number>('engagement_score')
 }
 
 describe('T-WH-2 the brief sample payload', () => {
@@ -192,9 +240,9 @@ describe('T-WH-3 event enum and one event per request', () => {
       [event({ ...base, device_id: '' }), 'device_id'],
       [event({ ...base, user_id: '' }), 'user_id'],
       [event({ ...base, timestamp: '2026-09-28' }), 'timestamp'], // the brief's time removed
-      [event({ ...base, timestamp: '2026-09-28T14:22:05Q' }), 'timestamp'],
-      [event({ ...base, properties: { story: { story: 'supreme-court-ruling-explained' } } }), 'properties'],
+      [event({ ...base, timestamp: '2026-09-28T14:22' }), 'timestamp'], // the brief's seconds removed
       [event({ ...base, properties: ['supreme-court-ruling-explained'] }), 'properties'],
+      [event({ ...base, properties: 'supreme-court-ruling-explained' }), 'properties'],
       [event({ ...base, properties: null }), 'properties'],
     ]
     for (const [body, field] of cases) {
@@ -262,6 +310,13 @@ describe('T-WH-5 a known user_id', () => {
       properties: { link: 'supreme-court-ruling-explained' },
       attached_via: 'direct',
     })
+
+    // 09 D-46: her stored score counts every app event of hers in the last 30 days, this one too.
+    const recent = profile.app.events.filter((e) => days(e.event_ts, TODAY) <= 30)
+    expect(recent.length).toBeGreaterThan(0)
+    const score = await storedScore(await pkeyForEmail(piiKeySecret(), JULIA))
+    expect(score).toBe(await expectedScore(JULIA, recent.length))
+    expect(score).toBeGreaterThan(await expectedScore(JULIA, 0))
   })
 })
 
@@ -280,13 +335,15 @@ describe('T-WH-6 an unknown user_id', () => {
     const user = await env.DB.prepare('SELECT * FROM app_users WHERE user_id = ?').bind(unknown).first()
     expect(user).toEqual({ user_id: unknown, email_norm: null, created_at: receivedAt, from_csv: 0 })
     const profile = await env.DB.prepare('SELECT * FROM profiles WHERE pkey = ?').bind(stubKey).first()
+    // 09 D-46: the stub's one app event counts: 25 × min(1, 1/10) = 2.5, rounded to 3.
     expect(profile).toEqual({
       pkey: stubKey,
       email_norm: null,
       kind: 'unknown_user_stub',
-      engagement_score: 0,
+      engagement_score: 3,
       created_at: receivedAt,
     })
+    expect(await expectedScore(null, 1)).toBe(3)
 
     // A second event for the same user reuses the stub.
     const second = await post(
@@ -300,6 +357,8 @@ describe('T-WH-6 an unknown user_id', () => {
     expect(second.status).toBe(202)
     expect(await count('app_users WHERE user_id = ?', unknown)).toBe(1)
     expect(await count('profiles WHERE pkey = ?', stubKey)).toBe(1)
+    // Two app events: 25 × 2/10 = 5.
+    expect(await storedScore(stubKey)).toBe(5)
 
     const { status: found, body } = await lookup(unknown)
     expect(found).toBe(200)
@@ -340,6 +399,66 @@ describe('T-WH-7 out of order and old events', () => {
       '2026-06-30T20:45:52Z',
       sixHoursAgo.slice(0, 19) + 'Z',
     ])
+
+    // 09 D-46 with 02 §Time: the June events are more than 30 days before TODAY and do not count;
+    // the wall-clock event is after TODAY and counts as 0 days old.
+    expect(days(TODAY, sixHoursAgo)).toBeGreaterThan(0)
+    const email = 'daniel.hill389@gmail.com' // app_users.csv line 3
+    expect(await storedScore(await pkeyForEmail(piiKeySecret(), email))).toBe(await expectedScore(email, 1))
+  })
+})
+
+describe('T-WH-7b lenient offsets (09 D-38)', () => {
+  it('accepts an hour-only offset and stores the same UTC instant', async () => {
+    // The brief's instant with the -05:00 offset used in T-WH-6, its minutes removed.
+    for (const timestamp of [
+      '2026-09-28T09:22:05-05:00',
+      '2026-09-28T09:22:05-0500',
+      '2026-09-28T09:22:05-05',
+    ]) {
+      const body = event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8', timestamp })
+      expect((await post(body)).status, timestamp).toBe(202)
+      expect((await stored(body.event_id as string))!.event_ts).toBe(BRIEF_TS)
+    }
+  })
+})
+
+describe('09 D-46 score recompute and 01 identity resolution across one device', () => {
+  it('rescores both users when a device changes hands, and an older event keeps its own user_id', async () => {
+    const [x, xEmail] = ['u_38e852b0', 'sarah.edwards657@gmail.com']
+    const [y, yEmail] = ['u_f1cad5ce', 'eli.clark874@icloud.com']
+    const dev = 'd_38e852b0'
+    const xKey = await pkeyForEmail(piiKeySecret(), xEmail)
+    const yKey = await pkeyForEmail(piiKeySecret(), yEmail)
+    // The seed's stored scores have no app events (09 D-46).
+    expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 0))
+    expect(await storedScore(yKey)).toBe(await expectedScore(yEmail, 0))
+
+    expect((await post(event({ event: 'login', user_id: x, device_id: dev }))).status).toBe(202)
+    expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 1))
+
+    // An anonymous event on x's device resolves to x and counts for x.
+    const anon = await post(event({ event: 'app_open', user_id: null, device_id: dev }))
+    expect(anon.json.resolved).toEqual({ user_id: x, pkey: xKey })
+    expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 2))
+
+    // y logs in on the device at the same event_ts: the later arrival owns it (09 D-43), the
+    // anonymous event moves to y, and x, the previous owner, is rescored without it.
+    const yLogin = await post(event({ event: 'login', user_id: y, device_id: dev }))
+    expect(yLogin.json.resolved).toEqual({ user_id: y, pkey: yKey })
+    expect(await device(dev)).toEqual({ user_id: y, last_seen_ts: BRIEF_TS })
+    expect(await storedScore(yKey)).toBe(await expectedScore(yEmail, 2))
+    expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 1))
+
+    // An older event from x on y's device resolves to x, its own user_id, and leaves the device to
+    // y. It is more than 30 days before TODAY, so x's score does not change.
+    const older = await post(
+      event({ event: 'read_story', user_id: x, device_id: dev, timestamp: '2026-06-30T20:45:52Z' }),
+    )
+    expect(older.status).toBe(202)
+    expect(older.json.resolved).toEqual({ user_id: x, pkey: xKey })
+    expect(await device(dev)).toEqual({ user_id: y, last_seen_ts: BRIEF_TS })
+    expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 1))
   })
 })
 
@@ -432,6 +551,22 @@ describe('T-WH-11 signature headers', () => {
     )
   })
 
+  it('logs each 401 with its reason and no header or body value (04 §Webhook responses)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
+    await unchanged(() => sendWebhook(body, { secret: webhookSecret().slice(0, -1) }), 'bad_signature')
+    await unchanged(() => sendWebhook(body, { timestamp: String(nowSeconds() - 301) }), 'stale_timestamp')
+    const lines = warn.mock.calls.map((args) => JSON.parse(String(args[0])))
+    expect(lines.map((l) => [l.at, l.status, l.error])).toEqual([
+      ['webhook', 401, 'bad_signature'],
+      ['webhook', 401, 'stale_timestamp'],
+    ])
+    for (const line of lines) expect(line.reason).toEqual(expect.any(String))
+    const logged = JSON.stringify(warn.mock.calls)
+    expect(logged).not.toContain('u_2b6447a3')
+    expect(logged).not.toContain(webhookSecret())
+  })
+
   it('rejects a signature without the v1= prefix', async () => {
     const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
     const timestamp = String(nowSeconds())
@@ -502,6 +637,44 @@ describe('T-WH-12 size and content-type caps', () => {
     })
     expect((await post(atCap)).status).toBe(202)
     expect(JSON.parse((await stored(atCap.event_id as string))!.properties!).story).toHaveLength(200)
+  })
+
+  it('accepts any JSON object as properties and caps strings at any depth (04, 09 D-22)', async () => {
+    const slug = 'supreme-court-ruling-explained'
+    const base = { user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }
+    const accepted = event({
+      ...base,
+      properties: { story: slug, link: { story: slug }, page: [slug], utm: null },
+    })
+    expect((await post(accepted)).status).toBe(202)
+    expect(JSON.parse((await stored(accepted.event_id as string))!.properties!)).toEqual(accepted.properties)
+
+    const long = Array(8).fill(slug).join('-').slice(0, 201)
+    for (const properties of [{ link: { story: long } }, { story: [slug, long] }]) {
+      const rows = await count('app_events')
+      const { status, json } = await post(event({ ...base, properties }))
+      expect(status).toBe(400)
+      expect(json).toMatchObject({ error: 'invalid_event', details: [{ field: 'properties' }] })
+      expect(JSON.stringify(json.details)).not.toContain('story')
+      expect(await count('app_events')).toBe(rows)
+    }
+  })
+
+  it('accepts properties nested as deep as the store allows and refuses one level more with 400', async () => {
+    // The object is level 1; D1's json_valid CHECK on app_events.properties allows 1000 levels.
+    const nested = (levels: number) => {
+      let value: unknown = 'supreme-court-ruling-explained'
+      for (let i = 1; i < levels; i++) value = [value]
+      return { story: value }
+    }
+    const deepest = event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8', properties: nested(1000) })
+    expect((await post(deepest)).status).toBe(202)
+    expect(await stored(deepest.event_id as string)).not.toBeNull()
+    const tooDeep = await post(
+      event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8', properties: nested(1001) }),
+    )
+    expect(tooDeep.status).toBe(400)
+    expect(tooDeep.json).toMatchObject({ error: 'invalid_event', details: [{ field: 'properties' }] })
   })
 
   it('answers 415 for a body that is not sent as application/json', async () => {
