@@ -173,3 +173,37 @@ export interface AuditTrace {
   trace_id: string
   rows: AuditRow[]
 }
+
+/** The counts every /growth number shares: the `explain` question opens /assistant prefilled (09 D-39). */
+interface Explained {
+  /** Share as a fraction, 4 decimals; null when the group is empty. */
+  rate: number | null
+  explain: string
+}
+
+/** Source → app counts (worker/insights/source-app.ts SourceAppCounts). */
+export interface SourceAppCounts extends Explained {
+  subscribers: number
+  with_app: number
+  with_app_after_signup: number
+}
+
+/** GET /api/insights/source-app-conversion (04, 06 §/growth panel 1). */
+export interface SourceAppConversion {
+  total: SourceAppCounts
+  by_source: (SourceAppCounts & { source: string | null })[]
+  definitions_used: DefinitionKey[]
+}
+
+/** Visitor → subscriber counts (worker/insights/funnel.ts FunnelCounts). */
+export interface FunnelCounts extends Explained {
+  visitors: number
+  subscribed: number
+}
+
+/** GET /api/insights/funnel (04, 06 §/growth panel 2; v_funnel). */
+export interface Funnel {
+  total: FunnelCounts
+  by_first_page: (FunnelCounts & { first_page: string })[]
+  by_first_utm: (FunnelCounts & { first_utm_source: string | null })[]
+}

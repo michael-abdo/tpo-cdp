@@ -8,11 +8,12 @@
 // /segments uses (src/labels.ts, principle 4); a segment answer also offers Export CSV (06
 // §/assistant). Every answer links to its trace on /audit ("what the AI saw", 05 §Proof surfaces). The request takes 5–20 s (04), shown as a short text
 // state. Errors show the 04 envelope's message; the 503 for a missing key names the hosted URL.
-// Single-shot: there is no conversation history (09 D-34).
+// Single-shot: there is no conversation history (09 D-34). "Explain this" on /growth opens this page
+// with ?q=<question> (09 D-39): the box is filled in and nothing is sent until the reader presses Ask.
 
 import { type FormEvent, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
-import { DEFINITIONS, type DefinitionKey } from '../../shared/derive'
+import { Link, useNavigate, useSearchParams } from 'react-router'
+import { DEFINITIONS } from '../../shared/derive'
 import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
@@ -29,7 +30,7 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDate } from '../format'
-import { columnLabel, filterLabel, sourceLabel, statusLabel } from '../labels'
+import { columnLabel, DEFINITION_LABEL, filterLabel, sourceLabel, statusLabel } from '../labels'
 import type { AssistantCell, AssistantResponse, SegmentFilters } from '../types'
 
 /** The brief's three example questions, verbatim (R5.2). */
@@ -38,22 +39,6 @@ const BRIEF_QUESTIONS = [
   'build me a list of our most engaged readers',
   'which pages do new subscribers hit first?',
 ] as const
-
-/** Plain headings for the definitions (principle 4); the raw names show only in Technical details. */
-const DEFINITION_LABEL: Record<DefinitionKey, string> = {
-  days_since_open: 'Days since last open',
-  cold_since: 'Cold date',
-  cold: 'Cold',
-  went_cold_in: 'Went cold in a month',
-  no_open_in_days: "Haven't opened in N days",
-  new_subscriber: 'New subscriber',
-  going_cold_risk: 'At risk of going cold',
-  engagement_score: 'Engagement',
-  has_app: 'Uses the app',
-  app_after_signup: 'Got the app after signing up',
-  last_month: 'Last month',
-  last_n_days: 'Last N days',
-}
 
 /** Rows shown before "Show all …" (principle 2: the rest is one click away). */
 const FIRST_ROWS = 10
@@ -270,8 +255,14 @@ function Result({ data }: { data: AssistantResponse }) {
   )
 }
 
+/** The query parameter "Explain this" on /growth fills the box with (09 D-39). */
+export const PREFILL_PARAM = 'q'
+
 export default function AssistantPage() {
-  const [question, setQuestion] = useState('')
+  // A question handed over by "Explain this" is filled in, not sent: the reader presses Ask.
+  const [params] = useSearchParams()
+  const prefilled = params.get(PREFILL_PARAM)?.trim() ?? ''
+  const [question, setQuestion] = useState(prefilled)
   const [state, setState] = useState<State | null>(null)
   // Only the latest question's answer is shown, so a slow earlier request never replaces it.
   const latest = useRef(0)
@@ -361,7 +352,11 @@ export default function AssistantPage() {
       </div>
 
       {state === null && (
-        <EmptyState>Type a question and press Ask, or pick one of the examples above.</EmptyState>
+        <EmptyState>
+          {prefilled !== '' && question === prefilled
+            ? 'The question from the Growth page is filled in above. Press Ask to send it, or change it first.'
+            : 'Type a question and press Ask, or pick one of the examples above.'}
+        </EmptyState>
       )}
       {state?.status === 'loading' && (
         <Loading label="Working on your question… this usually takes 5 to 20 seconds." />

@@ -1,6 +1,8 @@
 // Plain words for stored values, column names and filter keys (06 §UI principles 4). Display maps
 // only: the values sent to the API and the raw names shown in Technical details stay as they are.
-// /segments and /assistant read the same maps, so a reader's fields carry the same words on both.
+// /segments, /assistant and /growth read the same maps, so a reader's fields carry the same words on each.
+
+import type { DefinitionKey } from '../shared/derive'
 
 /** Signup sources as stored (02 §Normalization: canonical lowercase) → display words. */
 export const SOURCE_LABEL: Readonly<Record<string, string>> = {
@@ -67,3 +69,19 @@ export function words(name: string): string {
 
 export const columnLabel = (name: string) => (COLUMN_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 export const filterLabel = (name: string) => (FILTER_LABEL as Record<string, string | undefined>)[name] ?? words(name)
+
+/** Plain headings for the definitions (02 §Derived), on /assistant and /growth; the raw names show only in Technical details. */
+export const DEFINITION_LABEL: Record<DefinitionKey, string> = {
+  days_since_open: 'Days since last open',
+  cold_since: 'Cold date',
+  cold: 'Cold',
+  went_cold_in: 'Went cold in a month',
+  no_open_in_days: "Haven't opened in N days",
+  new_subscriber: 'New subscriber',
+  going_cold_risk: 'At risk of going cold',
+  engagement_score: 'Engagement',
+  has_app: 'Uses the app',
+  app_after_signup: 'Got the app after signing up',
+  last_month: 'Last month',
+  last_n_days: 'Last N days',
+}
