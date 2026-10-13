@@ -1,6 +1,7 @@
 import { env, SELF } from 'cloudflare:test'
 import { Hono } from 'hono'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { constantTimeStringEq, timingSafeEqual } from '../worker/auth/constant-time'
 import { requireSession } from '../worker/auth/middleware'
 import { nowSeconds, SESSION_TTL_SECONDS, signSession, verifySession } from '../worker/auth/session'
 import { type AppEnv, assertBindings } from '../worker/env'
@@ -33,6 +34,15 @@ function secretValues(): string[] {
   const values = [realSecret('SITE_PASSWORD'), realSecret('SESSION_SECRET'), realSecret('WEBHOOK_SECRET'), realSecret('PII_KEY_SECRET')]
   if (env.ANTHROPIC_API_KEY) values.push(env.ANTHROPIC_API_KEY)
   return values
+}
+
+/** True when text contains any length-n run of characters from secret (the whole secret if shorter). */
+function containsFragment(text: string, secret: string, n: number): boolean {
+  const width = Math.min(n, secret.length)
+  for (let i = 0; i + width <= secret.length; i++) {
+    if (text.includes(secret.slice(i, i + width))) return true
+  }
+  return false
 }
 
 /** The real env with some bindings removed, as a misconfigured deploy would see it. */
@@ -134,9 +144,12 @@ describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
   })
 
   it('an expired cookie signed with the real secret is 401', async () => {
-    const value = await signSession(realSecret('SESSION_SECRET'), { sub: crypto.randomUUID(), exp: nowSeconds() - 1 })
-    const res = await probeApp().fetch(new Request(`${BASE}/api/probe`, { headers: { cookie: `cdp_session=${value}` } }), env)
-    expect(res.status).toBe(401)
+    for (const exp of [nowSeconds() - 1, nowSeconds()]) {
+      // exp equal to now is already expired (the boundary is exclusive).
+      const value = await signSession(realSecret('SESSION_SECRET'), { sub: crypto.randomUUID(), exp })
+      const res = await probeApp().fetch(new Request(`${BASE}/api/probe`, { headers: { cookie: `cdp_session=${value}` } }), env)
+      expect(res.status).toBe(401)
+    }
   })
 
   it('a tampered signature, a tampered payload and a malformed value are 401', async () => {
@@ -227,6 +240,30 @@ describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
   })
 })
 
+describe('constant-time comparison without crypto.subtle.timingSafeEqual (fallback loop)', () => {
+  it('the fallback loop finds a difference in any byte position', () => {
+    const subtle = crypto.subtle as { timingSafeEqual?: unknown }
+    const native = subtle.timingSafeEqual
+    subtle.timingSafeEqual = undefined
+    try {
+      expect(typeof crypto.subtle.timingSafeEqual).toBe('undefined')
+      const secret = new TextEncoder().encode(realSecret('SESSION_SECRET'))
+      expect(timingSafeEqual(secret, secret.slice())).toBe(true)
+      for (const i of [0, Math.floor(secret.length / 2), secret.length - 1]) {
+        const changed = secret.slice()
+        changed[i] ^= 1
+        expect(timingSafeEqual(secret, changed)).toBe(false)
+      }
+      expect(timingSafeEqual(secret, secret.slice(1))).toBe(false)
+      expect(constantTimeStringEq(realSecret('SITE_PASSWORD'), realSecret('SITE_PASSWORD'))).toBe(true)
+      expect(constantTimeStringEq(wrongPasswordSameLength(), realSecret('SITE_PASSWORD'))).toBe(false)
+    } finally {
+      subtle.timingSafeEqual = native
+    }
+    expect(typeof crypto.subtle.timingSafeEqual).toBe('function')
+  })
+})
+
 describe('assertBindings (11 §Deploy, fail fast)', () => {
   it('names every missing binding and secret in one error', () => {
     expect(() => assertBindings(envWithout('DB', 'WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'LOGIN_LIMITER', 'WEBHOOK_LIMITER'))).toThrow(
@@ -261,6 +298,37 @@ describe('T-AUTH-2 error bodies carry no secrets (04 §Error envelope)', () => {
     for (const secret of secretValues()) {
       expect(forcedText.includes(secret)).toBe(false)
       expect(healthText.includes(secret)).toBe(false)
+    }
+  })
+
+  it('a malformed login body carrying a secret is 400 and no log line contains any secret', async () => {
+    // V8 JSON SyntaxError messages quote the start of the input, so logging the parse error would
+    // write the submitted password to Worker logs. Every console method is replaced (not wrapped),
+    // so nothing reaches the test output even if this assertion fails.
+    const logged: string[] = []
+    const methods = ['log', 'info', 'warn', 'error', 'debug'] as const
+    const spies = methods.map((m) => vi.spyOn(console, m).mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' '))))
+    try {
+      for (const secret of secretValues()) {
+        for (const body of [secret, `{"password":${secret}}`, `{"password":"${secret}"`]) {
+          const res = await app.fetch(
+            new Request(`${BASE}/api/login`, { method: 'POST', headers: { ...JSON_HEADERS, 'cf-connecting-ip': documentationIp() }, body }),
+            env,
+          )
+          expect(res.status).toBe(400)
+          const text = await res.text()
+          expect(JSON.parse(text).error).toBe('invalid_body')
+          expect(text.includes(secret)).toBe(false)
+        }
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore()
+    }
+    expect(logged).toContain(JSON.stringify({ at: 'login', outcome: 'invalid_body', error: 'SyntaxError' }))
+    // V8 quotes only a window of about ten characters around the error for longer input, so a
+    // whole-value includes() would miss the leak: check every 8-character fragment of every secret.
+    for (const line of logged) {
+      for (const secret of secretValues()) expect(containsFragment(line, secret, 8)).toBe(false)
     }
   })
 

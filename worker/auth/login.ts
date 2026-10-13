@@ -27,8 +27,10 @@ loginRoutes.post('/login', async (c) => {
     throw new ApiError(429, 'rate_limited', 'Too many sign-in attempts. Wait a minute and try again.')
   }
 
+  // Log only the error's class name: V8's JSON SyntaxError message quotes the request body,
+  // which here is a password attempt (CLAUDE.md: secrets never in logs).
   const body: unknown = await c.req.json().catch((err: unknown) => {
-    console.warn(JSON.stringify({ at: 'login', outcome: 'invalid_body', error: String(err) }))
+    console.warn(JSON.stringify({ at: 'login', outcome: 'invalid_body', error: err instanceof Error ? err.name : 'unknown' }))
     return undefined
   })
   const password = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).password : undefined
