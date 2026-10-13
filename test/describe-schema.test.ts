@@ -66,6 +66,9 @@ describe('describe_schema: v_* view names and PRAGMA columns only (16 parked ite
     // The model sees only the first rows of the table (format-results.ts MODEL_ROW_CAP), so the
     // summary carries every view's full column list: it must be the PRAGMA columns, in order.
     expect(Object.keys(output.summary.views as Record<string, string[]>).sort()).toEqual([...expected.keys()].sort())
+    // The whole output shape is pinned, so no extra key (e.g. sample rows of a view) can ride along.
+    expect(Object.keys(output).sort()).toEqual(['columns', 'rows', 'summary', 'tool', 'total_rows'])
+    expect(Object.keys(output.summary).sort()).toEqual(['note', 'views'])
     for (const [view, columns] of expected) {
       expect(output.rows.filter((r) => r.view === view).map((r) => ({ name: r.column, type: r.type }))).toEqual(columns)
       const described = columns.map((c) => (c.type === '' ? c.name : `${c.name} ${c.type}`))

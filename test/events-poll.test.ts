@@ -60,6 +60,8 @@ describe('/events polls every 5 seconds and announces only new events (06 §/eve
     const third = await feed()
     expect(third).toHaveLength(RECENT_EVENTS_LIMIT)
     expect(eventsAnnouncement(ids(second), third, 'poll')).toBe('2 new events at the top of the list')
+    // A manual Refresh that finds new events says so, never "No new events".
+    expect(eventsAnnouncement(ids(second), third, 'manual')).toBe('2 new events at the top of the list')
 
     const fourth = await feed()
     expect(eventsAnnouncement(ids(third), fourth, 'poll')).toBeNull()
