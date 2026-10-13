@@ -11,7 +11,8 @@
 //   3  tool loading (tools/tool-loader.ts)           → 500 no_tools | tool_config_error
 //   4  the view schema for the system prompt (schema-context.ts)
 //   5-9, 11  the model loop (loop.ts): build, scan, call, audit, execute tools
-//   10 respond.ts types the result; the result is scanned once more; rehydrate.ts swaps pk_ keys
+//   10 respond.ts types the result (given every table and view name, so T-AI-5 can tell a
+//      SELECT … FROM over a real relation from English); the result is scanned once more; rehydrate.ts swaps pk_ keys
 //      for emails in the HTTP response only (05 §Re-hydration)
 //
 // Every error in the 04 table is written to ai_audit under the request's trace (04 "Errors (also
@@ -26,7 +27,7 @@ import { guardPayload } from './gates/pii-guard'
 import { type MessagesTransport, runLoop } from './loop'
 import { collectPkeys, loadEmailsByPkey, rehydrate } from './rehydrate'
 import { type AssistantResult, respond } from './respond'
-import { viewSchemas } from './schema-context'
+import { relationNames, viewSchemas } from './schema-context'
 import { loadTools, type LoadedTools } from './tools/tool-loader'
 
 /** 09 D-40. */
@@ -105,7 +106,8 @@ export async function answerQuestion(deps: AssistantDeps, question: string): Pro
   const views = await viewSchemas(deps.db)
   const loop = await runLoop({ db: deps.db, trace, views, tools, question: sanitized, transport: deps.transportFor(apiKey) })
 
-  const { result, notes } = respond({ modelText: loop.finalText, outputs: loop.outputs, capped: loop.capped })
+  const relations = await relationNames(deps.db)
+  const { result, notes } = respond({ modelText: loop.finalText, outputs: loop.outputs, capped: loop.capped, relations })
   if (notes.malformed !== null || notes.sqlRemoved) {
     console.warn(
       JSON.stringify({ at: 'respond', trace_id: trace.traceId, outcome: 'partial_or_cleaned', malformed: notes.malformed, sql_removed: notes.sqlRemoved, stop_reason: loop.stopReason }),
