@@ -1,20 +1,51 @@
-// /segments (06 §/segments, R3): the filter form, Preview (POST /api/segments/preview), Export CSV
-// (POST /api/segments/export.csv, downloaded from the response), the brief's one-click preset,
-// the result table, the placeholders-only SQL shape and a footer rendered from DEFINITIONS
-// (02 §Derived "one runtime source"). Status defaults to active and the response's
-// hidden_unsubscribed is shown as "+N unsubscribed hidden" (02 §Defaults).
+// /segments (06 §/segments, R3): "Build a list to email". The brief's one-click preset, the filter
+// form in plain words, Preview (POST /api/segments/preview), the count as a sentence, Export CSV
+// (POST /api/segments/export.csv, run on the filters the shown result came from, so the file always
+// matches the count on screen) and a short result table. Level 2 / Technical details (06 §UI
+// principles 2–5): per-row Details, "How these filters work" with the definitions from DEFINITIONS
+// (02 §Derived "one runtime source"), raw names and the placeholders-only SQL shape. Status
+// defaults to active; the response's hidden_unsubscribed is shown in words when it is above 0.
+// The form sends what the inputs hold (02 §Normalization): labels below are display maps only.
 
 import { type FormEvent, useState } from 'react'
 import { DEFINITIONS } from '../../shared/derive'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../worker/ingest/quarantine'
-import { errorMessage, postJson, request } from '../api'
-import { Empty, ErrorLine, Loading } from '../components'
-import { dateOr } from '../format'
-import type { SegmentFilters, SegmentPreview } from '../types'
+import { ApiError, errorMessage, postJson, request } from '../api'
+import {
+  Announcer,
+  Button,
+  type Column,
+  Disclosure,
+  EmptyState,
+  ErrorLine,
+  Field,
+  Loading,
+  PageHeader,
+  ResponsiveTable,
+  TechnicalDetails,
+} from '../components'
+import type { SegmentFilters, SegmentPreview, SegmentRow } from '../types'
 
 /** Rows a preview asks for; the full segment is what Export CSV is for. */
 const PREVIEW_LIMIT = 100
+/** Rows shown before "Show all … in preview" (principle 2: the rest is one click away). */
+const FIRST_ROWS = 10
+
+/** Display words for the stored values; the values sent to the API stay as they are. */
+const SOURCE_LABEL: Record<string, string> = {
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  referral: 'Referral',
+  google: 'Google',
+  direct: 'Direct',
+  podcast: 'Podcast',
+  x: 'X',
+}
+const STATUS_LABEL: Record<string, string> = { active: 'Active', unsubscribed: 'Unsubscribed' }
+
+const sourceLabel = (s: string | null) => (s === null ? 'Unknown' : (SOURCE_LABEL[s] ?? s))
+const statusLabel = (s: string) => STATUS_LABEL[s] ?? s
 
 /** The form's state: strings and flags as the inputs hold them, turned into 04 filters on submit. */
 interface Form {
@@ -32,7 +63,15 @@ const DEFAULT_FORM: Form = { status: 'active', sources: [], days: '', includeNev
 /** The brief's R3 example (02 §Counts): Instagram, active, no open in 30 days including never-opened. */
 const BRIEF_PRESET: Form = { status: 'active', sources: ['instagram'], days: '30', includeNeverOpened: true, hasApp: 'any' }
 
-const FOOTER_DEFINITIONS = [DEFINITIONS.days_since_open, DEFINITIONS.no_open_in_days, DEFINITIONS.cold]
+/** The footer definitions, each with a plain heading; the raw name shows only in Technical details. */
+const FOOTER_DEFINITIONS = [
+  { label: 'Days since last open', def: DEFINITIONS.days_since_open },
+  { label: "Haven't opened in N days", def: DEFINITIONS.no_open_in_days },
+  { label: 'Cold', def: DEFINITIONS.cold },
+]
+
+/** The CSV's columns as the export writes them (04 §Segments). */
+const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
 
 /** The 04 filters object; a days value the server would reject is still sent, so its 400 message shows. */
 function toFilters(form: Form): SegmentFilters {
@@ -46,26 +85,58 @@ function toFilters(form: Form): SegmentFilters {
   }
 }
 
-/** An ok result keeps the filters it was computed for, so the hidden count never describes an edited form. */
+/** An ok result keeps the filters it was computed for, so its notes and the export never describe an edited form. */
 type Result =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; invalidFilters: boolean }
   | { status: 'ok'; data: SegmentPreview; filters: SegmentFilters }
+
+const fmt = (n: number) => n.toLocaleString('en-US')
+const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`
+
+/** The table's columns: a column whose every row would repeat the filter is left out (principle 5). */
+function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
+  const cols: Column<SegmentRow>[] = [{ header: 'Email', cell: (r) => <span className="break-all">{r.email}</span> }]
+  if (filters.status.length > 1) cols.push({ header: 'Status', cell: (r) => statusLabel(r.status) })
+  if (filters.source?.length !== 1) cols.push({ header: 'Signed up from', cell: (r) => sourceLabel(r.source) })
+  cols.push(
+    { header: 'Last opened', cell: (r) => r.last_open_date ?? 'Never opened' },
+    { header: 'Engagement', cell: (r) => `${fmt(r.engagement_score)} / 100`, numeric: true },
+  )
+  return cols
+}
+
+function RowDetails({ row }: { row: SegmentRow }) {
+  return (
+    <dl className="space-y-1">
+      <Field label="Signed up">{row.signup_date}</Field>
+      <Field label="Signed up from">{sourceLabel(row.source)}</Field>
+      <Field label="Uses the app">{row.has_app ? 'Yes' : 'No'}</Field>
+    </dl>
+  )
+}
 
 export default function SegmentsPage() {
   const [form, setForm] = useState<Form>(DEFAULT_FORM)
   const [result, setResult] = useState<Result | null>(null)
+  const [showAll, setShowAll] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
   async function preview(f: Form) {
     setResult({ status: 'loading' })
+    setShowAll(false)
+    setExportError(null)
     try {
       const filters = toFilters(f)
       const data = await postJson<SegmentPreview>('/api/segments/preview', { filters, limit: PREVIEW_LIMIT })
       setResult({ status: 'ok', data, filters })
     } catch (err) {
-      setResult({ status: 'error', message: errorMessage(err) })
+      setResult({
+        status: 'error',
+        message: errorMessage(err),
+        invalidFilters: err instanceof ApiError && err.code === 'invalid_filters',
+      })
     }
   }
 
@@ -79,11 +150,11 @@ export default function SegmentsPage() {
     void preview(BRIEF_PRESET)
   }
 
-  async function exportCsv() {
+  async function exportCsv(filters: SegmentFilters) {
     setExporting(true)
     setExportError(null)
     try {
-      const res = await request('/api/segments/export.csv', { method: 'POST', body: { filters: toFilters(form) } })
+      const res = await request('/api/segments/export.csv', { method: 'POST', body: { filters } })
       const url = URL.createObjectURL(await res.blob())
       const link = document.createElement('a')
       link.href = url
@@ -104,158 +175,219 @@ export default function SegmentsPage() {
     }))
   }
 
-  return (
-    <>
-      <h1 className="text-xl font-semibold">Segments</h1>
-      <button
-        type="button"
-        onClick={applyPreset}
-        className="rounded border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50"
-      >
-        haven't opened in 30 days (the brief's example)
-      </button>
+  const daysBlank = form.days.trim() === ''
+  const ok = result?.status === 'ok' ? result : null
+  const hidden = ok !== null && !ok.filters.status.includes('unsubscribed') ? ok.data.hidden_unsubscribed : 0
+  const countSentence = ok === null ? '' : ok.data.count === 0 ? 'No readers match' : `${plural(ok.data.count, 'reader matches', 'readers match')}`
 
-      <form onSubmit={submit} className="space-y-3 rounded border border-gray-200 p-4 text-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor="status">Status</label>
+  let announcement = countSentence
+  if (result?.status === 'loading') announcement = 'Counting matching readers…'
+  if (exporting) announcement = 'Preparing download…'
+
+  const labelClass = 'block text-sm font-medium text-gray-900'
+  const hintClass = 'text-sm text-gray-600'
+  const inputClass = 'min-h-9 rounded border border-gray-300 bg-white px-2 py-1 text-sm'
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Build a list to email"
+        purpose="Choose who to include, see how many readers match, then download the list."
+      />
+      <Announcer message={announcement} />
+
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-gray-700">Not sure where to start? Try the brief's example:</span>
+        <Button onClick={applyPreset}>haven't opened in 30 days (the brief's example)</Button>
+      </div>
+
+      <form onSubmit={submit} noValidate className="grid gap-5 rounded border border-gray-200 p-4 sm:grid-cols-2">
+        <div className="space-y-1">
+          <label htmlFor="status" className={labelClass}>
+            Status
+          </label>
           <select
             id="status"
             value={form.status}
             onChange={(e) => setForm({ ...form, status: e.target.value as Form['status'] })}
-            className="rounded border border-gray-300 px-2 py-1"
+            className={inputClass}
           >
             {SUBSCRIBER_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {statusLabel(s)}
               </option>
             ))}
-            <option value="all">all statuses</option>
+            <option value="all">Everyone (including unsubscribed)</option>
           </select>
-          {result?.status === 'ok' && !result.filters.status.includes('unsubscribed') && (
-            <span className="text-gray-500">(+{result.data.hidden_unsubscribed} unsubscribed hidden)</span>
-          )}
         </div>
 
-        <fieldset className="flex flex-wrap items-center gap-3">
-          <legend className="mb-1">Source (none checked = any source)</legend>
-          {CANONICAL_SOURCES.map((s) => (
-            <label key={s} className="flex items-center gap-1">
-              <input type="checkbox" checked={form.sources.includes(s)} onChange={() => toggleSource(s)} />
-              {s}
-            </label>
-          ))}
-        </fieldset>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor="days">Days since last open ≥</label>
-          <input
-            id="days"
-            type="number"
-            min={1}
-            step={1}
-            value={form.days}
-            onChange={(e) => setForm({ ...form, days: e.target.value })}
-            placeholder="any"
-            className="w-20 rounded border border-gray-300 px-2 py-1"
-          />
-          <label className="flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={form.includeNeverOpened}
-              disabled={form.days.trim() === ''}
-              onChange={(e) => setForm({ ...form, includeNeverOpened: e.target.checked })}
-            />
-            include never opened
+        <div className="space-y-1">
+          <label htmlFor="has-app" className={labelClass}>
+            Uses the app
           </label>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor="has-app">Has app</label>
           <select
             id="has-app"
             value={form.hasApp}
             onChange={(e) => setForm({ ...form, hasApp: e.target.value as Form['hasApp'] })}
-            className="rounded border border-gray-300 px-2 py-1"
+            className={inputClass}
           >
-            <option value="any">any</option>
-            <option value="yes">yes</option>
-            <option value="no">no</option>
+            <option value="any">Either</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
           </select>
         </div>
 
-        <div className="flex gap-2">
-          <button type="submit" className="rounded bg-gray-900 px-4 py-1.5 text-white">
-            Preview
-          </button>
-          <button
-            type="button"
-            onClick={exportCsv}
-            disabled={exporting}
-            className="rounded border border-gray-300 px-4 py-1.5 disabled:opacity-50"
-          >
-            {exporting ? 'Exporting…' : 'Export CSV'}
-          </button>
+        <fieldset className="space-y-1 sm:col-span-2" aria-describedby="sources-hint">
+          <legend className={labelClass}>Where they signed up</legend>
+          <p id="sources-hint" className={hintClass}>
+            Leave all unchecked for any.
+          </p>
+          <div className="flex flex-wrap gap-x-4">
+            {CANONICAL_SOURCES.map((s) => (
+              <label key={s} className="flex min-h-8 cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  checked={form.sources.includes(s)}
+                  onChange={() => toggleSource(s)}
+                />
+                {sourceLabel(s)}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <div className="space-y-1 sm:col-span-2">
+          <label htmlFor="days" className={labelClass}>
+            Haven't opened an email in at least
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              id="days"
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              value={form.days}
+              onChange={(e) => setForm({ ...form, days: e.target.value })}
+              aria-describedby="days-hint"
+              className={`${inputClass} w-24`}
+            />
+            <span className="text-sm text-gray-700">days</span>
+          </div>
+          <p id="days-hint" className={hintClass}>
+            Leave blank for anyone. Otherwise enter a whole number, 1 or more.
+          </p>
+          <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm has-disabled:cursor-not-allowed has-disabled:text-gray-500">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={form.includeNeverOpened}
+              disabled={daysBlank}
+              aria-describedby={daysBlank ? 'never-hint' : undefined}
+              onChange={(e) => setForm({ ...form, includeNeverOpened: e.target.checked })}
+            />
+            Also include people who never opened
+          </label>
+          {daysBlank && (
+            <p id="never-hint" className={hintClass}>
+              Enter a number of days first.
+            </p>
+          )}
         </div>
-        {exportError !== null && <ErrorLine message={exportError} />}
+
+        <div className="sm:col-span-2">
+          <Button type="submit" variant="primary" className="px-5">
+            Preview
+          </Button>
+        </div>
       </form>
 
-      {result === null && <Empty>Set the filters and press Preview, or use the preset above.</Empty>}
-      {result?.status === 'loading' && <Loading />}
-      {result?.status === 'error' && <ErrorLine message={result.message} />}
-      {result?.status === 'ok' && (
-        <section className="space-y-3">
-          <h2 className="font-semibold">
-            Result: {result.data.count.toLocaleString('en-US')} subscribers
-            {result.data.rows.length < result.data.count && (
-              <span className="font-normal text-gray-500"> (showing the first {result.data.rows.length})</span>
-            )}
-          </h2>
-          {result.data.rows.length === 0 ? (
-            <Empty>No subscribers match these filters.</Empty>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-gray-200 text-gray-500">
-                  <tr>
-                    <th className="py-1 pr-4">email</th>
-                    <th className="py-1 pr-4">status</th>
-                    <th className="py-1 pr-4">source</th>
-                    <th className="py-1 pr-4">signup</th>
-                    <th className="py-1 pr-4">last open</th>
-                    <th className="py-1 pr-4">score</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.data.rows.map((row) => (
-                    <tr key={row.email} className="border-b border-gray-100">
-                      <td className="py-1 pr-4">{row.email}</td>
-                      <td className="py-1 pr-4">{row.status}</td>
-                      <td className="py-1 pr-4">{row.source ?? 'none'}</td>
-                      <td className="py-1 pr-4">{row.signup_date}</td>
-                      <td className="py-1 pr-4">{dateOr(row.last_open_date, 'never')}</td>
-                      <td className="py-1 pr-4">{row.engagement_score}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {result === null && (
+        <EmptyState>Choose who to include, then press Preview, or start from the brief's example above.</EmptyState>
+      )}
+      {result?.status === 'loading' && <Loading label="Counting matching readers…" />}
+      {result?.status === 'error' && (
+        <ErrorLine
+          message={result.message}
+          next={
+            result.invalidFilters
+              ? "Check the “Haven't opened an email in at least” box: enter a whole number, 1 or more, or leave it blank."
+              : undefined
+          }
+        />
+      )}
+      {ok !== null && (
+        <section aria-labelledby="result-heading" className="space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h2 id="result-heading" className="text-lg font-semibold text-gray-900">
+                {countSentence}
+              </h2>
+              {hidden > 0 && (
+                <p className={hintClass}>{plural(hidden, 'unsubscribed reader', 'unsubscribed readers')} not shown.</p>
+              )}
+              {ok.data.count === 0 && (
+                <p className={hintClass}>Try fewer days, more places they signed up, or “Either” for Uses the app.</p>
+              )}
+              {ok.data.rows.length < ok.data.count && (
+                <p className={hintClass}>
+                  Showing {fmt(ok.data.rows.length)} of {fmt(ok.data.count)}. Export CSV downloads all {fmt(ok.data.count)}.
+                </p>
+              )}
             </div>
+            {ok.data.count > 0 && (
+              <Button onClick={() => void exportCsv(ok.filters)} disabled={exporting}>
+                {exporting ? 'Preparing download…' : 'Export CSV'}
+              </Button>
+            )}
+          </div>
+          {exportError !== null && <ErrorLine message={exportError} next="Press Export CSV to try again." />}
+
+          {ok.data.rows.length > 0 && (
+            <>
+              <ResponsiveTable
+                caption="Matching readers"
+                columns={columnsFor(ok.filters)}
+                rows={showAll ? ok.data.rows : ok.data.rows.slice(0, FIRST_ROWS)}
+                rowKey={(r) => r.email}
+                details={(r) => <RowDetails row={r} />}
+              />
+              {!showAll && ok.data.rows.length > FIRST_ROWS && (
+                <Button onClick={() => setShowAll(true)}>Show all {fmt(ok.data.rows.length)} in preview</Button>
+              )}
+            </>
           )}
-          <details className="text-sm">
-            <summary className="cursor-pointer text-gray-600">SQL shape (placeholders only)</summary>
-            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded bg-gray-50 p-3 font-mono text-xs">
-              {result.data.sql_shape}
-            </pre>
-          </details>
         </section>
       )}
 
-      <footer className="space-y-1 border-t border-gray-200 pt-3 text-xs text-gray-600">
-        {FOOTER_DEFINITIONS.map((d) => (
-          <p key={d.name}>
-            <span className="font-mono">{d.name}</span>: {d.doc}
+      <Disclosure label="How these filters work" className="border-t border-gray-200 pt-4">
+        <dl className="space-y-2 text-sm">
+          {FOOTER_DEFINITIONS.map(({ label, def }) => (
+            <div key={def.name}>
+              <dt className="font-medium text-gray-900">{label}</dt>
+              <dd className="text-gray-700">{def.doc}</dd>
+            </div>
+          ))}
+        </dl>
+        <TechnicalDetails>
+          <p className="font-medium">Definitions (shared/derive.ts)</p>
+          {FOOTER_DEFINITIONS.map(({ def }) => (
+            <p key={def.name}>
+              <span className="font-mono">{def.name}</span>: <span className="font-mono">{def.formula}</span>
+            </p>
+          ))}
+          <p>
+            Preview shows at most {PREVIEW_LIMIT} rows. CSV columns: <span className="font-mono">{CSV_COLUMNS}</span>
           </p>
-        ))}
-      </footer>
-    </>
+          {ok !== null && (
+            <>
+              <p className="pt-2 font-medium">SQL shape (placeholders only)</p>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono">{ok.data.sql_shape}</pre>
+            </>
+          )}
+        </TechnicalDetails>
+      </Disclosure>
+    </div>
   )
 }
