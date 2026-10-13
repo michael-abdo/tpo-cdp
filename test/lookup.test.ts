@@ -210,17 +210,16 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     }
   })
 
-  it('400 invalid_query for a blank q or one that is neither an email nor u_…', async () => {
+  it('404 not_found for a blank or missing q and for one that is neither an email nor u_… (04 lists only 404)', async () => {
+    const notFound = { error: 'not_found', message: 'No profile matches that email or app user id.' }
     for (const q of ['', '   ', 'joy.hall830']) {
       const res = await lookup(q)
-      expect(res.status, JSON.stringify(q)).toBe(400)
-      expect(await res.json()).toEqual({
-        error: 'invalid_query',
-        message: 'Enter an email address or an app user id starting with u_.',
-      })
+      expect(res.status, JSON.stringify(q)).toBe(404)
+      expect(await res.json()).toEqual(notFound)
     }
     const res = await SELF.fetch('http://cdp.test/api/lookup', { headers: { cookie } })
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual(notFound)
   })
 
   it('401 without a session cookie', async () => {

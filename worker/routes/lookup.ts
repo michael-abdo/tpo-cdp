@@ -3,7 +3,9 @@
 // here (02 §Normalization lists this file; the browser sends raw input). One profile, four
 // sections, each null when absent. Stored derived columns are read as stored (09 D-46);
 // app_after_signup comes from shared/derive.ts, never from SQL. Identity resolution for app
-// events is worker/identity/resolve.ts. Nothing is cached (03 §No-restart).
+// events is worker/identity/resolve.ts. Nothing is cached (03 §No-restart). 04 defines one error
+// for this route: any q that names no profile (blank, missing, neither u_… nor a valid email, or
+// simply unknown) is 404 not_found.
 
 import { Hono } from 'hono'
 import { appAfterSignup, hasApp } from '../../shared/derive'
@@ -51,8 +53,6 @@ interface WebEventRow {
   utm_source: string | null
 }
 
-const invalidQuery = () =>
-  new ApiError(400, 'invalid_query', 'Enter an email address or an app user id starting with u_.')
 const notFound = () => new ApiError(404, 'not_found', 'No profile matches that email or app user id.')
 
 /** At most one row, or a loud error: the 04 shape holds one of each per profile. Never names the key (PII). */
@@ -97,9 +97,7 @@ async function resolveQuery(
     return { profile, appUser }
   }
   const emailNorm = normalizeEmail(q)
-  if (emailNorm === null) {
-    throw invalidQuery()
-  }
+  if (emailNorm === null) return null
   const profile = await profileByEmail(db, emailNorm)
   return profile === null ? null : { profile, appUser: null }
 }
@@ -108,9 +106,10 @@ async function resolveQuery(
 export const lookupRoutes = new Hono<AppEnv>()
 
 lookupRoutes.get('/lookup', async (c) => {
-  const q = (c.req.query('q') ?? '').trim()
-  if (q === '') throw invalidQuery()
-  const found = await resolveQuery(c.env, q)
+  // trim() only so ' u_…' is still a user id; the email branch normalizes the raw value itself.
+  const raw = c.req.query('q') ?? ''
+  const q = raw.trim()
+  const found = await resolveQuery(c.env, q.startsWith(USER_ID_PREFIX) ? q : raw)
   if (found === null) throw notFound()
   const { profile } = found
   const db = c.env.DB
@@ -143,7 +142,7 @@ lookupRoutes.get('/lookup', async (c) => {
   if (visitor !== null) {
     const signupTs = visitor.signup_ts
     if (signupTs === null) {
-      throw new Error('lookup: a linked web visitor has no signup_ts; re-run the seed (11 §Seed)')
+      throw new Error('lookup: a linked web visitor has no signup_ts, which the seed always writes (worker/ingest/web.ts)')
     }
     const { results } = await db
       .prepare('SELECT page, event_ts, utm_source FROM web_events WHERE visitor_id = ? ORDER BY event_ts, id')

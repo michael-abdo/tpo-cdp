@@ -30,7 +30,13 @@ CREATE TABLE web_visitors (
   email_norm       TEXT,                            -- PII; from the /subscribe row
   first_seen_ts    TEXT NOT NULL,
   first_page       TEXT NOT NULL,
-  first_utm_source TEXT                             -- canonical
+  first_utm_source TEXT,                            -- canonical
+  -- event_ts of the /subscribe row that carried the email (02 §Linking 2): /api/lookup marks
+  -- earlier events pre_signup (04). Not derivable from web_events, where a visitor can have
+  -- several /subscribe rows and most carry no email. NULL exactly when email_norm is NULL:
+  -- the seed (worker/ingest/web.ts) writes both from the same row and /api/lookup fails loud
+  -- on a linked visitor without it.
+  signup_ts        TEXT
 );
 
 CREATE TABLE web_events (
