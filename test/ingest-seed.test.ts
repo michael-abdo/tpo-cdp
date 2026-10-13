@@ -148,6 +148,28 @@ describe('T-ING-1 the emitted seed loads and its counts equal 02 §Counts', () =
     expect(results.map((r) => r.s).filter((v) => !canonical.includes(v))).toEqual([])
   })
 
+  it('first_seen_ts, first_page and first_utm_source all come from the earliest event (09 D-49)', async () => {
+    // first_seen_ts is the visitor's earliest event_ts (v_profiles orders first visits by it).
+    expect(
+      await count(
+        'SELECT count(*) AS n FROM web_visitors v WHERE v.first_seen_ts <> (SELECT min(e.event_ts) FROM web_events e WHERE e.visitor_id = v.visitor_id)',
+      ),
+    ).toBe(0)
+    // Page and UTM are that same event's, NULL UTM included (IS NOT compares NULLs).
+    expect(
+      await count(
+        'SELECT count(*) AS n FROM web_visitors v JOIN web_events e ON e.visitor_id = v.visitor_id AND e.event_ts = v.first_seen_ts WHERE e.utm_source IS NOT v.first_utm_source OR e.page <> v.first_page',
+      ),
+    ).toBe(0)
+    // The rule matters on this data: some visitors landed without a UTM and carried one later,
+    // so a "first non-empty UTM" rule would give them a different first_utm_source.
+    expect(
+      await count(
+        'SELECT count(*) AS n FROM web_visitors v WHERE v.first_utm_source IS NULL AND EXISTS (SELECT 1 FROM web_events e WHERE e.visitor_id = v.visitor_id AND e.utm_source IS NOT NULL)',
+      ),
+    ).toBeGreaterThan(0)
+  })
+
   it('web timestamps are stored as ISO-8601 UTC', async () => {
     expect(csvTimestampToIso('2026-09-02 20:40:04')).toBe('2026-09-02T20:40:04Z')
     const { results } = await env.DB.prepare('SELECT event_ts FROM web_events').all<{ event_ts: string }>()
@@ -206,6 +228,18 @@ describe('T-ING-5 web → subscriber linking (02 §Linking 2–3, D-08)', () => 
         subscribeTs,
       ),
     ).toBe(3)
+    // Her visitor row's first_seen_ts is her earliest event, not her /subscribe row or a later one.
+    const earliest = await env.DB.prepare('SELECT min(event_ts) AS ts FROM web_events WHERE visitor_id = ?')
+      .bind('v_c9e136fd6d')
+      .first<string>('ts')
+    expect(earliest).not.toBeNull()
+    expect(subscribeTs).not.toBeNull()
+    expect(earliest! < subscribeTs!).toBe(true)
+    expect(
+      await env.DB.prepare('SELECT first_seen_ts FROM web_visitors WHERE visitor_id = ?')
+        .bind('v_c9e136fd6d')
+        .first('first_seen_ts'),
+    ).toBe(earliest)
     // Through the PII-free view: the whole history, before and after signup, carries her pkey.
     const pkey = await pkeyForEmail(secret(), JOY)
     expect(await count('SELECT count(*) AS n FROM v_web_events WHERE pkey = ?', pkey)).toBe(9)
@@ -272,6 +306,10 @@ describe('T-ING-6 app → subscriber linking and app-only profiles (02 §Linking
     expect(await count(join + 'a.created_at > s.signup_date')).toBe(432)
     expect(await count(join + 'a.created_at = s.signup_date')).toBe(11)
     expect(await count(join + "s.status = 'unsubscribed'")).toBe(98)
+    // v_profiles counts only strictly-after as app_after_signup: the 11 same-day are not in it.
+    expect(
+      await count("SELECT count(*) AS n FROM v_profiles WHERE kind = 'subscriber' AND app_after_signup = 1"),
+    ).toBe(432)
   })
 })
 
