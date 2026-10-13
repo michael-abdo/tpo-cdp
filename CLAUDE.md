@@ -8,7 +8,7 @@ This file holds HOW we work. WHAT we build lives in `../design/`, one home per f
 Decided in 09 D-02..D-06, D-23 (Claude only, confirmed), D-24 (mirror the consulting repo's gateway; deviations listed there). Canonical module layout: 03 §Module layout. Project lives on local disk at `/Users/Mike/hiring/TPO/CDP`.
 
 ## Non-negotiables (rule → home; each has a test in 08)
-- NO MOCK OR DUMMY DATA: only `data/*.csv` and real webhook events; constructed test payloads only as 09 D-11 allows.
+- NO MOCK OR DUMMY DATA: only `data/*.csv` and real webhook events; constructed webhook payloads only as 09 D-11 allows, and error-path test inputs derived from real rows only as 09 D-47 allows (never an invented email, name, source, status or date).
 - TODAY and the wall-clock allow-list: 02 §Time.
 - One normalization implementation and the list of every location: 02 §Normalization.
 - Never drop a row: 02 §Quarantine; import is the seed step in 11 §Seed, not a UI upload.
