@@ -1,6 +1,10 @@
 // Gate 1, the input sanitizer (design 03 §Gateway layers row 2; 04 §POST /api/assistant errors).
-// Origin: palisade packages/workflows/src/gateway/gate1-input-sanitizer.ts L20-109, as
-// recorded in 14 §3.4 — the 19 regexes and the 2,000-character cap are ported as written there.
+// Origin: palisade packages/workflows/src/gateway/gate1-input-sanitizer.ts L20-48 (patterns) and
+// L53-109 (order). The 19 regexes, their flags and their \b word boundaries are copied verbatim
+// from that source file (14 §4 "copy nearly verbatim"). 14 §3.4's transcription of them leaves
+// out the \b anchors and words the system-prompt pattern differently; the origin source wins.
+// The \b anchors matter: without them "migrant story" hits (GRANT|REVOKE)\s+\w and "impact as"
+// hits "act as".
 // Changes (14 §4, §6 #4/#5; 09 D-24):
 //   - email redaction to `[email]`: user text with an email is redacted and continues
 //   - a pattern hit or an over-long question is a 400 `invalid_question` with a loud log line and
@@ -9,10 +13,6 @@
 //     (09 D-34), so there is no conversation to count
 //   - the origin's DB/memory rate limiter (L117-226) is not ported: rate limiting is the Workers
 //     binding (03 row 0)
-// 14 §3.4 records the multiline flag on the line-comment regex and dotAll on the block-comment
-// regex; it records no case flag. SQL keywords and injection phrases are matched ignoring case
-// here, so `drop table` is caught like `DROP TABLE`. The three PII-shape regexes are kept case-
-// sensitive as written (the passport shape is two capital letters and seven digits).
 // Patterns run on the question exactly as sent, before redaction, so redaction cannot hide or
 // create a match.
 
@@ -35,27 +35,27 @@ export interface Gate1Pattern {
 // No `g` flags: a global regex keeps `lastIndex` between `.test()` calls.
 export const GATE1_PATTERNS: readonly Gate1Pattern[] = [
   // SQL (origin L20-29)
-  { id: 'sql_ddl', category: 'sql_injection', regex: /(DROP|DELETE|TRUNCATE|ALTER|CREATE|INSERT|UPDATE)\s+(TABLE|DATABASE|INDEX|ROLE|USER|SCHEMA|TRIGGER|FUNCTION)/i },
-  { id: 'sql_grant_revoke', category: 'sql_injection', regex: /(GRANT|REVOKE)\s+\w/i },
+  { id: 'sql_ddl', category: 'sql_injection', regex: /\b(DROP|DELETE|TRUNCATE|ALTER|CREATE|INSERT|UPDATE)\s+(TABLE|DATABASE|INDEX|ROLE|USER|SCHEMA|TRIGGER|FUNCTION)/i },
+  { id: 'sql_grant_revoke', category: 'sql_injection', regex: /\b(GRANT|REVOKE)\s+\w/i },
   { id: 'sql_chained_statement', category: 'sql_injection', regex: /;\s*(DROP|DELETE|TRUNCATE|ALTER|GRANT|REVOKE)/i },
   { id: 'sql_line_comment', category: 'sql_injection', regex: /--\s*$/m },
   { id: 'sql_block_comment', category: 'sql_injection', regex: /\/\*.*\*\//s },
-  { id: 'sql_union_select', category: 'sql_injection', regex: /UNION\s+(ALL\s+)?SELECT/i },
-  { id: 'sql_into_outfile', category: 'sql_injection', regex: /INTO\s+(OUT|DUMP)FILE/i },
-  { id: 'sql_exec', category: 'sql_injection', regex: /EXEC(UTE)?\s*\(/i },
+  { id: 'sql_union_select', category: 'sql_injection', regex: /\bUNION\s+(ALL\s+)?SELECT\b/i },
+  { id: 'sql_into_outfile', category: 'sql_injection', regex: /\bINTO\s+(OUT|DUMP)FILE\b/i },
+  { id: 'sql_exec', category: 'sql_injection', regex: /\bEXEC(UTE)?\s*\(/i },
   // Prompt injection (origin L32-41)
-  { id: 'inject_ignore_previous', category: 'prompt_injection', regex: /(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior|earlier)\s+(instructions?|prompts?|rules?|context)/i },
-  { id: 'inject_role_play', category: 'prompt_injection', regex: /(you\s+are\s+now|act\s+as|pretend\s+(to\s+be|you\s+are)|roleplay\s+as)/i },
-  { id: 'inject_system_prompt', category: 'prompt_injection', regex: /(system|initial|original|hidden)\s+prompt/i },
-  { id: 'inject_exfiltrate', category: 'prompt_injection', regex: /(exfiltrate|leak|extract|dump|reveal)\s+(data|information|secrets?|credentials?|passwords?|keys?|tokens?)/i },
-  { id: 'inject_base64', category: 'prompt_injection', regex: /base64\s*(encode|decode|output)/i },
-  { id: 'inject_bypass', category: 'prompt_injection', regex: /(bypass|override|circumvent)\s+(security|auth|permission|access|restriction|filter|gate)/i },
+  { id: 'inject_ignore_previous', category: 'prompt_injection', regex: /\b(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior|earlier)\s+(instructions?|prompts?|rules?|context)/i },
+  { id: 'inject_role_play', category: 'prompt_injection', regex: /\b(you\s+are\s+now|act\s+as|pretend\s+(to\s+be|you\s+are)|roleplay\s+as)\b/i },
+  { id: 'inject_system_prompt', category: 'prompt_injection', regex: /\b(system\s+prompt|initial\s+prompt|original\s+prompt|hidden\s+prompt)\b/i },
+  { id: 'inject_exfiltrate', category: 'prompt_injection', regex: /\b(exfiltrate|leak|extract|dump|reveal)\s+(data|information|secrets?|credentials?|passwords?|keys?|tokens?)/i },
+  { id: 'inject_base64', category: 'prompt_injection', regex: /\bbase64\s*(encode|decode|output)\b/i },
+  { id: 'inject_bypass', category: 'prompt_injection', regex: /\b(bypass|override|circumvent)\s+(security|auth|permission|access|restriction|filter|gate)/i },
   { id: 'inject_system_tag', category: 'prompt_injection', regex: /\[\s*SYSTEM\s*\]/i },
-  { id: 'inject_system_fence', category: 'prompt_injection', regex: /```\s*system/i },
+  { id: 'inject_system_fence', category: 'prompt_injection', regex: /```\s*system\b/i },
   // "PII" shapes (origin L44-48)
-  { id: 'pii_ssn', category: 'pii_pattern', regex: /\d{3}-\d{2}-\d{4}/ },
-  { id: 'pii_card', category: 'pii_pattern', regex: /\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}/ },
-  { id: 'pii_passport', category: 'pii_pattern', regex: /[A-Z]{2}\d{7}/ },
+  { id: 'pii_ssn', category: 'pii_pattern', regex: /\b\d{3}-\d{2}-\d{4}\b/ },
+  { id: 'pii_card', category: 'pii_pattern', regex: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/ },
+  { id: 'pii_passport', category: 'pii_pattern', regex: /\b[A-Z]{2}\d{7}\b/ },
 ]
 
 declare const gate1Passed: unique symbol
