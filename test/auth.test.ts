@@ -2,6 +2,7 @@ import { env, SELF } from 'cloudflare:test'
 import { Hono } from 'hono'
 import { describe, expect, it, vi } from 'vitest'
 import { constantTimeStringEq, timingSafeEqual } from '../worker/auth/constant-time'
+import { loginRoutes } from '../worker/auth/login'
 import { requireSession } from '../worker/auth/middleware'
 import { nowSeconds, SESSION_TTL_SECONDS, signSession, verifySession } from '../worker/auth/session'
 import { type AppEnv, assertBindings } from '../worker/env'
@@ -13,6 +14,8 @@ import { documentationIp, loginCookie } from './helpers/auth'
 // "expected true to be false", not the value. Constructed inputs, and why each is allowed:
 // - wrong passwords are the real SITE_PASSWORD with one character changed or appended (09 D-47 spirit);
 // - expired and tampered cookies are produced by the real signSession with the real secret;
+// - the wrong-key cookie is signed by the real signSession with the real SESSION_SECRET with its
+//   last character changed (same length, different key);
 // - misconfigured deploys are the real env with bindings removed;
 // - every login sends CF-Connecting-IP from 2001:db8::/32 (RFC 3849, reserved for documentation):
 //   a fresh one per request, or one fixed per test in the rate-limit test, so tests never share a
@@ -80,6 +83,29 @@ function cookieValue(cookie: string): string {
   return cookie.slice('cdp_session='.length)
 }
 
+/** Unpadded base64url, written here independently of worker/auth/session.ts so the wire format is pinned. */
+function base64Url(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+/** The real secret with its last character replaced: a different key of the same length. */
+function otherSecretSameLength(secret: string): string {
+  return secret.slice(0, -1) + (secret.at(-1) === 'a' ? 'b' : 'a')
+}
+
+/**
+ * miniflare's rate limiter counts in windows aligned to the wall clock (epoch = floor(now / 60 s))
+ * and clears every bucket when the window rolls over. A burst that straddles a minute boundary
+ * would restart the count and get 401 where 429 is due, so wait for the next window when less
+ * than needMs of the current one is left.
+ */
+async function awaitLimiterWindow(needMs: number): Promise<void> {
+  const left = 60_000 - (Date.now() % 60_000)
+  if (left < needMs) await new Promise((resolve) => setTimeout(resolve, left + 250))
+}
+
 describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
   it('a wrong password is 401 after the 100 ms delay, same length or not', async () => {
     for (const password of [wrongPasswordSameLength(), `${realSecret('SITE_PASSWORD')}${realSecret('SITE_PASSWORD').at(-1)}`]) {
@@ -143,6 +169,23 @@ describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
     expect((await SELF.fetch(`${BASE}/health`)).status).toBe(200)
   })
 
+  it('the cookie signature is HMAC-SHA256 keyed by SESSION_SECRET over the payload part', async () => {
+    const value = cookieValue(await loginCookie())
+    const [payload, signature] = value.split('.')
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(realSecret('SESSION_SECRET')), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+    const expected = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)))
+    expect(signature === base64Url(expected)).toBe(true)
+    const decoded = JSON.parse(atob(payload.replaceAll('-', '+').replaceAll('_', '/'))) as Record<string, unknown>
+    expect(Object.keys(decoded).sort()).toEqual(['exp', 'sub'])
+  })
+
+  it('a valid-looking cookie signed with any other secret is 401', async () => {
+    const forged = await signSession(otherSecretSameLength(realSecret('SESSION_SECRET')), { sub: crypto.randomUUID(), exp: nowSeconds() + SESSION_TTL_SECONDS })
+    const res = await probeApp().fetch(new Request(`${BASE}/api/probe`, { headers: { cookie: `cdp_session=${forged}` } }), env)
+    expect(res.status).toBe(401)
+    expect(((await res.json()) as { error: string }).error).toBe('unauthorized')
+  })
+
   it('an expired cookie signed with the real secret is 401', async () => {
     for (const exp of [nowSeconds() - 1, nowSeconds()]) {
       // exp equal to now is already expired (the boundary is exclusive).
@@ -196,19 +239,39 @@ describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
     expect(((await res.json()) as { message: string }).message).toContain('SITE_PASSWORD')
   })
 
+  it('the login route fails closed by itself, without assertBindings in front', async () => {
+    const bare = new Hono<AppEnv>()
+    bare.route('/api', loginRoutes)
+    bare.onError(onError)
+    for (const missing of ['SESSION_SECRET', 'SITE_PASSWORD'] as const) {
+      const res = await bare.fetch(
+        new Request(`${BASE}/api/login`, { method: 'POST', headers: { ...JSON_HEADERS, 'cf-connecting-ip': documentationIp() }, body: JSON.stringify({ password: realSecret('SITE_PASSWORD') }) }),
+        envWithout(missing),
+      )
+      expect(res.status).toBe(500)
+      expect(res.headers.get('set-cookie')).toBeNull()
+      expect(await res.json()).toEqual({ error: 'server_misconfigured', message: `The server is missing required configuration: ${missing}.` })
+    }
+  })
+
   it('logout is open and clears the cookie with 204', async () => {
     const res = await SELF.fetch(`${BASE}/api/logout`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })
     expect(res.status).toBe(204)
     const header = res.headers.get('set-cookie') ?? ''
     expect(header).toMatch(/^cdp_session=;/)
-    expect(header).toContain('Max-Age=0')
-    expect(header).toContain('HttpOnly')
-    expect(header).toContain('SameSite=Strict')
+    // The same Path and flags as the login cookie, or the browser keeps the login cookie.
+    const attributes = header.split(';').slice(1).map((a) => a.trim())
+    expect(attributes).toEqual(expect.arrayContaining(['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/', 'Max-Age=0']))
   })
 
   it('a login POST without a JSON content type is 415, with charset is accepted', async () => {
     const password = realSecret('SITE_PASSWORD')
-    const contentTypes: Record<string, string>[] = [{ 'content-type': 'text/plain' }, { 'content-type': 'application/x-www-form-urlencoded' }, {}]
+    const contentTypes: Record<string, string>[] = [
+      { 'content-type': 'text/plain' },
+      { 'content-type': 'application/x-www-form-urlencoded' },
+      { 'content-type': 'application/jsonx' },
+      {},
+    ]
     for (const headers of contentTypes) {
       const res = await SELF.fetch(`${BASE}/api/login`, { method: 'POST', headers, body: JSON.stringify({ password }) })
       expect(res.status).toBe(415)
@@ -219,13 +282,27 @@ describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
     expect(charset.status).toBe(204)
   })
 
+  it('every /api/* POST needs a JSON content type: logout, and a signed-in POST to another path', async () => {
+    const logout = await SELF.fetch(`${BASE}/api/logout`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' })
+    expect(logout.status).toBe(415)
+    expect(logout.headers.get('set-cookie')).toBeNull()
+    // requireJson runs before requireSession (worker/index.ts), so this is 415 whether or not
+    // the caller is signed in; signed in, the path would otherwise reach the 404 envelope.
+    const cookie = await loginCookie()
+    const other = await SELF.fetch(`${BASE}/api/overview`, { method: 'POST', headers: { cookie, 'content-type': 'text/plain' }, body: '{}' })
+    expect(other.status).toBe(415)
+    expect(((await other.json()) as { error: string }).error).toBe('unsupported_media_type')
+  })
+
   it('a body without a string password is 400 invalid_body', async () => {
     const res = await SELF.fetch(`${BASE}/api/login`, { method: 'POST', headers: { ...JSON_HEADERS, 'cf-connecting-ip': documentationIp() }, body: '{}' })
     expect(res.status).toBe(400)
     expect(((await res.json()) as { error: string }).error).toBe('invalid_body')
   })
 
-  it('the 11th attempt from one IP within a minute is 429 rate_limited', async () => {
+  it('the 11th attempt from one IP within a minute is 429 rate_limited', { timeout: 20_000 }, async () => {
+    // 13 requests take about 1.5 s; leave a wide margin for a loaded machine.
+    await awaitLimiterWindow(8_000)
     const ip = { 'cf-connecting-ip': documentationIp() }
     const wrong = wrongPasswordSameLength()
     for (let attempt = 1; attempt <= 10; attempt++) {
