@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:test'
 import type Anthropic from '@anthropic-ai/sdk'
+import { Hono } from 'hono'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
@@ -17,6 +18,8 @@ import {
   PiiBlockedError,
 } from '../worker/assistant/gates/pii-guard'
 import { discoverViewSchemas, type ViewSchema, viewSchemas } from '../worker/assistant/schema-context'
+import type { AppEnv } from '../worker/env'
+import { onError } from '../worker/index'
 import { seedDatabase } from './helpers/seed'
 
 // T-PII-1, T-PII-2, T-PII-3, T-PII-4 (08) and the parts of T-AI-4 that need no model call, over
@@ -388,5 +391,83 @@ describe('T-AI-4 (no model call): ai_audit rows under one trace_id, request_json
     const total = await env.DB.prepare('SELECT count(*) AS n FROM ai_audit').first<number>('n')
     expect(total).toBeGreaterThan(0)
     expect(count).toBe(0)
+  })
+})
+
+/**
+ * Runs `fn` while the real D1 refuses every ai_audit insert (a trigger that aborts), so the
+ * audit write fails the way a D1 outage would. The trigger is dropped afterwards.
+ */
+async function withAuditOffline<T>(fn: () => Promise<T>): Promise<T> {
+  await env.DB.prepare(
+    "CREATE TRIGGER ai_audit_offline BEFORE INSERT ON ai_audit BEGIN SELECT RAISE(ABORT, 'ai_audit offline'); END",
+  ).run()
+  try {
+    return await fn()
+  } finally {
+    await env.DB.prepare('DROP TRIGGER ai_audit_offline').run()
+  }
+}
+
+describe('T-PII-4 / T-AI-4 review fixes: awaited blocked rows, every scanned field, the 500 envelope', () => {
+  it('a failed blocked-row write rejects guardPayload with AuditWriteError, not blocked_pii (03 row 11: awaited)', async () => {
+    const logged: string[] = []
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' ')))
+    const trace = await startTrace(env.DB)
+    const [profile] = await rows('SELECT * FROM v_profiles WHERE pkey = ?', juliaPkey)
+    const failure = await withAuditOffline(() =>
+      guardPayload(trace, framed('query_sql', [{ ...profile, source: JULIA }]), 'tool_result', 'query_sql').then(
+        () => null,
+        (err: unknown) => err,
+      ),
+    )
+    expect(failure).toBeInstanceOf(AuditWriteError)
+    expect(failure).not.toBeInstanceOf(PiiBlockedError)
+    expect(await auditRows(trace.traceId)).toEqual([])
+    expect(logged.some((line) => line.includes('write_failed') && line.includes(trace.traceId))).toBe(true)
+  })
+
+  it('refuses a row whose response_json, sql or error holds PII, and writes nothing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const trace = await startTrace(env.DB)
+    const [profile] = await rows('SELECT * FROM v_profiles WHERE pkey = ?', juliaPkey)
+    const leaks = [
+      { response_json: framed('query_sql', [{ ...profile, source: JULIA }]) },
+      { sql: `SELECT * FROM v_profiles WHERE source = '${JULIA}'` },
+      { error: `no row for ${JOY_APP_USER}` },
+    ]
+    for (const leak of leaks) {
+      await expect(trace.write({ kind: 'tool_call', status: 'error', tool_name: 'query_sql', ...leak })).rejects.toThrow(
+        AuditWriteError,
+      )
+    }
+    expect(await auditRows(trace.traceId)).toEqual([])
+  })
+
+  it('finds a known email after an earlier "@" that starts none', async () => {
+    const known = await loadKnownEmails(env.DB)
+    expect(known.occursIn(`reply @ noon to ${JULIA}`)).toBe(true)
+    expect(known.occursIn('reply @ noon')).toBe(false)
+  })
+
+  it('renders PiiBlockedError as the 04 envelope at HTTP 500, naming no value', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const app = new Hono<AppEnv>()
+    app.post('/guard', async (c) => {
+      const trace = await startTrace(c.env.DB)
+      const [profile] = await rows('SELECT * FROM v_profiles WHERE pkey = ?', juliaPkey)
+      await guardPayload(trace, framed('query_sql', [{ ...profile, source: JULIA }]), 'tool_result', 'query_sql')
+      return c.json({ ok: true })
+    })
+    app.onError(onError)
+    const res = await app.request('/guard', { method: 'POST' }, env)
+    expect(res.status).toBe(500)
+    const body = await res.json<Record<string, unknown>>()
+    expect(body).toEqual({
+      error: 'blocked_pii',
+      message: expect.any(String),
+      details: [{ check: 'known_email', site: 'tool_result' }],
+    })
+    expect(JSON.stringify(body)).not.toContain('@')
   })
 })

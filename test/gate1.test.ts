@@ -1,13 +1,14 @@
 import { env } from 'cloudflare:test'
 import { Hono } from 'hono'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { startTrace } from '../worker/assistant/audit/ai-audit'
+import { AuditWriteError, startTrace } from '../worker/assistant/audit/ai-audit'
 import {
   enforceGate1,
   GATE1_PATTERNS,
   QUESTION_MAX_CHARS,
   sanitizeQuestion,
 } from '../worker/assistant/gates/gate1-input-sanitizer'
+import { ApiError } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
 
@@ -232,5 +233,62 @@ describe('enforceGate1: a block is loud, audited and a 400 invalid_question (04,
     })
     expect(JSON.stringify(body)).not.toContain('inject_ignore_previous')
     expect(JSON.stringify(body)).not.toContain('previous instructions')
+  })
+})
+
+/**
+ * Runs `fn` while the real D1 refuses every ai_audit insert (a trigger that aborts), so the
+ * audit write fails the way a D1 outage would. The trigger is dropped afterwards.
+ */
+async function withAuditOffline<T>(fn: () => Promise<T>): Promise<T> {
+  await env.DB.prepare(
+    "CREATE TRIGGER ai_audit_offline BEFORE INSERT ON ai_audit BEGIN SELECT RAISE(ABORT, 'ai_audit offline'); END",
+  ).run()
+  try {
+    return await fn()
+  } finally {
+    await env.DB.prepare('DROP TRIGGER ai_audit_offline').run()
+  }
+}
+
+describe('T-GATE-1: order, case and an awaited audit row (review fixes)', () => {
+  it('a failed blocked-row write rejects enforceGate1 with AuditWriteError, not the 400 (03 row 11: awaited)', async () => {
+    const logged: string[] = []
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' ')))
+    for (const question of [PROBES.sql_ddl, 'x'.repeat(QUESTION_MAX_CHARS + 1)]) {
+      const trace = await startTrace(env.DB)
+      const failure = await withAuditOffline(() => enforceGate1(trace, question).then(() => null, (err: unknown) => err))
+      expect(failure).toBeInstanceOf(AuditWriteError)
+      expect(failure).not.toBeInstanceOf(ApiError)
+      expect(await auditRows(trace.traceId)).toEqual([])
+      expect(logged.some((line) => line.includes('write_failed') && line.includes(trace.traceId))).toBe(true)
+    }
+  })
+
+  it('checks the length first, as the origin does: an over-long question with DROP TABLE is length_exceeded', () => {
+    const long = `${PROBES.sql_ddl} ${'x'.repeat(QUESTION_MAX_CHARS)}`
+    expect(sanitizeQuestion(long)).toEqual({ ok: false, reason: 'length_exceeded', length: long.length })
+  })
+
+  it('runs the patterns before redaction: an SSN shape inside an email-shaped span still blocks', () => {
+    // The SSN probe written against a real address with no space, so the email regex spans both.
+    const smuggled = `who is ${PROBES.pii_ssn.split(' ').at(-1)}joy.hall830@protonmail.com`
+    expect(sanitizeQuestion(smuggled)).toEqual({ ok: false, reason: 'pii_pattern', pattern: 'pii_ssn' })
+  })
+
+  it('every case-insensitive pattern blocks its probe in lower and upper case', () => {
+    const insensitive = GATE1_PATTERNS.filter((p) => p.regex.flags.includes('i'))
+    // All SQL and injection patterns that hold letters; the two comment patterns hold none, and
+    // the three PII shapes stay case-sensitive as written (file header of the sanitizer).
+    const caseFree = new Set(['sql_line_comment', 'sql_block_comment'])
+    expect(insensitive.map((p) => p.id)).toEqual(
+      GATE1_PATTERNS.filter((p) => p.category !== 'pii_pattern' && !caseFree.has(p.id)).map((p) => p.id),
+    )
+    expect(insensitive).toHaveLength(14)
+    for (const p of insensitive) {
+      for (const probe of [PROBES[p.id].toLowerCase(), PROBES[p.id].toUpperCase()]) {
+        expect(sanitizeQuestion(probe), `${p.id}: ${probe}`).toEqual({ ok: false, reason: p.category, pattern: p.id })
+      }
+    }
   })
 })
