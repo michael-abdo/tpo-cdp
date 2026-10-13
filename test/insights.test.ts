@@ -1,24 +1,31 @@
 /// <reference types="vite/client" />
-import { SELF } from 'cloudflare:test'
+import { env, SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
 import appCsv from '../data/app_users.csv?raw'
 import subscribersCsv from '../data/subscribers.csv?raw'
 import webCsv from '../data/web_events.csv?raw'
-import { canonicalSource, normalizeEmail } from '../shared/normalize'
+import { TODAY } from '../shared/config'
+import { goingColdRisk } from '../shared/derive'
+import { CANONICAL_SOURCES, canonicalSource, normalizeEmail } from '../shared/normalize'
+import type { DataQualityCheckKey as UiCheckKey } from '../src/types'
 import { sanitizeQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
 import { parseCsv } from '../worker/ingest/csv'
+import { DATA_QUALITY_CHECKS, type DataQuality } from '../worker/insights/data-quality'
 import type { Funnel } from '../worker/insights/funnel'
+import type { GoingCold } from '../worker/insights/going-cold'
 import type { SourceAppConversion } from '../worker/insights/source-app'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// GET /api/insights/source-app-conversion and /api/insights/funnel (04 §GET /api/insights/…,
-// 06 §/growth; R6). T-INS-1 and T-INS-2 (08). The test D1 holds the real seed of data/*.csv
+// GET /api/insights/source-app-conversion, /funnel, /going-cold and /data-quality (04 §GET
+// /api/insights/…, 06 §/growth; R6). T-INS-1, T-INS-2 and T-INS-3 (08), and going_cold_risk
+// (02 §Derived, 09 D-31) on the seeded rows. The test D1 holds the real seed of data/*.csv
 // (test/helpers/seed.ts) and no webhook events. Expected totals are 02 §Counts; the per-group
 // numbers are checked against independent tallies of the ?raw CSVs in TypeScript (the one
 // normalization from shared/normalize.ts, then plain loops), never against SQL.
 
 const SUBSCRIBERS = 2900
+const ACTIVE = 2610
 const APP_USERS_MATCHING_A_SUBSCRIBER = 900
 const APP_CREATED_BEFORE_SIGNUP = 457
 const APP_CREATED_AFTER_SIGNUP = 432
@@ -27,6 +34,14 @@ const VISITORS = 2028
 const LINKED_VISITORS = 1400
 const ANONYMOUS_VISITORS = 628
 const DISTINCT_PAGES = 16
+const SUBSCRIBER_ROWS_IN = 2995
+const SUBSCRIBER_BLANK_ROWS = 8
+const SUBSCRIBER_INVALID_EMAILS = 2
+const SUBSCRIBERS_MERGED = 85
+const WEB_ROWS = 10000
+const WEB_ROWS_WITHOUT_UTM = 8030
+const APP_ACCOUNTS = 930
+const APP_ONLY = 30
 
 let cookie: string
 
@@ -224,15 +239,202 @@ describe('T-INS-2 GET /api/insights/funnel', () => {
 })
 
 describe('insights auth', () => {
-  it('401 without a session cookie on both routes', async () => {
-    for (const path of ['source-app-conversion', 'funnel']) {
+  it('401 without a session cookie on every route', async () => {
+    for (const path of ['source-app-conversion', 'funnel', 'going-cold', 'data-quality']) {
       const res = await get(path, {})
       expect(res.status).toBe(401)
       expect(await res.json()).toEqual({ error: 'unauthorized', message: 'Sign in to continue.' })
     }
   })
+})
 
-  it('the parked panels have no route (04 [parked])', async () => {
-    for (const path of ['going-cold', 'data-quality']) expect((await get(path)).status).toBe(404)
+const DAY_MS = 86_400_000
+/** Whole days from `a` to `b`, both `YYYY-MM-DD`; the test's own arithmetic, not shared/derive.ts. */
+const days = (a: string, b: string) => (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS
+
+/**
+ * 02 §Derived going_cold_risk, read literally: "opened in the last 30 days but not in the last 14,
+ * or cold_since within the next 7 days". "Last N days" is TODAY − N .. TODAY; "the next 7 days"
+ * is TODAY + 1 .. TODAY + 7.
+ */
+function goingColdByTheDoc(lastOpen: string | null, coldSince: string) {
+  const ago = lastOpen === null ? null : days(lastOpen, TODAY)
+  const openedLast30NotLast14 = ago !== null && ago > 14 && ago <= 30 // "> 14" also rules out a future open
+  const coldWithinNext7 = days(TODAY, coldSince) >= 1 && days(TODAY, coldSince) <= 7
+  return { openedLast30NotLast14, coldWithinNext7, atRisk: openedLast30NotLast14 || coldWithinNext7 }
+}
+
+interface SeededSubscriber {
+  source: string | null
+  status: string
+  signup_date: string
+  last_open_date: string | null
+  cold_since: string
+}
+
+describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-31)', () => {
+  async function seeded() {
+    const { results } = await env.DB.prepare(
+      'SELECT source, status, signup_date, last_open_date, cold_since FROM subscribers',
+    ).all<SeededSubscriber>()
+    expect(results).toHaveLength(SUBSCRIBERS)
+    return results
+  }
+
+  it('goingColdRisk agrees with the 02 §Derived sentence on every seeded subscriber, and both halves occur', async () => {
+    const halves = { opened_15_to_30_days_ago_only: 0, cold_within_7_days_only: 0, both: 0, neither: 0 }
+    for (const row of await seeded()) {
+      // The stored cold date is 02's cold_since: 30 days after the last open, else after signup.
+      expect(days(row.last_open_date ?? row.signup_date, row.cold_since)).toBe(30)
+      const doc = goingColdByTheDoc(row.last_open_date, row.cold_since)
+      expect({ row, atRisk: goingColdRisk(row.last_open_date, row.cold_since) }).toEqual({ row, atRisk: doc.atRisk })
+      if (doc.openedLast30NotLast14 && doc.coldWithinNext7) halves.both++
+      else if (doc.openedLast30NotLast14) halves.opened_15_to_30_days_ago_only++
+      else if (doc.coldWithinNext7) halves.cold_within_7_days_only++
+      else halves.neither++
+    }
+    // Each half of the "or" decides some rows on its own, so dropping either changes the counts.
+    expect(halves.opened_15_to_30_days_ago_only).toBeGreaterThan(0)
+    expect(halves.cold_within_7_days_only).toBeGreaterThan(0)
+    expect(halves.neither).toBeGreaterThan(0)
+  })
+
+  it('counts per source equal the sentence applied row by row: active only, the unsubscribed at risk counted as hidden', async () => {
+    const perSource = new Map<string | null, { active: number; at_risk: number }>()
+    let hidden = 0
+    for (const row of await seeded()) {
+      const atRisk = goingColdByTheDoc(row.last_open_date, row.cold_since).atRisk
+      if (row.status === 'unsubscribed') {
+        if (atRisk) hidden++
+        continue
+      }
+      const t = perSource.get(row.source) ?? { active: 0, at_risk: 0 }
+      t.active++
+      if (atRisk) t.at_risk++
+      perSource.set(row.source, t)
+    }
+    const res = await get('going-cold')
+    expect(res.status).toBe(200)
+    const body = await res.json<GoingCold>()
+    expect(Object.keys(body)).toEqual(['total', 'hidden_unsubscribed', 'by_source', 'definitions_used'])
+    expect(new Map(body.by_source.map((r) => [r.source, { active: r.active, at_risk: r.at_risk }]))).toEqual(perSource)
+    for (const r of body.by_source) expect(r.rate).toBe(round4(r.at_risk, r.active))
+    const atRisk = [...perSource.values()].reduce((n, t) => n + t.at_risk, 0)
+    // The active total is 02 §Counts' 2,610: the panel's rows cover every active subscriber.
+    expect(body.total).toEqual({ active: ACTIVE, at_risk: atRisk, rate: round4(atRisk, ACTIVE), explain: body.total.explain })
+    expect(body.total.at_risk).toBeGreaterThan(0)
+    expect(body.hidden_unsubscribed.count).toBe(hidden)
+    expect(hidden).toBeGreaterThan(0)
+    expect(body.definitions_used).toEqual(['going_cold_risk', 'cold_since'])
+  })
+
+  it('orders sources by readers at risk, and every number carries an askable explain question', async () => {
+    const body = await (await get('going-cold')).json<GoingCold>()
+    const atRisk = body.by_source.map((r) => r.at_risk)
+    expect(atRisk).toEqual([...atRisk].sort((a, b) => b - a))
+    const explains = [body.total.explain, body.hidden_unsubscribed.explain, ...body.by_source.map((r) => r.explain)]
+    explains.forEach(expectAskable)
+    expect(new Set(explains).size).toBe(explains.length)
+    for (const e of explains) expect(e).toContain('going_cold_risk')
+    for (const row of body.by_source) expect(row.explain).toContain(`"${row.source}"`)
+    expect(body.hidden_unsubscribed.explain).toContain('unsubscribed')
+  })
+})
+
+/** Per deduped subscriber its canonical source, and per web row its canonical UTM, from the ?raw CSVs. */
+function tallyDataQuality() {
+  const subs = parseCsv(subscribersCsv)
+  const [email, source] = ['email', 'acquisition_source'].map((n) => column(subs, n))
+  const sourceByEmail = new Map<string, string | null>()
+  for (const row of subs.rows) {
+    const e = normalizeEmail(row[email])
+    if (e !== null && !sourceByEmail.has(e)) sourceByEmail.set(e, canonicalSource(row[source]))
+  }
+  const web = parseCsv(webCsv)
+  const utm = column(web, 'utm_source')
+  const known = new Set<string>(CANONICAL_SOURCES)
+  const sources = [...sourceByEmail.values()]
+  const utms = web.rows.map((row) => canonicalSource(row[utm]))
+  return {
+    subscribers: sourceByEmail.size,
+    without_source: sources.filter((s) => s === null).length,
+    unexpected_source: sources.filter((s) => s !== null && !known.has(s)).length,
+    page_views: utms.length,
+    without_utm: utms.filter((u) => u === null).length,
+    unexpected_utm: utms.filter((u) => u !== null && !known.has(u)).length,
+  }
+}
+
+describe('T-INS-3 GET /api/insights/data-quality', () => {
+  it('the import numbers equal import_runs and quarantine, and 02 §Counts', async () => {
+    const res = await get('data-quality')
+    expect(res.status).toBe(200)
+    const body = await res.json<DataQuality>()
+    expect(Object.keys(body)).toEqual(['import', 'checks'])
+    const { results: runs } = await env.DB.prepare(
+      'SELECT file, rows_in, rows_out, merged, quarantined FROM import_runs',
+    ).all<{ file: string; rows_in: number; rows_out: number; merged: number; quarantined: number }>()
+    const { results: quarantined } = await env.DB.prepare('SELECT file, reason FROM quarantine').all<{ file: string; reason: string }>()
+    const sum = (k: 'rows_in' | 'rows_out' | 'merged' | 'quarantined') => runs.reduce((n, r) => n + r[k], 0)
+    const groups = new Map<string, number>()
+    for (const q of quarantined) groups.set(`${q.file} ${q.reason}`, (groups.get(`${q.file} ${q.reason}`) ?? 0) + 1)
+    expect(body.import).toEqual({
+      rows_in: sum('rows_in'),
+      rows_out: sum('rows_out'),
+      merged: sum('merged'),
+      quarantined: quarantined.length,
+      rate: round4(quarantined.length, sum('rows_in')),
+      by_file_reason: [...groups]
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([key, rows]) => ({ file: key.split(' ')[0], reason: key.split(' ')[1], rows })),
+    })
+    expect(sum('quarantined')).toBe(quarantined.length)
+    // 02 §Counts: three files, 2,995 + 10,000 + 930 rows in; the subscribers file's 10 set aside
+    // are 8 blank rows and 2 invalid emails, and 85 duplicates merged.
+    const subscribers = runs.find((r) => r.file === 'subscribers')
+    expect(runs).toHaveLength(3)
+    expect(subscribers).toEqual({
+      file: 'subscribers',
+      rows_in: SUBSCRIBER_ROWS_IN,
+      rows_out: SUBSCRIBERS,
+      merged: SUBSCRIBERS_MERGED,
+      quarantined: SUBSCRIBER_BLANK_ROWS + SUBSCRIBER_INVALID_EMAILS,
+    })
+    expect(body.import.rows_in).toBe(SUBSCRIBER_ROWS_IN + WEB_ROWS + APP_ACCOUNTS)
+    expect(body.import.by_file_reason.filter((g) => g.file === 'subscribers')).toEqual([
+      { file: 'subscribers', reason: 'blank_row', rows: SUBSCRIBER_BLANK_ROWS },
+      { file: 'subscribers', reason: 'invalid_email', rows: SUBSCRIBER_INVALID_EMAILS },
+    ])
+  })
+
+  it('the record checks equal 02 §Counts and an independent tally of the CSVs', async () => {
+    const t = tallyDataQuality()
+    expect([t.subscribers, t.page_views, t.without_utm]).toEqual([SUBSCRIBERS, WEB_ROWS, WEB_ROWS_WITHOUT_UTM])
+    const body = await (await get('data-quality')).json<DataQuality>()
+    expect(body.checks.map((c) => c.key)).toEqual([...DATA_QUALITY_CHECKS])
+    const counts = Object.fromEntries(body.checks.map((c) => [c.key, { count: c.count, of: c.of, rate: c.rate }]))
+    const expected = (count: number, of: number) => ({ count, of, rate: round4(count, of) })
+    expect(counts).toEqual({
+      subscribers_without_source: expected(t.without_source, SUBSCRIBERS),
+      subscribers_unexpected_source: expected(t.unexpected_source, SUBSCRIBERS),
+      page_views_without_utm: expected(WEB_ROWS_WITHOUT_UTM, WEB_ROWS),
+      page_views_unexpected_utm: expected(t.unexpected_utm, WEB_ROWS),
+      app_users_not_on_list: expected(APP_ONLY, APP_ACCOUNTS),
+    })
+  })
+
+  it('every check carries an askable explain question, and the UI union is the worker list', async () => {
+    const body = await (await get('data-quality')).json<DataQuality>()
+    const explains = body.checks.map((c) => c.explain)
+    explains.forEach(expectAskable)
+    expect(new Set(explains).size).toBe(explains.length)
+    for (const c of body.checks) if (c.key.startsWith('subscribers_')) expect(c.explain).toContain('including unsubscribed')
+    // src/types.ts restates the keys (the browser project cannot import the worker module); this fails to compile if they drift.
+    const sameKeys: [UiCheckKey] extends [(typeof DATA_QUALITY_CHECKS)[number]]
+      ? [(typeof DATA_QUALITY_CHECKS)[number]] extends [UiCheckKey]
+        ? true
+        : false
+      : false = true
+    expect(sameKeys).toBe(true)
   })
 })

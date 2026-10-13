@@ -215,3 +215,46 @@ export interface Funnel {
   by_first_page: (FunnelCounts & { first_page: string })[]
   by_first_utm: (FunnelCounts & { first_utm_source: string | null })[]
 }
+
+/** Readers at risk of going cold (worker/insights/going-cold.ts GoingColdCounts); active subscribers only. */
+export interface GoingColdCounts extends Explained {
+  active: number
+  at_risk: number
+}
+
+/** GET /api/insights/going-cold (04, 06 §/growth parked panel; going_cold_risk, 02 §Derived). */
+export interface GoingCold {
+  total: GoingColdCounts
+  /** Unsubscribed readers at risk, left out of every count above (02 §Defaults). */
+  hidden_unsubscribed: { count: number; explain: string }
+  by_source: (GoingColdCounts & { source: string | null })[]
+  definitions_used: DefinitionKey[]
+}
+
+/**
+ * The data-quality check keys, as worker/insights/data-quality.ts DATA_QUALITY_CHECKS lists them.
+ * Restated like every shape here: that module types D1Database, which the browser project does not
+ * have. test/insights.test.ts pins this union to the worker's list.
+ */
+export type DataQualityCheckKey =
+  | 'subscribers_without_source'
+  | 'subscribers_unexpected_source'
+  | 'page_views_without_utm'
+  | 'page_views_unexpected_utm'
+  | 'app_users_not_on_list'
+
+/** GET /api/insights/data-quality (04, 06 §/growth parked panel; T-INS-3). */
+export interface DataQuality {
+  /** Sums over import_runs, and the quarantine table by file and reason. */
+  import: {
+    rows_in: number
+    rows_out: number
+    merged: number
+    quarantined: number
+    /** quarantined / rows_in; null when nothing was loaded. */
+    rate: number | null
+    by_file_reason: { file: string; reason: string; rows: number }[]
+  }
+  /** One per DATA_QUALITY_CHECKS key (worker/insights/data-quality.ts), in that order. */
+  checks: ({ key: DataQualityCheckKey; count: number; of: number } & Explained)[]
+}
