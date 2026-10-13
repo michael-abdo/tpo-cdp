@@ -7,8 +7,9 @@
 //   - a `segment` answer must name filters that a segment tool call of this request ran with;
 //     its count is that call's count, which is the segment builder's (T-AI-3). Filters the
 //     server never counted make the block malformed, so no count can be invented
-//   - SQL never reaches the teammate (04, 14 §6 #6): fenced code blocks and SQL statements are
-//     cut from `text`, belt and braces with the system-prompt rule (T-AI-5)
+//   - SQL never reaches the teammate (04, 14 §6 #6): fenced code blocks and SELECT statements in
+//     any form (multi-line, indented, any case, inline code) are cut from `text`, belt and
+//     braces with the system-prompt rule (T-AI-5; removeSql below)
 //   - the iteration cap → `partial: true` with whatever table exists and a sentence saying so
 //
 // Pure: the model text and the request's tool outputs in, the result out. Re-hydration of pk_
@@ -75,8 +76,58 @@ const FENCED = /```[^\n`]*\n?[\s\S]*?```/g
 // The closing fence must start a line: a JSON string cannot hold a raw line break, so a ``` inside
 // the block's own "text" value (an SQL fence the model quoted) cannot end the block early.
 const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
-/** An upper-case SQL statement, or a lower-case one that reads a v_* view, up to `;` or the line end. */
-const SQL_STATEMENTS = [/\b(?:SELECT|WITH)\b[^;\n]*?\bFROM\b[^;\n]*;?/g, /\bselect\b[^;\n]*?\bfrom\s+v_[a-z_]+[^;\n]*;?/gi]
+
+// T-AI-5: no SELECT statement in any form. A statement is a standalone SELECT keyword followed,
+// anywhere later in the same text block (paragraph or inline code span), by a FROM keyword.
+// The match is case-insensitive and crosses line breaks and indentation, so neither can hide a
+// statement. Only one shape is kept as English: a lower- or mixed-case "select … from" whose
+// FROM starts a noun phrase ("from the builder") and whose select list holds no SQL punctuation.
+// A statement is cut from its SELECT (or a WITH … AS ( before it) to its `;`, else to the end
+// of the block. Over-cutting prose is the safe direction; the cut is logged (route.ts).
+const SELECT_WORD = /\bselect\b/gi
+const FROM_WORD = /\bfrom\b/gi
+const ENGLISH_FROM =
+  /^\s+(?:the|a|an|this|that|these|those|our|your|my|their|his|her|its|each|every|any|some|all|one)\s+(?!(?:select|from|where|group|order|limit|join|inner|left|right|outer|cross|union|having|as|on|and|or|by)\b)[a-z]/i
+/** Characters and shapes English between "select" and "from" does not hold, but SQL does. */
+const SQL_LIST_MARK = /[*()=;'"`]|\w\.\w/
+const CTE_BEFORE = /\bwith\s+[a-z_][a-z0-9_]*\s+as\s*\(\s*$/i
+const INLINE_CODE = /`[^`]*`/g
+const BLOCK_BREAK = /(\n[ \t]*\n)/
+
+function isUpper(word: string): boolean {
+  return word === word.toUpperCase()
+}
+
+/** The first SELECT statement in `block`, as a [start, end) span, or null. */
+function findStatement(block: string): [number, number] | null {
+  for (const select of block.matchAll(SELECT_WORD)) {
+    const listStart = select.index + select[0].length
+    for (const from of block.slice(listStart).matchAll(FROM_WORD)) {
+      const fromAt = listStart + from.index
+      const english =
+        !isUpper(select[0]) &&
+        !isUpper(from[0]) &&
+        !SQL_LIST_MARK.test(block.slice(listStart, fromAt)) &&
+        ENGLISH_FROM.test(block.slice(fromAt + from[0].length))
+      if (english) continue
+      const cte = CTE_BEFORE.exec(block.slice(0, select.index))
+      const semicolon = block.indexOf(';', fromAt)
+      return [cte === null ? select.index : cte.index, semicolon === -1 ? block.length : semicolon + 1]
+    }
+  }
+  return null
+}
+
+/** `block` with every SELECT statement in it cut out. */
+function cutStatements(block: string): { text: string; removed: boolean } {
+  let text = block
+  let removed = false
+  for (let span = findStatement(text); span !== null; span = findStatement(text)) {
+    text = `${text.slice(0, span[0])} ${text.slice(span[1])}`
+    removed = true
+  }
+  return { text, removed }
+}
 
 /** `text` with fenced code blocks and SQL statements removed. Pure; exported for tests. */
 export function removeSql(text: string): { text: string; removed: boolean } {
@@ -86,11 +137,23 @@ export function removeSql(text: string): { text: string; removed: boolean } {
     return ' '
   }
   let out = text.replace(FENCED, cut)
-  for (const pattern of SQL_STATEMENTS) out = out.replace(pattern, cut)
+  // An inline code span is its own block: one holding a statement goes whole, backticks too.
+  out = out.replace(INLINE_CODE, (span) => (findStatement(span.slice(1, -1)) === null ? span : cut()))
+  out = out
+    .split(BLOCK_BREAK)
+    .map((part, i) => {
+      if (i % 2 === 1) return part // a block break, kept as it is
+      const cleaned = cutStatements(part)
+      if (cleaned.removed) removed = true
+      return cleaned.text
+    })
+    .join('')
   if (!removed) return { text: text.trim(), removed }
   out = out
-    .replace(/`\s*`/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+\n/g, '\n\n')
+    .replace(/\n{3,}/g, '\n\n')
     .replace(/ +([.,;:])/g, '$1')
     .trim()
   return { text: out, removed }

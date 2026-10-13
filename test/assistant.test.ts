@@ -843,4 +843,156 @@ describe('T-AI-5: the teammate-facing text never contains a ```sql block or a SE
     const plain = 'Select the Instagram list from the builder to export it.'
     expect(removeSql(plain)).toEqual({ text: plain, removed: false })
   })
+
+  // The shapes the H2 review found passing the single-line patterns, each with the text that must remain.
+  const shapes: Array<[string, string, string]> = [
+    ['multi-line, with ;', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram';", 'I ran:'],
+    ['multi-line, no ;: cut to the end of its block', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram'\n\nThere are 46.", 'I ran:\n\nThere are 46.'],
+    ['an indented four-space block', "I ran this:\n\n    SELECT count(*)\n    FROM v_profiles\n    WHERE source = 'instagram';\n\nThere are 46.", 'I ran this:\n\nThere are 46.'],
+    ['upper case', "There are 46. SELECT count(*) FROM v_profiles WHERE source = 'instagram'", 'There are 46.'],
+    ['lower case', "There are 46. select count(*) from v_profiles where source = 'instagram'", 'There are 46.'],
+    ['mixed case', "There are 46. SeLeCt CoUnT(*) fRoM v_profiles WhErE source = 'instagram';", 'There are 46.'],
+    ['lower case with no punctuation at all', 'There are 46. select pkey from v_profiles limit 5', 'There are 46.'],
+    ['a table that is not a v_* view', "There are 46. select email_norm from subscribers where status = 'active';", 'There are 46.'],
+    ['mixed case over a base table, no ;', 'There are 46. Select Email_Norm From Profiles', 'There are 46.'],
+    ['inline backticks', 'There are 46; I used `select count(*) from profiles` for it.', 'There are 46; I used for it.'],
+    ['inline backticks over two lines', 'There are 46; I used `SELECT pkey\nFROM subscribers` for it.', 'There are 46; I used for it.'],
+    ['a WITH … AS ( statement', 'WITH cold AS (SELECT pkey FROM v_profiles) SELECT count(*) FROM cold; There are 46.', 'There are 46.'],
+    ['two statements in one block', 'There are 46. SELECT 1 FROM v_profiles; and select pkey from v_funnel; done.', 'There are 46. and done.'],
+  ]
+  for (const [shape, sql, kept] of shapes) {
+    it(`cuts a SELECT statement: ${shape}`, () => {
+      expect(removeSql(sql)).toEqual({ text: kept, removed: true })
+      const inBlock = respond({
+        modelText: finalText('prose', { type: 'answer', text: sql, window: null, filters_applied: {}, definitions_used: [] }),
+        outputs: [],
+        capped: false,
+      })
+      const partial = respond({ modelText: sql, outputs: [], capped: false })
+      for (const { result, notes } of [inBlock, partial]) {
+        expect(notes.sqlRemoved).toBe(true)
+        expect(result.text).toBe(kept)
+        expect(result.text).not.toMatch(/\bselect\b/i)
+        expect(result.text).not.toMatch(/\bfrom\s+(?:v_|profiles|subscribers|cold)/i)
+      }
+    })
+  }
+
+  it('keeps prose that only uses the word "select", even with "from the …" after it', () => {
+    for (const plain of [
+      'Select a segment in the builder to export it.',
+      'You can select readers from the builder, then export them from the list.',
+      'To narrow it, select a source and a status.',
+    ]) {
+      expect(removeSql(plain)).toEqual({ text: plain, removed: false })
+    }
+  })
+})
+
+describe('T-PII-4 at every scanner site through the route: a planted real email → 500 blocked_pii and a blocked ai_audit row', () => {
+  // 05 §Scanner and §Leak paths; 04 §POST /api/assistant errors (500 blocked_pii). Each test plants
+  // the demo subject's email (subscribers.csv:902, 09 D-47) at exactly one point and pins the site
+  // in both the 500 envelope and the audit row, so removing that one scanner call fails that test
+  // (an email that slipped past it would be caught later at another site, or by the audit writer).
+
+  async function expectBlocked(res: Response, sub: string, site: string, kinds: string[], toolName: string | null = null) {
+    expect(res.status).toBe(500)
+    const body = await res.json<Record<string, unknown>>()
+    expect(body).toEqual({ error: 'blocked_pii', message: expect.any(String), details: [{ check: 'known_email', site }] })
+    const rows = await auditRows('session_sub', sub)
+    expect(new Set(rows.map((r) => r.trace_id)).size).toBe(1)
+    expect(rows.map((r) => `${r.kind}/${r.status}`)).toEqual(kinds)
+    expect(rows.at(-1)).toMatchObject({
+      kind: 'blocked',
+      status: 'blocked',
+      tool_name: toolName,
+      request_json: null,
+      response_json: null,
+      error: `blocked_pii: known_email in ${site}`,
+    })
+    expect(rows.every((r) => ![r.request_json, r.response_json, r.error].join(' ').includes('@'))).toBe(true)
+  }
+
+  it('the model request (loop.ts): an email in an assistant_tools description is never sent', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    const before = await env.DB.prepare("SELECT description FROM assistant_tools WHERE name = 'aggregate'").first<string>('description')
+    if (before === null) throw new Error('the aggregate tool row is not seeded')
+    // Tools are data (09 D-41): a teammate's row edit is the one input to the request no other scan sees.
+    await env.DB.prepare("UPDATE assistant_tools SET description = ? WHERE name = 'aggregate'").bind(`${before} Ask ${JOY}.`).run()
+    try {
+      const { transport, requests } = scripted([() => message([text('never')], 'end_turn')])
+      await expectBlocked(await ask(appWith(transport), cookie, 'how many subscribers?'), sub, 'model_request', ['blocked/blocked'])
+      expect(requests).toHaveLength(0)
+    } finally {
+      await env.DB.prepare("UPDATE assistant_tools SET description = ? WHERE name = 'aggregate'").bind(before).run()
+    }
+  })
+
+  it('the model response (loop.ts): an email in the model text is blocked before it is audited or read', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    const { transport, requests } = scripted([() => message([text(`The subscriber is ${JOY}.`)], 'end_turn')])
+    await expectBlocked(await ask(appWith(transport), cookie, 'who signed up first?'), sub, 'model_output', ['blocked/blocked'])
+    expect(requests).toHaveLength(1)
+  })
+
+  it('the tool result (tool-executor.ts): an email in a view row never reaches the model', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    const source = await env.DB.prepare('SELECT source FROM subscribers WHERE email_norm = ?').bind(JOY).first<string>('source')
+    if (source === null) throw new Error('no subscriber row for the demo subject (02 §Counts)')
+    // 05 §Leak paths: a client-supplied text column that holds an email; here her own, in place of her source.
+    await env.DB.prepare('UPDATE subscribers SET source = email_norm WHERE email_norm = ?').bind(JOY).run()
+    try {
+      const { transport, requests } = scripted([
+        () => message([toolUse('toolu_src', 'aggregate', { metric: 'subscribers', group_by: 'source' })], 'tool_use'),
+        () => message([text('never')], 'end_turn'),
+      ])
+      const res = await ask(appWith(transport), cookie, 'how many active subscribers per source?')
+      await expectBlocked(res, sub, 'tool_result', ['model_request/success', 'blocked/blocked'], 'aggregate')
+      expect(requests).toHaveLength(1) // the result never went back to the model
+    } finally {
+      await env.DB.prepare('UPDATE subscribers SET source = ? WHERE email_norm = ?').bind(source, JOY).run()
+    }
+  })
+
+  it('the final result (route.ts): an email that decodes only when the json block is parsed is still blocked', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    // The block spells "@" as the JSON escape \u0040, so the raw response holds no "@" and passes
+    // the response scan; JSON.parse in respond.ts turns it back into the email.
+    const escaped = finalText('Here is the answer.', {
+      type: 'answer',
+      text: `Write to ${JOY}.`,
+      window: null,
+      filters_applied: {},
+      definitions_used: [],
+    }).replace('@', '\\u0040')
+    expect(escaped).not.toContain('@')
+    const { transport } = scripted([() => message([text(escaped)], 'end_turn')])
+    await expectBlocked(await ask(appWith(transport), cookie, 'who should I write to?'), sub, 'model_output', ['model_request/success', 'blocked/blocked'])
+  })
+})
+
+describe('T-PII-4 at the tool executor\'s error result (tool-executor.ts)', () => {
+  // The executor scans the error it sends back as well as a success. Through the route the model's
+  // input has already passed the response scan, so this call is tested on the executor directly,
+  // with a segment input whose unknown key ("unknown filter: <key>") is the demo subject's email.
+  it('an email echoed in an invalid-input problem → blocked_pii, a blocked row, no tool_call row', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const trace = await startTrace(env.DB)
+    const failure = await executeToolCall({ db: env.DB, trace, tools: await loadTools(env.DB) }, { id: 'toolu_key', name: 'segment', input: { [JOY]: true } }).then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(failure).toMatchObject({ status: 500, code: 'blocked_pii', details: [{ check: 'known_email', site: 'tool_result' }] })
+    const rows = await auditRows('trace_id', trace.traceId)
+    expect(rows.map((r) => `${r.kind}/${r.status}/${r.tool_name}/${r.error}`)).toEqual(['blocked/blocked/segment/blocked_pii: known_email in tool_result'])
+  })
 })

@@ -18,13 +18,16 @@ import { renderSystemPrompt } from './system-prompt'
 /** 09 D-03: Claude Opus 5.5, called directly. */
 export const MODEL = 'claude-opus-5-5'
 
-/** 09 D-45. */
-export const MAX_TOKENS = 2048
+/**
+ * 09 D-57 (amends D-45): the model's thinking counts against max_tokens, and 2,048 could cut an
+ * answer short.
+ */
+export const MAX_TOKENS = 8192
 
-// 09 D-45 also says temperature 0. Claude Opus 5.5 rejects every sampling parameter
-// (temperature, top_p, top_k) with a 400, so none is sent; tool_choice is left at its default
-// (auto) because forced tool use is also a 400 on this model, and thinking is left at the
-// model's default because it cannot be disabled.
+// 09 D-57: no sampling parameter (temperature, top_p, top_k) and no forced tool_choice is sent,
+// because Claude Opus 5.5 rejects each with a 400; tool_choice stays at its default (auto) and
+// thinking at the model's default, which cannot be disabled. Determinism comes from the tools
+// (fixed SQL, stored definitions), not from sampling.
 
 /** One tool as sent to the model: an assistant_tools row's name, description and input_schema. */
 export type ModelTool = Pick<Anthropic.Tool, 'name' | 'description' | 'input_schema'>

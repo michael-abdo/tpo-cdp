@@ -190,6 +190,7 @@ describe('T-PII-1: a request built from a real profile question carries no PII',
     expect(Object.keys(first).sort()).toEqual(['max_tokens', 'messages', 'model', 'system', 'tools'])
     expect(first.model).toBe(MODEL)
     expect(first.max_tokens).toBe(MAX_TOKENS)
+    expect(MAX_TOKENS).toBe(8192) // 09 D-57, pinned as a literal; no temperature/top_p/top_k key (above)
     expect(first.tools).toEqual(TOOLS)
     expect(first.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user'])
   })
