@@ -3,6 +3,9 @@ import { env, SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { normalizeQueryFragment, QUERY_FRAGMENT_MIN_LENGTH } from '../shared/normalize'
 import { pkeyForEmail, pkeyForUnknownUser } from '../shared/pseudonym'
+import apiSource from '../src/api.ts?raw'
+import lookupPageSource from '../src/pages/LookupPage.tsx?raw'
+import { SEARCH_LIMIT } from '../worker/routes/lookup'
 import lookupSource from '../worker/routes/lookup.ts?raw'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
@@ -14,20 +17,21 @@ import { eventIdPool, sendWebhook } from './helpers/webhook'
 // - joy.hall524 (subscribers.csv:2250), joy.hall830 (subscribers.csv:902, app user u_ceed5f12 at
 //   app_users.csv:303), joy.hall898 (subscribers.csv:1392): the 3 `joy.hall` profiles.
 // - julia.evans230@gmail.com: subscribers.csv:373, app_users.csv:2 (u_2b6447a3, the PDF's sample).
-// - "ell", "hall", "joy.hall", "u_2b64": substrings of the real values above (09 D-47 removals).
+// - "ell", "hall", "joy.hall", "u_2b64", "2b6447": substrings of the real values above (09 D-47
+//   removals). "2b6447" sits inside u_2b6447a3 without starting it, and no email contains it.
+// - "JOY.HALL ", "  jo  ", "jo", "": "joy.hall" re-cased, padded or cut (09 D-47).
 //   aaron.bell239@gmail.com (subscribers.csv:2483) contains "ell" without starting with it and
 //   sorts before every "ell…" address, so plain alphabetical order would list it first.
 // - "not-an-email": a real value of subscribers.csv:1750, quarantined (invalid_email), so no
 //   profile holds it: the unknown fragment.
-// - "hall%", "joy_hall", "hall\": real fragments with one LIKE metacharacter added or swapped in
-//   for a "."; they test escaping, not data, and introduce no business value (09 D-47).
+// - "hall%", "joy_hall", "hall\", "joy\.hall": real fragments with one LIKE metacharacter added
+//   or swapped in for a "."; they test escaping, not data, and introduce no business value (09 D-47).
 // - The stub: u_2b6447a (julia's id with its last character removed, as T-WH-6 uses), sent once
 //   through the real webhook with the brief's sample device d_4b21e8 (09 D-11), in the last
 //   describe because storage persists across this file's tests.
 
 const JOY_HALL = ['joy.hall524@protonmail.com', 'joy.hall830@protonmail.com', 'joy.hall898@gmail.com']
 const JULIA = 'julia.evans230@gmail.com'
-const SEARCH_LIMIT = 20
 
 interface Match {
   pkey: string
@@ -61,16 +65,25 @@ async function found(q: string): Promise<SearchBody> {
 
 describe('normalizeQueryFragment (02 §Normalization)', () => {
   it('trims and lowercases, and nothing else', () => {
+    // The "." stays: no dot stripping, like normalizeEmail (D-26).
     expect(normalizeQueryFragment('  JOY.HALL ')).toBe('joy.hall')
     // Not an address and still returned: a fragment is never validated.
     expect(normalizeQueryFragment('Joy.Hall830')).toBe('joy.hall830')
-    // No plus or dot stripping, like normalizeEmail (D-26).
-    expect(normalizeQueryFragment('Joy.Hall+830')).toBe('joy.hall+830')
   })
 
   it('the route folds in code, never in SQL', () => {
     expect(lookupSource).toContain('normalizeQueryFragment(')
     expect(lookupSource).not.toMatch(/\bLOWER\s*\(/i)
+  })
+
+  it('the browser sends the raw input and never folds it (02 §Normalization)', () => {
+    for (const [file, text] of [
+      ['src/pages/LookupPage.tsx', lookupPageSource],
+      ['src/api.ts', apiSource],
+    ]) {
+      expect(text, file).not.toMatch(/\.(trim|trimStart|trimEnd|toLowerCase|toLocaleLowerCase)\s*\(/)
+    }
+    expect(lookupPageSource).toContain('/api/lookup/search?q=${encodeURIComponent(fragment)}')
   })
 })
 
@@ -152,10 +165,18 @@ describe('T-API-3 partial lookup', () => {
 
   it('%, _ and \\ match literally', async () => {
     // Unescaped, "hall%" would match all 52, "joy_hall" the 3 joy.hall profiles ("_" = any one
-    // character), and "hall\" would be a malformed escape.
-    for (const q of ['hall%', 'joy_hall', 'hall\\']) {
+    // character), "hall\" would be a malformed escape, and "joy\.hall" would match the 3 joy.hall
+    // profiles ("\." = a literal "."). "hall\" alone cannot tell: unescaped it also gives [].
+    for (const q of ['hall%', 'joy_hall', 'hall\\', 'joy\\.hall']) {
       expect(await found(q), q).toEqual({ q, matches: [], truncated: false })
     }
+  })
+
+  it('user_id matches only from its start: 2b6447 (inside u_2b6447a3) → none', async () => {
+    const inside = await env.DB.prepare("SELECT count(*) AS n FROM app_users WHERE instr(user_id, '2b6447') > 1")
+      .first<number>('n')
+    expect(inside).toBe(1)
+    expect(await found('2b6447')).toEqual({ q: '2b6447', matches: [], truncated: false })
   })
 
   it('an unknown fragment → 200 with no matches, not 404', async () => {

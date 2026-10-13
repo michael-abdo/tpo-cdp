@@ -3,7 +3,9 @@
 // (02 §Normalization). Absent sections render the labelled empty states from 06.
 // Partial lookup (06 §/lookup, 09 D-52): after QUERY_FRAGMENT_MIN_LENGTH typed characters the
 // box lists GET /api/lookup/search suggestions (debounced); Find goes to the exact lookup and
-// falls back to the suggestions on 404. The raw input is sent; the server folds it.
+// falls back to the suggestions on 404. The raw input is sent unchanged and the server alone
+// folds it (02 §Normalization: the browser never normalizes): this file never trims or
+// lowercases, a 400 query_too_short just means "no list yet" (test/lookup-search.test.ts pins it).
 
 import { type FormEvent, type KeyboardEvent, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
@@ -13,7 +15,6 @@ import { ApiError, errorMessage, getJson } from '../api'
 import { Empty, ErrorLine, Field, Loading, Section } from '../components'
 import { dateOr, utc } from '../format'
 import type { Lookup, LookupSearch } from '../types'
-import { type GetState, useGet } from '../useGet'
 
 /** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
 const SUGGEST_DEBOUNCE_MS = 250
@@ -166,9 +167,42 @@ function lookupKey(match: Match): string {
   return key
 }
 
-/** Server-side minimum, checked here only to avoid asking for an answer that is always 400. */
+/**
+ * Whether to ask for suggestions at all: the raw length, not folded, so it can only let through
+ * inputs the server then answers with 400 query_too_short (never hold back one it would answer).
+ */
 function searchable(raw: string): boolean {
-  return raw.trim().length >= QUERY_FRAGMENT_MIN_LENGTH
+  return raw.length >= QUERY_FRAGMENT_MIN_LENGTH
+}
+
+/** The suggestion list's answer; `too_short` is the server's 400 query_too_short: no list yet. */
+type SuggestState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'too_short' }
+  | { status: 'ok'; data: LookupSearch }
+
+/** GETs `path` whenever it changes (null = nothing to ask); a stale answer never shows. */
+function useSuggestions(path: string | null): SuggestState | null {
+  const [settled, setSettled] = useState<{ path: string; state: SuggestState } | null>(null)
+  useEffect(() => {
+    if (path === null) return
+    let current = true
+    getJson<LookupSearch>(path).then(
+      (data) => current && setSettled({ path, state: { status: 'ok', data } }),
+      (err: unknown) => {
+        if (!current) return
+        const tooShort = err instanceof ApiError && err.status === 400 && err.code === 'query_too_short'
+        setSettled({ path, state: tooShort ? { status: 'too_short' } : { status: 'error', message: errorMessage(err) } })
+      },
+    )
+    return () => {
+      current = false
+    }
+  }, [path])
+  if (path === null) return null
+  if (settled === null || settled.path !== path) return { status: 'loading' }
+  return settled.state
 }
 
 function Suggestions({
@@ -176,11 +210,11 @@ function Suggestions({
   active,
   onPick,
 }: {
-  state: GetState<LookupSearch> | null
+  state: SuggestState | null
   active: number
   onPick: (match: Match) => void
 }) {
-  if (state === null) return null
+  if (state === null || state.status === 'too_short') return null
   if (state.status === 'loading') return <Loading />
   if (state.status === 'error') return <ErrorLine message={state.message} />
   const { matches, truncated } = state.data
@@ -205,7 +239,11 @@ function Suggestions({
           {m.status !== null && <span className="text-gray-500">{m.status}</span>}
         </li>
       ))}
-      {truncated && <li className="px-3 py-2 text-gray-500">+ more — keep typing</li>}
+      {truncated && (
+        <li role="presentation" className="px-3 py-2 text-gray-500">
+          + more — keep typing
+        </li>
+      )}
     </ul>
   )
 }
@@ -217,14 +255,14 @@ export default function LookupPage() {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
   const fragment = useDebounced(input, SUGGEST_DEBOUNCE_MS)
-  const suggestions = useGet<LookupSearch>(
+  const suggestions = useSuggestions(
     open && searchable(fragment) ? `/api/lookup/search?q=${encodeURIComponent(fragment)}` : null,
   )
   const matches = suggestions?.status === 'ok' ? suggestions.data.matches : []
 
   const [exact, setExact] = useState<{ q: string; state: ExactState } | null>(null)
   useEffect(() => {
-    if (q === null || q.trim() === '') return
+    if (q === null || q === '') return
     let current = true
     getJson<Lookup>(`/api/lookup?q=${encodeURIComponent(q)}`).then(
       (data) => current && setExact({ q, state: { status: 'ok', data } }),
@@ -243,7 +281,7 @@ export default function LookupPage() {
     }
   }, [q])
   const state: ExactState | null =
-    q === null || q.trim() === '' ? null : exact === null || exact.q !== q ? { status: 'loading' } : exact.state
+    q === null || q === '' ? null : exact === null || exact.q !== q ? { status: 'loading' } : exact.state
 
   function pick(match: Match) {
     const key = lookupKey(match)
@@ -258,7 +296,7 @@ export default function LookupPage() {
     setActive(-1)
     // Find again on the same unmatched q re-opens its fallback list; otherwise the list closes.
     setOpen(input === q && state?.status === 'not_found')
-    setParams(input.trim() === '' ? {} : { q: input })
+    setParams(input === '' ? {} : { q: input })
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -282,7 +320,9 @@ export default function LookupPage() {
   }
 
   // The fallback after a 404 is the list itself; with the list closed (Esc) the 404 message stays.
-  const listShown = open && searchable(fragment)
+  const listShown = suggestions !== null && suggestions.status !== 'too_short'
+  // A 404 with no list to fall back to (fragment too short) has zero suggestions: 06's text.
+  const noFallback = !searchable(q ?? '') || suggestions?.status === 'too_short'
   return (
     <>
       <h1 className="text-xl font-semibold">Lookup</h1>
@@ -315,7 +355,7 @@ export default function LookupPage() {
       {state?.status === 'loading' && <Loading />}
       {state?.status === 'error' && <ErrorLine message={state.message} />}
       {state?.status === 'not_found' && !listShown && (
-        <Empty>{searchable(q ?? '') ? state.message : NO_MATCH}</Empty>
+        <Empty>{noFallback ? NO_MATCH : state.message}</Empty>
       )}
       {state?.status === 'ok' && (
         <div className="space-y-4">

@@ -214,7 +214,7 @@ lookupRoutes.get('/lookup', async (c) => {
 })
 
 /** At most this many candidates; `truncated` says more exist (04 §/api/lookup/search). */
-const SEARCH_LIMIT = 20
+export const SEARCH_LIMIT = 20
 
 interface SearchRow {
   grp: 0 | 1 | 2

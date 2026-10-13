@@ -123,3 +123,8 @@ Built in Claude Code throughout. Each entry: what was asked, what the AI got wro
 ## 2026-10-13 — W4
 
 - **Asked:** `GET /api/lookup/search` with no `LOWER(` in its SQL, and a test that pins it. **Wrong:** the AI's header comment in `worker/routes/lookup.ts` said the SQL never folds case "(no LOWER()", so the new source scan for `/\bLOWER\s*\(/i` matched the comment and failed on SQL that was correct. **Caught:** the first `npx vitest run test/lookup-search.test.ts` (1 failed, 11 passed). **Fix:** the comment says "no SQL case folding"; the scan stays case-insensitive so a lowercase `lower(` in SQL would still fail it.
+
+## 2026-10-13 — W4 review fixes
+
+- **Asked:** W4's search box must send raw input (02 §Normalization: "the browser never normalizes"). **Wrong:** d7bbb5f gated suggestions on `raw.trim().length >= 3` in `src/pages/LookupPage.tsx`, a copy of part of `normalizeQueryFragment` in the browser, and called it fine in the notes. **Caught:** the adversarial review of W4. **Fix:** the gate is now the raw length, the server's 400 `query_too_short` reads as "no list yet", the page has no `.trim(`/`.toLowerCase(` left, and a source scan in `test/lookup-search.test.ts` pins it (re-adding the trim fails it).
+- **Asked:** T-API-3 tests that `%`, `_` and `\` match literally and that `user_id` matches by prefix. **Wrong:** the AI's `hall\` case passes even with no backslash escaping (an unescaped trailing `\` also returns []), and every `user_id` case started with `u_`, so a contains-match passed too. **Caught:** the same review, by mutation. **Fix:** added `joy\.hall` → [] and `2b6447` (inside u_2b6447a3) → []; each now fails under its mutation.
