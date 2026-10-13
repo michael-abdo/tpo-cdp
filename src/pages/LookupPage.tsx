@@ -72,7 +72,8 @@ function Column({ title, summary, children }: { title: string; summary: ReactNod
 
 function Header({ data }: { data: Lookup }) {
   const { profile, newsletter, app } = data
-  const identity = profile.email ?? app?.user_id ?? 'No email on file'
+  // A reader with no email is named in words; the raw app id lives in Technical details (06 §UI principles 2, 4).
+  const identity = profile.email ?? 'App user with no email on file'
   const facts: string[] = []
   // The kind word only when it says something the columns don't (principle 5).
   if (!(profile.kind === 'subscriber' && newsletter !== null)) facts.push(KIND_LABEL[profile.kind])
@@ -87,7 +88,6 @@ function Header({ data }: { data: Lookup }) {
         <h2 className="break-all text-lg font-semibold text-gray-900">{identity}</h2>
         <ScoreMeter score={profile.engagement_score} />
       </div>
-      {profile.email === null && app !== null && <p className="text-sm text-gray-700">No email on file</p>}
       {facts.length > 0 && <p className="text-sm text-gray-700">{facts.join(' · ')}</p>}
       <Disclosure label="How engagement is scored">
         <p className="text-sm text-gray-700">{DEFINITIONS.engagement_score.doc}</p>
@@ -99,6 +99,11 @@ function Header({ data }: { data: Lookup }) {
             <Field label="Kind">
               <span className="font-mono">{profile.kind}</span>
             </Field>
+            {app !== null && (
+              <Field label="App user id">
+                <span className="font-mono">{app.user_id}</span>
+              </Field>
+            )}
             <Field label="Score formula">
               <span className="font-mono">{DEFINITIONS.engagement_score.formula}</span>
             </Field>
@@ -513,7 +518,7 @@ export default function LookupPage() {
     message = noFallback ? `Type at least ${QUERY_FRAGMENT_MIN_LENGTH} letters to search.` : notFound.message
     messageVisible = true
   } else if (result !== null) {
-    message = `Showing profile for ${result.profile.email ?? result.app?.user_id ?? 'a reader with no email'}.`
+    message = `Showing profile for ${result.profile.email ?? 'an app user with no email on file'}.`
   }
   // The one-click first step (principle 6): on the empty page and after a search that found nobody.
   const showExample = (state === null && !listShown) || (notFound !== null && (zeroMatches || !listShown))
