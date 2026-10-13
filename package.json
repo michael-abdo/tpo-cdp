@@ -13,7 +13,8 @@
     "test": "vitest run",
     "types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply cdp --local",
-    "db:migrate:remote": "wrangler d1 migrations apply cdp --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply cdp --remote",
+    "db:seed:local": "tsx scripts/csv2sql.ts && for f in seed/*.sql; do npx wrangler d1 execute cdp --local --file=$f || exit 1; done"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

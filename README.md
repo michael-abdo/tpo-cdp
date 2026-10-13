@@ -28,7 +28,58 @@ The three CSVs in `data/` are the synthetic files provided with the brief ("No r
 
 ## Data rules and known edge cases
 
-_Lands with ingest (Mon)._
+`npm run db:seed:local` runs `scripts/csv2sql.ts`, which turns `data/*.csv` into `seed/*.sql` and loads it with `wrangler d1 execute`. The script checks every file's header before it builds anything, prints per-file counts and every quarantine reason, and stops with a non-zero exit on any error. The counts it writes to `import_runs` are the import report on Overview.
+
+**Normalization** (`shared/normalize.ts`, the only implementation)
+
+- Email: `trim()` then lowercase, nothing else. No plus-stripping and no Gmail dot removal. The result must match `^[^@\s]+@[^@\s]+\.[^@\s]+$`.
+- Source and UTM: trim, lowercase, `twitter → x`. Blank becomes `NULL`. A value outside `instagram facebook referral google direct podcast x` is kept lowercased, so an unexpected source shows up in the data instead of disappearing.
+- Every table stores `email_norm`, computed once at ingest, and joins use it. SQL and the browser never normalize.
+- CSV timestamps have no zone and are treated as UTC. Web event times are stored as `YYYY-MM-DDTHH:MM:SSZ`.
+
+**Quarantine** (never drop a row)
+
+A row that cannot become a record goes to the `quarantine` table with one reason and its raw text, and is not counted:
+
+- `blank_row`: every field is empty.
+- `invalid_email`: the email fails the pattern above.
+- `missing_field`: a required column is empty.
+- `bad_date`: subscriber and app dates must be `YYYY-MM-DD`, and web timestamps must be `YYYY-MM-DD HH:MM:SS`. These are the CSVs' own formats, and nothing looser is accepted.
+
+A missing header column stops the seed and names the file and the column. A value that has no rule stops the seed with its file line instead of being guessed: an unknown status, a repeated `user_id`, an email on a web row other than `/subscribe`, or two different emails for one visitor.
+
+**Dedupe** (subscribers)
+
+Identity is the normalized email. When rows merge:
+
+- `signup_date` is the earliest.
+- `last_open_date` is the latest non-empty one.
+- `status` is `unsubscribed` if any row says so.
+- `source` comes from the earliest-signup row.
+- `email_raw` is the first spelling seen.
+- `merged_count` records how many rows were collapsed.
+
+No duplicate pair in the data disagrees on any field, so these rules are covered by tests but never change a value on this dataset.
+
+**Linking**
+
+1. App to subscriber: `app_users.email_norm = subscribers.email_norm`. An app user with no matching subscriber gets an `app_only` profile.
+2. Web to subscriber: the email on a `/subscribe` row matches a subscriber. That visitor's whole history, before and after signup, is attributed to the profile, which is how "which pages do new subscribers hit first?" can be answered.
+3. Visitors without a `/subscribe` email get no profile. They stay in the funnel view.
+4. A webhook `user_id` that no app user has creates an app user with no email and an `unknown_user_stub` profile when it arrives. It is never dropped.
+5. App account direction: an app account counts as converted from the newsletter only if it was created on a later day than the signup.
+
+Each subscriber and each `app_only` email gets one profile with a keyed pseudonymous `pkey`. `created_at` is the signup date for a subscriber and the app account date for an app-only profile. `cold_since` and `engagement_score` are computed by `shared/derive.ts` when they are written, and stored. At seed time a profile has no app events yet.
+
+**Known edge cases, not handled**
+
+- Plus-addressing and Gmail dot-aliases. There are none in the data.
+- One person with two emails.
+- One browser or visitor shared by two people.
+- An app user who changes email.
+- A device used by several users. All of its anonymous events attach to the most recent user.
+- An unknown `user_id` that later appears in `app_users` with an email. The stub profile and the email profile stay separate.
+- A `/subscribe` email that is not in `subscribers.csv`. There are none in the data. It would get no profile, since no `web_only` kind exists, and the seed prints how many there are.
 
 ## Definitions
 

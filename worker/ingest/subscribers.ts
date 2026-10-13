@@ -39,7 +39,7 @@ export interface SubscriberIngest {
   quarantined: QuarantinedRow[]
 }
 
-function toCsvRecord(row: readonly string[]): string {
+export function toCsvRecord(row: readonly string[]): string {
   return row.map((f) => (/[",\r\n]/.test(f) ? `"${f.replace(/"/g, '""')}"` : f)).join(',')
 }
 
