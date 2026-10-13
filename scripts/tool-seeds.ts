@@ -11,7 +11,10 @@
  *   segment tool takes exactly this filters object"), not the draft's own field set.
  * - `aggregate` takes `status` and `source` lists like the segment filters, so "Instagram signups"
  *   and the unsubscribed default (02 §Defaults) mean the same thing in both tools. Its metrics
- *   are the ones builtin-handlers.ts computes over the v_* views.
+ *   are the ones builtin-handlers.ts computes over the v_* views. The draft's
+ *   `engagement_buckets` is not seeded (09 D-55): 02 §Derived defines no buckets, and bucket
+ *   edges in SQL would be a second formula (D-46). "Most engaged" is the segment tool's
+ *   ranking instead: its rows come out by stored engagement_score, highest first.
  * - `query_sql`, `describe_schema`, the `query` row and `open_segment` are not seeded here:
  *   `query_sql` and the `query` handler type come with Gate 2/3 (16, Friday); `describe_schema`
  *   and the `passthrough` type are not in 16 §MVP scope.
@@ -33,8 +36,10 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
     name: 'segment',
     description:
       'Count and list a subscriber segment, exactly as the segment builder does. Returns the count, how many ' +
-      'unsubscribed profiles the status filter hides, and up to 10 rows referenced by pseudonymous keys (pk_…). ' +
-      'Use for "who/which subscribers…" questions and whenever the teammate may want to open or export the list. ' +
+      'unsubscribed profiles the status filter hides, and up to 10 rows referenced by pseudonymous keys (pk_…), ' +
+      'listed most engaged first (the stored engagement_score, highest first). ' +
+      'Use for "who/which subscribers…" questions, for "most engaged readers" (no extra filters; the rows are the ' +
+      'ranking), and whenever the teammate may want to open or export the list. ' +
       'Status defaults to ["active"]. days_since_open_gte is the brief\'s "no open in N days" filter, not "cold". ' +
       'Never invent filters the user did not ask for.',
     inputSchema: {
@@ -135,7 +140,7 @@ export function toolSeedValues(seed: ToolSeed, id: string): SqlValue[] {
  * One INSERT, idempotent by `name` (11 §Scripts): an existing row of that name is left as it is,
  * so a re-seed never overwrites a row a teammate edited (the origin's onConflictDoNothing, 14 §2.4).
  * `values` is either `?` placeholders or rendered literals. created_at/updated_at are the time
- * the row was written, taken in SQL: operational metadata, not business logic (02 §Time).
+ * the row was written, taken in SQL: operational metadata on the 02 §Time wall-clock allow-list.
  */
 export function toolSeedSql(values: readonly string[]): string {
   if (values.length !== COLUMNS.length) throw new Error(`tool-seeds: expected ${COLUMNS.length} values, got ${values.length}`)

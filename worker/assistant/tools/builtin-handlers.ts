@@ -11,8 +11,9 @@
 //   parseFilters and compiled by the builder's WHERE translation (compileModelSegment in
 //   worker/segments/compile.ts) over v_profiles, so it reads only a PII-free view (05 §Exactly
 //   what the model receives, "Structural"; 07 §H) and applies the builder's rules. Its count and
-//   hidden-unsubscribed count equal the builder's (T-AI-3 pins 177 / 55). Rows come out in pkey
-//   order, since the view holds no email.
+//   hidden-unsubscribed count equal the builder's (T-AI-3 pins 177 / 55). Rows come out most
+//   engaged first (stored engagement_score descending, then pkey; 09 D-55), the path for "our
+//   most engaged readers" (R5.2).
 // - `aggregate` also reads only v_* views. Every value is a bound parameter; every SQL fragment
 //   comes from the fixed METRICS table below, never from the input. Cold comparisons use the
 //   `DEFINITIONS.cold.sql` fragment from shared/derive.ts, the one runtime source (02 §Derived).

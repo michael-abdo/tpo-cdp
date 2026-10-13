@@ -250,7 +250,7 @@ export const MODEL_SEGMENT_COLUMNS = ['pkey', 'status', 'source', 'signup_date',
 
 /** The assistant's segment: the same filters over v_profiles, keyed by pkey (05 §Strategy). */
 export interface CompiledModelSegment {
-  /** The segment's rows, MODEL_SEGMENT_COLUMNS in order, by pkey; the caller appends `LIMIT ?`. */
+  /** The segment's rows, MODEL_SEGMENT_COLUMNS in order, most engaged first; the caller appends `LIMIT ?`. */
   rowsSql: string
   /** `SELECT count(*) AS n` over the same rows. */
   countSql: string
@@ -259,13 +259,15 @@ export interface CompiledModelSegment {
 
 /**
  * The same filters compiled over v_profiles, the only relation this SQL names (05 §Exactly what
- * the model receives, "Structural"). v_profiles has no email, so rows come out in pkey order, not
- * the builder's email order; status IN (…) drops the profiles that have no subscriber row.
+ * the model receives, "Structural"). Rows come out most engaged first: the stored
+ * engagement_score descending, pkey breaking ties (09 D-55, D-46: an ORDER BY on the stored
+ * column, no formula). That is the path for "our most engaged readers" (R5.2); the builder keeps
+ * its email order (04). status IN (…) drops the profiles that have no subscriber row.
  */
 export function compileModelSegment(filters: SegmentFilters): CompiledModelSegment {
   const { where, params } = segmentWhere(filters, MODEL_VIEW)
   return {
-    rowsSql: `SELECT ${MODEL_SEGMENT_COLUMNS.join(', ')} FROM v_profiles WHERE ${where} ORDER BY pkey`,
+    rowsSql: `SELECT ${MODEL_SEGMENT_COLUMNS.join(', ')} FROM v_profiles WHERE ${where} ORDER BY engagement_score DESC, pkey`,
     countSql: `SELECT count(*) AS n FROM v_profiles WHERE ${where}`,
     params,
   }
