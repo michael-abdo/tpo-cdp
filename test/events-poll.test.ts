@@ -1,6 +1,7 @@
 import { SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { TODAY } from '../shared/config'
+import { RECENT_EVENTS_LIMIT } from '../worker/routes/events'
 import { eventsAnnouncement, POLL_MS } from '../src/events-poll'
 import type { RecentEvent, RecentEvents } from '../src/types'
 import { loginCookie } from './helpers/auth'
@@ -40,21 +41,32 @@ describe('/events polls every 5 seconds and announces only new events (06 §/eve
     expect(POLL_MS).toBe(5_000)
   })
 
-  it('first load says how many are shown; a poll says only how many are new; nothing new says nothing', async () => {
+  it('first load says how many are shown; a poll on the full 20-event list says only how many are new; nothing new says nothing', async () => {
+    // The list is normally full (RECENT_EVENTS_LIMIT, 04 §GET /api/events/recent), so new events push
+    // old ones off the end and the count on screen stays the same: fill it before the first load.
+    expect(await feed()).toHaveLength(0)
+    for (let i = 0; i < RECENT_EVENTS_LIMIT; i++) await send('read_story', `09:${String(i).padStart(2, '0')}:00`)
     const first = await feed()
-    expect(eventsAnnouncement(null, first, 'initial')).toBe(`${first.length} ${first.length === 1 ? 'event' : 'events'} shown`)
+    expect(first).toHaveLength(RECENT_EVENTS_LIMIT)
+    expect(eventsAnnouncement(null, first, 'initial')).toBe('20 events shown')
 
     await send('app_open', '10:00:00')
     const second = await feed()
+    expect(second).toHaveLength(RECENT_EVENTS_LIMIT)
     expect(eventsAnnouncement(ids(first), second, 'poll')).toBe('1 new event at the top of the list')
 
     await send('read_story', '10:01:00')
     await send('link_click', '10:02:00')
     const third = await feed()
+    expect(third).toHaveLength(RECENT_EVENTS_LIMIT)
     expect(eventsAnnouncement(ids(second), third, 'poll')).toBe('2 new events at the top of the list')
 
     const fourth = await feed()
     expect(eventsAnnouncement(ids(third), fourth, 'poll')).toBeNull()
     expect(eventsAnnouncement(ids(third), fourth, 'manual')).toBe('No new events')
+  })
+
+  it('an empty list on first load says 0 events shown', () => {
+    expect(eventsAnnouncement(null, [], 'initial')).toBe('0 events shown')
   })
 })

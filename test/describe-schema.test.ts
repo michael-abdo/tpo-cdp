@@ -90,6 +90,8 @@ describe('describe_schema: v_* view names and PRAGMA columns only (16 parked ite
     expect(executed.output).toBeNull()
     expect(executed.result.is_error).toBe(true)
     expect(executed.result.content).toContain(`view must be one of ${[...expected.keys()].join(', ')}`)
+    // The refusal never repeats what the model sent (`v_profiles` has no word boundary before `profiles`).
+    expect(executed.result.content).not.toMatch(/\bprofiles\b/)
     expect(audit).toHaveLength(1)
     expect(audit[0]).toMatchObject({ kind: 'tool_call', status: 'error', tool_name: 'describe_schema' })
     expect(audit[0].error).toMatch(/^invalid_input: /)
