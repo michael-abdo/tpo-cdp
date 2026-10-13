@@ -7,14 +7,14 @@
 //   - a `segment` answer must name filters that a segment tool call of this request ran with;
 //     its count is that call's count, which is the segment builder's (T-AI-3). Filters the
 //     server never counted make the block malformed, so no count can be invented
-//   - SQL never reaches the teammate (04, 14 §6 #6): fenced code blocks and SELECT statements in
-//     any form (multi-line, split by blank lines, indented, any case, any table, inline code) are
-//     cut from `text`, belt and braces with the system-prompt rule (T-AI-5; removeSql below)
+//   - SQL never reaches the teammate (04, 14 §6 #6; T-AI-5): a text with any D-58 sign of SQL
+//     (sqlSign below) is discarded whole and replaced by a server sentence built from the typed
+//     result (discardSentence), belt and braces with the system-prompt rule. Nothing is stripped:
+//     every stripping rule that tried to keep prose left a bypass (09 D-58)
 //   - the iteration cap → `partial: true` with whatever table exists and a sentence saying so
 //
-// Pure: the model text, the request's tool outputs and the database's relation names in, the
-// result out. Re-hydration of pk_ keys is a separate step (rehydrate.ts), after this and after
-// the output scan.
+// Pure: the model text and the request's tool outputs in, the result out. Re-hydration of pk_
+// keys is a separate step (rehydrate.ts), after this and after the output scan.
 
 import { z } from 'zod'
 import { DEFINITIONS, type DefinitionKey } from '../../shared/derive'
@@ -48,14 +48,12 @@ export interface RespondInput {
   modelText: string | null
   outputs: readonly ToolOutput[]
   capped: boolean
-  /** Every table and view name in the database, for the T-AI-5 cut (removeSql). */
-  relations: readonly string[]
 }
 
 export interface Responded {
   result: AssistantResult
-  /** Why the result is partial or was cleaned, for the caller's log line. */
-  notes: { malformed: string | null; sqlRemoved: boolean }
+  /** Why the result is partial, and which D-58 sign discarded the model text, for the caller's log and ai_audit row. */
+  notes: { malformed: string | null; sqlDiscarded: SqlSign | null }
 }
 
 const DEFINITION_KEYS = Object.keys(DEFINITIONS) as [DefinitionKey, ...DefinitionKey[]]
@@ -75,226 +73,41 @@ export const FinalBlock = z
     message: 'segment is required exactly when type is "segment"',
   })
 
-const FENCED = /(`{3,})[^\n`]*\n?[\s\S]*?\1`*|(~{3,})[^\n~]*\n?[\s\S]*?\2~*/g
-/** A fence that never closes: everything from it to the end of the text is code. */
-const UNCLOSED_FENCE = /(?:```|~~~)[\s\S]*$/
 // The closing fence must start a line: a JSON string cannot hold a raw line break, so a ``` inside
 // the block's own "text" value (an SQL fence the model quoted) cannot end the block early.
 const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
 
-// T-AI-5: no SELECT statement in any form. A statement is a standalone SELECT keyword followed,
-// anywhere later in the text, by a FROM keyword. The search runs over the whole text, so neither a
-// line break, a blank line, indentation nor case can split a statement from its FROM. Invisible
-// characters (soft hyphen, zero-width) are dropped first, so they cannot split a keyword.
-// A SELECT … FROM pair is SQL when any of these holds:
-//   - either keyword is written in any case but plain lower case or one leading capital
-//     ("SELECT", "sElEcT", "FrOm"): English never writes them that way
-//   - the select list holds an SQL mark: `*()=;'"`, a backtick, an underscore, or a word.word
-//   - FROM's object names a real table or view of this database (`relations`, read from
-//     sqlite_master by the caller, so the schema keeps one home), directly or after a determiner
-//     ("from subscribers.", "from the profiles"), in any case and whatever follows it
-//   - FROM's object is a word only SQL writes (`_`, a digit or a dot: v_x, t1, s.email), an SQL
-//     keyword or a bracket, or a plain word that the text does not continue as English: followed
-//     (after at most one alias word) by the end of the text, a line break, `;`, `)` or a clause
-//     keyword (WHERE, GROUP, ORDER, LIMIT, JOIN …)
-// Otherwise the pair reads as English and is kept ("select subscribers from Instagram who …",
-// "select readers from the builder"). A select list that ends a sentence ("Select a segment. Most
-// came from …") is prose unless it holds a quote or `--`, where a ". X" could be SQL text; no
-// select list in SQL holds a full stop followed by a space outside a string.
-// A SELECT with no FROM is a statement too when it opens with `*` or a function call
-// ("SELECT COUNT(*) AS n").
-// A statement is cut from its SELECT (or a `WITH x AS (` before it) to its first `;` outside a
-// quoted string, else to the end of its last line: the line holding FROM (or SELECT, with no FROM)
-// and each following line that carries the statement on — one that opens with a clause keyword
-// (in lower or leading-capital case only with an SQL mark in the line), or, with no blank line
-// before it, any line holding an SQL mark. Over-cutting prose is the safe direction; every cut is
-// logged (route.ts).
-const INVISIBLE = /[­​-‍⁠﻿]/g
-const SELECT_WORD = /\bselect\b/gi
-const FROM_WORD = /\bfrom\b/gi
-const SQL_LIST_MARK = /[*()=;'"`_]|\w\.\w/
-/** A line that carries a statement on: an SQL list mark or a comparison. */
-const SQL_LINE_MARK = /[*()=<>;'"`_]|\w\.\w/
-/** Text that may hold SQL string literals or comments, where ". X" is not a sentence end. */
-const LITERAL_MARK = /['"]|--/
-const SENTENCE_END = /[.!?]\s+[A-Z]/
-/** A SELECT that is a statement even with no FROM: its list opens with `*` or a function call. */
-const SELECT_HEAD = /^\s*(?:\*|[A-Za-z_]\w*\s*\()/
-const DETERMINER =
-  /^(?:the|a|an|this|that|these|those|our|your|my|their|his|her|its|each|every|any|some|all|one)$/i
-/** Words that, right after FROM's object, carry on an SQL statement rather than a sentence. */
-const SQL_KEYWORD = /^(?:select|from|where|group|order|limit|offset|join|union|having|as|values)$/i
-/** A word only SQL writes: an underscore, a digit, or a dot inside it (v_profiles, t1, s.email). */
-const IDENTIFIER = /[_\d]|\w\.\w/
-/** A line that goes on with the statement: optional list marker, then a clause keyword. */
-const CLAUSE_START =
-  /^(?:(?:[-*+>]|\d+[.)])[ \t]+)?(where|group|order|limit|offset|join|inner|left|right|outer|cross|on|using|union|having|and|or)\b/i
-const LIST_MARKER = /^(?:[-*+>]|\d+[.)])[ \t]+/
-const CTE_BEFORE = /\bwith\s+[a-z_][a-z0-9_]*\s+as\s*\(\s*$/i
-const INLINE_CODE = /`[^`]*`|<code>[\s\S]*?<\/code>/gi
-const MARKER_ONLY_LINE = /^[ \t]*(?:[-*+>]|\d+[.)])[ \t]*$/gm
+// T-AI-5 by rejection, not stripping (09 D-58). The checks read a copy of the text with every
+// Unicode format character deleted (\p{Cf}: U+00AD soft hyphen, U+200B-U+200D zero-width, U+2060
+// word joiner, U+FEFF and the rest), then NFKC-folded (fullwidth letters become ASCII), so neither
+// can split or disguise a keyword. Any one sign discards the whole text; there is no English
+// exemption, so "select a segment from the builder" is discarded too (accepted by D-58).
+const FORMAT_CHARS = /\p{Cf}/gu
+export type SqlSign = 'sql_fence' | 'select_line' | 'select_from'
+const SQL_SIGNS: ReadonlyArray<[SqlSign, RegExp]> = [
+  // A ```sql or ~~~sql fence, any fence length, any case.
+  ['sql_fence', /(?:`{3,}|~{3,})[ \t]*sql\b/i],
+  // A line whose first word is SELECT, after optional indentation, blockquote marks or backticks.
+  ['select_line', /^[\s>`]*select\b/im],
+  // The word select followed anywhere later, across lines, by the word from.
+  ['select_from', /\bselect\b[\s\S]*\bfrom\b/i],
+]
 
-/** Plain lower case or one leading capital: the only ways English writes "select" and "from". */
-function isEnglishCase(word: string): boolean {
-  const lower = word.toLowerCase()
-  return word === lower || word === lower.charAt(0).toUpperCase() + lower.slice(1)
-}
-
-function isWord(token: string): boolean {
-  return /^[A-Za-z]/.test(token)
-}
-
-interface Token {
-  /** A word (letters, digits, `_`, inner dots), one other character, or null at the end. */
-  token: string | null
-  end: number
-  /** A line break came before the token. */
-  newline: boolean
-}
-
-function nextToken(text: string, at: number): Token {
-  const space = /\s*/y
-  space.lastIndex = at
-  space.exec(text)
-  const word = /[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*|\S/y
-  word.lastIndex = space.lastIndex
-  const found = word.exec(text)
-  return {
-    token: found === null ? null : found[0],
-    end: found === null ? text.length : word.lastIndex,
-    newline: text.slice(at, space.lastIndex).includes('\n'),
-  }
-}
-
-/** Whether what follows a FROM keyword (from `at`) is a table reference rather than English. */
-function fromObjectIsSql(text: string, at: number, relations: ReadonlySet<string>): boolean {
-  const object = nextToken(text, at)
-  if (object.token === null || !isWord(object.token)) return true
-  const sqlWord = (token: string) => IDENTIFIER.test(token) || SQL_KEYWORD.test(token) || relations.has(token.toLowerCase())
-  if (sqlWord(object.token)) return true
-  if (DETERMINER.test(object.token)) {
-    const noun = nextToken(text, object.end)
-    return noun.token === null || !isWord(noun.token) || sqlWord(noun.token)
-  }
-  let after = nextToken(text, object.end)
-  if (after.token !== null && isWord(after.token) && !after.newline && !SQL_KEYWORD.test(after.token)) {
-    after = nextToken(text, after.end) // one alias word: "from subscribers s where"
-  }
-  return after.token === null || after.newline || after.token === ';' || after.token === ')' || SQL_KEYWORD.test(after.token)
-}
-
-/** Whether `line` carries a statement on; `afterBlank`: a blank line comes before it. */
-function continuesStatement(line: string, afterBlank: boolean): boolean {
-  const trimmed = line.trim()
-  const clause = CLAUSE_START.exec(trimmed)
-  if (clause !== null) return !isEnglishCase(clause[1]) || SQL_LINE_MARK.test(trimmed.replace(LIST_MARKER, ''))
-  return !afterBlank && SQL_LINE_MARK.test(trimmed.replace(LIST_MARKER, ''))
-}
-
-/** The index of the line break that ends the line holding `at`, or the text's end. */
-function lineEnd(text: string, at: number): number {
-  const found = text.indexOf('\n', at)
-  return found === -1 ? text.length : found
-}
-
-/** Where the statement whose last keyword (FROM, or SELECT with no FROM) starts at `at` ends (exclusive). */
-function statementEnd(text: string, at: number): number {
-  let end = lineEnd(text, at)
-  for (;;) {
-    let next = end + 1
-    let afterBlank = false
-    while (next < text.length && text.slice(next, lineEnd(text, next)).trim() === '') {
-      afterBlank = true
-      next = lineEnd(text, next) + 1
-    }
-    if (next >= text.length) break
-    const nextEnd = lineEnd(text, next)
-    if (!continuesStatement(text.slice(next, nextEnd), afterBlank)) break
-    end = nextEnd
-  }
-  let quoted = false
-  for (let i = at; i < end; i++) {
-    if (text[i] === "'") quoted = !quoted
-    else if (text[i] === ';' && !quoted) return i + 1
-  }
-  return end
-}
-
-/** The [start, end) span of a statement whose SELECT starts at `selectAt` and whose cut runs from `at`. */
-function span(text: string, selectAt: number, at: number): [number, number] {
-  const cte = CTE_BEFORE.exec(text.slice(0, selectAt))
-  let start = cte === null ? selectAt : cte.index
-  let end = statementEnd(text, at)
-  // A statement split over adjacent inline spans takes their backticks with it.
-  if (text[start - 1] === '`') start -= 1
-  if (text[end] === '`') end += 1
-  return [start, end]
-}
-
-/**
- * The first SELECT statement in `text`, as a [start, end) span, or null. `requireFrom`: count only
- * SELECT … FROM pairs (an inline code span alone may hold just the SELECT half of a statement).
- */
-function findStatement(text: string, relations: ReadonlySet<string>, requireFrom: boolean): [number, number] | null {
-  for (const select of text.matchAll(SELECT_WORD)) {
-    const listStart = select.index + select[0].length
-    for (const from of text.slice(listStart).matchAll(FROM_WORD)) {
-      const fromAt = listStart + from.index
-      const list = text.slice(listStart, fromAt)
-      if (SENTENCE_END.test(list) && !LITERAL_MARK.test(list)) break
-      const sure = !isEnglishCase(select[0]) || !isEnglishCase(from[0]) || SQL_LIST_MARK.test(list)
-      if (!sure && !fromObjectIsSql(text, fromAt + from[0].length, relations)) continue
-      return span(text, select.index, fromAt)
-    }
-    if (!requireFrom && SELECT_HEAD.test(text.slice(listStart))) return span(text, select.index, listStart)
-  }
+/** The first D-58 sign of SQL in `text`, or null. Pure; exported for tests. */
+export function sqlSign(text: string): SqlSign | null {
+  const checked = text.replace(FORMAT_CHARS, '').normalize('NFKC')
+  for (const [sign, pattern] of SQL_SIGNS) if (pattern.test(checked)) return sign
   return null
 }
 
-/** `text` with every SELECT statement in it cut out. */
-function cutStatements(text: string, relations: ReadonlySet<string>): { text: string; removed: boolean } {
-  let out = text
-  let removed = false
-  for (let found = findStatement(out, relations, false); found !== null; found = findStatement(out, relations, false)) {
-    out = `${out.slice(0, found[0])} ${out.slice(found[1])}`
-    removed = true
+/** The server's own sentence for a discarded text, built from the typed result (09 D-58). */
+export function discardSentence(type: OutputType, count: number | null): string {
+  if (type === 'segment') {
+    if (count === null) throw new Error('discardSentence: a segment result has a count')
+    return count === 1 ? '1 reader matches.' : `${count} readers match.`
   }
-  return { text: out, removed }
-}
-
-/** The code inside a `…` or <code>…</code> span. */
-function codeOf(spanText: string): string {
-  return spanText.startsWith('`') ? spanText.slice(1, -1) : spanText.slice('<code>'.length, -'</code>'.length)
-}
-
-/**
- * `text` with fenced code blocks and SQL statements removed. Pure; exported for tests.
- * `relations`: every table and view name in the database (route.ts reads them from sqlite_master).
- */
-export function removeSql(text: string, relations: readonly string[]): { text: string; removed: boolean } {
-  if (relations.length === 0) throw new Error('removeSql: no table or view names given; T-AI-5 needs the real relations')
-  const known = new Set(relations.map((name) => name.toLowerCase()))
-  const visible = text.replace(INVISIBLE, '')
-  let removed = false
-  const cut = () => {
-    removed = true
-    return ' '
-  }
-  let out = visible.replace(FENCED, cut).replace(UNCLOSED_FENCE, cut)
-  // An inline code span is its own unit first: one holding a whole statement goes, its marks too.
-  out = out.replace(INLINE_CODE, (code) => (findStatement(codeOf(code), known, true) === null ? code : cut()))
-  const cleaned = cutStatements(out, known)
-  if (cleaned.removed) removed = true
-  if (!removed) return { text: visible.trim(), removed }
-  out = cleaned.text
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(MARKER_ONLY_LINE, '')
-    .replace(/\n[ \t]+\n/g, '\n\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/ +([.,;:])/g, '$1')
-    .trim()
-  return { text: out, removed }
+  if (type === 'table') return 'Here is the table you asked for.'
+  return "I couldn't phrase that answer safely — see Technical details for the steps."
 }
 
 function lastJsonBlock(text: string): string | null {
@@ -322,14 +135,21 @@ function tableOf(output: ToolOutput | undefined): AssistantTable | null {
 const CAPPED_TEXT = `The assistant reached its limit of ${MAX_TOOL_ITERATIONS} tool rounds before it finished, so this answer is incomplete.`
 const EMPTY_TEXT = 'The assistant did not return a usable answer.'
 
+/** The model's text, or the server sentence when it shows a sign of SQL (09 D-58). */
+function screened(text: string, type: OutputType, count: number | null): { text: string; sqlDiscarded: SqlSign | null } {
+  const sign = sqlSign(text)
+  if (sign !== null) return { text: discardSentence(type, count), sqlDiscarded: sign }
+  return { text: text.trim() === '' ? EMPTY_TEXT : text.trim(), sqlDiscarded: null }
+}
+
 export function respond(input: RespondInput): Responded {
   const last = input.outputs.at(-1)
   const partialResult = (text: string, malformed: string): Responded => {
-    const cleaned = removeSql(text.replace(JSON_FENCE, ' '), input.relations)
+    const shown = screened(text.replace(JSON_FENCE, ' '), 'answer', null)
     return {
       result: {
         type: 'answer',
-        text: cleaned.text === '' ? EMPTY_TEXT : cleaned.text,
+        text: shown.text,
         table: tableOf(last),
         segment: null,
         window: null,
@@ -337,7 +157,7 @@ export function respond(input: RespondInput): Responded {
         definitions_used: [],
         partial: true,
       },
-      notes: { malformed, sqlRemoved: cleaned.removed },
+      notes: { malformed, sqlDiscarded: shown.sqlDiscarded },
     }
   }
 
@@ -378,11 +198,11 @@ export function respond(input: RespondInput): Responded {
     segment = { filters: counted.segment.filters, count: counted.segment.count }
   }
 
-  const cleaned = removeSql(block.text, input.relations)
+  const shown = screened(block.text, block.type, segment?.count ?? null)
   return {
     result: {
       type: block.type,
-      text: cleaned.text === '' ? EMPTY_TEXT : cleaned.text,
+      text: shown.text,
       table: block.type === 'answer' ? null : tableOf(last),
       segment,
       window: block.window,
@@ -390,6 +210,6 @@ export function respond(input: RespondInput): Responded {
       definitions_used: [...new Set(block.definitions_used)],
       partial: false,
     },
-    notes: { malformed: null, sqlRemoved: cleaned.removed },
+    notes: { malformed: null, sqlDiscarded: shown.sqlDiscarded },
   }
 }

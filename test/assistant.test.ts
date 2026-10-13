@@ -9,9 +9,8 @@ import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { MODEL } from '../worker/assistant/build-request'
 import { MAX_TOOL_ITERATIONS, type MessagesTransport } from '../worker/assistant/loop'
 import { collectPkeys, loadEmailsByPkey, rehydrate } from '../worker/assistant/rehydrate'
-import { removeSql, respond } from '../worker/assistant/respond'
-import { ASSISTANT_CALLS_PER_HOUR } from '../worker/assistant/route'
-import { relationNames } from '../worker/assistant/schema-context'
+import { discardSentence, respond, type SqlSign, sqlSign } from '../worker/assistant/respond'
+import { ASSISTANT_CALLS_PER_HOUR, SQL_DISCARD_ERROR } from '../worker/assistant/route'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { formatToolOutput } from '../worker/assistant/tools/format-results'
 import { executeToolCall } from '../worker/assistant/tools/tool-executor'
@@ -171,16 +170,12 @@ async function preview(cookie: string, filters: unknown, limit = 100) {
   return res.json<{ count: number; hidden_unsubscribed: number; rows: { email: string }[] }>()
 }
 
-/** Every table and view name, as route.ts passes them to respond() for T-AI-5. */
-let RELATIONS: readonly string[] = []
-
 beforeAll(async () => {
   await seedDatabase()
   for (const seed of TOOL_SEEDS) {
     const { sql, params } = toolSeedInsert(seed)
     await env.DB.prepare(sql).bind(...params).run()
   }
-  RELATIONS = await relationNames(env.DB)
 })
 
 describe('tool loader (03 row 3, 09 D-41)', () => {
@@ -504,7 +499,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
       definitions_used: ['no_open_in_days', 'days_since_open'],
       segment: { filters: { include_never_opened: true, days_since_open_gte: 30, source: ['Instagram'], status: ['active'] } },
     })
-    const { result } = respond({ modelText, outputs: [executed.output!], capped: false, relations: RELATIONS })
+    const { result } = respond({ modelText, outputs: [executed.output!], capped: false })
     const builder = await preview(cookie, PRESET)
     expect(result.type).toBe('segment')
     expect(result.partial).toBe(false)
@@ -541,7 +536,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     const { result } = respond({
       modelText: finalText('', { type: 'answer', text: `${pkey} opened last on 2026-09-22.`, window: null, filters_applied: {}, definitions_used: [] }),
       outputs: [],
-      capped: false, relations: RELATIONS,
+      capped: false,
     })
     expect(result.text).toBe(`${pkey} opened last on 2026-09-22.`)
     const hydrated = rehydrate(result, await loadEmailsByPkey(env.DB, collectPkeys(result)))
@@ -561,7 +556,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
         segment: { filters: { source: ['facebook'] } },
       }),
       outputs: [executed.output!],
-      capped: false, relations: RELATIONS,
+      capped: false,
     })
     expect(result.type).toBe('answer')
     expect(result.partial).toBe(true)
@@ -582,7 +577,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
         segment: { filters: { ...PRESET, include_never_opened: false } },
       }),
       outputs: [executed.output!],
-      capped: false, relations: RELATIONS,
+      capped: false,
     })
     expect(result.segment).toBeNull()
     expect(result.partial).toBe(true)
@@ -596,7 +591,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
       respond({
         modelText: finalText('', { type: 'segment', text: 'Here they are.', window: null, filters_applied: {}, definitions_used: [], segment: { filters } }),
         outputs: [executed.output!],
-        capped: false, relations: RELATIONS,
+        capped: false,
       })
     // One field changed at a time, every value a filter value the data or the brief already uses.
     const oneFieldOff: Array<[string, unknown]> = [
@@ -659,16 +654,16 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
       definitions_used: [],
       segment: { filters: PRESET },
     })
-    const last = respond({ modelText: segmentText, outputs: [cold, seg], capped: false, relations: RELATIONS }).result
+    const last = respond({ modelText: segmentText, outputs: [cold, seg], capped: false }).result
     expect(last.type).toBe('segment')
     expect(last.table).toEqual({ columns: [...MODEL_SEGMENT_COLUMNS], rows: seg.rows })
 
     // A table answer after the segment call: the aggregate's row, not the segment's.
     const tableText = finalText('', { type: 'table', text: '147 are cold.', window: null, filters_applied: {}, definitions_used: ['cold'] })
-    expect(respond({ modelText: tableText, outputs: [seg, cold], capped: false, relations: RELATIONS }).result.table).toEqual({ columns: ['cold'], rows: [{ cold: 147 }] })
+    expect(respond({ modelText: tableText, outputs: [seg, cold], capped: false }).result.table).toEqual({ columns: ['cold'], rows: [{ cold: 147 }] })
 
-    expect(respond({ modelText: null, outputs: [cold, seg], capped: true, relations: RELATIONS }).result.table?.rows).toEqual(seg.rows)
-    expect(respond({ modelText: null, outputs: [seg, cold], capped: true, relations: RELATIONS }).result.table?.rows).toEqual([{ cold: 147 }])
+    expect(respond({ modelText: null, outputs: [cold, seg], capped: true }).result.table?.rows).toEqual(seg.rows)
+    expect(respond({ modelText: null, outputs: [seg, cold], capped: true }).result.table?.rows).toEqual([{ cold: 147 }])
   })
 
   it('"our most engaged readers": the segment tool lists the highest stored engagement scores first (09 D-56)', async () => {
@@ -820,175 +815,162 @@ describe('the aggregate tool over v_profiles (02 §Derived cold / went_cold_in, 
   })
 })
 
-describe('T-AI-5: the teammate-facing text never contains a ```sql block or a SELECT statement', () => {
-  const sqlText =
-    'There are 46.\n```sql\nSELECT count(*) FROM v_profiles WHERE source = \'instagram\'\n```\n' +
-    'I ran SELECT count(*) AS n FROM v_profiles WHERE status = \'active\'; to get it, and `select pkey from v_profiles limit 5` too.'
+describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded whole (09 D-58)', () => {
+  const ANSWER_SENTENCE = "I couldn't phrase that answer safely — see Technical details for the steps."
+  const answerBlock = (value: string) => finalText('prose', { type: 'answer', text: value, window: null, filters_applied: {}, definitions_used: [] })
 
-  it('in a valid json block', () => {
-    const { result, notes } = respond({
-      modelText: finalText('prose', { type: 'answer', text: sqlText, window: null, filters_applied: {}, definitions_used: [] }),
-      outputs: [],
-      capped: false, relations: RELATIONS,
-    })
-    expect(notes.sqlRemoved).toBe(true)
-    expect(result.text).not.toMatch(/```/)
-    expect(result.text).not.toMatch(/\bSELECT\b/i)
-    expect(result.text).toContain('There are 46.')
-  })
+  /** Both respond() paths: the json block's text, and prose with no json block (partial). */
+  function bothPaths(value: string) {
+    return [
+      respond({ modelText: answerBlock(value), outputs: [], capped: false }),
+      respond({ modelText: value, outputs: [], capped: false }),
+    ]
+  }
 
-  it('in prose with no json block (partial), and outside the block', () => {
-    const { result } = respond({ modelText: sqlText, outputs: [], capped: false, relations: RELATIONS })
-    expect(result.partial).toBe(true)
-    expect(result.text).not.toMatch(/```/)
-    expect(result.text).not.toMatch(/\bSELECT\b/i)
-    expect(result.text).toContain('There are 46.')
-  })
-
-  it('leaves plain English alone', () => {
-    const plain = 'Select the Instagram list from the builder to export it.'
-    expect(removeSql(plain, RELATIONS)).toEqual({ text: plain, removed: false })
-  })
-
-  // The shapes the H2 review found passing the single-line patterns, each with the text that must remain.
-  const shapes: Array<[string, string, string]> = [
-    ['multi-line, with ;', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram';", 'I ran:'],
-    ['multi-line, no ;: cut to the end of its block', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram'\n\nThere are 46.", 'I ran:\n\nThere are 46.'],
-    ['an indented four-space block', "I ran this:\n\n    SELECT count(*)\n    FROM v_profiles\n    WHERE source = 'instagram';\n\nThere are 46.", 'I ran this:\n\nThere are 46.'],
-    ['upper case', "There are 46. SELECT count(*) FROM v_profiles WHERE source = 'instagram'", 'There are 46.'],
-    ['lower case', "There are 46. select count(*) from v_profiles where source = 'instagram'", 'There are 46.'],
-    ['mixed case', "There are 46. SeLeCt CoUnT(*) fRoM v_profiles WhErE source = 'instagram';", 'There are 46.'],
-    ['lower case with no punctuation at all', 'There are 46. select pkey from v_profiles limit 5', 'There are 46.'],
-    ['a table that is not a v_* view', "There are 46. select email_norm from subscribers where status = 'active';", 'There are 46.'],
-    ['mixed case over a base table, no ;', 'There are 46. Select Email_Norm From Profiles', 'There are 46.'],
-    ['inline backticks', 'There are 46; I used `select count(*) from profiles` for it.', 'There are 46; I used for it.'],
-    ['inline backticks over two lines', 'There are 46; I used `SELECT pkey\nFROM subscribers` for it.', 'There are 46; I used for it.'],
-    ['a WITH … AS ( statement', 'WITH cold AS (SELECT pkey FROM v_profiles) SELECT count(*) FROM cold; There are 46.', 'There are 46.'],
-    ['two statements in one block', 'There are 46. SELECT 1 FROM v_profiles; and select pkey from v_funnel; done.', 'There are 46. and done.'],
-    // The H2b review: a blank line between SELECT and FROM split the statement into two blocks.
-    ['a blank line between SELECT and FROM', 'I ran SELECT count(*)\n\nFROM v_profiles;\n\nThere are 46.', 'I ran\n\nThere are 46.'],
-    [
-      'an indented block with blank lines between its clauses',
-      "I ran:\n\n    SELECT count(*)\n\n    FROM v_profiles\n\n    WHERE source = 'instagram';\n\nThere are 46.",
-      'I ran:\n\nThere are 46.',
-    ],
-    ['list items, one clause each, no ;', "I ran:\n\n- SELECT count(*)\n\n- FROM v_profiles\n\n- WHERE source = 'instagram'\n\nThere are 46.", 'I ran:\n\nThere are 46.'],
-    ['lower case over blank lines, no ;', "There are 46. select email\n\nfrom v_profiles\n\nwhere source = 'instagram'\n\nDone.", 'There are 46.\n\nDone.'],
-    ['lower case, a plain table name, no ;', 'There are 46. select email from subscribers', 'There are 46.'],
-    ['lower case, a plain table name, then WHERE', "There are 46. select email from subscribers where status = 'active' and more.", 'There are 46.'],
-    ['an alias before WHERE', "There are 46. select email from subscribers s where s.status = 'active'", 'There are 46.'],
-    // Pins the capitals rule and the select-list marks: each is the only SQL sign in its shape.
-    ['all-caps keywords over "the" and a plain word', 'There are 46. SELECT pkey FROM the profiles', 'There are 46.'],
-    ['SQL marks in a lower-case select list over "the"', 'There are 46. I ran select count(*) from the profiles view.', 'There are 46. I ran'],
-    ['a view name followed by English punctuation', 'There are 46. I ran select pkey from v_profiles, then counted.', 'There are 46. I ran'],
-    ['a ; inside a quoted string does not end the cut', "There are 46. SELECT pkey FROM v_profiles WHERE source = 'a;b' AND status = 'active'; Done.", 'There are 46. Done.'],
-    ['one statement over two adjacent inline spans', 'I ran `SELECT count(*)` `FROM v_profiles`\n\nThere are 46.', 'I ran\n\nThere are 46.'],
-    ['a tilde fence', 'There are 46.\n~~~sql\nSELECT 1 FROM v_profiles\n~~~\nDone.', 'There are 46.\n\nDone.'],
-    ['a fence that never closes', 'There are 46.\n```sql\nSELECT 1 FROM v_profiles', 'There are 46.'],
-    // The H2b second review: a real table name followed by English punctuation or a plain word
-    // read as prose. FROM's object is now checked against the database's tables and views.
-    ['mixed case over a base table, then a full stop', 'There are 46. Select Email From Profiles.', 'There are 46.'],
-    ['lower case over subscribers, then a full stop', 'There are 46. select email from subscribers.', 'There are 46.'],
-    ['a comma-separated select list over subscribers', 'There are 46. select email, status from subscribers.', 'There are 46.'],
-    ['subscribers, then a comma and prose', 'There are 46. select email from subscribers, which I counted.', 'There are 46.'],
-    ['subscribers, then a colon', 'There are 46. select status from subscribers: 46 rows.', 'There are 46.'],
-    ['profiles, then a plain word', 'There are 46. select pkey from profiles and then I counted.', 'There are 46.'],
-    ['profiles, then a !', 'There are 46. select pkey from profiles!', 'There are 46.'],
-    ['a determiner before a real table', 'There are 46. select pkey from the profiles', 'There are 46.'],
-    ['inline backticks over subscribers with a full stop', 'There are 46; I used `select email from subscribers.` for it.', 'There are 46; I used for it.'],
-    ['odd case over subscribers with a full stop', 'There are 46. I ran sElEcT email FrOm subscribers.', 'There are 46. I ran'],
-    ['a leading-capital From over subscribers', 'There are 46. Select email From subscribers.', 'There are 46.'],
-    ['subscribers in prose that goes on', 'There are 46. I ran select email from subscribers, and found it.', 'There are 46. I ran'],
-    ['a two-column list over profiles after a colon', 'There are 46. I queried: select pkey, status from profiles, which gave 46.', 'There are 46. I queried:'],
-    ['subscribers and a view', 'There are 46. I ran select email from subscribers and v_profiles.', 'There are 46. I ran'],
-    // Case alone decides these: FROM's object (a source) and what follows read as English.
-    ['odd-case SELECT, the rest English', 'There are 46. I ran SeLeCt readers from Instagram, then counted.', 'There are 46. I ran'],
-    ['odd-case FROM, the rest English', 'There are 46. I ran select readers fRoM Instagram, then counted.', 'There are 46. I ran'],
-    // An unknown plain table name ends its line: the line break, not the name, marks it as SQL.
-    ['an unknown table name, then a line break and prose', 'There are 46. select email from users\nThat is all.', 'There are 46.\nThat is all.'],
-    // The review's minor notes.
-    ['a SELECT with no FROM', 'There are 46. SELECT COUNT(*) AS n', 'There are 46.'],
-    ['a SELECT with no FROM in its own paragraph', 'There are 46.\n\nSELECT count(*) AS n;', 'There are 46.'],
-    ['a four-backtick fence', 'There are 46.\n````sql\nSELECT 1 FROM v_profiles\n````\nDone.', 'There are 46.\n\nDone.'],
-    ['a blockquoted statement', 'There are 46.\n\n> SELECT pkey FROM v_profiles\n\nDone.', 'There are 46.\n\nDone.'],
-    ['a soft hyphen inside SELECT', 'There are 46. sel\u00ADect pkey from v_profiles', 'There are 46.'],
-    ['a zero-width space inside FROM', 'There are 46. SELECT pkey fr\u200Bom v_profiles', 'There are 46.'],
-    ['an HTML code span', 'I ran <code>SELECT pkey FROM v_profiles</code> Done.', 'I ran Done.'],
-    ['the cut stops at the line that no longer carries the statement', 'SELECT pkey FROM v_profiles\nThere are 46 rows.', 'There are 46 rows.'],
-    ['after a blank line only a clause keyword carries the statement on', 'SELECT pkey FROM v_profiles\n\nThere are 46 rows (all active).', 'There are 46 rows (all active).'],
-    ['a WHERE line goes with the statement, the prose line after it does not', "SELECT pkey\nFROM v_profiles\nWHERE source = 'instagram'\nThere are 46 rows.", 'There are 46 rows.'],
+  // Every shape the H2 and H2b reviews found, plus the D-58 ones. None may reach the teammate.
+  const shapes: Array<[string, string]> = [
+    ['multi-line, with ;', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram';"],
+    ['multi-line, no ;, prose after', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram'\n\nThere are 46."],
+    ['one keyword per line (pretty print)', "There are 46.\nSELECT\n  count(*)\nFROM\n  v_profiles\nWHERE\n  source = 'instagram';"],
+    ['an indented four-space block', "I ran this:\n\n    SELECT count(*)\n    FROM v_profiles\n    WHERE source = 'instagram';\n\nThere are 46."],
+    ['a blockquote', 'There are 46.\n\n> SELECT pkey FROM v_profiles\n\nDone.'],
+    ['a nested blockquote', 'There are 46.\n\n> > select pkey from v_profiles'],
+    ['inline code', 'There are 46; I used `select count(*) from profiles` for it.'],
+    ['inline code over two lines', 'There are 46; I used `SELECT pkey\nFROM subscribers` for it.'],
+    ['two adjacent inline spans', 'I ran `SELECT count(*)` `FROM v_profiles`\n\nThere are 46.'],
+    ['an HTML code span', 'I ran <code>SELECT pkey FROM v_profiles</code> Done.'],
+    ['upper case', "There are 46. SELECT count(*) FROM v_profiles WHERE source = 'instagram'"],
+    ['lower case', "There are 46. select count(*) from v_profiles where source = 'instagram'"],
+    ['mixed case', "There are 46. SeLeCt CoUnT(*) fRoM v_profiles WhErE source = 'instagram';"],
+    ['leading capitals over a base table', 'There are 46. Select Email From Profiles.'],
+    ['an unknown table', 'There are 46. select email from users.'],
+    ['an unknown table, then a line break and prose', 'There are 46. select email from users\nThat is all.'],
+    ['the review probe', 'select email from users.'],
+    ['a blank line between SELECT and FROM', 'I ran SELECT count(*)\n\nFROM v_profiles;\n\nThere are 46.'],
+    ['list items, one clause each', "I ran:\n\n- SELECT count(*)\n\n- FROM v_profiles\n\n- WHERE source = 'instagram'\n\nThere are 46."],
+    ['a WITH … AS ( statement', 'WITH cold AS (SELECT pkey FROM v_profiles) SELECT count(*) FROM cold; There are 46.'],
+    ['a SELECT with no FROM on its own line', 'There are 46.\n\nSELECT count(*) AS n;'],
+    ['a ```sql fence', "There are 46.\n```sql\nSELECT count(*) FROM v_profiles WHERE source = 'instagram'\n```"],
+    ['a ~~~sql fence', 'There are 46.\n~~~sql\nSELECT 1 FROM v_profiles\n~~~\nDone.'],
+    ['a four-backtick fence', 'There are 46.\n````sql\nSELECT 1 FROM v_profiles\n````\nDone.'],
+    ['a fence that never closes', 'There are 46.\n```sql\nSELECT 1 FROM v_profiles'],
+    ['fullwidth letters (NFKC)', 'There are 46. ｓｅｌｅｃｔ pkey ｆｒｏｍ v_profiles'],
+    ['prose with both words (accepted by D-58)', 'select a segment from the builder'],
+    ['prose with both words, mid-sentence', 'To export them, select a segment from the builder.'],
   ]
-  for (const [shape, sql, kept] of shapes) {
-    it(`cuts a SELECT statement: ${shape}`, () => {
-      expect(removeSql(sql, RELATIONS)).toEqual({ text: kept, removed: true })
-      const inBlock = respond({
-        modelText: finalText('prose', { type: 'answer', text: sql, window: null, filters_applied: {}, definitions_used: [] }),
-        outputs: [],
-        capped: false, relations: RELATIONS,
-      })
-      const partial = respond({ modelText: sql, outputs: [], capped: false, relations: RELATIONS })
-      for (const { result, notes } of [inBlock, partial]) {
-        expect(notes.sqlRemoved).toBe(true)
-        expect(result.text).toBe(kept)
-        expect(result.text).not.toMatch(/\bselect\b/i)
-        expect(result.text).not.toMatch(/\bfrom\s+(?:v_|profiles|subscribers|cold)/i)
+  // Each invisible character D-58 names, inside each keyword.
+  for (const [name, char] of [['U+200B', '​'], ['U+200C', '‌'], ['U+200D', '‍'], ['U+2060', '⁠'], ['U+FEFF', '﻿'], ['U+00AD', '­']]) {
+    shapes.push([`${name} inside select`, `There are 46. sel${char}ect pkey from v_profiles`])
+    shapes.push([`${name} inside from`, `There are 46. select pkey fr${char}om v_profiles`])
+  }
+  for (const [shape, sql] of shapes) {
+    it(`discards: ${shape}`, () => {
+      expect(sqlSign(sql)).not.toBeNull()
+      for (const { result, notes } of bothPaths(sql)) {
+        expect(notes.sqlDiscarded).not.toBeNull()
+        expect(result.text).toBe(ANSWER_SENTENCE)
       }
     })
   }
 
-  it('the relation names come from the database, and an empty list fails loud', () => {
-    expect(RELATIONS).toEqual(expect.arrayContaining(['profiles', 'subscribers', 'v_profiles', 'v_funnel']))
-    expect(() => removeSql('There are 46.', [])).toThrow(/no table or view names/)
+  // One shape per sign that no other sign catches, so dropping any one clause fails its test.
+  const onlyOneSign: Array<[string, string, SqlSign]> = [
+    ['a ```sql fence with no SELECT in it', 'There are 46.\n```sql\nPRAGMA table_info(v_profiles)\n```', 'sql_fence'],
+    ['a ~~~SQL fence with no SELECT in it', 'There are 46.\n~~~SQL\nPRAGMA table_info(v_profiles)\n~~~', 'sql_fence'],
+    ['a SELECT line with no FROM', 'There are 46.\n\nSELECT count(*) AS n;', 'select_line'],
+    ['an indented select line with no from', 'There are 46.\n    select 1', 'select_line'],
+    ['a blockquoted SELECT with no FROM', 'There are 46.\n> SELECT 46', 'select_line'],
+    ['a backticked SELECT line with no FROM', 'There are 46.\n`SELECT 46`', 'select_line'],
+    ['select … from inside a line', 'There are 46. select email from users.', 'select_from'],
+    ['select … from across lines, select not first on its line', 'I ran select count(*)\n\nand then\nfrom v_profiles', 'select_from'],
+  ]
+  for (const [shape, sql, sign] of onlyOneSign) {
+    it(`the ${sign} sign alone catches ${shape}`, () => {
+      expect(sqlSign(sql)).toBe(sign)
+      for (const { result, notes } of bothPaths(sql)) {
+        expect(notes.sqlDiscarded).toBe(sign)
+        expect(result.text).toBe(ANSWER_SENTENCE)
+      }
+    })
+  }
+
+  it('keeps prose without both words, verbatim', () => {
+    for (const plain of [
+      '46 Instagram signups went cold in August 2026.',
+      'To narrow it, select a source and a status.',
+      'Most of the 46 came from Instagram.',
+      'The selection came from Instagram.',
+      'Selected readers came from Instagram, and 46 went cold.',
+      'There are 46.\n```\n46\n```',
+    ]) {
+      expect(sqlSign(plain)).toBeNull()
+      for (const { result, notes } of bothPaths(plain)) {
+        expect(notes.sqlDiscarded).toBeNull()
+        expect(result.text).toBe(plain)
+      }
+    }
   })
 
-  it('through the route: a statement over a base table in the json block text never reaches the body', async () => {
+  it('the server sentence comes from the typed result: segment count, table, answer, and the capped path', async () => {
+    const trace = await startTrace(env.DB)
+    const tools = await loadTools(env.DB)
+    const seg = (await executeToolCall({ db: env.DB, trace, tools }, { id: 's', name: 'segment', input: PRESET })).output!
+    // Mid-sentence, so select … from is its only sign (a line-start "select" is the select_line sign).
+    const sql = 'To export them, select a segment from the builder.'
+    const segment = respond({
+      modelText: finalText('', { type: 'segment', text: sql, window: null, filters_applied: PRESET, definitions_used: [], segment: { filters: PRESET } }),
+      outputs: [seg],
+      capped: false,
+    })
+    expect(segment.result).toMatchObject({ type: 'segment', text: '177 readers match.', partial: false, segment: { count: 177 } })
+    expect(segment.result.table?.rows).toEqual(seg.rows)
+    const table = respond({ modelText: finalText('', { type: 'table', text: sql, window: null, filters_applied: {}, definitions_used: [] }), outputs: [seg], capped: false })
+    expect(table.result).toMatchObject({ type: 'table', text: 'Here is the table you asked for.', partial: false })
+    expect(table.notes.sqlDiscarded).toBe('select_from')
+    const capped = respond({ modelText: sql, outputs: [seg], capped: true })
+    expect(capped.result.text).toBe(`${ANSWER_SENTENCE} The assistant reached its limit of 5 tool rounds before it finished, so this answer is incomplete.`)
+    expect(capped.notes.sqlDiscarded).toBe('select_from')
+    expect(discardSentence('segment', 1)).toBe('1 reader matches.')
+    expect(() => discardSentence('segment', null)).toThrow(/has a count/)
+  })
+
+  it('through the route: the discard reaches the body as the server sentence and ai_audit as a blocked row naming D-58', async () => {
     const cookie = await loginCookie()
     const { transport } = scripted([
+      () => message([toolUse('toolu_seg', 'segment', PRESET)], 'tool_use'),
       () =>
         message(
-          [text(finalText('Done.', { type: 'answer', text: 'There are 46. select email from subscribers.', window: null, filters_applied: {}, definitions_used: [] }))],
+          [
+            text(
+              finalText('Done.', {
+                type: 'segment',
+                text: '177 readers match:\nSELECT pkey\nFROM v_profiles;',
+                window: null,
+                filters_applied: PRESET,
+                definitions_used: [],
+                segment: { filters: PRESET },
+              }),
+            ),
+          ],
           'end_turn',
         ),
     ])
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const res = await ask(appWith(transport), cookie, 'how many went cold?')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await ask(appWith(transport), cookie, "Instagram subscribers who haven't opened in 30 days")
     expect(res.status).toBe(200)
-    const body = await res.json<{ text: string; partial: boolean }>()
-    expect(body).toMatchObject({ text: 'There are 46.', partial: false })
-  })
-
-  it('a statement that is the whole text leaves nothing, and respond() says no usable answer', () => {
-    const sql = 'SELECT count(*)\n\nFROM v_profiles;'
-    expect(removeSql(sql, RELATIONS)).toEqual({ text: '', removed: true })
-    expect(respond({ modelText: sql, outputs: [], capped: false, relations: RELATIONS }).result.text).toBe('The assistant did not return a usable answer.')
-  })
-
-  it('keeps prose that only uses the word "select", even with "from …" after it', () => {
-    for (const plain of [
-      'Select a segment in the builder to export it.',
-      'You can select readers from the builder, then export them from the list.',
-      'To narrow it, select a source and a status.',
-      // The H2b review: "from" + a source or a time was cut as if it were a table.
-      'To build it, select subscribers from Instagram who have not opened in 30 days.',
-      'Select readers from Instagram, then export them.',
-      'You can select readers from Facebook or Instagram.',
-      'Select readers who signed up from last month.',
-      'Select a segment.\n\nMost of the 46 came from Instagram.',
-      'Select a segment. Most of them came from subscribers.',
-      // A sentence ends inside the select list, so this SELECT is prose even though "from subscribers" ends a line.
-      'Select a segment. Its readers come from subscribers\n\nThen export them.',
-      // An all-caps SELECT whose sentence ends before any FROM, with no function call after it.
-      'Use SELECT to pick. Data comes from the builder.',
-    ]) {
-      expect(removeSql(plain, RELATIONS)).toEqual({ text: plain, removed: false })
-      const inBlock = respond({
-        modelText: finalText('prose', { type: 'answer', text: plain, window: null, filters_applied: {}, definitions_used: [] }),
-        outputs: [],
-        capped: false, relations: RELATIONS,
-      })
-      expect(inBlock.notes.sqlRemoved).toBe(false)
-      expect(inBlock.result.text).toBe(plain)
-    }
+    const body = await res.json<{ text: string; type: string; partial: boolean; segment: { count: number }; audit_id: string }>()
+    expect(body).toMatchObject({ type: 'segment', text: '177 readers match.', partial: false, segment: { count: 177 } })
+    const rows = await auditRows('trace_id', body.audit_id)
+    expect(rows.map((r) => `${r.kind}/${r.status}/${r.tool_name}`)).toEqual([
+      'model_request/success/null',
+      'tool_call/success/segment',
+      'model_request/success/null',
+      'blocked/blocked/null',
+    ])
+    expect(rows[3].error).toBe(`${SQL_DISCARD_ERROR} (select_line)`)
+    expect(rows[3].error).toContain('D-58')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"sql_discarded":"select_line"'))
+    warn.mockRestore()
   })
 })
 

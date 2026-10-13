@@ -59,16 +59,3 @@ export function viewSchemas(db: D1Database): Promise<readonly ViewSchema[]> {
   }
   return cached
 }
-
-/**
- * Every table and view name in the database, for respond.ts's T-AI-5 cut (a SELECT … FROM over a
- * real relation is SQL whatever its case or punctuation). Read per request, not cached: 03
- * §No-restart lists the only per-isolate caches. Names only, never data.
- */
-export async function relationNames(db: D1Database): Promise<readonly string[]> {
-  const { results } = await db
-    .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
-    .all<{ name: string }>()
-  if (results.length === 0) throw new Error('schema-context: sqlite_master lists no tables or views; migrations have not been applied')
-  return results.map((row) => row.name)
-}
