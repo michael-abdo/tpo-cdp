@@ -6,7 +6,7 @@
 /** The sentence for a blocked step whose error starts with no known code. */
 export const BLOCKED_FALLBACK = 'This step was blocked.'
 
-/** Why a step was blocked, in words, from the stored error's code (worker/assistant writers; gate2_/gate3_denied: tool-executor.ts deny). */
+/** Why a step was blocked, in words, from the stored error's code (worker/assistant writers; gate2_/gate3_denied: tool-executor.ts deny). Gate 3 also checks a seeded query row's own SQL, so its sentence does not say the AI wrote the query. */
 export const BLOCK_REASON: Array<[string, string]> = [
   ['gate1', 'The question was refused by the input check before anything was sent to the AI.'],
   ['blocked_pii', 'Personal data was found, so the request was stopped and nothing more was sent.'],
@@ -25,7 +25,7 @@ export const BLOCK_REASON: Array<[string, string]> = [
   ],
   [
     'gate3_denied',
-    "The AI's database query was not one plain read-only question, so it was refused before it ran and the AI was told why.",
+    'The database query was not one plain read-only question, so it was refused before it ran and the AI was told why.',
   ],
 ]
 

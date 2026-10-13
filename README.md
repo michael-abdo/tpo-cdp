@@ -25,7 +25,7 @@ npm install --legacy-peer-deps      # the flag installs package-lock.json exactl
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
 npm run db:migrate:local            # the three migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
-npm test                            # 23 files, 489 tests in workerd against a local D1; no network
+npm test                            # 24 files, 492 tests in workerd against a local D1; no network
 npm run dev                         # http://localhost:5173; sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
@@ -371,7 +371,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 23 files, 489 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 24 files, 492 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -391,6 +391,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 | T-INS-1..2 | `insights.test.ts` | the two Growth panels |
 | — | `audit.test.ts`, `health.test.ts`, `overview.test.ts`, `pseudonym.test.ts` | the audit API and /audit's words for blocked steps, the D-58 screen of `filters_applied`, `/health`, Overview numbers, key derivation |
 | — | `ui/assistant-result.test.ts` | "Ask a question" rendered: no model-written SQL in `filters_applied` reaches the page (typed by `tsconfig.ui-test.json`, DOM and JSX) |
+| — | `ui/audit-step.test.ts` | /audit rendered: a Gate 2 or Gate 3 block shows its own sentence in words, not the generic one |
 
 ## Known gaps
 

@@ -125,7 +125,8 @@ function Stored({ label, value }: { label: string; value: string | null }) {
   )
 }
 
-function Step({ row, title, matches }: { row: AuditRow; title: string; matches: number | null }) {
+/** One audit step; exported for the render test (test/ui/audit-step.test.ts). */
+export function Step({ row, title, matches }: { row: AuditRow; title: string; matches: number | null }) {
   const tokens =
     row.tokens_in === null && row.tokens_out === null ? null : (row.tokens_in ?? 0) + (row.tokens_out ?? 0)
   return (

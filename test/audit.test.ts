@@ -669,7 +669,7 @@ describe('/audit names every blocked step in words (06 §UI principles 4)', () =
       'The AI asked a data tool for something it may not read, or in a form the tool does not accept, so the call was refused and the AI was told why.',
     )
     expect(gate3).toBe(
-      "The AI's database query was not one plain read-only question, so it was refused before it ran and the AI was told why.",
+      'The database query was not one plain read-only question, so it was refused before it ran and the AI was told why.',
     )
     // Every sentence is distinct, so no two codes read the same on /audit.
     expect(new Set(BLOCK_REASON.map(([, words]) => words)).size).toBe(BLOCK_REASON.length)
