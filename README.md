@@ -42,6 +42,7 @@ URL=https://tpo-cdp.michaelabdo-mail.workers.dev
 curl $URL/health                                     # {"ok":true,"db":true,"today":"2026-09-28"}
 # POST /api/login {"password": …} → 204 + cookie; then, with the cookie:
 #   GET  /api/lookup?q=joy.hall830@protonmail.com   → 200, her pkey, app user u_ceed5f12, 9 web views
+#   GET  /api/lookup/search?q=joy.hall             → 200, 3 matches; ?q=hall → 20 and truncated; ?q=jo → 400 query_too_short
 #   POST /api/segments/preview, the brief's preset (active, instagram, no open in 30 days, never-opened included) → count 177
 ```
 

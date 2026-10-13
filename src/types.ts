@@ -12,6 +12,20 @@ export interface Overview {
   quarantine_reasons: Record<string, number>
 }
 
+/** GET /api/lookup/search?q= (09 D-52) */
+export interface LookupSearch {
+  /** The fragment as the server normalized it. */
+  q: string
+  matches: {
+    pkey: string
+    email: string | null
+    kind: Lookup['profile']['kind']
+    user_id: string | null
+    status: SubscriberStatus | null
+  }[]
+  truncated: boolean
+}
+
 /** GET /api/lookup?q= */
 export interface Lookup {
   profile: {

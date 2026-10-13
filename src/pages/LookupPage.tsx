@@ -1,14 +1,24 @@
 // /lookup (06 §/lookup, R2): one search box, then one profile in three columns: newsletter,
 // website, app. The raw input goes to GET /api/lookup?q= unchanged; the server normalizes it
 // (02 §Normalization). Absent sections render the labelled empty states from 06.
+// Partial lookup (06 §/lookup, 09 D-52): after QUERY_FRAGMENT_MIN_LENGTH typed characters the
+// box lists GET /api/lookup/search suggestions (debounced); Find goes to the exact lookup and
+// falls back to the suggestions on 404. The raw input is sent; the server folds it.
 
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, type KeyboardEvent, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { isCold } from '../../shared/derive'
+import { QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
+import { ApiError, errorMessage, getJson } from '../api'
 import { Empty, ErrorLine, Field, Loading, Section } from '../components'
 import { dateOr, utc } from '../format'
-import type { Lookup } from '../types'
-import { useGet } from '../useGet'
+import type { Lookup, LookupSearch } from '../types'
+import { type GetState, useGet } from '../useGet'
+
+/** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
+const SUGGEST_DEBOUNCE_MS = 250
+const NO_MATCH = 'No profile matches — try part of the email'
+const LISTBOX_ID = 'lookup-suggestions'
 
 const KIND_LABEL: Record<Lookup['profile']['kind'], string> = {
   subscriber: 'Subscriber',
@@ -130,25 +140,168 @@ function AppActivity({ data }: { data: Lookup['app'] }) {
   )
 }
 
+type Match = LookupSearch['matches'][number]
+
+/** The exact lookup's answer; a 404 is kept apart because it opens the suggestion fallback. */
+type ExactState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'not_found'; message: string }
+  | { status: 'ok'; data: Lookup }
+
+/** `value`, once it has stopped changing for `ms`. */
+function useDebounced(value: string, ms: number): string {
+  const [settled, setSettled] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), ms)
+    return () => clearTimeout(timer)
+  }, [value, ms])
+  return settled
+}
+
+/** What the exact lookup takes for a picked suggestion: the email, or the u_… of an email-less stub. */
+function lookupKey(match: Match): string {
+  const key = match.email ?? match.user_id
+  if (key === null) throw new Error(`lookup: suggestion ${match.pkey} has neither an email nor a user id`)
+  return key
+}
+
+/** Server-side minimum, checked here only to avoid asking for an answer that is always 400. */
+function searchable(raw: string): boolean {
+  return raw.trim().length >= QUERY_FRAGMENT_MIN_LENGTH
+}
+
+function Suggestions({
+  state,
+  active,
+  onPick,
+}: {
+  state: GetState<LookupSearch> | null
+  active: number
+  onPick: (match: Match) => void
+}) {
+  if (state === null) return null
+  if (state.status === 'loading') return <Loading />
+  if (state.status === 'error') return <ErrorLine message={state.message} />
+  const { matches, truncated } = state.data
+  if (matches.length === 0) return <Empty>{NO_MATCH}</Empty>
+  return (
+    <ul id={LISTBOX_ID} role="listbox" className="max-w-md divide-y divide-gray-100 rounded border border-gray-200 text-sm">
+      {matches.map((m, i) => (
+        <li
+          key={m.pkey}
+          id={`${LISTBOX_ID}-${i}`}
+          role="option"
+          aria-selected={i === active}
+          // mousedown, not click: the input keeps focus, so the list is not closed first.
+          onMouseDown={(e) => {
+            e.preventDefault()
+            onPick(m)
+          }}
+          className={`flex cursor-pointer flex-wrap gap-x-3 px-3 py-2 ${i === active ? 'bg-gray-100' : ''}`}
+        >
+          <span className="font-medium">{m.email ?? m.user_id}</span>
+          <span className="text-gray-500">{KIND_LABEL[m.kind]}</span>
+          {m.status !== null && <span className="text-gray-500">{m.status}</span>}
+        </li>
+      ))}
+      {truncated && <li className="px-3 py-2 text-gray-500">+ more — keep typing</li>}
+    </ul>
+  )
+}
+
 export default function LookupPage() {
   const [params, setParams] = useSearchParams()
   const q = params.get('q')
   const [input, setInput] = useState(q ?? '')
-  const state = useGet<Lookup>(q === null || q.trim() === '' ? null : `/api/lookup?q=${encodeURIComponent(q)}`)
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(-1)
+  const fragment = useDebounced(input, SUGGEST_DEBOUNCE_MS)
+  const suggestions = useGet<LookupSearch>(
+    open && searchable(fragment) ? `/api/lookup/search?q=${encodeURIComponent(fragment)}` : null,
+  )
+  const matches = suggestions?.status === 'ok' ? suggestions.data.matches : []
+
+  const [exact, setExact] = useState<{ q: string; state: ExactState } | null>(null)
+  useEffect(() => {
+    if (q === null || q.trim() === '') return
+    let current = true
+    getJson<Lookup>(`/api/lookup?q=${encodeURIComponent(q)}`).then(
+      (data) => current && setExact({ q, state: { status: 'ok', data } }),
+      (err: unknown) => {
+        if (!current) return
+        if (err instanceof ApiError && err.status === 404) {
+          setExact({ q, state: { status: 'not_found', message: err.message } })
+          setOpen(true) // 06: on 404 Find falls back to the suggestion list
+        } else {
+          setExact({ q, state: { status: 'error', message: errorMessage(err) } })
+        }
+      },
+    )
+    return () => {
+      current = false
+    }
+  }, [q])
+  const state: ExactState | null =
+    q === null || q.trim() === '' ? null : exact === null || exact.q !== q ? { status: 'loading' } : exact.state
+
+  function pick(match: Match) {
+    const key = lookupKey(match)
+    setInput(key)
+    setOpen(false)
+    setActive(-1)
+    setParams({ q: key })
+  }
 
   function submit(e: FormEvent) {
     e.preventDefault()
+    setActive(-1)
+    // Find again on the same unmatched q re-opens its fallback list; otherwise the list closes.
+    setOpen(input === q && state?.status === 'not_found')
     setParams(input.trim() === '' ? {} : { q: input })
   }
 
+  function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!searchable(input)) return
+      e.preventDefault()
+      if (!open) {
+        setOpen(true)
+        return
+      }
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      setActive((i) => Math.max(-1, Math.min(matches.length - 1, i + step)))
+    } else if (e.key === 'Enter' && open && active >= 0 && active < matches.length) {
+      e.preventDefault()
+      pick(matches[active])
+    } else if (e.key === 'Escape' && open) {
+      e.preventDefault()
+      setOpen(false)
+      setActive(-1)
+    }
+  }
+
+  // The fallback after a 404 is the list itself; with the list closed (Esc) the 404 message stays.
+  const listShown = open && searchable(fragment)
   return (
     <>
       <h1 className="text-xl font-semibold">Lookup</h1>
       <form onSubmit={submit} className="flex gap-2">
         <input
           type="search"
+          role="combobox"
+          aria-expanded={listShown}
+          aria-controls={LISTBOX_ID}
+          aria-autocomplete="list"
+          aria-activedescendant={listShown && active >= 0 ? `${LISTBOX_ID}-${active}` : undefined}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value)
+            setOpen(true)
+            setActive(-1)
+          }}
+          onKeyDown={onKeyDown}
+          onBlur={() => setOpen(false)}
           placeholder="email or u_…"
           aria-label="email or u_…"
           className="w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm"
@@ -157,9 +310,13 @@ export default function LookupPage() {
           Find
         </button>
       </form>
-      {state === null && <Empty>Search by email or app user id to see one profile.</Empty>}
+      {listShown && <Suggestions state={suggestions} active={active} onPick={pick} />}
+      {state === null && !listShown && <Empty>Search by email or app user id, or type part of one.</Empty>}
       {state?.status === 'loading' && <Loading />}
       {state?.status === 'error' && <ErrorLine message={state.message} />}
+      {state?.status === 'not_found' && !listShown && (
+        <Empty>{searchable(q ?? '') ? state.message : NO_MATCH}</Empty>
+      )}
       {state?.status === 'ok' && (
         <div className="space-y-4">
           <Header data={state.data} />

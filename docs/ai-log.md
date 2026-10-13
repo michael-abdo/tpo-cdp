@@ -119,3 +119,7 @@ Built in Claude Code throughout. Each entry: what was asked, what the AI got wro
 ## 2026-10-13 — W3 live proof (operator tick)
 
 - **Asked:** a README live webhook check. **Wrong:** commit c54ddab said T-WH-10 pins "count stays 245"; the test pins only the score rise. The same block also sent the preview filters at the top level of the body, which 04 rejects as `unknown field: source`. **Caught:** the adversarial review of W3. **Fix:** 336d66e reworded the T-WH-10 claim; this commit corrects the body to `{filters, limit}` and replaces the expected-results line with what the live worker returned after deploy (202, 200 duplicate, lookup, feed, score 28 → 31, count 245).
+
+## 2026-10-13 — W4
+
+- **Asked:** `GET /api/lookup/search` with no `LOWER(` in its SQL, and a test that pins it. **Wrong:** the AI's header comment in `worker/routes/lookup.ts` said the SQL never folds case "(no LOWER()", so the new source scan for `/\bLOWER\s*\(/i` matched the comment and failed on SQL that was correct. **Caught:** the first `npx vitest run test/lookup-search.test.ts` (1 failed, 11 passed). **Fix:** the comment says "no SQL case folding"; the scan stays case-insensitive so a lowercase `lower(` in SQL would still fail it.

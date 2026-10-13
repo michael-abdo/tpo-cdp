@@ -40,3 +40,15 @@ export function canonicalSource(raw: string): string | null {
   if (source === '') return null
   return source === 'twitter' ? 'x' : source
 }
+
+/**
+ * A partial-lookup query fragment (09 D-52, 04 §/api/lookup/search): `trim()` then
+ * `toLowerCase()` only, the same folding `email_norm` was stored with, so a fragment of a
+ * stored address still matches it. No validation: a fragment is not an address.
+ */
+export function normalizeQueryFragment(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+/** Shortest normalized fragment the search answers; shorter is 400 `query_too_short` (04). */
+export const QUERY_FRAGMENT_MIN_LENGTH = 3

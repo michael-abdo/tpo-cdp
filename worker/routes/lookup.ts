@@ -6,10 +6,16 @@
 // events is worker/identity/resolve.ts. Nothing is cached (03 §No-restart). 04 defines one error
 // for this route: any q that names no profile (blank, missing, neither u_… nor a valid email, or
 // simply unknown) is 404 not_found.
+//
+// GET /api/lookup/search?q= (04 §/api/lookup/search, 06 §/lookup Partial lookup; 09 D-52) is
+// the search box's candidate list. The fragment is folded by normalizeQueryFragment, the one
+// home for query normalization; SQL compares it with the stored email_norm and never folds
+// (no SQL case folding). It returns emails, so it is never an assistant tool (05). Fuzzy matching is
+// parked (16 §If time remains 3).
 
 import { Hono } from 'hono'
 import { appAfterSignup, hasApp } from '../../shared/derive'
-import { normalizeEmail } from '../../shared/normalize'
+import { normalizeEmail, normalizeQueryFragment, QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
 import { pkeyForUnknownUser } from '../../shared/pseudonym'
 import { ApiError } from '../auth/middleware'
 import { type AppEnv, requireSecret } from '../env'
@@ -205,4 +211,81 @@ lookupRoutes.get('/lookup', async (c) => {
     web,
     app,
   })
+})
+
+/** At most this many candidates; `truncated` says more exist (04 §/api/lookup/search). */
+const SEARCH_LIMIT = 20
+
+interface SearchRow {
+  grp: 0 | 1 | 2
+  /** NULL only for a stub user (no email), whose pkey is derived from the user id. */
+  pkey: string | null
+  kind: ProfileRow['kind'] | null
+  email: string | null
+  user_id: string | null
+  status: 'active' | 'unsubscribed' | null
+}
+
+/** `%`, `_` and `\` match literally under `ESCAPE '\'`. */
+function escapeLike(fragment: string): string {
+  return fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
+
+// Three groups, each alphabetical (04): 0 = email starts with q, 1 = email contains q elsewhere,
+// 2 = app user_id starts with q and the user was not already listed by its email. The groups
+// are disjoint, so one LIMIT of SEARCH_LIMIT + 1 tells whether more than SEARCH_LIMIT exist.
+// ?1 = %q%, ?2 = q%, ?3 = SEARCH_LIMIT + 1; every pattern is escaped, every value bound.
+const SEARCH_SQL = `
+SELECT grp, pkey, kind, email, user_id, status FROM (
+  SELECT CASE WHEN p.email_norm LIKE ?2 ESCAPE '\\' THEN 0 ELSE 1 END AS grp,
+         p.pkey AS pkey, p.kind AS kind, p.email_norm AS email, a.user_id AS user_id,
+         s.status AS status, p.email_norm AS sort_key
+  FROM profiles p
+  LEFT JOIN subscribers s ON s.email_norm = p.email_norm
+  LEFT JOIN app_users a ON a.email_norm = p.email_norm
+  WHERE p.email_norm LIKE ?1 ESCAPE '\\'
+  UNION ALL
+  SELECT 2, p.pkey, p.kind, a.email_norm, a.user_id, s.status, a.user_id
+  FROM app_users a
+  LEFT JOIN profiles p ON p.email_norm = a.email_norm
+  LEFT JOIN subscribers s ON s.email_norm = a.email_norm
+  WHERE a.user_id LIKE ?2 ESCAPE '\\'
+    AND (a.email_norm IS NULL OR a.email_norm NOT LIKE ?1 ESCAPE '\\')
+)
+ORDER BY grp, sort_key
+LIMIT ?3`
+
+lookupRoutes.get('/lookup/search', async (c) => {
+  const q = normalizeQueryFragment(c.req.query('q') ?? '')
+  if (q.length < QUERY_FRAGMENT_MIN_LENGTH) {
+    throw new ApiError(400, 'query_too_short', `Type at least ${QUERY_FRAGMENT_MIN_LENGTH} characters to search.`)
+  }
+  const escaped = escapeLike(q)
+  const db = c.env.DB
+  const { results } = await db
+    .prepare(SEARCH_SQL)
+    .bind(`%${escaped}%`, `${escaped}%`, SEARCH_LIMIT + 1)
+    .all<SearchRow>()
+  const rows = results.slice(0, SEARCH_LIMIT)
+
+  const matches = []
+  for (const row of rows) {
+    let { pkey, kind } = row
+    if (pkey === null) {
+      // No profile joined: only a stub user (no email) may lack one; its pkey comes from the
+      // user id (02 §Linking 4), as in the exact lookup above.
+      if (row.email !== null || row.user_id === null) {
+        throw new Error('lookup/search: an app user with an email has no profile')
+      }
+      pkey = await pkeyForUnknownUser(requireSecret(c.env, 'PII_KEY_SECRET'), row.user_id)
+      kind = await db.prepare('SELECT kind FROM profiles WHERE pkey = ?').bind(pkey).first<ProfileRow['kind']>('kind')
+      if (kind === null) throw new Error('lookup/search: an app user without an email has no stub profile')
+    }
+    if (kind === null) throw new Error('lookup/search: a joined profile has no kind')
+    matches.push({ pkey, email: row.email, kind, user_id: row.user_id, status: row.status })
+  }
+  if (new Set(matches.map((m) => m.pkey)).size !== matches.length) {
+    throw new Error('lookup/search: one profile matched twice; the 04 shape lists each profile once')
+  }
+  return c.json({ q, matches, truncated: results.length > SEARCH_LIMIT })
 })
