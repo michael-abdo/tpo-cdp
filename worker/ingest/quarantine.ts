@@ -6,7 +6,11 @@
  */
 import { normalizeEmail } from '../../shared/normalize'
 
-/** The reasons in 02 §Quarantine, in the order they are tested. */
+/**
+ * The reasons in 02 §Quarantine. classifySubscriberRow tests blank_row first, then a blank
+ * email (missing_field), an unparseable email (invalid_email), the other required fields
+ * (missing_field) and the dates (bad_date).
+ */
 export type QuarantineReason = 'blank_row' | 'invalid_email' | 'missing_field' | 'bad_date'
 
 /** The columns subscribers.csv must have; `acquisition_source` and `last_open_date` may be blank. */

@@ -180,6 +180,28 @@ describe('T-ING-4 merge precedence on a conflicting pair built from real rows (D
     })
   })
 
+  it('unsubscribed wins from any row, even one with neither the earliest signup nor the latest open', () => {
+    // Line 70 changed: active, an earlier signup, a different real source, a later open.
+    // Line 2269 changed only to unsubscribed, so it keeps signup 2026-08-12 and open 2026-09-20.
+    // A "status from the earliest-signup row" or "status from the latest-open row" rule fails here.
+    const earlierAndLater = rowAt(70)
+    earlierAndLater[1] = '2026-07-01'
+    earlierAndLater[3] = 'Facebook'
+    earlierAndLater[4] = '2026-09-28'
+    const unsubscribedOnly = rowAt(2269)
+    unsubscribedOnly[2] = 'unsubscribed'
+    for (const merged of [
+      ingestPair(earlierAndLater, unsubscribedOnly),
+      ingestPair(unsubscribedOnly, earlierAndLater),
+    ]) {
+      expect(merged?.status).toBe('unsubscribed')
+      expect(merged?.signup_date).toBe('2026-07-01')
+      expect(merged?.source).toBe('facebook')
+      expect(merged?.last_open_date).toBe('2026-09-28')
+      expect(merged?.merged_count).toBe(2)
+    }
+  })
+
   it('latest open is taken across rows, not from the earliest-signup row; null never wins', () => {
     const neverOpened = rowAt(2269)
     neverOpened[1] = '2026-07-01'
