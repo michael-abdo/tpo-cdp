@@ -48,16 +48,17 @@ curl $URL/health                                     # {"ok":true,"db":true,"tod
 Live webhook check (the Wednesday checkpoint). First, before any event, note the `{"source":["instagram"],"has_app":true}` preview: count 245, and julia.evans230 has `engagement_score` 28. Then:
 
 ```bash
+# run these two back to back: --again re-sends the body in .wrangler/send-webhook-last.json, which any webhook:send in between (even to localhost) overwrites
 npm run webhook:send -- --url $URL --event read_story --user u_2b6447a3   # expect 202, resolves to julia.evans230
 npm run webhook:send -- --url $URL --event read_story --again             # expect 200 {"accepted":true,"duplicate":true}
 # with the cookie:
 #   GET  /api/lookup?q=u_2b6447a3        → the read_story event in julia.evans230's app timeline
 #   GET  /api/events/recent              → the event listed, resolved to her profile
 #   POST /api/segments/preview {"source":["instagram"],"has_app":true}
-#        → count stays 245 and julia's engagement_score rises above 28, with no re-import (T-WH-10; see Known gaps)
+#        → julia's engagement_score rises above 28 with no re-import (what T-WH-10 pins); the count should stay 245, because no filter reads webhook data (see Known gaps; no test pins the count)
 ```
 
-Status on 2026-10-13: the worker at this URL still runs the first-deploy build, which has no webhook route (`POST /webhooks/app` → 404). The 245 / 28 baseline and the 177 preset count above are observed live. The webhook lines show the results the tests pin, not live results yet; they become live after `npm run deploy` ships the webhook build.
+Status on 2026-10-13: the worker at this URL still runs the first-deploy build, which has no webhook route (`POST /webhooks/app` → 404). The 245 / 28 baseline and the 177 preset count (hidden_unsubscribed 55) above were observed live again on 2026-10-13. The webhook lines are expected results, not live results yet: the score rise is what T-WH-10 pins in tests, and the 245 count is the design reading, not a test pin. They become live after `npm run deploy` ships the webhook build; then replace this line with the observed codes, count and score.
 
 ## Architecture
 
