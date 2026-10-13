@@ -1,0 +1,280 @@
+import { env, SELF } from 'cloudflare:test'
+import { Hono } from 'hono'
+import { describe, expect, it } from 'vitest'
+import { requireSession } from '../worker/auth/middleware'
+import { nowSeconds, SESSION_TTL_SECONDS, signSession, verifySession } from '../worker/auth/session'
+import { type AppEnv, assertBindings } from '../worker/env'
+import app, { onError } from '../worker/index'
+import { documentationIp, loginCookie } from './helpers/auth'
+
+// T-AUTH-1, T-AUTH-2 (08) for 04 §Auth and §Error envelope. Secrets come from .dev.vars and are
+// never printed: assertions compare against them with includes/equality, so a failure reports
+// "expected true to be false", not the value. Constructed inputs, and why each is allowed:
+// - wrong passwords are the real SITE_PASSWORD with one character changed or appended (09 D-47 spirit);
+// - expired and tampered cookies are produced by the real signSession with the real secret;
+// - misconfigured deploys are the real env with bindings removed;
+// - every login sends CF-Connecting-IP from 2001:db8::/32 (RFC 3849, reserved for documentation):
+//   a fresh one per request, or one fixed per test in the rate-limit test, so tests never share a
+//   LOGIN_LIMITER budget; data/*.csv contains no IP addresses;
+// - no protected product route exists yet, so requireSession is mounted on a test-local app with a
+//   probe route that echoes the session subject.
+
+const BASE = 'http://cdp.test'
+const JSON_HEADERS = { 'content-type': 'application/json' }
+
+function realSecret(name: 'SITE_PASSWORD' | 'SESSION_SECRET' | 'WEBHOOK_SECRET' | 'PII_KEY_SECRET'): string {
+  const value = env[name]
+  if (!value) throw new Error(`${name} missing from .dev.vars; the test cannot run`)
+  return value
+}
+
+/** Every secret value present in env, for the no-leak assertions. */
+function secretValues(): string[] {
+  const values = [realSecret('SITE_PASSWORD'), realSecret('SESSION_SECRET'), realSecret('WEBHOOK_SECRET'), realSecret('PII_KEY_SECRET')]
+  if (env.ANTHROPIC_API_KEY) values.push(env.ANTHROPIC_API_KEY)
+  return values
+}
+
+/** The real env with some bindings removed, as a misconfigured deploy would see it. */
+function envWithout(...names: (keyof Env)[]): Env {
+  const copy: Partial<Env> = { ...env }
+  for (const name of names) delete copy[name]
+  return copy as Env
+}
+
+/** The real password with its last character replaced: same length, wrong value. */
+function wrongPasswordSameLength(): string {
+  const password = realSecret('SITE_PASSWORD')
+  const last = password.at(-1) === 'a' ? 'b' : 'a'
+  return password.slice(0, -1) + last
+}
+
+function postLogin(password: string, headers: Record<string, string> = {}): Promise<Response> {
+  return SELF.fetch(`${BASE}/api/login`, {
+    method: 'POST',
+    headers: { ...JSON_HEADERS, 'cf-connecting-ip': documentationIp(), ...headers },
+    body: JSON.stringify({ password }),
+  })
+}
+
+/** requireSession on a test-local app, rendered by the production onError. */
+function probeApp(): Hono<AppEnv> {
+  const probe = new Hono<AppEnv>()
+  probe.use('/api/*', requireSession)
+  probe.get('/api/probe', (c) => c.json({ sub: c.get('session').sub }))
+  probe.onError(onError)
+  return probe
+}
+
+function cookieValue(cookie: string): string {
+  return cookie.slice('cdp_session='.length)
+}
+
+describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
+  it('a wrong password is 401 after the 100 ms delay, same length or not', async () => {
+    for (const password of [wrongPasswordSameLength(), `${realSecret('SITE_PASSWORD')}${realSecret('SITE_PASSWORD').at(-1)}`]) {
+      const started = Date.now()
+      const res = await postLogin(password)
+      const elapsed = Date.now() - started
+      expect(res.status).toBe(401)
+      expect(res.headers.get('set-cookie')).toBeNull()
+      const body = (await res.json()) as Record<string, unknown>
+      expect(body.error).toBe('unauthorized')
+      expect(typeof body.message).toBe('string')
+      expect(elapsed).toBeGreaterThanOrEqual(100)
+    }
+  })
+
+  it('the right password is 204 with a signed 12 h cookie carrying every attribute', async () => {
+    const before = nowSeconds()
+    const res = await postLogin(realSecret('SITE_PASSWORD'))
+    expect(res.status).toBe(204)
+    const header = res.headers.get('set-cookie') ?? ''
+    expect(header).toMatch(/^cdp_session=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+;/)
+    const attributes = header.split(';').slice(1).map((a) => a.trim())
+    expect(attributes).toEqual(expect.arrayContaining(['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/', 'Max-Age=43200']))
+
+    const value = header.split(';')[0].slice('cdp_session='.length)
+    const session = await verifySession(realSecret('SESSION_SECRET'), value)
+    expect(session).not.toBeNull()
+    expect(session?.sub).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(session?.exp).toBeGreaterThanOrEqual(before + SESSION_TTL_SECONDS)
+    expect(session?.exp).toBeLessThanOrEqual(nowSeconds() + SESSION_TTL_SECONDS)
+  })
+
+  it('each login gets a fresh random subject', async () => {
+    const a = await verifySession(realSecret('SESSION_SECRET'), cookieValue(await loginCookie()))
+    const b = await verifySession(realSecret('SESSION_SECRET'), cookieValue(await loginCookie()))
+    expect(a?.sub).not.toBe(b?.sub)
+  })
+
+  it('the login cookie passes requireSession; no cookie is 401 unauthorized', async () => {
+    const cookie = await loginCookie()
+    const ok = await probeApp().fetch(new Request(`${BASE}/api/probe`, { headers: { cookie } }), env)
+    expect(ok.status).toBe(200)
+    const session = await verifySession(realSecret('SESSION_SECRET'), cookieValue(cookie))
+    expect(await ok.json()).toEqual({ sub: session?.sub })
+
+    const anonymous = await probeApp().fetch(new Request(`${BASE}/api/probe`), env)
+    expect(anonymous.status).toBe(401)
+    expect(await anonymous.json()).toEqual({ error: 'unauthorized', message: 'Sign in to continue.' })
+  })
+
+  it('the production app guards every /api/* path but the open ones', async () => {
+    const anonymous = await SELF.fetch(`${BASE}/api/overview`)
+    expect(anonymous.status).toBe(401)
+    expect(((await anonymous.json()) as { error: string }).error).toBe('unauthorized')
+
+    // Past the guard, an unbuilt route is a 404 envelope, not a 401.
+    const signedIn = await SELF.fetch(`${BASE}/api/overview`, { headers: { cookie: await loginCookie() } })
+    expect(signedIn.status).toBe(404)
+    expect(((await signedIn.json()) as { error: string }).error).toBe('not_found')
+
+    expect((await SELF.fetch(`${BASE}/health`)).status).toBe(200)
+  })
+
+  it('an expired cookie signed with the real secret is 401', async () => {
+    const value = await signSession(realSecret('SESSION_SECRET'), { sub: crypto.randomUUID(), exp: nowSeconds() - 1 })
+    const res = await probeApp().fetch(new Request(`${BASE}/api/probe`, { headers: { cookie: `cdp_session=${value}` } }), env)
+    expect(res.status).toBe(401)
+  })
+
+  it('a tampered signature, a tampered payload and a malformed value are 401', async () => {
+    const value = cookieValue(await loginCookie())
+    const [payload, signature] = value.split('.')
+    const mid = Math.floor(signature.length / 2)
+    const flipped = signature.slice(0, mid) + (signature[mid] === 'A' ? 'B' : 'A') + signature.slice(mid + 1)
+    const forgedPayload = btoa(JSON.stringify({ sub: crypto.randomUUID(), exp: nowSeconds() + 365 * 24 * 3600 }))
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replace(/=+$/, '')
+    for (const tampered of [`${payload}.${flipped}`, `${forgedPayload}.${signature}`, `${payload}.${signature.slice(0, -2)}`, payload, `${value}.x`]) {
+      const res = await probeApp().fetch(new Request(`${BASE}/api/probe`, { headers: { cookie: `cdp_session=${tampered}` } }), env)
+      expect(res.status).toBe(401)
+    }
+  })
+
+  it('missing SESSION_SECRET is 500 server_misconfigured, never 200 or 204', async () => {
+    const broken = envWithout('SESSION_SECRET')
+    const login = await app.fetch(
+      new Request(`${BASE}/api/login`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ password: realSecret('SITE_PASSWORD') }) }),
+      broken,
+    )
+    expect(login.status).toBe(500)
+    expect(login.headers.get('set-cookie')).toBeNull()
+    const body = (await login.json()) as { error: string; message: string }
+    expect(body.error).toBe('server_misconfigured')
+    expect(body.message).toContain('SESSION_SECRET')
+
+    // Without assertBindings in front, requireSession itself fails closed, even for a valid cookie.
+    const cookie = await loginCookie()
+    const probe = await probeApp().fetch(new Request(`${BASE}/api/probe`, { headers: { cookie } }), broken)
+    expect(probe.status).toBe(500)
+    expect(((await probe.json()) as { error: string }).error).toBe('server_misconfigured')
+  })
+
+  it('missing SITE_PASSWORD is 500 server_misconfigured, never a login', async () => {
+    const res = await app.fetch(
+      new Request(`${BASE}/api/login`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ password: realSecret('SITE_PASSWORD') }) }),
+      envWithout('SITE_PASSWORD'),
+    )
+    expect(res.status).toBe(500)
+    expect(res.headers.get('set-cookie')).toBeNull()
+    expect(((await res.json()) as { message: string }).message).toContain('SITE_PASSWORD')
+  })
+
+  it('logout is open and clears the cookie with 204', async () => {
+    const res = await SELF.fetch(`${BASE}/api/logout`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })
+    expect(res.status).toBe(204)
+    const header = res.headers.get('set-cookie') ?? ''
+    expect(header).toMatch(/^cdp_session=;/)
+    expect(header).toContain('Max-Age=0')
+    expect(header).toContain('HttpOnly')
+    expect(header).toContain('SameSite=Strict')
+  })
+
+  it('a login POST without a JSON content type is 415, with charset is accepted', async () => {
+    const password = realSecret('SITE_PASSWORD')
+    const contentTypes: Record<string, string>[] = [{ 'content-type': 'text/plain' }, { 'content-type': 'application/x-www-form-urlencoded' }, {}]
+    for (const headers of contentTypes) {
+      const res = await SELF.fetch(`${BASE}/api/login`, { method: 'POST', headers, body: JSON.stringify({ password }) })
+      expect(res.status).toBe(415)
+      expect(((await res.json()) as { error: string }).error).toBe('unsupported_media_type')
+      expect(res.headers.get('set-cookie')).toBeNull()
+    }
+    const charset = await postLogin(password, { 'content-type': 'application/json; charset=utf-8' })
+    expect(charset.status).toBe(204)
+  })
+
+  it('a body without a string password is 400 invalid_body', async () => {
+    const res = await SELF.fetch(`${BASE}/api/login`, { method: 'POST', headers: { ...JSON_HEADERS, 'cf-connecting-ip': documentationIp() }, body: '{}' })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_body')
+  })
+
+  it('the 11th attempt from one IP within a minute is 429 rate_limited', async () => {
+    const ip = { 'cf-connecting-ip': documentationIp() }
+    const wrong = wrongPasswordSameLength()
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      expect((await postLogin(wrong, ip)).status).toBe(401)
+    }
+    const eleventh = await postLogin(wrong, ip)
+    expect(eleventh.status).toBe(429)
+    expect(((await eleventh.json()) as { error: string }).error).toBe('rate_limited')
+    // The limit applies even to the right password, and is per IP.
+    expect((await postLogin(realSecret('SITE_PASSWORD'), ip)).status).toBe(429)
+    expect((await postLogin(realSecret('SITE_PASSWORD'), { 'cf-connecting-ip': documentationIp() })).status).toBe(204)
+  })
+})
+
+describe('assertBindings (11 §Deploy, fail fast)', () => {
+  it('names every missing binding and secret in one error', () => {
+    expect(() => assertBindings(envWithout('DB', 'WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'LOGIN_LIMITER', 'WEBHOOK_LIMITER'))).toThrow(
+      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER',
+    )
+  })
+
+  it('treats an empty secret as missing and does not check ANTHROPIC_API_KEY', async () => {
+    expect(() => assertBindings({ ...env, WEBHOOK_SECRET: '' })).toThrow('WEBHOOK_SECRET')
+    expect(() => assertBindings(envWithout('ANTHROPIC_API_KEY'))).not.toThrow()
+    expect((await app.fetch(new Request(`${BASE}/health`), envWithout('ANTHROPIC_API_KEY'))).status).toBe(200)
+  })
+
+  it('runs before routing: /health with a missing limiter is 500 naming it', async () => {
+    const res = await app.fetch(new Request(`${BASE}/health`), envWithout('WEBHOOK_LIMITER'))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ error: 'server_misconfigured', message: 'The server is missing required configuration: WEBHOOK_LIMITER.' })
+  })
+})
+
+describe('T-AUTH-2 error bodies carry no secrets (04 §Error envelope)', () => {
+  it('a forced 500 and the /health body contain none of the secret values', async () => {
+    const forced = await app.fetch(new Request(`${BASE}/health`), envWithout('DB'))
+    expect(forced.status).toBe(500)
+    const forcedText = await forced.text()
+    expect(JSON.parse(forcedText).error).toBe('server_misconfigured')
+
+    const health = await SELF.fetch(`${BASE}/health`)
+    expect(health.status).toBe(200)
+    const healthText = await health.text()
+
+    for (const secret of secretValues()) {
+      expect(forcedText.includes(secret)).toBe(false)
+      expect(healthText.includes(secret)).toBe(false)
+    }
+  })
+
+  it('an unexpected error is a generic internal_error with no stack in the body', async () => {
+    const probe = new Hono<AppEnv>()
+    probe.get('/api/throws', () => {
+      throw new Error('probe route failure')
+    })
+    probe.onError(onError)
+    const res = await probe.fetch(new Request(`${BASE}/api/throws`), env)
+    expect(res.status).toBe(500)
+    const text = await res.text()
+    expect(JSON.parse(text)).toEqual({ error: 'internal_error', message: 'Something went wrong on the server. The error has been logged.' })
+    expect(text).not.toContain('probe route failure')
+    expect(text).not.toContain('auth.test')
+  })
+})
