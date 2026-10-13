@@ -158,7 +158,8 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
           {last !== null && ` · last on ${humanDate(last)}`}
         </p>
         <p>
-          First page <span className="font-mono">{data.first_page}</span>
+          First page:{' '}
+          {data.first_page === '/' ? 'the home page' : <span className="font-mono">{data.first_page}</span>}
           {data.first_utm_source !== null && `, came from ${capitalized(data.first_utm_source)}`}
         </p>
       </>
@@ -573,7 +574,8 @@ export default function LookupPage() {
         {showExample && <Button onClick={() => go(EXAMPLE)}>Try an example: {EXAMPLE}</Button>}
       </div>
 
-      {result !== null && (
+      {/* While suggestions are open the old profile steps aside, so the current reader is never in doubt. */}
+      {result !== null && !listboxShown && (
         <div className="space-y-4">
           <Header data={result} />
           <div className="grid gap-4 md:grid-cols-3">

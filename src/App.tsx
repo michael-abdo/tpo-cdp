@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { TODAY } from '../shared/config'
+import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
 import { ErrorLine } from './components'
 import EventsPage from './pages/EventsPage'
@@ -74,7 +75,7 @@ function TopBar() {
         <nav aria-label="Main" className="hidden flex-wrap gap-1 sm:flex">
           {links}
         </nav>
-        <span className="ml-auto rounded bg-gray-100 px-2 py-1 text-xs whitespace-nowrap text-gray-700">Today: {TODAY}</span>
+        <span className="ml-auto rounded bg-gray-100 px-2 py-1 text-xs whitespace-nowrap text-gray-700">Today: {humanDate(TODAY)}</span>
         <span className="hidden sm:inline-flex">{logoutButton}</span>
         <button
           ref={menuButton}

@@ -45,8 +45,9 @@ export function PageHeader({ title, purpose, action }: { title: string; purpose?
 }
 
 function Chevron({ open }: { open?: boolean }) {
-  // Inside <details> the rotation follows group-open; a button passes `open`.
-  const turn = open === undefined ? 'group-open:rotate-90' : open ? 'rotate-90' : ''
+  // Inside <details> the rotation follows only its OWN <details> (direct summary child), so a closed
+  // inner toggle never shows an open chevron when its outer one is open; a button passes `open`.
+  const turn = open === undefined ? '[details[open]>summary>&]:rotate-90' : open ? 'rotate-90' : ''
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" className={`size-4 shrink-0 transition-transform motion-reduce:transition-none ${turn}`}>
       <path d="M7 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -71,7 +72,7 @@ export function Disclosure({
   className?: string
 }) {
   return (
-    <details className={`group ${className}`} open={defaultOpen}>
+    <details className={className || undefined} open={defaultOpen}>
       <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded py-0.5 text-sm font-medium text-blue-700 hover:underline">
         <Chevron />
         {label}
@@ -88,7 +89,7 @@ export function Disclosure({
  */
 export function TechnicalDetails({ children }: { children: ReactNode }) {
   return (
-    <details className="group">
+    <details>
       <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded py-0.5 text-xs text-gray-600 hover:underline">
         <Chevron />
         Technical details

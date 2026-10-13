@@ -8,6 +8,7 @@
 // The form sends what the inputs hold (02 §Normalization): labels below are display maps only.
 
 import { type FormEvent, useState } from 'react'
+import { TODAY } from '../../shared/config'
 import { DEFINITIONS } from '../../shared/derive'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../worker/ingest/quarantine'
@@ -25,6 +26,7 @@ import {
   ResponsiveTable,
   TechnicalDetails,
 } from '../components'
+import { humanDate } from '../format'
 import type { SegmentFilters, SegmentPreview, SegmentRow } from '../types'
 
 /** Rows a preview asks for; the full segment is what Export CSV is for. */
@@ -100,7 +102,7 @@ function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
   if (filters.status.length > 1) cols.push({ header: 'Status', cell: (r) => statusLabel(r.status) })
   if (filters.source?.length !== 1) cols.push({ header: 'Signed up from', cell: (r) => sourceLabel(r.source) })
   cols.push(
-    { header: 'Last opened', cell: (r) => r.last_open_date ?? 'Never opened' },
+    { header: 'Last opened', cell: (r) => (r.last_open_date === null ? 'Never opened' : humanDate(r.last_open_date)) },
     { header: 'Engagement', cell: (r) => `${fmt(r.engagement_score)} / 100`, numeric: true },
   )
   return cols
@@ -109,7 +111,7 @@ function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
 function RowDetails({ row }: { row: SegmentRow }) {
   return (
     <dl className="space-y-1">
-      <Field label="Signed up">{row.signup_date}</Field>
+      <Field label="Signed up">{humanDate(row.signup_date)}</Field>
       <Field label="Signed up from">{sourceLabel(row.source)}</Field>
       <Field label="Uses the app">{row.has_app ? 'Yes' : 'No'}</Field>
     </dl>
@@ -158,7 +160,7 @@ export default function SegmentsPage() {
       const url = URL.createObjectURL(await res.blob())
       const link = document.createElement('a')
       link.href = url
-      link.download = 'segment.csv'
+      link.download = `readers-to-email-${TODAY}.csv`
       link.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -180,6 +182,8 @@ export default function SegmentsPage() {
   const hidden = ok !== null && !ok.filters.status.includes('unsubscribed') ? ok.data.hidden_unsubscribed : 0
   const countSentence = ok === null ? '' : ok.data.count === 0 ? 'No readers match' : `${plural(ok.data.count, 'reader matches', 'readers match')}`
 
+  const shownRows = ok === null ? 0 : showAll ? ok.data.rows.length : Math.min(FIRST_ROWS, ok.data.rows.length)
+
   let announcement = countSentence
   if (result?.status === 'loading') announcement = 'Counting matching readers…'
   if (exporting) announcement = 'Preparing download…'
@@ -197,8 +201,13 @@ export default function SegmentsPage() {
       <Announcer message={announcement} />
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-gray-700">Not sure where to start? Try the brief's example:</span>
-        <Button onClick={applyPreset}>haven't opened in 30 days (the brief's example)</Button>
+        <span className="text-gray-700">Not sure where to start?</span>
+        <Button onClick={applyPreset} aria-describedby="preset-hint">
+          haven't opened in 30 days (the brief's example)
+        </Button>
+        <span id="preset-hint" className="text-gray-600">
+          Active Instagram readers with no email opened in 30+ days, including never-opened.
+        </span>
       </div>
 
       <form onSubmit={submit} noValidate className="grid gap-5 rounded border border-gray-200 p-4 sm:grid-cols-2">
@@ -297,14 +306,14 @@ export default function SegmentsPage() {
         </div>
 
         <div className="sm:col-span-2">
-          <Button type="submit" variant="primary" className="px-5">
+          <Button type="submit" variant={ok === null ? 'primary' : 'secondary'} className="px-5">
             Preview
           </Button>
         </div>
       </form>
 
       {result === null && (
-        <EmptyState>Choose who to include, then press Preview, or start from the brief's example above.</EmptyState>
+        <EmptyState>Choose who to include, then press Preview, or start from the example above.</EmptyState>
       )}
       {result?.status === 'loading' && <Loading label="Counting matching readers…" />}
       {result?.status === 'error' && (
@@ -330,14 +339,14 @@ export default function SegmentsPage() {
               {ok.data.count === 0 && (
                 <p className={hintClass}>Try fewer days, more places they signed up, or “Either” for Uses the app.</p>
               )}
-              {ok.data.rows.length < ok.data.count && (
+              {shownRows < ok.data.count && (
                 <p className={hintClass}>
-                  Showing {fmt(ok.data.rows.length)} of {fmt(ok.data.count)}. Export CSV downloads all {fmt(ok.data.count)}.
+                  Showing the first {fmt(shownRows)}. Export CSV downloads the full list.
                 </p>
               )}
             </div>
             {ok.data.count > 0 && (
-              <Button onClick={() => void exportCsv(ok.filters)} disabled={exporting}>
+              <Button variant="primary" onClick={() => void exportCsv(ok.filters)} disabled={exporting}>
                 {exporting ? 'Preparing download…' : 'Export CSV'}
               </Button>
             )}
@@ -349,7 +358,7 @@ export default function SegmentsPage() {
               <ResponsiveTable
                 caption="Matching readers"
                 columns={columnsFor(ok.filters)}
-                rows={showAll ? ok.data.rows : ok.data.rows.slice(0, FIRST_ROWS)}
+                rows={ok.data.rows.slice(0, shownRows)}
                 rowKey={(r) => r.email}
                 details={(r) => <RowDetails row={r} />}
               />

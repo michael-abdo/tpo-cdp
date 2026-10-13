@@ -71,6 +71,9 @@ function ImportLine({ run }: { run: Overview['import_runs'][number] }) {
   )
 }
 
+const plainCount = (count: number, one: string, many: string) =>
+  `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`
+
 export default function OverviewPage() {
   const state = useGet<Overview>('/api/overview')
   const header = <PageHeader title={TITLE} purpose={PURPOSE} />
@@ -140,6 +143,11 @@ export default function OverviewPage() {
         />
       </StatGrid>
 
+      <p className="text-sm text-gray-700">
+        Loaded {plainCount(o.import_runs.length, 'file', 'files')} into one list:{' '}
+        {plainCount(o.import_runs.reduce((t, r) => t + r.merged, 0), 'duplicate', 'duplicates')} merged,{' '}
+        {plainCount(o.import_runs.reduce((t, r) => t + r.quarantined, 0), 'row', 'rows')} set aside.
+      </p>
       <Disclosure label="How the data was combined">
         <ul className="space-y-1 text-sm text-gray-800">
           {o.import_runs.map((run) => (
