@@ -216,11 +216,12 @@ except urllib.error.HTTPError as err:  # 4xx/5xx arrive here
 ```bash
 npm run webhook:send -- --event app_open                                # 202: anonymous, on a new device
 npm run webhook:send -- --again                                         # 200 duplicate: same event_id, re-signed
+npm run webhook:send -- --event app_open --again                        # the same re-send, as 11 §Verify writes it; --event must match the last event
 npm run webhook:send -- --event login --user u_2b6447a3 --same-device   # 202: the device's earlier event now resolves to julia.evans230
 npm run webhook:send -- --event app_open --url https://tpo-cdp.michaelabdo-mail.workers.dev
 ```
 
-Flags: `--event`, `--user` (absent = anonymous), `--device` or `--same-device` (default: a new device), `--again`, `--url` (default `http://localhost:5173`). New events are timestamped TODAY (2026-09-28) at the current UTC time of day.
+Flags: `--event`, `--user` (absent = anonymous), `--device` or `--same-device` (default: a new device), `--again`, `--url` (default `http://localhost:5173`). New events are timestamped TODAY (`shared/config.ts`) at the current UTC time of day.
 
 **Identity at read time.** An event with a `user_id` belongs to that user. An anonymous event belongs to its device's most recent user by event time (`device_identity`, updated by every identified event), so a `login` attaches the device's anonymous events whether it arrives before or after them, with no replay; lookup and `/events` tag them "stitched". A device shared by several users gives all its anonymous events to the most recent one, the documented miss. `/events` lists the last 20 events, newest first, with the profile each one resolves to.
 

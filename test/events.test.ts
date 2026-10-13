@@ -166,6 +166,23 @@ describe('GET /api/events/recent (04, 06 §/events)', () => {
     expect((await (await signedRequest(JSON.stringify(oldest))).send()).status).toBe(200)
     expect((await feed()).map((e) => e.event_id)).toEqual(expected)
   })
+
+  it('orders by received_at, not event time: a late event with an older timestamp lists first (07 §C)', async () => {
+    const before = await feed()
+    // Every event above carries a later event time (09:00, 09:10 or the brief's 14:22) than this one.
+    const late = {
+      event_id: nextEventId(),
+      event: 'read_story',
+      user_id: 'u_09acb8a4',
+      device_id: 'd_09acb8a4',
+      timestamp: `${TODAY}T08:00:00Z`,
+    }
+    expect(before.every((e) => e.event_ts > late.timestamp)).toBe(true)
+    expect(await post(late)).toBe(202)
+    const after = await feed()
+    expect(after[0]).toMatchObject({ event_id: late.event_id, event_ts: late.timestamp })
+    expect(after.slice(1).map((e) => e.event_id)).toEqual(before.slice(0, 19).map((e) => e.event_id))
+  })
 })
 
 interface PreviewBody {

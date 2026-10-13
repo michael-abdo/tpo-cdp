@@ -6,12 +6,13 @@
  *   npm run webhook:send -- --event app_open                       anonymous, on a new device
  *   npm run webhook:send -- --event login --user u_2b6447a3 --same-device
  *   npm run webhook:send -- --again                                the last event, same event_id
+ *   npm run webhook:send -- --event app_open --again               the same, as 11 §Verify writes it
  *   npm run webhook:send -- --event app_open --url https://…       another deployment
  *
  * Flags: --event <name> (sent as given; the server validates it, so a bad name shows its 400) ·
  * --user <u_…> (absent = anonymous, user_id null) · --device <d_…> · --same-device (the last
  * event's device) · --again (re-send the last body byte for byte, so the server answers 200
- * duplicate) · --url <base> (default http://localhost:5173, the `npm run dev` address in 11
+ * duplicate; an --event given with it must match the last event) · --url <base> (default http://localhost:5173, the `npm run dev` address in 11
  * §Local run). A new event gets a fresh event_id and, without --device/--same-device, a fresh
  * device_id. Its timestamp is TODAY (shared/config.ts) at the current UTC time of day: 02 §Time
  * says demo events default to TODAY, and the time of day keeps successive events in send order.
@@ -74,6 +75,22 @@ function readLast(flag: string): LastEvent {
   return { body: last.body, device_id: last.device_id }
 }
 
+/**
+ * The last body for --again. `--event` may name the event being re-sent, as 11 §Verify writes
+ * `--event app_open --again`; it must match the recorded event, because --again never changes the
+ * body (a different event under the same event_id would still answer 200 duplicate and hide it).
+ */
+function readAgain(event: string | undefined): LastEvent {
+  const last = readLast('--again')
+  if (event === undefined) return last
+  const recorded = (JSON.parse(last.body) as { event?: unknown }).event
+  if (recorded !== event)
+    throw new Error(
+      `--again re-sends the last body unchanged; its event is ${JSON.stringify(recorded)}, not ${JSON.stringify(event)}`,
+    )
+  return last
+}
+
 function buildBody(values: {
   event?: string
   user?: string
@@ -109,13 +126,11 @@ async function main(): Promise<void> {
     },
     strict: true,
   })
-  if (values.again && (values.event ?? values.user ?? values.device ?? values['same-device']) !== undefined)
-    throw new Error(
-      '--again re-sends the last body unchanged; it takes no --event, --user, --device or --same-device',
-    )
+  if (values.again && (values.user ?? values.device ?? values['same-device']) !== undefined)
+    throw new Error('--again re-sends the last body unchanged; it takes no --user, --device or --same-device')
 
   const secret = webhookSecret()
-  const send = values.again ? readLast('--again') : buildBody(values)
+  const send = values.again ? readAgain(values.event) : buildBody(values)
   if (!values.again) {
     mkdirSync(dirname(LAST_FILE), { recursive: true })
     writeFileSync(LAST_FILE, JSON.stringify(send))
