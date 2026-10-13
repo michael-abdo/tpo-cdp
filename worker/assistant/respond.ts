@@ -102,8 +102,9 @@ export type SqlSign = 'sql_fence' | 'select_line' | 'select_from'
 const NOT_WORD_BEFORE = '(?<![\\p{L}\\p{N}])'
 const NOT_WORD_AFTER = '(?![\\p{L}\\p{N}])'
 const SQL_SIGNS: ReadonlyArray<[SqlSign, RegExp]> = [
-  // A ```sql or ~~~sql fence, any fence length, any case.
-  ['sql_fence', new RegExp(`(?:\`{3,}|~{3,})[ \\t]*sql${NOT_WORD_AFTER}`, 'iu')],
+  // A fence whose tag starts with sql (```sql, ```sqlite, ~~~SQL…), any fence length, any case.
+  // No word end: D-58 says "contains a ```sql fence", so ```sqlite counts.
+  ['sql_fence', new RegExp(`(?:\`{3,}|~{3,})[ \\t]*sql`, 'iu')],
   // A line whose first word is SELECT, after any characters that are not letters.
   ['select_line', new RegExp(`^[^\\p{L}\\r\\n]*select${NOT_WORD_AFTER}`, 'imu')],
   // The word select followed anywhere later, across lines, by the word from.

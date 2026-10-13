@@ -331,6 +331,8 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     expect(String(result.content)).toContain('went_cold needs window_from and window_to')
     const rows = await auditRows('trace_id', body.audit_id)
     expect(rows.find((r) => r.kind === 'tool_call')).toMatchObject({ status: 'error', tool_name: 'aggregate' })
+    // A partial answer with no sign of SQL writes no D-58 discard row (09 D-58).
+    expect(rows.filter((r) => r.kind === 'blocked')).toEqual([])
   })
 
   it('error paths write their rows too: Gate 1, missing key, model failure, broken tool row', async () => {
@@ -910,6 +912,8 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
   const onlyOneSign: Array<[string, string, SqlSign]> = [
     ['a ```sql fence with no SELECT in it', 'There are 46.\n```sql\nPRAGMA table_info(v_profiles)\n```', 'sql_fence'],
     ['a ~~~SQL fence with no SELECT in it', 'There are 46.\n~~~SQL\nPRAGMA table_info(v_profiles)\n~~~', 'sql_fence'],
+    ['a ```sqlite fence (tag goes on past sql)', 'There are 46.\n```sqlite\nPRAGMA table_info(v_profiles)\n```', 'sql_fence'],
+    ['a ~~~sqlite fence', 'There are 46.\n~~~sqlite\nPRAGMA table_info(v_profiles)\n~~~', 'sql_fence'],
     ['a SELECT line with no FROM', 'There are 46.\n\nSELECT count(*) AS n;', 'select_line'],
     ['an indented select line with no from', 'There are 46.\n    select 1', 'select_line'],
     ['a blockquoted SELECT with no FROM', 'There are 46.\n> SELECT 46', 'select_line'],
