@@ -863,6 +863,24 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     shapes.push([`${name} inside select`, `There are 46. sel${char}ect pkey from v_profiles`])
     shapes.push([`${name} inside from`, `There are 46. select pkey fr${char}om v_profiles`])
   }
+  // An invisible character between a keyword and the next word must not glue them (the SPACED copy),
+  // including format characters D-58 does not list (U+2063 invisible separator). Mid-sentence, so
+  // the select … from sign is the only one that can catch them.
+  for (const [name, char] of [['U+200B', '​'], ['U+2063', '⁣']]) {
+    shapes.push([`${name} between select and the column`, `There are 46. select${char}email from users`])
+    shapes.push([`${name} between from and the table`, `There are 46. select email from${char}users`])
+    shapes.push([`${name} between SELECT and the column, line start`, `SELECT${char}email FROM users`])
+  }
+  // "_" is not a word boundary for D-58: markdown emphasis and identifiers cannot hide a keyword.
+  shapes.push(
+    ['underscore emphasis, line start', '_SELECT_ email _FROM_ users'],
+    ['double-underscore emphasis', '__select__ * __from__ users'],
+    ['underscore emphasis mid-sentence', 'I counted them with _select_ email _from_ subscribers.'],
+    ['an identifier glued by _', 'There are 46. select_email from users'],
+    ['a numbered list item', 'There are 46.\n1. SELECT COUNT(*)'],
+    ['a dash list item', 'There are 46.\n- SELECT 1'],
+    ['star emphasis at line start', 'There are 46.\n*SELECT* 1'],
+  )
   for (const [shape, sql] of shapes) {
     it(`discards: ${shape}`, () => {
       expect(sqlSign(sql)).not.toBeNull()
@@ -883,6 +901,11 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     ['a backticked SELECT line with no FROM', 'There are 46.\n`SELECT 46`', 'select_line'],
     ['select … from inside a line', 'There are 46. select email from users.', 'select_from'],
     ['select … from across lines, select not first on its line', 'I ran select count(*)\n\nand then\nfrom v_profiles', 'select_from'],
+    ['a zero-width space gluing select to the column', 'There are 46. select\u200Bemail from users', 'select_from'],
+    ['an invisible separator gluing from to the table', 'There are 46. select email from\u2063users', 'select_from'],
+    ['underscore emphasis mid-sentence', 'I counted them with _select_ email _from_ subscribers.', 'select_from'],
+    ['a numbered list item with no FROM', 'There are 46.\n1. SELECT COUNT(*)', 'select_line'],
+    ['emphasis at line start with no FROM', 'There are 46.\n*SELECT* 1', 'select_line'],
   ]
   for (const [shape, sql, sign] of onlyOneSign) {
     it(`the ${sign} sign alone catches ${shape}`, () => {
@@ -902,6 +925,8 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
       'The selection came from Instagram.',
       'Selected readers came from Instagram, and 46 went cold.',
       'There are 46.\n```\n46\n```',
+      // Kept text is the original, not the checked copy: no NFKC fold, no format character removed.
+      'Café readers: ４６ went cold\u200B in August.',
     ]) {
       expect(sqlSign(plain)).toBeNull()
       for (const { result, notes } of bothPaths(plain)) {
@@ -927,6 +952,9 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     const table = respond({ modelText: finalText('', { type: 'table', text: sql, window: null, filters_applied: {}, definitions_used: [] }), outputs: [seg], capped: false })
     expect(table.result).toMatchObject({ type: 'table', text: 'Here is the table you asked for.', partial: false })
     expect(table.notes.sqlDiscarded).toBe('select_from')
+    // type table with no tool output has no table, so the table sentence would be false.
+    const noTable = respond({ modelText: finalText('', { type: 'table', text: sql, window: null, filters_applied: {}, definitions_used: [] }), outputs: [], capped: false })
+    expect(noTable.result).toMatchObject({ type: 'table', text: ANSWER_SENTENCE, table: null, partial: false })
     const capped = respond({ modelText: sql, outputs: [seg], capped: true })
     expect(capped.result.text).toBe(`${ANSWER_SENTENCE} The assistant reached its limit of 5 tool rounds before it finished, so this answer is incomplete.`)
     expect(capped.notes.sqlDiscarded).toBe('select_from')

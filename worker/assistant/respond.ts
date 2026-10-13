@@ -77,26 +77,37 @@ export const FinalBlock = z
 // the block's own "text" value (an SQL fence the model quoted) cannot end the block early.
 const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
 
-// T-AI-5 by rejection, not stripping (09 D-58). The checks read a copy of the text with every
-// Unicode format character deleted (\p{Cf}: U+00AD soft hyphen, U+200B-U+200D zero-width, U+2060
-// word joiner, U+FEFF and the rest), then NFKC-folded (fullwidth letters become ASCII), so neither
-// can split or disguise a keyword. Any one sign discards the whole text; there is no English
-// exemption, so "select a segment from the builder" is discarded too (accepted by D-58).
+// T-AI-5 by rejection, not stripping (09 D-58). Every Unicode format character (\p{Cf}: U+00AD soft
+// hyphen, U+200B-U+200D zero-width, U+2060 word joiner, U+FEFF and the rest) is invisible, so the
+// signs are checked on two NFKC-folded copies (fullwidth letters become ASCII) and either one
+// matching discards the text:
+//   - DELETED: format characters removed, so one inside a keyword cannot split it ("sel\u200Bect");
+//   - SPACED: format characters turned into spaces, so one between a keyword and the next word
+//     cannot glue them out of a whole-word match ("SELECT\u200Bemail", "SELECT\u2063email").
+// A word boundary is a letter or digit boundary, not \b, so "_" (markdown emphasis or an
+// identifier) cannot hide a keyword: "_select_ email _from_ users" and "select_email from users"
+// are discarded. Any one sign discards the whole text; there is no English exemption, so
+// "select a segment from the builder" is discarded too (accepted by D-58). Wider than D-58's
+// wording in the safe direction only: all format characters, NFKC, "_", and any non-letter
+// prefix before a line-start SELECT (list markers, emphasis, digits as well as indentation,
+// blockquote marks and backticks).
 const FORMAT_CHARS = /\p{Cf}/gu
 export type SqlSign = 'sql_fence' | 'select_line' | 'select_from'
+const NOT_WORD_BEFORE = '(?<![\\p{L}\\p{N}])'
+const NOT_WORD_AFTER = '(?![\\p{L}\\p{N}])'
 const SQL_SIGNS: ReadonlyArray<[SqlSign, RegExp]> = [
   // A ```sql or ~~~sql fence, any fence length, any case.
-  ['sql_fence', /(?:`{3,}|~{3,})[ \t]*sql\b/i],
-  // A line whose first word is SELECT, after optional indentation, blockquote marks or backticks.
-  ['select_line', /^[\s>`]*select\b/im],
+  ['sql_fence', new RegExp(`(?:\`{3,}|~{3,})[ \\t]*sql${NOT_WORD_AFTER}`, 'iu')],
+  // A line whose first word is SELECT, after any characters that are not letters.
+  ['select_line', new RegExp(`^[^\\p{L}\\r\\n]*select${NOT_WORD_AFTER}`, 'imu')],
   // The word select followed anywhere later, across lines, by the word from.
-  ['select_from', /\bselect\b[\s\S]*\bfrom\b/i],
+  ['select_from', new RegExp(`${NOT_WORD_BEFORE}select${NOT_WORD_AFTER}[\\s\\S]*${NOT_WORD_BEFORE}from${NOT_WORD_AFTER}`, 'iu')],
 ]
 
 /** The first D-58 sign of SQL in `text`, or null. Pure; exported for tests. */
 export function sqlSign(text: string): SqlSign | null {
-  const checked = text.replace(FORMAT_CHARS, '').normalize('NFKC')
-  for (const [sign, pattern] of SQL_SIGNS) if (pattern.test(checked)) return sign
+  const copies = [text.replace(FORMAT_CHARS, ''), text.replace(FORMAT_CHARS, ' ')].map((copy) => copy.normalize('NFKC'))
+  for (const [sign, pattern] of SQL_SIGNS) if (copies.some((copy) => pattern.test(copy))) return sign
   return null
 }
 
@@ -144,6 +155,8 @@ function screened(text: string, type: OutputType, count: number | null): { text:
 
 export function respond(input: RespondInput): Responded {
   const last = input.outputs.at(-1)
+  // A partial result is always type answer with no counted segment (09 D-42), so its discard
+  // sentence is the answer one, even when the model meant a segment or table.
   const partialResult = (text: string, malformed: string): Responded => {
     const shown = screened(text.replace(JSON_FENCE, ' '), 'answer', null)
     return {
@@ -198,12 +211,15 @@ export function respond(input: RespondInput): Responded {
     segment = { filters: counted.segment.filters, count: counted.segment.count }
   }
 
-  const shown = screened(block.text, block.type, segment?.count ?? null)
+  const table = block.type === 'answer' ? null : tableOf(last)
+  // "Here is the table you asked for." would be false with no table, so that case gets the answer sentence.
+  const sentenceType: OutputType = block.type === 'table' && table === null ? 'answer' : block.type
+  const shown = screened(block.text, sentenceType, segment?.count ?? null)
   return {
     result: {
       type: block.type,
       text: shown.text,
-      table: block.type === 'answer' ? null : tableOf(last),
+      table,
       segment,
       window: block.window,
       filters_applied: block.filters_applied,
