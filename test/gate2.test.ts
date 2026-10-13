@@ -312,7 +312,7 @@ describe('T-GATE-2 Gate 3: the read-only floor (03 row 8)', () => {
 describe('T-GATE-2 every tool call goes through Gate 2: authorizeToolCall (03 row 7)', () => {
   it('an unknown tool is denied; input failing input_schema is denied; valid input passes', async () => {
     const tools = await loadTools(env.DB)
-    expect(tools.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql', 'pages_new_subscribers_hit_first'])
+    expect(tools.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql', 'pages_new_subscribers_hit_first', 'describe_schema'])
     expect(authorizeToolCall(tools, { name: 'drop_everything', input: {} })).toEqual({ allowed: false, reason: 'unknown_tool' })
     const cases: Array<[string, unknown, string[]]> = [
       ['segment', { status: 'active' }, ['input.status must be array']],

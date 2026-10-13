@@ -25,6 +25,13 @@
 //   no PII column (01 §PII denylist), so its rows reference subjects by pk_ keys only (T-AI-2);
 //   the executor's scan is the second, independent check (05 §Scanner).
 //
+// - `describe_schema` (14 §4.2 draft, the origin's explain_database_schema; 16 §If time remains
+//   item 1) returns the v_* view names and their PRAGMA columns with declared types, as
+//   schema-context.ts discovered them (it refuses any view that selects a 01 §PII denylist
+//   column). It reads no row of any view or table, so the result holds names and types only; the
+//   executor's scan still runs on it. The same lists are in the system prompt (05 §What the model
+//   receives item 1); the tool lets the model re-read one view's exact columns before query_sql.
+//
 // `queryHandler` is not in the registry: it runs an assistant_tools row of handler_type `query`
 // (03 row 9, 09 D-41), the way Growth adds a question type as a row with no deploy. The loader
 // has already checked the row's template and rewritten its `:name` placeholders to `?`
@@ -421,6 +428,40 @@ const querySqlHandler: BuiltinHandler = {
   },
 }
 
+// ── describe_schema ──────────────────────────────────────────────────────────────────────
+
+const DescribeSchemaInput = z.object({ view: z.string().min(1).optional() }).strict()
+
+/** Result columns of describe_schema: one row per view column. */
+export const DESCRIBE_SCHEMA_COLUMNS = ['view', 'column', 'type'] as const
+
+const describeSchemaHandler: BuiltinHandler = {
+  inputKeys: Object.keys(DescribeSchemaInput.shape),
+  async run(db, input) {
+    const parsed = DescribeSchemaInput.safeParse(input)
+    if (!parsed.success) {
+      throw new ToolInputError(parsed.error.issues.map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`))
+    }
+    const all = await viewSchemas(db)
+    const wanted = parsed.data.view
+    const views = wanted === undefined ? all : all.filter((v) => v.name === wanted)
+    // The problem names the views that exist, never echoes what the model sent.
+    if (views.length === 0) throw new ToolInputError([`view must be one of ${all.map((v) => v.name).join(', ')}, or absent for all of them`])
+    const rows = views.flatMap((v) => v.columns.map((c): ResultRow => ({ view: v.name, column: c.name, type: c.type })))
+    return {
+      tool: 'describe_schema',
+      columns: [...DESCRIBE_SCHEMA_COLUMNS],
+      rows,
+      total_rows: rows.length,
+      summary: {
+        // The full answer for the model: the table below shows it only the first rows (format-results.ts).
+        views: Object.fromEntries(views.map((v) => [v.name, v.columns.map((c) => (c.type === '' ? c.name : `${c.name} ${c.type}`))])),
+        note: 'Names and declared types only; computed columns have no declared type. No rows were read.',
+      },
+    }
+  },
+}
+
 // ── query rows ───────────────────────────────────────────────────────────────────────────
 
 /** A query row's template as the loader checked it (tool-loader.ts). */
@@ -477,4 +518,5 @@ export const BUILTIN_HANDLERS: Readonly<Record<string, BuiltinHandler>> = {
   segment: segmentHandler,
   aggregate: aggregateHandler,
   query_sql: querySqlHandler,
+  describe_schema: describeSchemaHandler,
 }

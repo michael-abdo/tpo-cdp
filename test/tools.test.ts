@@ -150,6 +150,7 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
       ['aggregate', 'builtin'],
       ['query_sql', 'builtin'],
       [NEW_PAGES, 'query'],
+      ['describe_schema', 'builtin'],
     ])
   })
 

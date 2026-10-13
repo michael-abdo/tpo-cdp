@@ -1,6 +1,7 @@
 /**
- * The assistant_tools rows the MVP seeds (03 §Gateway layers row 9; 09 D-41; drafts in 14 §4.2,
- * same `ToolSeed` shape as the origin's seed-chatbot-tools.ts L31-38). Data only: the Worker
+ * The assistant_tools rows the seed writes: the MVP's four and the parked describe_schema (03
+ * §Gateway layers row 9; 09 D-41; 16 §If time remains item 1; drafts in 14 §4.2, same
+ * `ToolSeed` shape as the origin's seed-chatbot-tools.ts L31-38). Data only: the Worker
  * never imports this file. Tools are rows (CLAUDE.md "Tools are data"): the loader
  * (worker/assistant/tools/tool-loader.ts) reads them from D1 and validates every enabled row.
  * `npm run tools:seed` (scripts/seed-assistant-tools.ts) writes them; tests insert the same rows
@@ -26,8 +27,11 @@
  *   so the row's dates cannot drift from the definition. Its one input,
  *   `include_unsubscribed`, is bound through param_mapping; absent, the template keeps the
  *   unsubscribed default (02 §Defaults).
- * - `describe_schema` and `open_segment` are not seeded: neither they nor the `passthrough` type
- *   are in 16 §MVP scope.
+ * - `describe_schema` (16 §If time remains item 1) keeps the draft's optional `view` input. It
+ *   returns the v_* view names and their PRAGMA columns with declared types (01 §PII-free views),
+ *   never a row, so the description says "columns" where the draft said "columns and meaning":
+ *   meanings live in DEFINITIONS, which the system prompt renders (02 §Derived).
+ * - `open_segment` is not seeded: it and the `passthrough` type are parked (16 §If time remains).
  */
 
 import { addDays, DEFINITIONS, type DateWindow, lastNDays } from '../shared/derive'
@@ -194,6 +198,22 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
       format: 'markdown_table',
     },
     sortOrder: 40,
+  },
+  {
+    name: 'describe_schema',
+    description:
+      'List the PII-free views (v_*) and their columns with declared types, read from the database. Returns names ' +
+      'and types only, never rows. Give view to describe one view; leave it out for all of them. Use it to check a ' +
+      "view's exact column names before writing query_sql; it answers no data question by itself.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        view: { type: 'string', minLength: 1, description: 'One view name, e.g. v_profiles. Absent = every view.' },
+      },
+    },
+    handlerType: 'builtin',
+    executionConfig: { handler_name: 'describe_schema' },
+    sortOrder: 50,
   },
 ]
 
