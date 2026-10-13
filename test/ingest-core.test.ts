@@ -15,6 +15,8 @@ import { ingestSubscribers, type SubscriberIngest } from '../worker/ingest/subsc
 // - T-ING-4 (08 "a conflicting pair built from real rows"): lines 70/2269 with fields set to
 //   values that occur in the real file (2026-07-01, 2026-09-28, unsubscribed, Facebook, blank),
 //   because no pair in the data disagrees (02 §Dedupe).
+// - three-row merge (T-ING-3): real line 70 fed three times, unchanged (09 D-47), because no
+//   address occurs three times in the data.
 
 let loaded: { parsed: ParsedCsv; result: SubscriberIngest } | undefined
 /** Parses and ingests the real file once, inside a test, so a throw fails named tests. */
@@ -117,6 +119,17 @@ describe('T-ING-3 dedupe (02 §Dedupe, §Counts)', () => {
       last_open_date: '2026-09-20',
       merged_count: 2,
     })
+  })
+
+  it('merged_count sums every collapsed row: real line 70 fed three times gives 3 (D-47)', () => {
+    // The data has no triple, so the real counts cannot tell a sum from a constant 2.
+    const merged = ingestSubscribers({
+      header: real().parsed.header,
+      rows: [rowAt(70), rowAt(70), rowAt(70)],
+      lineNos: [70, 70, 70],
+    }).subscribers
+    expect([...merged.keys()]).toEqual(['chloe.reed603@yahoo.com'])
+    expect(merged.get('chloe.reed603@yahoo.com')?.merged_count).toBe(3)
   })
 
   it('2,995 rows − 10 quarantined − 85 merged = 2,900 subscribers', () => {

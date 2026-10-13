@@ -16,6 +16,14 @@ describe('T-NORM-1 normalizeEmail', () => {
     expect(normalizeEmail('   ')).toBeNull()
   })
 
+  it('pins each clause of the 02 §Normalization regex', () => {
+    // Regex-clause fixtures, not business data: these strings are never presented as real
+    // emails and none can pass the regex (09 D-47 spirit). Each one fails a weakened pattern:
+    expect(normalizeEmail('a@b')).toBeNull() // dropping the required `\.` before the TLD
+    expect(normalizeEmail('a@b@c.com')).toBeNull() // allowing `@` in either part
+    expect(normalizeEmail('a b@c.com')).toBeNull() // allowing whitespace inside the local part
+  })
+
   it('changes nothing but case: plus tags and dots stay (D-26)', () => {
     expect(normalizeEmail('a+b@x.com')).toBe('a+b@x.com')
     expect(normalizeEmail('First.Last@gmail.com')).toBe('first.last@gmail.com')
@@ -70,6 +78,7 @@ describe('T-NORM-3 single implementation', () => {
   it('scans the real tree, not an empty glob', () => {
     expect(Object.keys(sources)).toContain('../shared/normalize.ts')
     expect(Object.keys(sources)).toContain('../worker/index.ts')
+    expect(Object.keys(migrations)).toContain('../migrations/0001_core.sql')
   })
 
   it('no file outside shared/normalize.ts lowercases an email', () => {
