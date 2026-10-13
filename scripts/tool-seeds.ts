@@ -128,7 +128,10 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
       'segment and aggregate cannot answer. The server refuses the query unless: it starts with SELECT; it is one ' +
       'statement with no ";"; it has no WITH, PRAGMA, ATTACH or comments; it reads only those views and their columns, ' +
       'written plainly without quotes; every computed column is named with AS; dates are literals counted from TODAY ' +
-      '(never \'now\' or CURRENT_DATE). At most 100 rows come back: a missing or larger LIMIT becomes LIMIT 100. ' +
+      '(never \'now\' or CURRENT_DATE); date(), datetime(), julianday() and strftime() take a \'YYYY-MM-DD\' literal or a ' +
+      'date column (signup_date, last_open_date, cold_since, app_created_at, event_ts) as their time value, never ' +
+      'nothing or an expression. "Cold" is the stored cold_since <= TODAY and engagement is the stored ' +
+      'engagement_score; never re-derive them. At most 100 rows come back: a missing or larger LIMIT becomes LIMIT 100. ' +
       'Exclude unsubscribed profiles (status = \'active\') unless the teammate asks for them. Never show the SQL to the user.',
     inputSchema: {
       type: 'object',

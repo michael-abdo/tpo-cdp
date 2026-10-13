@@ -6,7 +6,7 @@ import { TOOL_SEEDS, toolSeedInsert } from '../scripts/tool-seeds'
 import { EMAIL_REGEX, PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
 import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { MODEL } from '../worker/assistant/build-request'
-import { authorizeToolCall, validateSqlAgainstViews } from '../worker/assistant/gates/gate2-tool-authorizer'
+import { authorizeToolCall, DATE_COLUMN, validateSqlAgainstViews } from '../worker/assistant/gates/gate2-tool-authorizer'
 import { GateDenied, readOnlySelect, sanitizeSqlError, SQL_ROW_LIMIT } from '../worker/assistant/gates/gate3-readonly-sql'
 import type { MessagesTransport } from '../worker/assistant/loop'
 import { type ViewSchema, viewSchemas } from '../worker/assistant/schema-context'
@@ -109,6 +109,16 @@ describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
       ['SELECT pkey FROM main.v_profiles', /^main\.v_profiles: name a view directly/],
       ["SELECT name FROM pragma_table_info('subscribers')", /^pragma_table_info\(\) is not a view/],
       ['SELECT sql FROM sqlite_master', /^sqlite_master is not one of the views/],
+      // SQLite reads a parenthesized table as a relation: the name inside must not hide under the alias.
+      ['SELECT count(*) AS subscribers FROM (subscribers)', /^a parenthesized table or join is not allowed after FROM/],
+      ['SELECT * FROM (subscribers) subscribers', /^a parenthesized table or join is not allowed after FROM/],
+      ['SELECT p.pkey FROM v_profiles p JOIN (app_users) app_users ON 1 = 1', /^a parenthesized table or join is not allowed after JOIN/],
+      ['SELECT * FROM (ai_audit) ai_audit', /^a parenthesized table or join is not allowed after FROM/],
+      ['SELECT p.pkey FROM v_profiles p, (assistant_tools) assistant_tools', /^a parenthesized table or join is not allowed after a comma in FROM/],
+      ['SELECT * FROM (v_profiles JOIN subscribers ON 1 = 1) x', /^a parenthesized table or join is not allowed after FROM/],
+      // SQLite also takes a string as a table name after FROM or JOIN.
+      ["SELECT * FROM 'subscribers'", /^after FROM, write a view name plainly or \(SELECT …\), not a string or quoted name/],
+      ["SELECT p.pkey FROM v_profiles p JOIN 'app_users' u ON 1 = 1", /^after JOIN, write a view name plainly or \(SELECT …\)/],
     ]
     for (const [sql, problem] of probes) {
       const denied = gate2(sql)
@@ -141,6 +151,59 @@ describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
     expect(gate2('SELECT count(*) AS n FROM v_profiles WHERE signup_date > CURRENT_DATE')?.problems).toEqual([
       'CURRENT_DATE is the wall clock and is not allowed; use TODAY from the system prompt as a date literal',
     ])
+  })
+
+  it('the wall clock through a date function is denied: no time value, a computed one, a free-text column, a renamed column', () => {
+    // SQLite evaluates each of these with the machine's clock, not TODAY (02 §Time).
+    const probes: Array<[string, RegExp]> = [
+      ['SELECT count(*) AS n FROM v_profiles WHERE signup_date > date()', /^date\(\) without a time value reads the wall clock/],
+      ["SELECT strftime('%Y-%m-%d') AS d FROM v_profiles", /^strftime\(\) without a time value reads the wall clock/],
+      ['SELECT julianday() AS d FROM v_profiles', /^julianday\(\) without a time value reads the wall clock/],
+      ["SELECT date('n'||'ow') AS d FROM v_profiles", /^the time value of date\(\) must be a single date literal or date column, not an expression/],
+      ["SELECT datetime(lower('NOW')) AS d FROM v_profiles", /^the time value of datetime\(\) must be a single date literal or date column/],
+      ["SELECT count(*) AS n FROM v_profiles WHERE signup_date > date(signup_date, date())", /^date\(\) without a time value/],
+      ["SELECT date('instagram') AS d FROM v_profiles", /^the time value of date\(\) must be a date literal 'YYYY-MM-DD'/],
+      // A webhook can store any text in page; only stored date columns are time values.
+      ['SELECT date(page) AS d FROM v_web_events', /^page is not a stored date column of a view this query reads/],
+      // A name can be given to any expression, with or without AS, or through a compound subquery.
+      ["SELECT * FROM (SELECT 'n'||'ow' signup_date FROM v_profiles) WHERE date(signup_date) > '2026-08-01'", /^signup_date is not a stored date column/],
+      ["SELECT 'n'||'ow' AS signup_date FROM v_profiles ORDER BY date(signup_date)", /^signup_date is not a stored date column/],
+      ["SELECT * FROM (SELECT signup_date FROM v_profiles UNION ALL SELECT page FROM v_web_events) WHERE date(signup_date) > '2026-08-01'", /^date\(\) over a column cannot be combined with UNION/],
+      ['SELECT date(x.signup_date) AS d FROM (SELECT signup_date FROM v_profiles) x', /^x\.signup_date: date\(\) must read its date column from a view/],
+    ]
+    for (const [sql, problem] of probes) {
+      const denied = gate2(sql)
+      expect(denied, sql).not.toBeNull()
+      expect(denied!.problems.some((p) => problem.test(p)), `${sql} → ${denied!.problems.join(' | ')}`).toBe(true)
+    }
+    const ok = [
+      "SELECT count(*) AS n FROM v_profiles WHERE status = 'active' AND julianday('2026-09-28') - julianday(last_open_date) >= 30",
+      "SELECT strftime('%Y-%m', p.signup_date) AS month, count(*) AS n FROM v_profiles p GROUP BY month",
+      "SELECT date(event_ts) AS day, count(*) AS views FROM v_web_events WHERE event_ts >= '2026-08-01' GROUP BY day",
+      "SELECT pkey FROM v_profiles WHERE date(signup_date, '+7 days') < '2026-09-28T00:00:00Z'",
+    ]
+    for (const sql of ok) expect(gate2(sql), sql).toBeNull()
+  })
+
+  it('the date columns a date function may read hold only ISO dates in the seeded data', async () => {
+    const dateColumns = views.flatMap((v) => v.columns.filter((c) => DATE_COLUMN.test(c.name)).map((c) => `${v.name}.${c.name}`))
+    expect(dateColumns).toEqual([
+      'v_app_events.event_ts',
+      'v_profiles.signup_date',
+      'v_profiles.last_open_date',
+      'v_profiles.cold_since',
+      'v_profiles.app_created_at',
+      'v_web_events.event_ts',
+    ])
+    for (const qualified of dateColumns) {
+      const [view, column] = qualified.split('.')
+      const counts = await env.DB.prepare(
+        `SELECT count(${column}) AS filled, sum(${column} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*') AS iso FROM ${view}`,
+      ).first<{ filled: number; iso: number | null }>()
+      // app events arrive only through the webhook (no events CSV, 09 D-11), which stores event_ts normalized (09 D-38).
+      if (view !== 'v_app_events') expect(counts!.filled, qualified).toBeGreaterThan(0)
+      expect(counts!.iso ?? 0, qualified).toBe(counts!.filled)
+    }
   })
 })
 
@@ -208,7 +271,7 @@ describe('T-GATE-2 every tool call goes through Gate 2: authorizeToolCall (03 ro
     expect(authorizeToolCall(tools, { name: 'drop_everything', input: {} })).toEqual({ allowed: false, reason: 'unknown_tool' })
     const cases: Array<[string, unknown, string[]]> = [
       ['segment', { status: 'active' }, ['input.status must be array']],
-      ['segment', { status: ['active', 'gone'] }, ['input.status[1] must be one of "active", "unsubscribed"']],
+      ['segment', { status: ['active', 'instagram'] }, ['input.status[1] must be one of "active", "unsubscribed"']],
       ['segment', { days_since_open_gte: 0 }, ['input.days_since_open_gte must be at least 1']],
       ['segment', { days_since_open_gte: 30.5 }, ['input.days_since_open_gte must be integer']],
       ['segment', { status: [] }, ['input.status must have at least 1 item(s)']],
@@ -301,6 +364,25 @@ describe('query_sql through Gates 2 and 3 (03 rows 7-9)', () => {
     const { executed } = await runTool('query_sql', { sql, explanation: 'nobody' })
     expect(executed.output).toMatchObject({ columns: ['pkey', 'source'], rows: [], total_rows: 0, summary: { may_have_more_rows: false } })
     expect(String(executed.result.content)).toContain('No rows.')
+  })
+
+  it('a hidden table in parentheses or the wall clock in a date function is refused before D1, with a blocked gate2 row', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const probes = [
+      'SELECT count(*) AS subscribers FROM (subscribers)',
+      'SELECT * FROM (subscribers) subscribers',
+      'SELECT p.pkey FROM v_profiles p JOIN (app_users) app_users ON 1 = 1',
+      'SELECT * FROM (ai_audit) ai_audit',
+      "SELECT * FROM 'subscribers'",
+      "SELECT count(*) AS n FROM v_profiles WHERE status = 'active' AND last_open_date < date()",
+    ]
+    for (const sql of probes) {
+      const { executed, rows } = await runTool('query_sql', { sql, explanation: 'probe' })
+      expect(executed.output, sql).toBeNull()
+      expect(executed.result.is_error, sql).toBe(true)
+      expect(rows, sql).toEqual([expect.objectContaining({ kind: 'blocked', status: 'blocked', tool_name: 'query_sql', sql, row_count: null })])
+      expect(rows[0].error?.startsWith('gate2_denied: '), `${sql} → ${rows[0].error}`).toBe(true)
+    }
   })
 
   it('two columns with one name are refused rather than silently merged', async () => {

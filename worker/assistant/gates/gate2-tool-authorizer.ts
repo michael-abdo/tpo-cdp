@@ -8,6 +8,13 @@
 //     (01 §PII-free views, discovered by schema-context.ts); write and statement keywords are
 //     denied; every column is checked against the views' `PRAGMA table_info` columns, which the
 //     origin advertised but never did (`knownColumns` unused, 14 §3.5; D-24 "→ implemented")
+//   - a relation is a view named by a bare word or a `(SELECT …)` subquery; a parenthesized
+//     table or join (`FROM (subscribers)`) and a string used as a table name (`FROM 'subscribers'`,
+//     which SQLite accepts) are denied, so no hidden table is read under a subquery's alias
+//   - the wall clock is denied (02 §Time): 'now', CURRENT_DATE/TIME/TIMESTAMP, and any date
+//     function whose time value is missing or computed (`date()`, `strftime('%Y')`,
+//     `date('n'||'ow')`), since SQLite reads the clock for those; the time value must be a date
+//     literal or a stored date column of a view (dateTimeValueProblems)
 //
 // Gate 2 is stricter than JSON Schema in one way: a property the schema does not declare is
 // denied unless the schema sets `additionalProperties`. Tool rows are data (09 D-41); the loader
@@ -154,6 +161,35 @@ const FUNCTIONS = new Set([
   'date', 'datetime', 'julianday', 'strftime',
 ])
 
+/**
+ * The date functions FUNCTIONS allows, with the index of their time-value argument. SQLite reads
+ * the wall clock when that argument is missing or evaluates to 'now', so it must be a date
+ * literal or a stored date column (dateTimeValueProblems). time() and unixepoch() are not allowed.
+ */
+const TIME_VALUE_ARGUMENT = new Map([
+  ['date', 0],
+  ['datetime', 0],
+  ['julianday', 0],
+  ['strftime', 1],
+])
+
+/** A date or UTC timestamp literal, as stored (02 §Time): `YYYY-MM-DD`, optionally with a time and zone. */
+const ISO_DATE_LITERAL = /^'\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?'$/
+
+/**
+ * A view column that stores a date or timestamp, by 01's naming (signup_date, last_open_date,
+ * cold_since, app_created_at, event_ts). These hold normalized ISO values written by the seed,
+ * shared/derive.ts or the webhook (02 §Time, 09 D-16, D-38), never 'now'; a free-text column
+ * (page, utm_source, story) can hold anything a webhook sent, so it is no time value.
+ * T-GATE-2 checks every such column's seeded values are ISO dates.
+ */
+export const DATE_COLUMN = /_(?:date|ts|at|since)$/
+
+/** Keywords that end an expression, so a name right after one is an alias (`CASE … END x`). */
+const EXPRESSION_END_KEYWORDS = new Set(['END', 'NULL', 'TRUE', 'FALSE', 'ISNULL', 'NOTNULL', 'NOCASE', 'BINARY'])
+
+const COMPOUND = new Set(['UNION', 'INTERSECT', 'EXCEPT'])
+
 /** After FROM at the same depth, these words end the list of relations. */
 const FROM_LIST_END = new Set(['WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'UNION', 'INTERSECT', 'EXCEPT', 'WINDOW'])
 
@@ -220,10 +256,16 @@ export function validateSqlAgainstViews(sql: string, views: readonly ViewSchema[
     const startsRelation = upper === 'FROM' || upper === 'JOIN' || (t.text === ',' && inFrom.has(t.depth))
     if (startsRelation && inFrom.has(t.depth)) {
       const next = tokens[i + 1]
+      const where = t.text === ',' ? 'after a comma in FROM' : `after ${upper}`
       if (isPunct(next, '(')) {
-        const close = closing.get(i + 1)!
-        aliasAt(close + 1, null)
-      } else if (isName(next)) {
+        // Only a subquery may be parenthesized. SQLite also reads `(subscribers)` and
+        // `(a JOIN b)` here, which would put a hidden table under the alias (T-GATE-2).
+        if (isWord(tokens[i + 2], 'SELECT')) aliasAt(closing.get(i + 1)! + 1, null)
+        else problems.push(`a parenthesized table or join is not allowed ${where}; name a view directly or write (SELECT …); only these views may be read: ${allowed}`)
+      } else if (!isWord(next)) {
+        // SQLite takes a string as a table name here (`FROM 'subscribers'`).
+        problems.push(`${where}, write a view name plainly or (SELECT …), not a string or quoted name; only these views may be read: ${allowed}`)
+      } else {
         named.add(i + 1)
         if (isPunct(tokens[i + 2], '(')) {
           problems.push(`${next.text}() is not a view; only these views may be read: ${allowed}`)
@@ -288,6 +330,92 @@ export function validateSqlAgainstViews(sql: string, views: readonly ViewSchema[
     }
   }
 
+  problems.push(...dateTimeValueProblems(tokens, closing, relations, read, columnAliases))
+
   if (problems.length > 0) throw new GateDenied('gate2', [...new Set(problems)], sql)
   return { views: [...read].map((v) => v.name) }
+}
+
+/**
+ * The wall clock through a date function (02 §Time): every date(), datetime(), julianday() and
+ * strftime() call needs its time value, and that value must be a date literal or a stored date
+ * column of a view the query reads, named so it cannot be a renamed expression: not an alias
+ * anywhere in the query, and not in a query with UNION/INTERSECT/EXCEPT (a compound subquery
+ * names its columns after its first SELECT, so `signup_date` could carry another branch's text).
+ */
+function dateTimeValueProblems(
+  tokens: readonly SqlToken[],
+  closing: ReadonlyMap<number, number>,
+  relations: ReadonlyMap<string, ViewSchema | null>,
+  read: ReadonlySet<ViewSchema>,
+  columnAliases: ReadonlySet<string>,
+): string[] {
+  const problems: string[] = []
+  const dateColumns = (view: ViewSchema) => view.columns.map((c) => c.name.toLowerCase()).filter((c) => DATE_COLUMN.test(c))
+  const readDateColumns = new Set([...read].flatMap(dateColumns))
+  const listed = [...readDateColumns].join(', ') || 'none in the views this query reads'
+  const compound = tokens.some((t) => isWord(t) && COMPOUND.has(t.text.toUpperCase()))
+
+  // Every name that is an alias somewhere: after AS, a relation alias, or a name right after an
+  // expression (`'x' signup_date`, `count(*) n`, `CASE … END d`).
+  const aliases = new Set(columnAliases)
+  for (const [name, target] of relations) if (target === null || target.name.toLowerCase() !== name) aliases.add(name)
+  tokens.forEach((t, i) => {
+    if (!isName(t) || isPunct(tokens[i + 1], '(') || isPunct(tokens[i + 1], '.')) return
+    const before = tokens[i - 1]
+    if (before === undefined) return
+    const endsExpression =
+      before.kind === 'number' ||
+      before.kind === 'string' ||
+      before.kind === 'quoted' ||
+      isPunct(before, ')') ||
+      (isWord(before) && (!KEYWORDS.has(before.text.toUpperCase()) || EXPRESSION_END_KEYWORDS.has(before.text.toUpperCase())))
+    if (endsExpression) aliases.add(t.text.toLowerCase())
+  })
+
+  tokens.forEach((t, i) => {
+    if (!isWord(t) || !isPunct(tokens[i + 1], '(')) return
+    const fn = t.text.toLowerCase()
+    const position = TIME_VALUE_ARGUMENT.get(fn)
+    if (position === undefined) return
+    const call = `${fn}()`
+    const close = closing.get(i + 1)!
+    const argDepth = tokens[i + 1].depth + 1
+    const args: SqlToken[][] = [[]]
+    for (let j = i + 2; j < close; j += 1) {
+      if (isPunct(tokens[j], ',') && tokens[j].depth === argDepth) args.push([])
+      else args.at(-1)!.push(tokens[j])
+    }
+    const arg = args[position]
+    const need = `use a date literal counted from TODAY (e.g. '2026-09-28') or a stored date column (${listed})`
+    if (arg === undefined || arg.length === 0) {
+      problems.push(`${call} without a time value reads the wall clock; ${need}`)
+      return
+    }
+    if (arg.length === 1 && arg[0].kind === 'string') {
+      if (arg[0].text.slice(1, -1).trim().toLowerCase() === 'now') return // reported as 'now' already
+      if (!ISO_DATE_LITERAL.test(arg[0].text)) problems.push(`the time value of ${call} must be a date literal 'YYYY-MM-DD'; ${need}`)
+      return
+    }
+    let column: string | null = null
+    let ok = false
+    if (arg.length === 1 && isName(arg[0])) {
+      column = arg[0].text.toLowerCase()
+      ok = readDateColumns.has(column) && !aliases.has(column)
+    } else if (arg.length === 3 && isWord(arg[0]) && isPunct(arg[1], '.') && isName(arg[2])) {
+      column = arg[2].text.toLowerCase()
+      const target = relations.get(arg[0].text.toLowerCase())
+      ok = target !== undefined && target !== null && dateColumns(target).includes(column)
+    }
+    if (column !== null && arg.length === 3 && relations.get(arg[0].text.toLowerCase()) === null) {
+      problems.push(`${arg[0].text}.${arg[2].text}: ${call} must read its date column from a view or a view's alias, not through a subquery; ${need}`)
+    } else if (column === null) {
+      problems.push(`the time value of ${call} must be a single date literal or date column, not an expression (an expression could be 'now'); ${need}`)
+    } else if (!ok) {
+      problems.push(`${column} is not a stored date column of a view this query reads, so ${call} cannot use it as a time value; ${need}`)
+    } else if (compound) {
+      problems.push(`${call} over a column cannot be combined with UNION, INTERSECT or EXCEPT (a compound names its columns after its first SELECT); ${need}`)
+    }
+  })
+  return problems
 }
