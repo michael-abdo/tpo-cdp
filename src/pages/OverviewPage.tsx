@@ -127,8 +127,8 @@ export default function OverviewPage() {
     <>
       {header}
       <StatGrid label="Headline numbers">
-        <StatTile label="Subscribers" value={o.subscribers} />
-        <StatTile label="Active subscribers" value={o.active} />
+        <StatTile label="Readers on the newsletter list" value={o.subscribers} />
+        <StatTile label="Readers still subscribed" value={o.active} />
         <StatTile label="App users" value={o.app_users} />
         <StatTile
           label="Events received since launch"

@@ -15,6 +15,11 @@ import { assistantRoutes } from '../worker/routes/assistant'
 import { AUDIT_DEFAULT_LIMIT, AUDIT_MAX_LIMIT } from '../worker/routes/audit'
 import { FILTER_KEYS, MODEL_SEGMENT_COLUMNS } from '../worker/segments/compile'
 import { COLUMN_LABEL, columnLabel, FILTER_LABEL, filterLabel } from '../src/labels'
+import { FILTERS_HIDDEN_MESSAGE, filtersAppliedView } from '../src/filters-applied'
+import auditPageSource from '../src/pages/AuditPage.tsx?raw'
+import { sqlSign as sharedSqlSign } from '../shared/sql-sign'
+import { sqlSign } from '../worker/assistant/respond'
+import { GateDenied } from '../worker/assistant/gates/gate3-readonly-sql'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
@@ -559,5 +564,77 @@ describe('/assistant shows plain words for every column and filter a tool can re
     expect(columnLabel('has_app')).toBe('Uses the app')
     expect(filterLabel('has_app')).toBe('Uses the app')
     expect(filterLabel('days_since_open_gte')).toBe("Haven't opened an email in at least")
+  })
+})
+
+describe("/assistant screens the model's filters_applied with the D-58 check before showing it (09 D-58)", () => {
+  // The filters the model echoes for the brief's first question (46 = Instagram active went_cold_in
+  // 2026-08, 02 §Counts). The SQL strings are the shapes T-AI-5 discards from the answer text.
+  const REAL = { status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
+  const SQL = 'SELECT email_norm FROM subscribers'
+
+  it('the page and the server run one check: respond.ts re-exports shared/sql-sign.ts', () => {
+    expect(sqlSign).toBe(sharedSqlSign)
+  })
+
+  it('filters with no sign of SQL show in plain words, and as raw JSON for Technical details', () => {
+    const view = filtersAppliedView(REAL)
+    expect(view).toEqual({
+      status: 'shown',
+      fields: [
+        { key: 'status', label: 'Status', value: 'Active' },
+        { key: 'source', label: 'Signed up from', value: 'Instagram' },
+        { key: 'window_from', label: 'From', value: 'Aug 1, 2026' },
+        { key: 'window_to', label: 'To', value: 'Aug 31, 2026' },
+      ],
+      raw: JSON.stringify(REAL),
+    })
+  })
+
+  const shapes: Array<[string, Record<string, unknown>]> = [
+    ['a SELECT … FROM in a value', { ...REAL, query: SQL }],
+    ['a line-start SELECT inside a value', { ...REAL, note: 'counted with\nSELECT count(*)' }],
+    ['a ```sql fence in a value', { ...REAL, note: '```sql\nSELECT 1\n```' }],
+    ['SQL as a key', { ...REAL, [SQL]: true }],
+    ['select in one key, from in a later value', { select: 'pkey', ...REAL, where: 'from v_profiles' }],
+    ['SQL in a nested array', { ...REAL, steps: [['first', SQL]] }],
+    ['a zero-width space inside the keyword', { ...REAL, query: 'SEL\u200BECT email_norm FROM subscribers' }],
+  ]
+  for (const [name, filters] of shapes) {
+    it(`${name} → hidden whole, at both levels, with a sentence in words`, () => {
+      const view = filtersAppliedView(filters)
+      expect(view.status, name).toBe('hidden')
+      if (view.status !== 'hidden') return
+      expect(view.message).toBe(FILTERS_HIDDEN_MESSAGE)
+      expect(sharedSqlSign(view.message)).toBeNull()
+      // Nothing the model wrote is carried: no fields, no raw JSON.
+      expect(Object.keys(view).sort()).toEqual(['message', 'sign', 'status'])
+    })
+  }
+})
+
+describe('/audit names every blocked step in words (06 §UI principles 4)', () => {
+  // The codes AuditPage.tsx BLOCK_REASON matches by prefix, read from its source.
+  const block = /const BLOCK_REASON[\s\S]*?\n\]\n/.exec(auditPageSource)?.[0] ?? ''
+  const codes = [...block.matchAll(/\[\s*'(\w+)',/g)].map((m) => m[1])
+
+  it('every blocked-row error the worker writes starts with a code the page has words for', () => {
+    const written = [
+      'gate1: ',
+      'blocked_pii: ',
+      SQL_DISCARD_ERROR,
+      'rate_limited: ',
+      'assistant_unavailable: ',
+      'no_tools: ',
+      'tool_config_error: ',
+      UNKNOWN_TOOL_ERROR,
+      // tool-executor.ts deny(): `${denial.gate}_denied: …`, for both gates.
+      ...(['gate2', 'gate3'] as const).map((gate) => `${new GateDenied(gate, ['x']).gate}_denied: `),
+    ]
+    for (const error of written) {
+      expect(codes.some((code) => error.startsWith(code)), error).toBe(true)
+    }
+    expect(codes).toContain('gate2_denied')
+    expect(codes).toContain('gate3_denied')
   })
 })

@@ -8,7 +8,7 @@
 //     its count is that call's count, which is the segment builder's (T-AI-3). Filters the
 //     server never counted make the block malformed, so no count can be invented
 //   - SQL never reaches the teammate (04, 14 §6 #6; T-AI-5): a text with any D-58 sign of SQL
-//     (sqlSign below) is discarded whole and replaced by a server sentence built from the typed
+//     (sqlSign, shared/sql-sign.ts) is discarded whole and replaced by a server sentence built from the typed
 //     result (discardSentence), belt and braces with the system-prompt rule. Nothing is stripped:
 //     every stripping rule that tried to keep prose left a bypass (09 D-58)
 //   - the iteration cap → `partial: true` with whatever table exists and a sentence saying so
@@ -17,6 +17,7 @@
 // keys is a separate step (rehydrate.ts), after this and after the output scan.
 
 import { z } from 'zod'
+import { type SqlSign, sqlSign } from '../../shared/sql-sign'
 import { DEFINITIONS, type DefinitionKey } from '../../shared/derive'
 import { ApiError } from '../auth/middleware'
 import { isIsoDate } from '../ingest/quarantine'
@@ -77,52 +78,9 @@ export const FinalBlock = z
 // the block's own "text" value (an SQL fence the model quoted) cannot end the block early.
 const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
 
-// T-AI-5 by rejection, not stripping (09 D-58). Every Unicode format character (\p{Cf}: U+00AD soft
-// hyphen, U+200B-U+200D zero-width, U+2060 word joiner, U+FEFF and the rest) is invisible, so the
-// signs are checked on several copies of the text and any one matching discards it:
-//   - LISTED: D-58 as written. Only its six characters are deleted; every other format character
-//     becomes a space (a separator either way, since a format character is not a letter or digit;
-//     the space also lets a "```\u2063sql" fence match). Checked raw and NFKC-folded. The raw copy
-//     makes the whole check a true superset of D-58: NFKC can turn a separator into letters
-//     ("\u338F", the kg square, becomes "kg") and so glue it to a keyword.
-//   - DELETED, NFKC: every format character removed, so an unlisted one inside a keyword cannot
-//     split it ("sel\u2063ect").
-//   - SPACED, NFKC: every format character turned into a space, so a listed one between a keyword
-//     and the next word cannot glue them out of a whole-word match ("SELECT\u200Bemail").
-// A word boundary is a letter or digit boundary, not \b, so "_" (markdown emphasis or an
-// identifier) cannot hide a keyword: "_select_ email _from_ users" and "select_email from users"
-// are discarded. Any one sign discards the whole text; there is no English exemption, so
-// "select a segment from the builder" is discarded too (accepted by D-58). Wider than D-58's
-// wording in the safe direction only: the LISTED raw copy is D-58 itself, and the other copies,
-// NFKC, "_", and any non-letter prefix before a line-start SELECT (list markers, emphasis, digits
-// as well as indentation, blockquote marks and backticks) can only add discards.
-const LISTED_FORMAT_CHARS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/gu
-const FORMAT_CHARS = /\p{Cf}/gu
-export type SqlSign = 'sql_fence' | 'select_line' | 'select_from'
-const NOT_WORD_BEFORE = '(?<![\\p{L}\\p{N}])'
-const NOT_WORD_AFTER = '(?![\\p{L}\\p{N}])'
-const SQL_SIGNS: ReadonlyArray<[SqlSign, RegExp]> = [
-  // A fence whose tag starts with sql (```sql, ```sqlite, ~~~SQL…), any fence length, any case.
-  // No word end: D-58 says "contains a ```sql fence", so ```sqlite counts.
-  ['sql_fence', new RegExp(`(?:\`{3,}|~{3,})[ \\t]*sql`, 'iu')],
-  // A line whose first word is SELECT, after any characters that are not letters.
-  ['select_line', new RegExp(`^[^\\p{L}\\r\\n]*select${NOT_WORD_AFTER}`, 'imu')],
-  // The word select followed anywhere later, across lines, by the word from.
-  ['select_from', new RegExp(`${NOT_WORD_BEFORE}select${NOT_WORD_AFTER}[\\s\\S]*${NOT_WORD_BEFORE}from${NOT_WORD_AFTER}`, 'iu')],
-]
-
-/** The first D-58 sign of SQL in `text`, or null. Pure; exported for tests. */
-export function sqlSign(text: string): SqlSign | null {
-  const listed = text.replace(LISTED_FORMAT_CHARS, '').replace(FORMAT_CHARS, ' ')
-  const copies = [
-    listed,
-    listed.normalize('NFKC'),
-    text.replace(FORMAT_CHARS, '').normalize('NFKC'),
-    text.replace(FORMAT_CHARS, ' ').normalize('NFKC'),
-  ]
-  for (const [sign, pattern] of SQL_SIGNS) if (copies.some((copy) => pattern.test(copy))) return sign
-  return null
-}
+// T-AI-5 by rejection, not stripping (09 D-58): the check itself lives in shared/sql-sign.ts, the
+// one home "Ask a question" also uses to screen filters_applied. Re-exported for the tests.
+export { type SqlSign, sqlSign }
 
 /** The server's own sentence for a discarded text, built from the typed result (09 D-58). D-58 gives
  * "177 readers match." as an example; a count of 1 reads "1 reader matches." so the sentence stays

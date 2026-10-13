@@ -71,7 +71,7 @@ const TOOL_LABEL: Record<string, string> = {
   query_sql: 'Ran a read-only query on the data',
 }
 
-/** Why a step was blocked, in words, from the stored error's code (worker/assistant writers). */
+/** Why a step was blocked, in words, from the stored error's code (worker/assistant writers; gate2_/gate3_denied: tool-executor.ts deny). */
 const BLOCK_REASON: Array<[string, string]> = [
   ['gate1', 'The question was refused by the input check before anything was sent to the AI.'],
   ['blocked_pii', 'Personal data was found, so the request was stopped and nothing more was sent.'],
@@ -84,6 +84,14 @@ const BLOCK_REASON: Array<[string, string]> = [
   ['no_tools', 'The assistant has no data tools turned on.'],
   ['tool_config_error', 'A data tool is set up wrongly.'],
   ['unknown_tool', 'The AI asked for a data tool that does not exist.'],
+  [
+    'gate2_denied',
+    'The AI asked a data tool for something it may not read, or in a form the tool does not accept, so the call was refused and the AI was told why.',
+  ],
+  [
+    'gate3_denied',
+    "The AI's database query was not one plain read-only question, so it was refused before it ran and the AI was told why.",
+  ],
 ]
 
 function blockReason(error: string | null): string {

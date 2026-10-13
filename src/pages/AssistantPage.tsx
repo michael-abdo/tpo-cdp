@@ -4,7 +4,8 @@
 // "Open in builder", which loads its filters on /segments. A partial result says so. Level 2 "How
 // this answer was worked out": the window, the filters and the definitions used, in words, with the
 // definitions' plain text from DEFINITIONS (02 §Derived "one runtime source"); Technical details:
-// the raw names, the result type and the trace id. Column and filter names show in the words
+// the raw names, the result type and the trace id. The filters are the model's own words, so they
+// pass the D-58 check first and are hidden whole on any sign of SQL (src/filters-applied.ts). Column and filter names show in the words
 // /segments uses (src/labels.ts, principle 4); a segment answer also offers Export CSV (06
 // §/assistant). Every answer links to its trace on /audit ("what the AI saw", 05 §Proof surfaces). The request takes 5–20 s (04), shown as a short text
 // state. Errors show the 04 envelope's message; the 503 for a missing key names the hosted URL.
@@ -30,7 +31,8 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDate } from '../format'
-import { columnLabel, DEFINITION_LABEL, filterLabel, sourceLabel, statusLabel } from '../labels'
+import { filtersAppliedView } from '../filters-applied'
+import { columnLabel, DEFINITION_LABEL, sourceLabel, statusLabel } from '../labels'
 import type { AssistantCell, AssistantResponse, SegmentFilters } from '../types'
 
 /** The brief's three example questions, verbatim (R5.2). */
@@ -62,21 +64,6 @@ function cellText(column: string, value: AssistantCell): string {
   if (column === 'status') return statusLabel(value)
   if (column === 'signup_date' || column === 'last_open_date') return humanDate(value)
   return value
-}
-
-/** A filter value in words: lists joined, true/false as Yes/No, null as Any; sources and statuses as on /segments. */
-function filterValue(key: string, value: unknown): string {
-  if (Array.isArray(value)) return value.map((v) => filterValue(key, v)).join(', ')
-  if (value === null) return 'Any'
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
-  if (typeof value === 'number') return key === 'days_since_open_gte' ? `${fmt(value)} days` : fmt(value)
-  if (typeof value === 'string') {
-    if (key === 'source') return sourceLabel(value)
-    if (key === 'status') return statusLabel(value)
-    if (key === 'window_from' || key === 'window_to') return humanDate(value)
-    return value
-  }
-  return JSON.stringify(value)
 }
 
 /** Next steps for the 04 errors that have one; the message itself is the envelope's. */
@@ -138,8 +125,13 @@ function Result({ data }: { data: AssistantResponse }) {
     }
   }
 
-  const filters = Object.entries(data.filters_applied)
-  const hasHow = data.window !== null || filters.length > 0 || data.definitions_used.length > 0
+  // The model writes filters_applied; any D-58 sign of SQL in it hides it whole (src/filters-applied.ts).
+  const filters = filtersAppliedView(data.filters_applied)
+  const hasHow =
+    data.window !== null ||
+    filters.status === 'hidden' ||
+    filters.fields.length > 0 ||
+    data.definitions_used.length > 0
   return (
     <section aria-labelledby="answer-heading" className="space-y-4 rounded border border-gray-200 p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -198,12 +190,14 @@ function Result({ data }: { data: AssistantResponse }) {
               {humanDate(data.window.from)} to {humanDate(data.window.to)}
             </Field>
           )}
-          {filters.map(([name, value]) => (
-            <Field key={name} label={filterLabel(name)}>
-              {filterValue(name, value)}
-            </Field>
-          ))}
+          {filters.status === 'shown' &&
+            filters.fields.map(({ key, label, value }) => (
+              <Field key={key} label={label}>
+                {value}
+              </Field>
+            ))}
         </dl>
+        {filters.status === 'hidden' && <p className="text-sm text-gray-700">{filters.message}</p>}
         {data.definitions_used.length > 0 && (
           <dl className="space-y-2 text-sm">
             {data.definitions_used.map((key) => (
@@ -230,7 +224,13 @@ function Result({ data }: { data: AssistantResponse }) {
           )}
           <p>
             Filters applied:{' '}
-            <span className="font-mono break-all">{JSON.stringify(data.filters_applied)}</span>
+            {filters.status === 'shown' ? (
+              <span className="font-mono break-all">{filters.raw}</span>
+            ) : (
+              <>
+                hidden, D-58 sign <span className="font-mono">{filters.sign}</span>
+              </>
+            )}
           </p>
           {data.definitions_used.map((key) => (
             <p key={key}>
