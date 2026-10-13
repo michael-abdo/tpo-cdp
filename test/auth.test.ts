@@ -162,10 +162,13 @@ describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
     expect(anonymous.status).toBe(401)
     expect(((await anonymous.json()) as { error: string }).error).toBe('unauthorized')
 
-    // Past the guard, an unbuilt route is a 404 envelope, not a 401.
-    const signedIn = await SELF.fetch(`${BASE}/api/overview`, { headers: { cookie: await loginCookie() } })
+    // Past the guard, the route answers, and a path with no endpoint is a 404 envelope, not a 401.
+    const cookie = await loginCookie()
+    expect((await SELF.fetch(`${BASE}/api/overview`, { headers: { cookie } })).status).toBe(200)
+    const signedIn = await SELF.fetch(`${BASE}/api/overview/missing`, { headers: { cookie } })
     expect(signedIn.status).toBe(404)
     expect(((await signedIn.json()) as { error: string }).error).toBe('not_found')
+    expect((await SELF.fetch(`${BASE}/api/overview/missing`)).status).toBe(401)
 
     expect((await SELF.fetch(`${BASE}/health`)).status).toBe(200)
   })

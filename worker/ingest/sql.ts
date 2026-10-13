@@ -4,7 +4,7 @@
  * 100 KB limit, no BEGIN/COMMIT (`wrangler d1 execute --file` wraps the file). Tables are
  * written so every REFERENCES target precedes its referrer (migrations/0001_core.sql):
  * web_visitors before web_events, import_runs before quarantine. Column names are the ones in
- * 0001_core.sql.
+ * 0001_core.sql plus web_visitors.signup_ts from 0003_visitor_signup_ts.sql.
  */
 import type { ImportRun, Seed } from './link'
 
@@ -144,7 +144,15 @@ export function seedSql(seed: Seed, ranAt: string): SeedFile[] {
       statements: [
         ...insertStatements(
           'web_visitors',
-          ['visitor_id', 'visitor_hash', 'email_norm', 'first_seen_ts', 'first_page', 'first_utm_source'],
+          [
+            'visitor_id',
+            'visitor_hash',
+            'email_norm',
+            'first_seen_ts',
+            'first_page',
+            'first_utm_source',
+            'signup_ts',
+          ],
           seed.visitors.map((v) => [
             v.visitor_id,
             v.visitor_hash,
@@ -152,6 +160,7 @@ export function seedSql(seed: Seed, ranAt: string): SeedFile[] {
             v.first_seen_ts,
             v.first_page,
             v.first_utm_source,
+            v.signup_ts,
           ]),
         ),
         ...insertStatements(

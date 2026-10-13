@@ -48,6 +48,8 @@ export interface WebVisitor {
   first_page: string
   /** The canonical UTM of the visitor's first event (the landing touch); `null` when it had none. */
   first_utm_source: string | null
+  /** `event_ts` of the `/subscribe` row carrying the email (the signup moment); `null` exactly when `email_norm` is. */
+  signup_ts: string | null
 }
 
 export interface WebIngest {
@@ -120,6 +122,7 @@ export function ingestWeb(csv: ParsedCsv): WebIngest {
         first_seen_ts: eventTs,
         first_page: page,
         first_utm_source: utm,
+        signup_ts: emailNorm === null ? null : eventTs,
       })
       return
     }
@@ -128,6 +131,8 @@ export function ingestWeb(csv: ParsedCsv): WebIngest {
         throw new Error(`web_events.csv line ${lineNo}: visitor has a second, different /subscribe email`)
       }
       known.email_norm = emailNorm
+      // The same email on two /subscribe rows: the earlier one is the signup.
+      if (known.signup_ts === null || eventTs < known.signup_ts) known.signup_ts = eventTs
     }
     if (eventTs < known.first_seen_ts) {
       known.first_seen_ts = eventTs

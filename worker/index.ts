@@ -3,6 +3,8 @@ import { TODAY } from '../shared/config'
 import { loginRoutes } from './auth/login'
 import { ApiError, requireJson, requireSession } from './auth/middleware'
 import { type AppEnv, assertBindings, MissingBindingsError } from './env'
+import { lookupRoutes } from './routes/lookup'
+import { overviewRoutes } from './routes/overview'
 
 /**
  * The one renderer of the 04 §Error envelope {error, message, details?}. Bodies never carry
@@ -34,6 +36,8 @@ app.use('*', async (c, next) => {
 // 04 §Auth: JSON-only POSTs, then the session guard (open: POST /api/login, POST /api/logout).
 app.use('/api/*', requireJson, requireSession)
 app.route('/api', loginRoutes)
+app.route('/api', overviewRoutes)
+app.route('/api', lookupRoutes)
 
 // Open path (04 §Auth). Reports whether D1 answers and which "today" the app is running with.
 app.get('/health', async (c) => {

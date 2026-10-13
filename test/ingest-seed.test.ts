@@ -10,15 +10,16 @@ import { PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
 import { pkeyForEmail, visitorHash } from '../shared/pseudonym'
 import { classifyAppRow, ingestApp, APP_COLUMNS } from '../worker/ingest/app'
 import { parseCsv } from '../worker/ingest/csv'
-import { buildSeed, type Seed, type SeedCsvs } from '../worker/ingest/link'
+import { buildSeed, type Seed } from '../worker/ingest/link'
 import { requireHeaders } from '../worker/ingest/quarantine'
 import { MAX_ROWS_PER_INSERT, MAX_STATEMENT_BYTES, seedSql, type SeedFile } from '../worker/ingest/sql'
 import { classifyWebRow, csvTimestampToIso, ingestWeb, WEB_COLUMNS } from '../worker/ingest/web'
+import { piiKeySecret, seedDatabase } from './helpers/seed'
 
 // 02 §Linking, §Derived, §Time, §Counts; 11 §Seed; 09 D-08, D-44, D-46. Tests 08 T-ING-1, -5, -6.
 // Input is the three real data/*.csv files and the PII_KEY_SECRET from .dev.vars. The pure
-// pipeline's SQL is executed into the test D1 (migrations applied by test/setup.ts), then
-// counts are read back from the tables and views. Every expected number is from 02 §Counts.
+// pipeline's SQL is executed into the test D1 by test/helpers/seed.ts, then counts are read
+// back from the tables and views. Every expected number is from 02 §Counts.
 // Tests that change real rows (09 D-47), and how:
 // - missing header: "timestamp" deleted from the real web header, "created_at" from the app header.
 // - web missing_field: the timestamp of real web line 5421 emptied.
@@ -33,28 +34,14 @@ const JOY = 'joy.hall830@protonmail.com'
 const JULIA = 'julia.evans230@gmail.com'
 const ISAAC_RAW = 'ISAAC.TAYLOR434@PROTONMAIL.COM'
 
-function secret(): string {
-  const value = env.PII_KEY_SECRET
-  if (!value) throw new Error('PII_KEY_SECRET missing from .dev.vars; the test cannot run')
-  return value
-}
-
-function csvs(): SeedCsvs {
-  return { subscribers: parseCsv(subscribersCsv), web_events: parseCsv(webCsv), app_users: parseCsv(appCsv) }
-}
+const secret = piiKeySecret
 
 let seed: Seed
 let files: SeedFile[]
-// import_runs.ran_at is the wall-clock time the seed ran (02 §Time allow-list, 09 D-48); the
-// test stands in for the seed script, so it takes the clock the same way.
-const RAN_AT = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
+let RAN_AT: string
 
 beforeAll(async () => {
-  seed = await buildSeed(csvs(), secret())
-  files = seedSql(seed, RAN_AT)
-  for (const file of files) {
-    await env.DB.batch(file.statements.map((s) => env.DB.prepare(s)))
-  }
+  ;({ seed, files, ranAt: RAN_AT } = await seedDatabase())
 })
 
 async function count(sql: string, ...params: unknown[]): Promise<number> {
