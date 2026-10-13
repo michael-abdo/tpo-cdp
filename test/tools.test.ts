@@ -7,6 +7,7 @@ import { EMAIL_REGEX, PII_COLUMNS } from '../shared/pii'
 import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { authorizeToolCall } from '../worker/assistant/gates/gate2-tool-authorizer'
 import { type ViewSchema, viewSchemas } from '../worker/assistant/schema-context'
+import { queryHandler } from '../worker/assistant/tools/builtin-handlers'
 import { executeToolCall, UNKNOWN_TOOL_ERROR } from '../worker/assistant/tools/tool-executor'
 import { loadTools, rewritePlaceholders, schemaProblems, type ToolRow, ToolConfigError, validateToolRow } from '../worker/assistant/tools/tool-loader'
 import { seedDatabase } from './helpers/seed'
@@ -291,6 +292,28 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
     })
   })
 
+  it('values bind in template order, not param_mapping order; a placeholder used twice is bound twice (Instagram active cold = 147, 02 §Counts)', async () => {
+    // The mapping lists today, status, source; the template uses source, status, status, today.
+    const seed = queryRow(
+      'cold_count_reordered',
+      {
+        type: 'object',
+        properties: { today: { type: 'string' }, status: { type: 'string', enum: ['active', 'unsubscribed'] }, source: { type: 'string' } },
+        required: ['today', 'source'],
+      },
+      `SELECT count(*) AS cold FROM v_profiles WHERE source = :source AND (status = :status OR :status IS NULL) AND ${DEFINITIONS.cold.sql}`,
+      { today: ':today', status: ':status', source: ':source' },
+    )
+    await withRows([seed], async () => {
+      const { db, prepared, bound } = recordingDb()
+      const { executed } = await runTool('cold_count_reordered', { today: TODAY, status: 'active', source: 'instagram' }, db)
+      expect(executed.output?.rows).toEqual([{ cold: 147 }])
+      const select = 'SELECT count(*) AS cold FROM v_profiles WHERE source = ? AND (status = ? OR ? IS NULL) AND cold_since <= ? LIMIT 100'
+      expect(prepared.filter((sql) => sql.startsWith('SELECT count(*) AS cold'))).toEqual([select])
+      expect(bound).toContainEqual(['instagram', 'active', 'active', TODAY])
+    })
+  })
+
   it('every row of a query row that lists subjects is pk_ keys only: no PII column, no email', async () => {
     const seed = queryRow(
       'readers_by_source',
@@ -311,6 +334,14 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
       expect(JSON.stringify(output.rows)).not.toMatch(EMAIL_REGEX)
       expect(String(executed.result.content)).not.toMatch(EMAIL_REGEX)
     })
+  })
+
+  it('the query handler runs Gate 2 again at call time: a template that skipped the loader never reaches D1', async () => {
+    // Defence in depth (03 rows 7-8): build the handler directly, so the load-time check never ran.
+    const { db, prepared } = recordingDb()
+    const handler = queryHandler('unchecked', { sql: 'SELECT email_norm FROM v_profiles WHERE source = ?', inputs: ['source'] })
+    await expect(handler.run(db, { source: 'instagram' })).rejects.toThrow('email_norm is personal data')
+    expect(prepared.filter((sql) => sql.includes('email_norm'))).toEqual([])
   })
 
   it('input failing the row\'s input_schema is denied by Gate 2 before the template runs', async () => {
