@@ -116,4 +116,20 @@ describe('/segments: ExportFileDetails sits beside Export CSV, only once a resul
     expect(exportArg).toBe('ok.filters')
     expect(exportArg).toBe(detailsArg)
   })
+
+  // The previous test pins the FILTERS EXPRESSION the button passes INTO exportCsv (`ok.filters`).
+  // It never looks inside exportCsv itself, so exportCsv could still widen what it sends onward to
+  // downloadSegmentCsv (e.g. spreading in its own extra status values) while still receiving the
+  // same `filters` argument — the disclosure would then describe a narrower file than the one
+  // actually downloaded. Pin exportCsv's body too: its one call to downloadSegmentCsv must forward
+  // `filters` exactly, with no widening, narrowing or added fields, and must be the only call site.
+  it('exportCsv forwards its filters parameter to downloadSegmentCsv unchanged (no widened status list)', () => {
+    const fnAt = segmentsSource.indexOf('async function exportCsv(')
+    expect(fnAt).toBeGreaterThan(-1)
+    const bodyEnd = segmentsSource.indexOf('\n  }\n', fnAt)
+    expect(bodyEnd).toBeGreaterThan(fnAt)
+    const body = segmentsSource.slice(fnAt, bodyEnd)
+    const calls = [...body.matchAll(/downloadSegmentCsv\([^)]*\)/g)].map((m) => m[0])
+    expect(calls).toEqual(['downloadSegmentCsv(filters)'])
+  })
 })
