@@ -153,3 +153,41 @@ describe('"Send a test event" wires onSent to refresh the list at once (09 D-73)
     expect(stripComments(send as string)).toMatch(/const data = await postJson[^]*?onSent\(data\.event\)[^]*?catch/)
   })
 })
+
+describe('/events empty state matches 06 §Empty and error states verbatim (D-72, curly quotes)', () => {
+  it('"No events yet — send one with “Send a test event” above." — not straight quotes, not a paraphrase', () => {
+    expect(eventsPageSource).toContain('No events yet — send one with “Send a test event” above.')
+  })
+})
+
+describe('Enter in the account field (06 keyboard contract): an exact single match picks it; otherwise the box says what to do', () => {
+  it("Enter with nothing highlighted picks the lone match when there's exactly one", () => {
+    expect(panelSource).toMatch(/if \(matches\.length === 1\) pick\(matches\[0\]\)/)
+  })
+
+  it('Enter with zero or more than one match says "Pick an account from the list" instead of doing nothing', () => {
+    expect(panelSource).toContain("setError('Pick an account from the list')")
+  })
+
+  it('a different pick clears any stale "Pick an account" error (pick() resets error, not just userId)', () => {
+    const pick = /const pick = \([^]*?\n  \}\n/.exec(panelSource)?.[0]
+    expect(pick, 'pick() was not found in the panel source').toBeDefined()
+    expect(pick).toMatch(/setError\(null\)/)
+  })
+})
+
+describe('a truncated account search shows the same line /lookup shows (D-72, D-66: one wording)', () => {
+  it('the panel reads LookupSearch.truncated and renders "+ more — keep typing", the exact text ../pages/LookupPage.tsx uses', () => {
+    expect(panelSource).toMatch(/\btruncated\b/)
+    expect(panelSource).toContain('+ more — keep typing')
+    expect(lookupSource).toContain('+ more — keep typing')
+  })
+})
+
+describe('Send is the only primary button while the panel is open (06 §UI principles 1: one main action per screen)', () => {
+  it('the panel tells the page when it opens/closes, and EventsPage demotes Refresh to secondary while open', () => {
+    expect(panelSource).toMatch(/onOpenChange\?\.\(open\)/)
+    expect(eventsPageSource).toMatch(/<TestEventPanel onSent=\{\(\) => void load\('sent'\)\} onOpenChange=\{setTestPanelOpen\}/)
+    expect(eventsPageSource).toMatch(/variant=\{testPanelOpen \? 'secondary' : 'primary'\}/)
+  })
+})

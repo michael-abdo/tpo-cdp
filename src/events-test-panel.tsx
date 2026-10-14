@@ -32,7 +32,7 @@ type Suggestions =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; matches: AccountMatch[] }
+  | { status: 'ok'; matches: AccountMatch[]; truncated: boolean }
 
 /**
  * Debounced GET /api/lookup/search?q= (09 D-52's endpoint, reused as the brief asks), kept to
@@ -52,7 +52,10 @@ function useAccountSuggestions(fragment: string, active: boolean): Suggestions {
           const matches: AccountMatch[] = data.matches
             .filter((m) => m.user_id !== null)
             .map((m) => ({ user_id: m.user_id as string, email: m.email }))
-          setSettled({ fragment, state: { status: 'ok', matches } })
+          // 06 §/lookup's "+ more — keep typing" (truncated) is the suggestion list's own line,
+          // not this panel's to reword (D-72): shown only when a filtered-out non-account row
+          // was not what made the server's own list hit its cap.
+          setSettled({ fragment, state: { status: 'ok', matches, truncated: data.truncated } })
         },
         (err: unknown) => {
           if (!current) return
@@ -71,8 +74,20 @@ function useAccountSuggestions(fragment: string, active: boolean): Suggestions {
   return settled.state
 }
 
-export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => void }) {
-  const [panelOpen, setPanelOpen] = useState(false)
+export function TestEventPanel({
+  onSent,
+  onOpenChange,
+}: {
+  onSent: (event: RecentEvent) => void
+  /** Told whenever the panel opens or closes, so the page can keep one primary button on
+   *  screen (06 §UI principles 1): Send while this panel is open, Refresh while it is not. */
+  onOpenChange?: (open: boolean) => void
+}) {
+  const [panelOpen, setPanelOpenState] = useState(false)
+  const setPanelOpen = (open: boolean) => {
+    setPanelOpenState(open)
+    onOpenChange?.(open)
+  }
   const [fragment, setFragment] = useState('')
   const [userId, setUserId] = useState<string | null>(null)
   const [eventName, setEventName] = useState<AppEventName>(APP_EVENTS[0])
@@ -90,10 +105,12 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
   const suggestions = useAccountSuggestions(fragment, userId === null)
   const listShown = userId === null && suggestions.status !== 'idle' && !dismissed
   const matches = suggestions.status === 'ok' ? suggestions.matches : []
+  const truncated = suggestions.status === 'ok' && suggestions.truncated
 
   const pick = (m: AccountMatch) => {
     setUserId(m.user_id)
     setFragment(m.email ?? m.user_id)
+    setError(null)
     nav.setActive(-1)
   }
 
@@ -110,6 +127,15 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (!listShown) return
+    // Enter with nothing highlighted: an exact single match is picked outright (as the brief's
+    // one-account case always is); otherwise the box says what to do next instead of doing
+    // nothing (no native submit fires — Send stays disabled with userId still null).
+    if (e.key === 'Enter' && nav.active < 0) {
+      e.preventDefault()
+      if (matches.length === 1) pick(matches[0])
+      else setError('Pick an account from the list')
+      return
+    }
     nav.onKeyDown(e, {
       itemCount: matches.length,
       onPick: (i) => pick(matches[i]),
@@ -190,6 +216,11 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
                     {m.email !== null && <span className="truncate">{m.email}</span>}
                   </ListboxOption>
                 ))
+              )}
+              {truncated && (
+                <li role="presentation" className="px-2 py-1 text-sm text-gray-600">
+                  + more — keep typing
+                </li>
               )}
             </ul>
           )}

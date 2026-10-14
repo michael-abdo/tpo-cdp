@@ -162,6 +162,10 @@ interface Shown {
 export default function EventsPage() {
   const [shown, setShown] = useState<Shown | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // The main action is the single most prominent control (06 §UI principles 1): while the panel
+  // is open, Send is it, so Refresh steps down to secondary; closed, Refresh is the page's own
+  // main action again.
+  const [testPanelOpen, setTestPanelOpen] = useState(false)
   // A counter rides along with the text so the same sentence twice in a row is still a change
   // the screen reader announces (Announcer: "change `message`").
   const [said, setSaid] = useState({ text: '', n: 0 })
@@ -247,12 +251,17 @@ export default function EventsPage() {
         purpose="The last 20 events the app sent, newest first."
         icon={ICONS.events}
         action={
-          <Button variant="primary" icon={ICONS.loading} onClick={refresh} disabled={shown === null || refreshing}>
+          <Button
+            variant={testPanelOpen ? 'secondary' : 'primary'}
+            icon={ICONS.loading}
+            onClick={refresh}
+            disabled={shown === null || refreshing}
+          >
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
       />
-      <TestEventPanel onSent={() => void load('sent')} />
+      <TestEventPanel onSent={() => void load('sent')} onOpenChange={setTestPanelOpen} />
       <Disclosure label="How this list updates">
         <p className="text-sm text-gray-700">
           The list updates itself every {POLL_SECONDS} seconds while this tab is in view. These times are live, so they can be later than the date in the top bar.
@@ -275,7 +284,7 @@ export default function EventsPage() {
           )}
           {events === null ? null : events.length === 0 ? (
             <EmptyState icon={ICONS.events}>
-              <p>No events yet — send one with "Send a test event" above.</p>
+              <p>No events yet — send one with “Send a test event” above.</p>
               <p className="mt-1 text-gray-600">The app sends events here as they happen. New ones appear here within {POLL_SECONDS} seconds.</p>
             </EmptyState>
           ) : (
