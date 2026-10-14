@@ -1083,10 +1083,17 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
   // in both the 500 envelope and the audit row, so removing that one scanner call fails that test
   // (an email that slipped past it would be caught later at another site, or by the audit writer).
 
-  async function expectBlocked(res: Response, sub: string, site: string, kinds: string[], toolName: string | null = null) {
+  async function expectBlocked(
+    res: Response,
+    sub: string,
+    site: string,
+    kinds: string[],
+    toolName: string | null = null,
+    check = 'known_email',
+  ) {
     expect(res.status).toBe(500)
     const body = await res.json<Record<string, unknown>>()
-    expect(body).toEqual({ error: 'blocked_pii', message: expect.any(String), details: [{ check: 'known_email', site }] })
+    expect(body).toEqual({ error: 'blocked_pii', message: expect.any(String), details: [{ check, site }] })
     const rows = await auditRows('session_sub', sub)
     expect(new Set(rows.map((r) => r.trace_id)).size).toBe(1)
     expect(rows.map((r) => `${r.kind}/${r.status}`)).toEqual(kinds)
@@ -1096,7 +1103,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
       tool_name: toolName,
       request_json: null,
       response_json: null,
-      error: `blocked_pii: known_email in ${site}`,
+      error: `blocked_pii: ${check} in ${site}`,
     })
     expect(rows.every((r) => ![r.request_json, r.response_json, r.error].join(' ').includes('@'))).toBe(true)
   }
@@ -1152,8 +1159,11 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
-    // The block spells "@" as the JSON escape \u0040, so the raw response holds no "@" and passes
-    // the response scan; JSON.parse in respond.ts turns it back into the email.
+    // The block spells "@" as the JSON escape \u0040, so the raw response holds no "@". Her bare
+    // local part (joy.hall830) still sits in that raw text, though, so loop.ts's own scan now
+    // catches it there as known_local_part (09 D-79: the outbound scan checks local parts too,
+    // not only "@"-shapes) — earlier than route.ts's scan on the parsed result, which is the "@"
+    // JSON.parse in respond.ts turns the escape back into, and what this test used to reach.
     const escaped = finalText('Here is the answer.', {
       type: 'answer',
       text: `Write to ${JOY}.`,
@@ -1163,7 +1173,17 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     }).replace('@', '\\u0040')
     expect(escaped).not.toContain('@')
     const { transport } = scripted([() => message([text(escaped)], 'end_turn')])
-    await expectBlocked(await ask(appWith(transport), cookie, 'who should I write to?'), sub, 'model_output', ['model_request/success', 'blocked/blocked'])
+    // Caught before the model_request row is even written as a success (loop.ts scans the raw
+    // response before recording it), unlike the old @-only scan this test used to need the later
+    // route.ts site for.
+    await expectBlocked(
+      await ask(appWith(transport), cookie, 'who should I write to?'),
+      sub,
+      'model_output',
+      ['blocked/blocked'],
+      null,
+      'known_local_part',
+    )
   })
 })
 

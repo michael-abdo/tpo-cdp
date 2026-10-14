@@ -1,19 +1,24 @@
 // The outbound PII scanner (design 05 §Scanner; 03 §Gateway layers row 5). New in the port:
 // the origin had no model-side PII control at all (14 §3.6, §5.3).
 //
-// `assertNoPII` serializes a payload and checks three things, in this order:
-//   1. known_email   — membership against every email_norm in the database (loaded per request)
-//   2. email_pattern — the case-insensitive email regex (shared/pii.ts EMAIL_REGEX)
-//   3. raw_id        — raw app user, device or web visitor ids (shared/pii.ts RAW_ID_REGEX)
+// `assertNoPII` serializes a payload, normalizes it once (shared/pii.ts normalizeForScan: NFKC,
+// zero-width/soft-hyphen stripped, every disguised "@"/"." folded to the real character — 09
+// D-79) and checks four things against the normalized text, in this order:
+//   1. known_email      — membership against every email_norm in the database (loaded per request)
+//   2. email_pattern    — the case-insensitive email regex (shared/pii.ts EMAIL_REGEX)
+//   3. raw_id           — raw app user, device or web visitor ids (shared/pii.ts RAW_ID_REGEX)
+//   4. known_local_part — a known email's local part with no "@" at all (09 D-79; this is what
+//                         closes the gap a stored email's local part took through a tool result,
+//                         e.g. a webhook `link` such as "…/u/joy.hall830")
 // A hit throws `PiiBlockedError` (500 `blocked_pii`, 04 §POST /api/assistant). It never redacts
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
 import { normalizeEmail, normalizeQueryFragment } from '../../../shared/normalize'
-import { EMAIL_REGEX, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, RAW_ID_REGEX } from '../../../shared/pii'
+import { EMAIL_REGEX, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, type NormalizedScan, normalizeForScan, RAW_ID_REGEX } from '../../../shared/pii'
 import { ApiError } from '../../auth/middleware'
 import type { AuditTrace } from '../audit/ai-audit'
 
-export type PiiCheck = 'known_email' | 'email_pattern' | 'raw_id'
+export type PiiCheck = 'known_email' | 'email_pattern' | 'raw_id' | 'known_local_part'
 
 /** Where the scanned payload was going (05 §Strategy diagram; 05 §Scanner "logging"). */
 export type PiiSite = 'model_request' | 'tool_result' | 'model_output' | 'log' | 'audit_row'
@@ -64,7 +69,11 @@ export class KnownEmails {
     return this.localParts.has(normalizeQueryFragment(token))
   }
 
-  /** True when any known email occurs anywhere in `text`, ignoring case. */
+  /**
+   * True when any known email occurs anywhere in `text`, ignoring case. `text` must already be
+   * normalized (shared/pii.ts normalizeForScan) — every caller in this file normalizes once at
+   * its own entry point and passes the result on, so this never re-normalizes.
+   */
   occursIn(text: string): boolean {
     for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
       for (const [local, lengths] of this.shapes) {
@@ -105,14 +114,80 @@ function serialize(payload: unknown): string {
   return text
 }
 
-/** The first check `payload` fails, or null when it is clean. Pure. */
+/**
+ * Every normalized-text span (09 D-79) that is a known local part at a non-alphanumeric
+ * boundary — the one scan both the outbound detector (findPII) and Gate 1's redaction
+ * (redactKnownLocalParts) run; neither keeps its own copy. `text` must already be normalized.
+ */
+function findLocalPartSpans(text: string, known: KnownEmails): Array<readonly [number, number]> {
+  const spans: Array<readonly [number, number]> = []
+  for (const m of text.matchAll(new RegExp(LOCAL_PART_TOKEN.source, 'gi'))) {
+    const token = m[0]
+    const base = m.index
+    let i = 0
+    while (i < token.length) {
+      let end = -1
+      if (ALNUM.test(token[i]) && (i === 0 || !ALNUM.test(token[i - 1]))) {
+        const last = Math.min(token.length, i + known.maxLocalPartLength)
+        for (let e = last; e >= i + LOCAL_PART_MIN_CHARS; e--) {
+          if (e < token.length && ALNUM.test(token[e])) continue
+          if (known.isLocalPart(token.slice(i, e))) {
+            end = e
+            break
+          }
+        }
+      }
+      if (end > 0) {
+        spans.push([base + i, base + end])
+        i = end
+      } else {
+        i += 1
+      }
+    }
+  }
+  return spans
+}
+
+/**
+ * Builds the redacted ORIGINAL text from `spans` (normalized-text coordinates, ascending, from
+ * `normalized`): everything between spans is copied from the original exactly as typed, and each
+ * span's original range — however many original characters its disguise took — becomes
+ * `replacement`. Shared by redactEmails and redactKnownLocalParts so a disguise is mapped back to
+ * the original exactly once, the same way for both.
+ */
+function applySpans(
+  original: string,
+  normalized: NormalizedScan,
+  spans: Array<readonly [number, number]>,
+  replacement: string,
+): { text: string; count: number } {
+  let result = ''
+  let lastOrigEnd = 0
+  let count = 0
+  for (const [ns, ne] of spans) {
+    const [os, oe] = normalized.mapToOriginal(ns, ne)
+    result += original.slice(lastOrigEnd, os) + replacement
+    lastOrigEnd = oe
+    count += 1
+  }
+  result += original.slice(lastOrigEnd)
+  return { text: result, count }
+}
+
+/**
+ * The first check `payload` fails, or null when it is clean. Pure. Checked in this order: a
+ * stored email anywhere in the text, the email shape on its own, a raw id, and (09 D-79, closing
+ * the gap the self-audit found) a known local part with no "@" at all — the path a webhook
+ * `link` like `…/u/joy.hall830` takes. Every check runs on one normalization of the payload
+ * (shared/pii.ts normalizeForScan), so a disguised address or a disguised local part is caught
+ * the same way as a plain one.
+ */
 export function findPII(payload: unknown, known: KnownEmails): PiiCheck | null {
-  const raw = serialize(payload)
-  // A percent-encoded "@" (%40, as URLs and unsubscribe links carry it) counts as "@" (09 D-70 #1).
-  const text = decodeAt(raw)
+  const text = normalizeForScan(serialize(payload)).text
   if (known.occursIn(text)) return 'known_email'
   if (EMAIL_REGEX.test(text)) return 'email_pattern'
   if (RAW_ID_REGEX.test(text)) return 'raw_id'
+  if (findLocalPartSpans(text, known).length > 0) return 'known_local_part'
   return null
 }
 
@@ -169,74 +244,42 @@ export function logModelPayload(at: string, payload: unknown, known: KnownEmails
 }
 
 /**
- * Gate 1's email redaction of user text (03 row 2): every email-shaped span becomes `[email]`.
- * The shared regex has no `g` flag (shared/pii.ts), so a global copy is made here per call.
+ * Gate 1's email redaction of user text (03 row 2): every email-shaped span, including a
+ * disguised one (09 D-79, shared/pii.ts normalizeForScan), becomes `[email]`; everything else in
+ * `text` is copied back exactly as typed (applySpans). The shared regex has no `g` flag
+ * (shared/pii.ts), so a global copy is made here per call.
  */
 export function redactEmails(text: string): { text: string; count: number } {
-  let count = 0
-  const redacted = text.replace(new RegExp(EMAIL_REGEX.source, 'gi'), () => {
-    count += 1
-    return '[email]'
-  })
-  return { text: redacted, count }
+  const normalized = normalizeForScan(text)
+  const spans: Array<readonly [number, number]> = [...normalized.text.matchAll(new RegExp(EMAIL_REGEX.source, 'gi'))].map((m) => [
+    m.index,
+    m.index + m[0].length,
+  ])
+  return applySpans(text, normalized, spans, '[email]')
 }
 
 /**
  * Gate 1's local-part redaction (09 D-70 #1): a known email's local part typed without its
- * domain ("is joy.hall830 engaged?") becomes `[email]` too. Only whole tokens count: a maximal
- * run of local-part characters (shared/pii.ts LOCAL_PART_TOKEN), as typed or less any leading
- * or trailing `. _ % + -` (sentence punctuation, "joy.hall830-"), must equal a known local part
- * of at least LOCAL_PART_MIN_CHARS characters, so "joy.hall8301" or "joy.hall83" stay as typed. Run after `redactEmails`, whose
- * `[email]` holds no token that long.
+ * domain ("is joy.hall830 engaged?"), disguised or not, becomes `[email]` too. Only whole tokens
+ * count: a maximal run of local-part characters (shared/pii.ts LOCAL_PART_TOKEN), as typed or
+ * less any leading or trailing `. _ % + -` (sentence punctuation, "joy.hall830-"), must equal a
+ * known local part of at least LOCAL_PART_MIN_CHARS characters, so "joy.hall8301" or
+ * "joy.hall83" stay as typed. Run after `redactEmails`, whose `[email]` holds no token that
+ * long. Shares `findLocalPartSpans` with the outbound detector (findPII), so the two never drift.
  */
 export function redactKnownLocalParts(text: string, known: KnownEmails): { text: string; count: number } {
-  let count = 0
-  const redacted = text.replace(new RegExp(LOCAL_PART_TOKEN.source, 'gi'), (token) => {
-    // A known local part counts wherever it starts and ends on a non-alphanumeric boundary inside the
-    // token, so "joy.hall830+x", "joy.hall830.protonmail" and "-joy.hall830" are caught, while
-    // "xjoy.hall830" and "joy.hall8301" (a different word) are not. Longest match first.
-    let out = ''
-    let i = 0
-    while (i < token.length) {
-      let end = -1
-      if (ALNUM.test(token[i]) && (i === 0 || !ALNUM.test(token[i - 1]))) {
-        const last = Math.min(token.length, i + known.maxLocalPartLength)
-        for (let e = last; e >= i + LOCAL_PART_MIN_CHARS; e--) {
-          if (e < token.length && ALNUM.test(token[e])) continue
-          if (known.isLocalPart(token.slice(i, e))) {
-            end = e
-            break
-          }
-        }
-      }
-      if (end > 0) {
-        out += '[email]'
-        count += 1
-        i = end
-      } else {
-        out += token[i]
-        i += 1
-      }
-    }
-    return out
-  })
-  return { text: redacted, count }
-}
-
-/** Decodes a percent-encoded "@" (%40, any case), the only escape that can hide an email from the checks. */
-export function decodeAt(text: string): string {
-  return text.replace(/%40/gi, '@')
+  const normalized = normalizeForScan(text)
+  return applySpans(text, normalized, findLocalPartSpans(normalized.text, known), '[email]')
 }
 
 /**
  * A redaction for a 400 `details` line or a `console.warn`/`console.error` log (09 D-70 item 1):
- * decodes a percent-encoded "@" first (so "name%40host.tld" redacts exactly as "name@host.tld"
- * would), then runs `redactEmails`, then masks any `RAW_ID_REGEX` match (`u_`/`d_`/`v_` + hex) as
- * `[id]`. It is regex-based and therefore incomplete on its own: it decodes only one level of
- * percent-encoding (misses `%2540`, a double-encoded "@"), `RAW_ID_REGEX`'s `\b` never fires
- * between two word characters (misses a raw id glued to a letter, e.g. "xu_ceed5f12"), and it
- * never runs `redactKnownLocalParts` (no bound `KnownEmails` at this call site), so a bare known
- * local part with no "@" passes through untouched.
+ * normalizes first (shared/pii.ts normalizeForScan, so a disguised "@" redacts exactly as a
+ * plain one would), then runs `redactEmails`, then masks any `RAW_ID_REGEX` match (`u_`/`d_`/`v_`
+ * + hex) as `[id]`. Still incomplete on its own: `RAW_ID_REGEX`'s `\b` never fires between two
+ * word characters (misses a raw id glued to a letter, e.g. "xu_ceed5f12"), and it never runs
+ * `redactKnownLocalParts` (no bound `KnownEmails` at this call site), so a bare known local part
+ * with no "@" passes through untouched.
  *
  * `worker/routes/segments.ts` (readBody's unknown field, filtersFrom's rethrown problems) runs
  * every detail through this function, but as a backstop only (fixer round 4): the real defense
@@ -246,7 +289,7 @@ export function decodeAt(text: string): string {
  * rely on this function alone for a value it cannot afford to leak.
  */
 export function redactDetail(text: string): string {
-  const { text: withoutEmails } = redactEmails(decodeAt(text))
+  const { text: withoutEmails } = redactEmails(text)
   return withoutEmails.replace(new RegExp(RAW_ID_REGEX.source, 'gi'), '[id]')
 }
 
