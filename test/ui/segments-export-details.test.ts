@@ -84,8 +84,7 @@ describe('/segments ExportFileDetails: "What\'s in the file" (09 D-76)', () => {
     expect(dd).toContain('30 days')
   })
 
-  it('a count of 0 is never passed in (Export CSV itself is hidden at 0, 06 §/segments)', () => {
-    // Guards the page's own gate: ExportFileDetails only ever renders behind `count > 0` (next test).
+  it('count 0 still renders "0 rows" (the page itself never passes 0 in: ExportFileDetails only renders behind `count > 0`, next test)', () => {
     expect(text(BRIEF_EXAMPLE, 0)).toContain('0 rows. Unsubscribed subscribers are not included.')
   })
 })
@@ -102,5 +101,19 @@ describe('/segments: ExportFileDetails sits beside Export CSV, only once a resul
   it("Technical details' CSV columns sentence was retired, not left as a second copy (09 D-72)", () => {
     expect(segmentsSource).not.toContain('CSV columns:')
     expect(segmentsSource).not.toContain('CSV_COLUMNS')
+  })
+
+  // The file Export CSV downloads and the file ExportFileDetails describes must be the same
+  // file: both read the identical filters expression, so a divergence (e.g. Export CSV sending
+  // a wider status list than the disclosure claims it will) cannot pass silently (09 D-76).
+  it('Export CSV and ExportFileDetails read the identical filters expression, not two separate copies', () => {
+    const onClickMatch = segmentsSource.match(/onClick=\{\(\) => void exportCsv\(([^)]*)\)\}/)
+    const detailsMatch = segmentsSource.match(/<ExportFileDetails filters=\{([^}]*)\} count=/)
+    expect(onClickMatch).not.toBeNull()
+    expect(detailsMatch).not.toBeNull()
+    const exportArg = onClickMatch![1]
+    const detailsArg = detailsMatch![1]
+    expect(exportArg).toBe('ok.filters')
+    expect(exportArg).toBe(detailsArg)
   })
 })
