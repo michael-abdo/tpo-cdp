@@ -192,6 +192,38 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
     expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(TOOL_SEEDS.map((s) => s.name))
   })
 
+  it('a `pattern` must be a string that compiles with the u flag, or the row is refused at load (09 D-69)', async () => {
+    // The segment row's patterns (shared/segment-filters.ts) pass; Gate 2 compiles each with `u`.
+    expect(schemaProblems({ type: 'string', pattern: '^/[a-z0-9/-]{0,120}$' }, 'p')).toEqual([])
+    expect(schemaProblems({ type: 'string', pattern: '(' }, 'p')).toEqual(['p.pattern is not a valid regular expression'])
+    expect(schemaProblems({ type: 'string', pattern: 5 }, 'p')).toEqual(['p.pattern must be a string'])
+    // `\-` outside a class compiles without the u flag but not with it, so the check uses the u flag.
+    expect(() => new RegExp('\\-')).not.toThrow()
+    expect(schemaProblems({ type: 'string', pattern: '\\-' }, 'p')).toEqual(['p.pattern is not a valid regular expression'])
+    const segment = TOOL_SEEDS[0]
+    expect(segment.name).toBe('segment')
+    const properties = segment.inputSchema.properties as Record<string, Record<string, unknown>>
+    const broken: Array<[ToolSeed, string]> = [
+      [
+        { ...segment, name: 'segment_bad_pattern', inputSchema: { ...segment.inputSchema, properties: { ...properties, site_visit_page: { ...properties.site_visit_page, pattern: '(' } } } },
+        'input_schema.properties.site_visit_page.pattern is not a valid regular expression',
+      ],
+      [
+        { ...segment, name: 'segment_number_pattern', inputSchema: { ...segment.inputSchema, properties: { ...properties, went_cold: { ...properties.went_cold, pattern: 5 } } } },
+        'input_schema.properties.went_cold.pattern must be a string',
+      ],
+    ]
+    for (const [seed, problem] of broken) {
+      await withRows([seed], async () => {
+        const error = await configError(() => loadTools(env.DB))
+        expect(error.status).toBe(500)
+        expect(error.code).toBe('tool_config_error')
+        expect(error.row).toBe(seed.name)
+        expect(error.message).toContain(problem)
+      })
+    }
+  })
+
   it('a query row is checked like a model query and more: PII, write words, the wall clock, raw "?", its config and mapping', async () => {
     const source = { type: 'object', properties: { source: { type: 'string' } }, required: ['source'] }
     const cases: Array<[ToolSeed, string]> = [

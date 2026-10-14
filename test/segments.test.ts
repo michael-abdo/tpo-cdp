@@ -582,6 +582,29 @@ describe('T-SEG-12 every new filter keeps the segment rules', () => {
     }
   })
 
+  it('the segment tool names the definitions each new filter applied (19 §4 "Assistant")', async () => {
+    const used = async (filters: Record<string, unknown>) => (await BUILTIN_HANDLERS.segment.run(env.DB, filters)).summary.definitions_used
+    expect(await used({ source: ['instagram'], went_cold: '2026-08' })).toEqual(['went_cold_in', 'cold_since'])
+    expect(await used({ source: ['instagram'], went_cold: 'any' })).toEqual(['cold', 'cold_since'])
+    // 30 days is the new_subscriber window (02 §Derived); 7 days is only a last-N-days window.
+    expect(await used({ signed_up_within_days: 30 })).toEqual(['new_subscriber', 'last_n_days'])
+    expect(await used({ signed_up_within_days: 7 })).toEqual(['last_n_days'])
+    expect(await used({ engagement_gte: 50 })).toEqual(['engagement_score'])
+    expect(await used({ engagement_lte: 40 })).toEqual(['engagement_score'])
+    expect(await used({ site_visit_within_days: 30 })).toEqual(['last_n_days'])
+    expect(await used({ app_active_within_days: 7 })).toEqual(['last_n_days'])
+    // A page or an event alone sets no window, so it names no definition.
+    expect(await used({ site_visit_page: '/shadrachs-picks' })).toEqual([])
+    expect(await used({ ...PRESET, went_cold: '2026-08', signed_up_within_days: 30, site_visit_within_days: 30 })).toEqual([
+      'no_open_in_days',
+      'days_since_open',
+      'went_cold_in',
+      'cold_since',
+      'new_subscriber',
+      'last_n_days',
+    ])
+  })
+
   it('the brief\'s preset is still 177 / 55 with every new key absent', async () => {
     const body = await preview(PRESET)
     expect({ count: body.count, hidden: body.hidden_unsubscribed }).toEqual({ count: PRESET_COUNT, hidden: 55 })
@@ -698,6 +721,22 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
     expect(await counts({ app_active_within_days: 7, app_event: 'login' })).toEqual({ active: 0, hidden: 0 })
     const rows = (await preview({ app_active_within_days: 7 })).rows
     expect(rows.map((r) => r.email)).toEqual([JULIA])
+  })
+
+  it('the N of app_active_within_days is the window: an event 8 days before TODAY counts for 8 and 30 days, not 7', async () => {
+    // john.turner61 (u_f2411d1c, app_users.csv line 9) reads a story at TODAY − 8 days, BRIEF_TS's
+    // time of day. lastNDays(7) starts 2026-09-21 and lastNDays(8) starts 2026-09-20 (02 §Derived).
+    const eightDaysAgo = `${minusDays(TODAY, 8)}${BRIEF_TS.slice(10)}`
+    expect(eightDaysAgo).toBe('2026-09-20T14:22:05Z')
+    expect(compileSegment(parseFilters({ app_active_within_days: 7 })).params).toEqual(['active', minusDays(TODAY, 7)])
+    expect(minusDays(TODAY, 7)).toBe('2026-09-21')
+    const before = { 7: await counts({ app_active_within_days: 7 }), 8: await counts({ app_active_within_days: 8 }), 30: await counts({ app_active_within_days: 30 }) }
+    const res = await send({ event: 'read_story', user_id: 'u_f2411d1c', device_id: 'd_f2411d1c', timestamp: eightDaysAgo, properties: { story: 'supreme-court-ruling-explained' } })
+    expect(res.status).toBe(202)
+    expect(await counts({ app_active_within_days: 7 })).toEqual(before[7])
+    expect(await counts({ app_active_within_days: 8 })).toEqual({ active: before[8].active + 1, hidden: before[8].hidden })
+    expect(await counts({ app_active_within_days: 30 })).toEqual({ active: before[30].active + 1, hidden: before[30].hidden })
+    expect((await preview({ app_active_within_days: 8, app_event: 'read_story' })).rows.map((r) => r.email).sort()).toEqual(['john.turner61@gmail.com', JULIA])
   })
 
   it('an anonymous app_open counts for joy.hall830 once a login stitches its device', async () => {

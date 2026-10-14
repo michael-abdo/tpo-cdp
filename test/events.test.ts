@@ -186,6 +186,7 @@ describe('GET /api/events/recent (04, 06 §/events)', () => {
 })
 
 interface PreviewBody {
+  count: number
   rows: { email: string; engagement_score: number; has_app: boolean }[]
 }
 
@@ -199,13 +200,14 @@ async function preview(filters: unknown): Promise<PreviewBody> {
   return res.json<PreviewBody>()
 }
 
-// 08 T-WH-10 reads "a segment count changes after an event". No 04 segment filter reads anything
-// a webhook writes (status, source and last_open_date come from subscribers.csv; has_app from
-// app_users rows with an email, which a webhook never creates), so no count can move. What a
-// webhook does change in a segment is the stored engagement_score of its rows (09 D-46). This
-// test pins that, on the same worker with no re-import; the count gap is reported, not hidden.
+// 08 T-WH-10 reads "a segment count changes after an event". 09 D-69 amends D-53: the app activity
+// filters (app_active_within_days, app_event) read v_app_events, which only webhooks fill, so an
+// event now moves a segment count; the engagement filters read the stored engagement_score, which
+// an event also moves (09 D-46). This test pins both on the same worker with no re-import: the
+// score in the rows, and the app activity counts (test/segments.test.ts T-SEG-9 and T-SEG-11 pin
+// the same for engagement ranges, windows, stitching and events after TODAY).
 describe('T-WH-10 a segment reflects a webhook event with no re-import, same worker instance', () => {
-  it("changes julia.evans230's engagement_score in the segment rows after a direct and a stitched event", async () => {
+  it("changes julia.evans230's engagement_score and the app activity counts after a direct and a stitched event", async () => {
     const julia = 'julia.evans230@gmail.com'
     const filters = { source: ['instagram'], has_app: true }
     const runs = await env.DB.prepare('SELECT count(*) AS n FROM import_runs').first<number>('n')
@@ -215,6 +217,12 @@ describe('T-WH-10 a segment reflects a webhook event with no re-import, same wor
       if (found === undefined) throw new Error('julia.evans230 is not in the Instagram + has_app segment')
       return { score: found.engagement_score }
     }
+
+    // App activity counts (09 D-69): only webhook events feed them, and this file sent none for her yet.
+    const appCount = async (f: Record<string, unknown>) => (await preview(f)).count
+    const has = async (f: Record<string, unknown>) => (await preview(f)).rows.some((r) => r.email === julia)
+    const countsBefore = { week: await appCount({ app_active_within_days: 7 }), login: await appCount({ app_event: 'login' }), open: await appCount({ app_event: 'app_open' }) }
+    expect(await has({ app_active_within_days: 7 })).toBe(false)
 
     const before = await row()
     const device = 'd_4b21e8'
@@ -235,6 +243,11 @@ describe('T-WH-10 a segment reflects a webhook event with no re-import, same wor
     ).toBe(202)
     const afterDirect = await row()
     expect(afterDirect.score).toBeGreaterThan(before.score)
+    // The login moves two segment counts by exactly her: app activity in 7 days, and login.
+    expect(await appCount({ app_active_within_days: 7 })).toBe(countsBefore.week + 1)
+    expect(await appCount({ app_event: 'login' })).toBe(countsBefore.login + 1)
+    expect(await has({ app_event: 'login' })).toBe(true)
+    expect(await appCount({ app_event: 'app_open' })).toBe(countsBefore.open)
 
     // An anonymous event on her device counts for her through the read-time stitch.
     expect(
@@ -248,6 +261,9 @@ describe('T-WH-10 a segment reflects a webhook event with no re-import, same wor
     ).toBe(202)
     const afterStitched = await row()
     expect(afterStitched.score).toBeGreaterThan(afterDirect.score)
+    // The stitched app_open counts for her too; app activity in 7 days already held her.
+    expect(await appCount({ app_event: 'app_open' })).toBe(countsBefore.open + 1)
+    expect(await appCount({ app_active_within_days: 7 })).toBe(countsBefore.week + 1)
 
     // The stored score is what the preview shows, read straight from the profile row.
     const stored = await env.DB.prepare('SELECT engagement_score FROM profiles WHERE email_norm = ?')
