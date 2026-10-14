@@ -103,6 +103,9 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
     setError(null)
     setDismissed(false)
     nav.setActive(-1)
+    // A different or now-unmatched account cannot resend the last account's event.
+    setSentEventId(null)
+    setSaid({ text: '', n: 0 })
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -115,6 +118,7 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
   }
 
   async function send(body: { user_id: string; event: AppEventName } | { resend: string }): Promise<void> {
+    if (sending) return // ignore a press while one is in flight (native disabled removed below)
     setSending(true)
     setError(null)
     try {
@@ -124,6 +128,7 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
       onSent(data.event)
     } catch (err) {
       setError(errorMessage(err))
+      setSaid({ text: '', n: 0 }) // an old success line never sits under a new, contradicting error
     } finally {
       setSending(false)
     }
@@ -154,7 +159,7 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
             value={fragment}
             onChange={onInput}
             onKeyDown={onKeyDown}
-            placeholder="Type part of a user ID, e.g. u_2b6447a3"
+            placeholder="Type the start of a user ID or an email, e.g. u_2b64"
             className="block w-full min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink"
           />
           {listShown && suggestions.status === 'loading' && <Loading label="Finding accounts…" />}
@@ -200,7 +205,11 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
                   name="test-event-name"
                   className="size-4"
                   checked={eventName === name}
-                  onChange={() => setEventName(name)}
+                  onChange={() => {
+                    setEventName(name)
+                    setSentEventId(null)
+                    setSaid({ text: '', n: 0 })
+                  }}
                   aria-labelledby={`test-event-name-${name}`}
                 />
                 <EventName event={name} nameId={`test-event-name-${name}`} />
@@ -210,14 +219,22 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
         </fieldset>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" variant="primary" icon={ICONS.events} disabled={userId === null || sending}>
+          <Button
+            type="submit"
+            variant="primary"
+            icon={ICONS.events}
+            disabled={userId === null}
+            aria-disabled={sending}
+            className="aria-disabled:cursor-wait aria-disabled:opacity-60"
+          >
             {sending ? 'Sending…' : 'Send'}
           </Button>
           {sentEventId !== null && (
             <Button
               type="button"
               variant="secondary"
-              disabled={sending}
+              aria-disabled={sending}
+              className="aria-disabled:cursor-wait aria-disabled:opacity-60"
               onClick={() => void send({ resend: sentEventId })}
             >
               Send again

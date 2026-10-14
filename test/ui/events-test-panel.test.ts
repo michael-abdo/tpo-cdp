@@ -31,7 +31,7 @@ describe('"Send a test event" panel: labels (D-55 levels, WCAG 2.2 AA)', () => {
   it('the account field has a visible label and combobox roles for the suggestion list', () => {
     const page = html()
     expect(page).toMatch(/<label[^>]*for="test-event-account"[^>]*>\s*App account\s*<\/label>/)
-    expect(page).toContain('Type part of a user ID, e.g. u_2b6447a3')
+    expect(page).toContain('Type the start of a user ID or an email, e.g. u_2b64')
     expect(page).toMatch(/role="combobox"/)
     // aria-controls names the listbox only while it is shown (WCAG 2.2 AA 4.1.2): with nothing
     // typed, no list is rendered, so the attribute must not point at an id that does not exist.
@@ -55,9 +55,23 @@ describe('"Send a test event" panel: labels (D-55 levels, WCAG 2.2 AA)', () => {
     expect(html()).toMatch(/role="status"[^>]*aria-live="polite"/)
   })
 
-  it('D-72: the placeholder is the only place the example id appears, not repeated in a separate hint', () => {
+  it('the placeholder names only what /api/lookup/search actually matches: the start of a user ID, or an email', () => {
     const page = html()
-    expect(page.match(/u_2b6447a3/g)).toHaveLength(1)
+    expect(page).toContain('Type the start of a user ID or an email, e.g. u_2b64')
+    // No separate helper line repeats or contradicts it (D-72: one thing in one place).
+    expect(page).not.toContain('Type part of a user ID')
+    expect(page.match(/e\.g\. u_/g)).toHaveLength(1)
+  })
+
+  it('never sets the native `disabled` attribute on Send or Send again for `sending` (keeps focus; 06 "Refresh stays focusable while it works")', () => {
+    // Native disabled only for userId === null on Send; `sending` must drive aria-disabled instead,
+    // exactly like InsightsPage's Refresh button, so a focused button never drops to <body> mid-press.
+    // The negative lookbehind keeps this from matching inside "aria-disabled={sending}" itself.
+    expect(panelSource).not.toMatch(/(?<!aria-)disabled=\{[^}]*\bsending\b[^}]*\}/)
+    expect(panelSource).toMatch(/aria-disabled=\{sending\}/g)
+    expect(panelSource).toMatch(/aria-disabled:cursor-wait aria-disabled:opacity-60/)
+    // Each send() call ignores a press already in flight instead of relying on native disabled.
+    expect(panelSource).toMatch(/async function send\([^)]*\)[^{]*\{\s*if \(sending\) return/)
   })
 })
 
@@ -113,5 +127,15 @@ describe('the account field is the shared listbox contract (../listbox; WCAG 2.2
 describe('"Send a test event" wires onSent to refresh the list at once (09 D-73)', () => {
   it('EventsPage passes a real onSent that loads with FetchKind \'sent\', not a no-op', () => {
     expect(eventsPageSource).toMatch(/<TestEventPanel onSent=\{\(\) => void load\('sent'\)\}/)
+  })
+
+  it('the panel itself calls onSent(data.event) after a successful send, inside send() — a mutant that drops this call (e.g. `void data`) must fail here even though EventsPage\'s own wiring above still reads fine', () => {
+    const send = /async function send\([^]*?\n  \}\n/.exec(panelSource)?.[0]
+    expect(send, 'send() was not found in the panel source').toBeDefined()
+    expect(send).toMatch(/postJson<TestEventResult>\('\/api\/events\/test'/)
+    expect(send).toMatch(/onSent\(data\.event\)/)
+    // The call sits after the result is captured and before the catch, not inside a comment.
+    const stripComments = (s: string) => s.replace(/\/\/.*$/gm, '')
+    expect(stripComments(send as string)).toMatch(/const data = await postJson[^]*?onSent\(data\.event\)[^]*?catch/)
   })
 })
