@@ -1,6 +1,6 @@
 // What /events says after each fetch and how often it fetches (06 §/events, §UI principles 7;
 // 16 §If time remains item 2). Pure, so test/events-poll.test.ts runs it on real answers of
-// GET /api/events/recent; src/pages/EventsPage.tsx is the only other reader.
+// GET /api/events/recent; src/pages/EventsPage.tsx is the only other caller.
 
 import type { RecentEvent } from './types'
 

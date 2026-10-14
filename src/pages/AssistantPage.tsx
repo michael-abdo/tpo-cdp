@@ -1,7 +1,7 @@
-// /assistant (06 §/assistant, R5): "Ask a question". One question box, the brief's three questions
+// /assistant (06 §/assistant, R5): the "AI assistant" (06 §Vocabulary, 09 D-66). One question box, the brief's three questions
 // (R5.2) as one-click examples (06 §UI principles 6), and one typed result from POST /api/assistant
 // (04): the answer text (announced politely, principle 7), the table, or the segment's count with
-// "Open in builder", which loads its filters on /segments. A partial result says so. Level 2 "How
+// "Open segment", which loads its filters on /segments. A partial result says so. Level 2 "How
 // this answer was worked out": the window, the filters and the definitions used, in words, with the
 // definitions' plain text from DEFINITIONS (02 §Derived "one runtime source"); Technical details:
 // the raw names, the result type and the trace id. The filters are the model's own words, so they
@@ -11,7 +11,7 @@
 // the AI saw", 05 §Proof surfaces). The request takes 5–20 s (04), shown as a short text state.
 // Errors show the 04 envelope's message; the 503 for a missing key names the hosted URL.
 // Single-shot: there is no conversation history (09 D-34). "Explain this" on /growth opens this page
-// with ?q=<question> (09 D-39): the box is filled in and nothing is sent until the reader presses Ask.
+// with ?q=<question> (09 D-39): the box is filled in and nothing is sent until the teammate presses Ask.
 
 import { type FormEvent, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
@@ -171,14 +171,14 @@ export function Result({ data }: { data: AssistantResponse }) {
         <div className="space-y-3 rounded-xl bg-surface-2 p-4">
           <div className="flex flex-wrap items-center gap-3">
             <p className="mr-auto font-display text-2xl font-semibold text-ink">
-              {data.segment.count === 1 ? '1 reader matches' : `${fmt(data.segment.count)} readers match`}
+              {data.segment.count === 1 ? '1 subscriber matches' : `${fmt(data.segment.count)} subscribers match`}
             </p>
             <Button
               variant="primary"
               icon={ICONS.next}
               onClick={() => navigate('/segments', { state: { filters: data.segment?.filters } })}
             >
-              Open in builder
+              Open segment
             </Button>
             <Button
               icon={ICONS.export}
@@ -186,7 +186,7 @@ export function Result({ data }: { data: AssistantResponse }) {
               {exporting ? 'Preparing download…' : 'Export CSV'}
             </Button>
           </div>
-          <p className="text-sm text-gray-600">The builder shows the full list; Export CSV downloads it.</p>
+          <p className="text-sm text-gray-600">Open segment shows everyone in it on Segments; Export CSV downloads it.</p>
           {exportError !== null && <ErrorLine message={exportError} next="Press Export CSV to try again." />}
         </div>
       )}
@@ -282,7 +282,7 @@ export function Result({ data }: { data: AssistantResponse }) {
 export const PREFILL_PARAM = 'q'
 
 export default function AssistantPage() {
-  // A question handed over by "Explain this" is filled in, not sent: the reader presses Ask.
+  // A question handed over by "Explain this" is filled in, not sent: the teammate presses Ask.
   const [params] = useSearchParams()
   const prefilled = params.get(PREFILL_PARAM)?.trim() ?? ''
   const [question, setQuestion] = useState(prefilled)
@@ -330,9 +330,9 @@ export default function AssistantPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Ask a question"
+        title="AI assistant"
         icon={ICONS.assistant}
-        purpose="Ask about readers in plain words. Answers come from our data; no reader's email is sent to the AI."
+        purpose="Ask in plain English and get an answer, a table, or a segment. Answers come from our data; no subscriber's email is sent to the AI."
       />
       <Announcer message={announcement} />
 

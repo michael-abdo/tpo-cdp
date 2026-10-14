@@ -1,6 +1,7 @@
 // Plain words for stored values, column names and filter keys (06 §UI principles 4). Display maps
 // only: the values sent to the API and the raw names shown in Technical details stay as they are.
-// /segments, /assistant and /growth read the same maps, so a reader's fields carry the same words on each.
+// /segments, /assistant and /growth read the same maps, so a subscriber's fields carry the same words on each.
+// Field words are the brief's own (06 §Vocabulary, 09 D-66): Signup date, Acquisition source, Last open date, UTM source.
 
 import type { DefinitionKey } from '../shared/derive'
 
@@ -26,20 +27,20 @@ export const statusLabel = (s: string) => STATUS_LABEL[s] ?? s
  */
 export const COLUMN_LABEL = {
   email: 'Email',
-  pkey: 'Reader key',
+  pkey: 'Profile key',
   status: 'Status',
-  source: 'Signed up from',
-  signup_date: 'Signed up',
-  last_open_date: 'Last opened',
+  source: 'Acquisition source',
+  signup_date: 'Signup date',
+  last_open_date: 'Last open date',
   engagement_score: 'Engagement',
   has_app: 'Uses the app',
   signup_month: 'Signup month',
   cold_month: 'Month they went cold',
   first_page: 'First page visited',
-  utm_source: 'Campaign source',
+  utm_source: 'UTM source',
   event: 'App event',
   subscribers: 'Subscribers',
-  cold: 'Cold readers',
+  cold: 'Cold subscribers',
   went_cold: 'Went cold',
   with_app_after_signup: 'Got the app after signing up',
   rate: 'Rate',
@@ -51,7 +52,7 @@ export const COLUMN_LABEL = {
 /** Segment filter keys (FILTER_KEYS) and the aggregate inputs a model may echo in filters_applied. */
 export const FILTER_LABEL: Readonly<Record<string, string>> = {
   status: 'Status',
-  source: 'Signed up from',
+  source: 'Acquisition source',
   days_since_open_gte: "Haven't opened an email in at least",
   include_never_opened: 'Also includes people who never opened',
   has_app: 'Uses the app',

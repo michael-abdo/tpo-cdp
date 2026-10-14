@@ -83,12 +83,12 @@ FROM v_web_events`
 /** The question behind each check's number. */
 export const DATA_QUALITY_EXPLAIN: Record<DataQualityCheckKey, string> = {
   subscribers_without_source:
-    'How many subscribers, including unsubscribed readers, have no signup source recorded, out of all subscribers?',
-  subscribers_unexpected_source: `How many subscribers, including unsubscribed readers, have a signup source that is not one of ${CANONICAL_LIST}, out of all subscribers?`,
-  page_views_without_utm: 'How many website page views carried no campaign source (UTM), out of all page views?',
-  page_views_unexpected_utm: `How many website page views carried a campaign source (UTM) that is not one of ${CANONICAL_LIST}, out of all page views?`,
+    'How many subscribers, including unsubscribed ones, have no acquisition source recorded, out of all subscribers?',
+  subscribers_unexpected_source: `How many subscribers, including unsubscribed ones, have an acquisition source that is not one of ${CANONICAL_LIST}, out of all subscribers?`,
+  page_views_without_utm: 'How many website visits carried no UTM source, out of all website visits?',
+  page_views_unexpected_utm: `How many website visits carried a UTM source that is not one of ${CANONICAL_LIST}, out of all website visits?`,
   app_users_not_on_list:
-    'How many app users have an email that is not on the newsletter list, out of all app users with an email?',
+    'How many app accounts have an email that does not belong to a newsletter subscriber, out of all app accounts with an email?',
 }
 
 const rate = (part: number, whole: number) => (whole === 0 ? null : Math.round((part / whole) * 10000) / 10000)

@@ -79,16 +79,16 @@ export const FinalBlock = z
 const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
 
 // T-AI-5 by rejection, not stripping (09 D-58): the check itself lives in shared/sql-sign.ts, the
-// one home "Ask a question" also uses to screen filters_applied. Re-exported for the tests.
+// one home the AI assistant page also uses to screen filters_applied. Re-exported for the tests.
 export { type SqlSign, sqlSign }
 
-/** The server's own sentence for a discarded text, built from the typed result (09 D-58). D-58 gives
- * "177 readers match." as an example; a count of 1 reads "1 reader matches." so the sentence stays
- * grammatical. A table result with no table gets the answer sentence (see respond()). */
+/** The server's own sentence for a discarded text, built from the typed result (09 D-58). D-58's
+ * example "177 readers match." reads "177 subscribers match." in the brief's words (09 D-66); a count
+ * of 1 reads "1 subscriber matches." so the sentence stays grammatical. A table result with no table gets the answer sentence (see respond()). */
 export function discardSentence(type: OutputType, count: number | null): string {
   if (type === 'segment') {
     if (count === null) throw new Error('discardSentence: a segment result has a count')
-    return count === 1 ? '1 reader matches.' : `${count} readers match.`
+    return count === 1 ? '1 subscriber matches.' : `${count} subscribers match.`
   }
   if (type === 'table') return 'Here is the table you asked for.'
   return "I couldn't phrase that answer safely — see Technical details for the steps."

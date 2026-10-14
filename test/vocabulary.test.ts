@@ -1,0 +1,137 @@
+// T-VOC-1 (08, 09 D-66): every user-facing word is the brief's own, per the table in 06 §Vocabulary.
+// The scan reads screen text from the TypeScript AST (JSX text, string literals, template chunks;
+// comments are not nodes), handed over by vitest.config.ts as SCREEN_TEXTS.vocabulary for each file
+// test/helpers/screen-text.ts VOCABULARY_SCAN names, plus the README as written. No database or
+// network: the inputs are the repo's own files.
+
+import { env } from 'cloudflare:test'
+import { describe, expect, it } from 'vitest'
+import readme from '../README.md?raw'
+import appSource from '../src/App.tsx?raw'
+import lookupSource from '../src/pages/LookupPage.tsx?raw'
+import { GLOSSARY } from '../shared/glossary'
+import { SOURCES } from '../shared/sources'
+import { COLUMN_LABEL, FILTER_LABEL } from '../src/labels'
+import { FILES } from '../src/needs-review'
+import { VOCABULARY_SCAN } from './helpers/screen-text'
+
+/**
+ * Retired anywhere user-facing (06 §Vocabulary, last line). "Reader(s)" stays only inside the brief's
+ * own example question; "screen reader" names assistive technology, not a person on the list.
+ */
+const RETIRED: readonly { name: string; pattern: RegExp }[] = [
+  { name: 'reader(s)', pattern: /\breaders?\b/i },
+  { name: 'Find a reader', pattern: /\bfind a reader\b/i },
+  { name: 'Build a list', pattern: /\bbuil[dt] a list\b/i },
+  { name: 'Newsletter list', pattern: /\bnewsletter list\b/i },
+  { name: 'App users', pattern: /\bapp users?\b/i },
+]
+/** Phrases that may hold a retired word: the brief's question (R5.2) and assistive technology. */
+const ALLOWED = [/most engaged readers/gi, /screen[- ]readers?/gi]
+
+function retiredIn(text: string): string[] {
+  const cleaned = ALLOWED.reduce((t, allowed) => t.replace(allowed, ''), text)
+  return RETIRED.filter((r) => r.pattern.test(cleaned)).map((r) => r.name)
+}
+
+function offences(files: Record<string, readonly string[]>): string[] {
+  const out: string[] = []
+  for (const [path, texts] of Object.entries(files))
+    for (const text of texts) for (const name of retiredIn(text)) out.push(`${path}: ${name} in "${text.trim()}"`)
+  return out
+}
+
+/** The labels a `<Field label="…">` or `<Column title="…">` names in a page's source. */
+const attributeValues = (code: string, tag: string, attribute: string) =>
+  [...code.matchAll(new RegExp(`<${tag}\\s+${attribute}="([^"]+)"`, 'g'))].map((m) => m[1])
+
+describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () => {
+  it('scans every file it names: all of src/ but the Segments page, the glossary, the registry and the server sentences', () => {
+    const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
+    for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
+    for (const page of ['src/App.tsx', 'src/pages/OverviewPage.tsx', 'src/pages/LookupPage.tsx', 'src/labels.ts'])
+      expect(scanned).toContain(page)
+    expect(scanned).not.toContain('src/pages/SegmentsPage.tsx')
+    expect(scanned.filter((p) => p.startsWith('src/')).length).toBeGreaterThan(15)
+  })
+
+  it('the guard flags each retired term and lets the brief\'s question and "screen reader" through', () => {
+    expect(retiredIn('Find a reader')).toEqual(['reader(s)', 'Find a reader'])
+    expect(retiredIn('Built a list of readers')).toEqual(['reader(s)', 'Build a list'])
+    expect(retiredIn('App users whose email is not on the newsletter list')).toEqual(['Newsletter list', 'App users'])
+    expect(retiredIn('build me a list of our most engaged readers')).toEqual([])
+    expect(retiredIn('so screen readers hear each change')).toEqual([])
+    expect(retiredIn('app_users.csv')).toEqual([])
+  })
+
+  it('no user-facing string in the scanned code holds a retired term', () => {
+    const texts = env.SCREEN_TEXTS.vocabulary
+    expect(Object.values(texts).flat().length).toBeGreaterThan(500)
+    expect(offences(texts)).toEqual([])
+  })
+
+  it('no README line holds a retired term outside the brief\'s own question', () => {
+    expect(offences({ 'README.md': readme.split('\n') })).toEqual([])
+  })
+
+  it('nav labels are the 06 words: Look up, Segments, App events, AI assistant', () => {
+    const nav = appSource.slice(appSource.indexOf('const NAV'), appSource.indexOf(']\n', appSource.indexOf('const NAV')))
+    const labels = [...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])
+    expect(labels).toEqual(['Overview', 'Look up', 'Segments', 'App events', 'AI assistant', 'Growth', 'AI audit log'])
+  })
+
+  it('Look up: title, purpose and the three column titles are the brief\'s', () => {
+    expect(lookupSource).toContain('title="Look up a subscriber"')
+    expect(lookupSource).toContain("'Finds anyone: newsletter info, site visits and app activity in one view.'")
+    expect(new Set(attributeValues(lookupSource, 'Column', 'title'))).toEqual(
+      new Set(['Newsletter info', 'Site visits', 'App activity']),
+    )
+    // Field labels a person reads on the profile (06 §Vocabulary subscriber, web and app fields).
+    const fields = new Set(attributeValues(lookupSource, 'Field', 'label'))
+    for (const label of ['Acquisition source', 'Signup date', 'Last open date', 'Visitor ID', 'User ID', 'Created date'])
+      expect(fields).toContain(label)
+  })
+
+  it('source names and units are the brief\'s: beehiiv, Website, App accounts, App events', () => {
+    expect(SOURCES.map((s) => s.name)).toEqual(['beehiiv', 'Website', 'App accounts', 'App events'])
+    expect(SOURCES.map((s) => s.unit[1])).toEqual(['subscribers', 'website visits', 'app accounts', 'events'])
+    expect(SOURCES.map((s) => s.unit[0])).toEqual(['subscriber', 'website visit', 'app account', 'event'])
+  })
+
+  it('headline tiles read Subscribers · Active subscribers · App accounts · App events', () => {
+    const tiles = [GLOSSARY.subscribers_signed_up, GLOSSARY.subscribers_active, GLOSSARY.app_accounts, GLOSSARY.events_received]
+    expect(tiles.map((t) => t.term)).toEqual(['Subscribers', 'Active subscribers', 'App accounts', 'App events'])
+    // merged = "deduped" (06 §Vocabulary dedupe + link).
+    expect(GLOSSARY.merged.term).toBe('Deduped')
+  })
+
+  it('field labels equal the 06 table: subscriber, web and app fields', () => {
+    const shown = (file: keyof typeof FILES) => FILES[file].columns.map((c) => c.label)
+    expect(shown('subscribers')).toEqual(['Email', 'Signup date', 'Status', 'Acquisition source'])
+    expect(shown('web_events')).toEqual(['Visitor ID', 'Page', 'Timestamp', 'UTM source', 'Email'])
+    expect(shown('app_users')).toEqual(['User ID', 'Email', 'Created date'])
+    expect({
+      email: COLUMN_LABEL.email,
+      signup_date: COLUMN_LABEL.signup_date,
+      status: COLUMN_LABEL.status,
+      source: COLUMN_LABEL.source,
+      last_open_date: COLUMN_LABEL.last_open_date,
+      utm_source: COLUMN_LABEL.utm_source,
+    }).toEqual({
+      email: 'Email',
+      signup_date: 'Signup date',
+      status: 'Status',
+      source: 'Acquisition source',
+      last_open_date: 'Last open date',
+      utm_source: 'UTM source',
+    })
+    expect(FILTER_LABEL.source).toBe('Acquisition source')
+  })
+
+  it('the app\'s event names show as the brief writes them, each with a plain gloss', () => {
+    for (const event of ['app_open', 'read_story', 'link_click', 'login'] as const) {
+      expect(GLOSSARY[event].term).toBe(event)
+      expect(GLOSSARY[event].text.length).toBeGreaterThan(10)
+    }
+  })
+})

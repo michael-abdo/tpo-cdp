@@ -185,8 +185,8 @@ describe('Rows to fix tab logic (src/needs-review.ts) on the real answers', () =
     expect(groups).toHaveLength(1)
     const [group] = groups
     expect(group.sentence).toBe("2 subscribers couldn't be added — their email isn't valid.")
-    expect(group.fix).toBe('Correct the email in subscribers.csv, then re-run the seed.')
-    expect(group.columns.map((c) => c.label)).toEqual(['Email', 'Signed up', 'Status', 'Source'])
+    expect(group.fix).toBe('Correct the email in subscribers.csv, then re-import the file.')
+    expect(group.columns.map((c) => c.label)).toEqual(['Email', 'Signup date', 'Status', 'Acquisition source'])
     expect(group.rows.map((r) => [r.line_no, ...group.columns.map((c) => r.fields[c.name])])).toEqual([
       [1750, 'not-an-email', '2026-08-14', 'active', 'Instagram'],
       [1788, '@gmail.com', '2026-09-02', 'active', 'Google'],

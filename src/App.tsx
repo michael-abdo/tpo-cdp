@@ -21,13 +21,13 @@ import LookupPage from './pages/LookupPage'
 import OverviewPage from './pages/OverviewPage'
 import SegmentsPage from './pages/SegmentsPage'
 
-/** Nav labels say what each screen does, in plain words (principles 1, 4). */
+/** Nav labels are the brief's words for each screen (06 §Vocabulary, 09 D-66, D-67; principles 1, 4). */
 const NAV: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/', label: 'Overview', icon: ICONS.overview },
-  { to: '/lookup', label: 'Find a reader', icon: ICONS.lookup },
-  { to: '/segments', label: 'Build a list', icon: ICONS.segments },
+  { to: '/lookup', label: 'Look up', icon: ICONS.lookup },
+  { to: '/segments', label: 'Segments', icon: ICONS.segments },
   { to: '/events', label: 'App events', icon: ICONS.events },
-  { to: '/assistant', label: 'Ask a question', icon: ICONS.assistant },
+  { to: '/assistant', label: 'AI assistant', icon: ICONS.assistant },
   { to: '/growth', label: 'Growth', icon: ICONS.growth },
   { to: '/audit', label: 'AI audit log', icon: ICONS.audit },
 ]

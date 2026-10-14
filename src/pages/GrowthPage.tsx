@@ -93,7 +93,7 @@ function ShareTable({ caption, groupHeader, rows }: { caption: string; groupHead
         </span>
       ),
     },
-    { header: 'Ask the assistant', hideLabel: true, cell: (r) => <ExplainLink question={r.explain} about={`${r.label}, ${r.count}`} /> },
+    { header: 'Ask the AI assistant', hideLabel: true, cell: (r) => <ExplainLink question={r.explain} about={`${r.label}, ${r.count}`} /> },
   ]
   return <ResponsiveTable caption={caption} columns={columns} rows={rows} rowKey={(r) => r.key} />
 }
@@ -176,7 +176,7 @@ function SourceAppPanel() {
   return (
     <Section
       title={title}
-      summary="By where they signed up: the share who created an app account after joining the newsletter."
+      summary="By acquisition source: the share who created an app account after joining the newsletter."
     >
       <p className="text-gray-900">
         <span className="font-display text-2xl font-semibold tabular-nums text-accent-strong">{n(d.total.with_app_after_signup)}</span> of{' '}
@@ -184,12 +184,12 @@ function SourceAppPanel() {
         account after signing up.{' '}
         <ExplainLink question={d.total.explain} about="all subscribers who got the app after signing up" />
       </p>
-      <TopRows caption="Subscribers who got the app, by signup source" groupHeader="Signed up from" rows={rows} label="Show by source" />
+      <TopRows caption="Subscribers who got the app, by acquisition source" groupHeader="Acquisition source" rows={rows} label="Show by acquisition source" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
           Of the {n(d.total.with_app)} subscribers with an app account, {n(d.total.with_app_after_signup)} created it after
           their signup day. The others already had the app, or got it on the same day, so the newsletter did not lead them
-          to it and they are not counted. Unsubscribed readers are included, so the whole list is counted.
+          to it and they are not counted. Unsubscribed ones are included, so every subscriber is counted.
         </p>
         <DefinitionList keys={d.definitions_used} />
         <TechnicalDetails>
@@ -232,7 +232,7 @@ function FunnelPanel() {
   }))
   const utms: ShareRow[] = d.by_first_utm.map((r) => ({
     key: r.first_utm_source ?? 'none',
-    label: r.first_utm_source === null ? 'No campaign source' : sourceLabel(r.first_utm_source),
+    label: r.first_utm_source === null ? 'No UTM source' : sourceLabel(r.first_utm_source),
     rate: r.rate,
     count: count(r),
     explain: r.explain,
@@ -245,11 +245,11 @@ function FunnelPanel() {
         newsletter. <ExplainLink question={d.total.explain} about="all website visitors who subscribed" />
       </p>
       <TopRows caption="Visitors who subscribed, by first page" groupHeader="First page" rows={pages} label="Show by first page" />
-      <TopRows caption="Visitors who subscribed, by campaign source" groupHeader="Campaign source" rows={utms} label="Show by campaign" />
+      <TopRows caption="Visitors who subscribed, by UTM source" groupHeader="UTM source" rows={utms} label="Show by UTM source" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
-          A visitor&apos;s first page and campaign source both come from their earliest visit. A visitor counts as subscribed
-          when they signed up on the website with an email that is on the newsletter list. Visitors who never subscribed are
+          A visitor&apos;s first page and UTM source both come from their earliest visit. A visitor counts as subscribed
+          when they signed up on the website with the email of a newsletter subscriber. Visitors who never subscribed are
           counted too, so each share is out of everyone who visited.
         </p>
         <TechnicalDetails>
@@ -273,7 +273,7 @@ function FunnelPanel() {
 
 function GoingColdPanel() {
   const state = useGet<GoingCold>('/api/insights/going-cold')
-  const title = 'Readers at risk of going cold'
+  const title = 'Subscribers at risk of going cold'
   if (state === null || state.status !== 'ok') {
     return <Section title={title}>{state !== null && <PanelState state={state} />}</Section>
   }
@@ -294,21 +294,21 @@ function GoingColdPanel() {
   }))
   const hidden = d.hidden_unsubscribed.count
   return (
-    <Section title={title} summary="Active subscribers who are slipping away, by where they signed up. A note to them now may keep them reading.">
+    <Section title={title} summary="Active subscribers who are slipping away, by acquisition source. A note to them now may keep them reading.">
       <p className="text-gray-900">
         <span className="font-display text-2xl font-semibold tabular-nums text-accent-strong">{n(d.total.at_risk)}</span> of{' '}
         <span className="tabular-nums">{n(d.total.active)}</span> active subscribers ({percent(d.total.rate)}) are at risk of
         going cold. <ExplainLink question={d.total.explain} about="all active subscribers at risk of going cold" />
       </p>
-      <TopRows caption="Active subscribers at risk of going cold, by signup source" groupHeader="Signed up from" rows={rows} label="Show by source" />
+      <TopRows caption="Active subscribers at risk of going cold, by acquisition source" groupHeader="Acquisition source" rows={rows} label="Show by acquisition source" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
-          Each share is out of the source&apos;s active subscribers. Unsubscribed readers are left out, as on every list, and
+          Each share is out of the source&apos;s active subscribers. Unsubscribed ones are left out, as in every segment, and
           counted only in the line below.
         </p>
         <p className="text-sm text-gray-700">
-          {n(hidden)} unsubscribed {hidden === 1 ? 'reader' : 'readers'} at risk {hidden === 1 ? 'is' : 'are'} not shown.{' '}
-          <ExplainLink question={d.hidden_unsubscribed.explain} about="unsubscribed readers at risk of going cold" />
+          {n(hidden)} unsubscribed {hidden === 1 ? 'subscriber' : 'subscribers'} at risk {hidden === 1 ? 'is' : 'are'} not shown.{' '}
+          <ExplainLink question={d.hidden_unsubscribed.explain} about="unsubscribed subscribers at risk of going cold" />
         </p>
 
         <DefinitionList keys={d.definitions_used} />
@@ -332,11 +332,11 @@ function GoingColdPanel() {
 
 /** Plain words for each data-quality check (06 §UI principles 4): what was checked, and what is counted. */
 const CHECK_LABEL: Record<DataQualityCheckKey, { label: string; unit: string }> = {
-  subscribers_without_source: { label: 'Subscribers with no signup source', unit: 'subscribers' },
-  subscribers_unexpected_source: { label: 'Subscribers with a signup source we don’t recognise', unit: 'subscribers' },
-  page_views_without_utm: { label: 'Website page views with no campaign source', unit: 'page views' },
-  page_views_unexpected_utm: { label: 'Website page views with a campaign source we don’t recognise', unit: 'page views' },
-  app_users_not_on_list: { label: 'App users whose email is not on the newsletter list', unit: 'app users' },
+  subscribers_without_source: { label: 'Subscribers with no acquisition source', unit: 'subscribers' },
+  subscribers_unexpected_source: { label: 'Subscribers with an acquisition source we don’t recognise', unit: 'subscribers' },
+  page_views_without_utm: { label: 'Website visits with no UTM source', unit: 'website visits' },
+  page_views_unexpected_utm: { label: 'Website visits with a UTM source we don’t recognise', unit: 'website visits' },
+  app_users_not_on_list: { label: 'App accounts whose email is not a newsletter subscriber’s', unit: 'app accounts' },
 }
 
 function DataQualityPanel() {
@@ -373,9 +373,9 @@ function DataQualityPanel() {
       <TopRows caption="Gaps in the records that loaded" groupHeader="What we checked" rows={rows} label="Show each gap" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
-          Every reader is counted, unsubscribed or not: a gap matters whoever it belongs to. A source we don&apos;t recognise is
+          Every subscriber is counted, unsubscribed or not: a gap matters whoever it belongs to. A source we don&apos;t recognise is
           kept as it was written, never dropped, so it shows up here. The rows set aside while loading are recorded by the
-          import itself, which the assistant cannot read, so that number links to the Overview&apos;s report instead.
+          import itself, which the AI assistant cannot read, so that number links to the Overview&apos;s report instead.
         </p>
         <TechnicalDetails>
           <p>
@@ -405,7 +405,7 @@ export default function GrowthPage() {
     <div className="space-y-6">
       <PageHeader
         title="Growth"
-        purpose="Where readers come from, who is slipping away, and where the data has gaps. “Explain this” asks the assistant about any number."
+        purpose="Where subscribers come from, who is slipping away, and where the data has gaps. “Explain this” asks the AI assistant about any number."
         icon={ICONS.growth}
       />
       <SourceAppPanel />

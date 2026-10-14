@@ -17,7 +17,7 @@ export type CheckKind = (typeof CHECK_KINDS)[number]
 export interface SourceEntry {
   /** The stored id: import_runs.file / quarantine.file for a CSV, the table name for the webhook. */
   readonly id: string
-  /** What people call it on screen (06 §UI principles 4). */
+  /** What people call it on screen: the brief's own word for it (06 §Vocabulary, 09 D-66). */
   readonly name: string
   /** `csv` = a file the seed script loads; `webhook` = events the app sends as they happen. */
   readonly kind: 'csv' | 'webhook'
@@ -35,7 +35,7 @@ export interface SourceEntry {
 export const SOURCES = [
   {
     id: 'subscribers',
-    name: 'Newsletter list',
+    name: 'beehiiv',
     kind: 'csv',
     unit: ['subscriber', 'subscribers'],
     loads_by: 'seed',
@@ -44,18 +44,18 @@ export const SOURCES = [
   },
   {
     id: 'web_events',
-    name: 'Website visits',
+    name: 'Website',
     kind: 'csv',
-    unit: ['page view', 'page views'],
+    unit: ['website visit', 'website visits'],
     loads_by: 'seed',
     file: 'web_events.csv',
     checks: [],
   },
   {
     id: 'app_users',
-    name: 'App users',
+    name: 'App accounts',
     kind: 'csv',
-    unit: ['app user', 'app users'],
+    unit: ['app account', 'app accounts'],
     loads_by: 'seed',
     file: 'app_users.csv',
     checks: [],

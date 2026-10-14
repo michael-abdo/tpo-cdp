@@ -49,14 +49,14 @@ const TOTAL_SQL = `SELECT ${COUNTS_SQL}`
 const BY_SOURCE_SQL = `SELECT source, ${COUNTS_SQL} GROUP BY source ORDER BY rate DESC, subscribers DESC, source`
 
 const QUESTION = (who: string) =>
-  `Of ${who}, including unsubscribed readers, how many created an app account after the day they signed up for the newsletter, and what share is that?`
+  `Of ${who}, including unsubscribed ones, how many created an app account after the day they signed up for the newsletter, and what share is that?`
 
 /** The question behind the panel's total. */
 export const SOURCE_APP_TOTAL_EXPLAIN = QUESTION('all subscribers')
 
 /** The question behind one source's row. */
 export function sourceAppExplain(source: string | null): string {
-  return QUESTION(source === null ? 'subscribers with no signup source recorded' : `subscribers whose signup source is "${source}"`)
+  return QUESTION(source === null ? 'subscribers with no acquisition source recorded' : `subscribers whose acquisition source is "${source}"`)
 }
 
 export async function sourceAppConversion(db: D1Database): Promise<SourceAppConversion> {

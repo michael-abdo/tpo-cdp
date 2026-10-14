@@ -58,8 +58,8 @@ export function funnelPageExplain(page: string): string {
 export function funnelUtmExplain(utm: string | null): string {
   return QUESTION(
     utm === null
-      ? 'website visitors whose first visit carried no campaign source (UTM)'
-      : `website visitors whose first visit came from the campaign source (UTM) "${utm}"`,
+      ? 'website visitors whose first visit carried no UTM source'
+      : `website visitors whose first visit came from the UTM source "${utm}"`,
   )
 }
 

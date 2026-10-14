@@ -101,7 +101,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     const [subscribers, web, app] = list
     expect(subscribers).toEqual({
       id: 'subscribers',
-      name: 'Newsletter list',
+      name: 'beehiiv',
       kind: 'csv',
       unit: 'subscribers',
       unit_one: 'subscriber',
@@ -377,7 +377,7 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
   })
 
   it('fails loud with a 500 when a source that declares no rows_to_fix check holds a row a person can fix', async () => {
-    // 09 D-47: one of the seed's real invalid-email rows moved to the Website visits run, with both
+    // 09 D-47: one of the seed's real invalid-email rows moved to the Website run, with both
     // runs' set-aside counts moved with it so import_runs and quarantine still agree.
     const runOf = (file: string) =>
       env.DB.prepare('SELECT id FROM import_runs WHERE file = ?').bind(file).first<{ id: number }>()
@@ -452,8 +452,8 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     // The four headline numbers plus the Sources and run terms written out on the page.
     expect(new Set(named)).toEqual(
       new Set([
-        'readers_signed_up',
-        'readers_subscribed',
+        'subscribers_signed_up',
+        'subscribers_active',
         'app_accounts',
         'events_received',
         'live',
@@ -493,15 +493,15 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     const { fixtures } = env.SCREEN_TEXTS
     expect(Object.keys(fixtures)).toEqual(Object.keys(SCAN_FIXTURES))
     // The AST splits "Read {n} files from …" into the runs either side of the interpolation.
-    expect(fixtures.interpolated_file_count).toEqual(['Read ', ' files from the Newsletter list'])
+    expect(fixtures.interpolated_file_count).toEqual(['Read ', ' files from beehiiv'])
     for (const key of Object.keys(SCAN_FIXTURES) as ScanFixture[]) {
       const offences = sourceTextOffences(fixtures[key])
       if (key === 'comment_only') expect(offences, key).toEqual([])
       else expect(offences.length, `${key}: ${SCAN_FIXTURES[key]}`).toBeGreaterThan(0)
     }
     expect(sourceTextOffences(fixtures.interpolated_file_count)).toEqual([
-      '"Newsletter list" in " files from the Newsletter list"',
-      'file count in " files from the Newsletter list"',
+      '"beehiiv" in " files from beehiiv"',
+      'file count in " files from beehiiv"',
     ])
     // " subscribers" is both the unit and, once trimmed, the bare source id.
     expect(sourceTextOffences(fixtures.interpolated_unit)).toEqual([

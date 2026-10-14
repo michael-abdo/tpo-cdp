@@ -150,7 +150,7 @@ export function candidatePairs(readers: readonly DedupeReader[]): [DedupeReader,
     for (let i = 0; i < group.length; i++) {
       for (let j = i + 1; j < group.length; j++) {
         const [x, y] = [group[i], group[j]]
-        if (x.pkey === y.pkey) throw new Error('dedupe: two readers share one pkey')
+        if (x.pkey === y.pkey) throw new Error('dedupe: two subscribers share one pkey')
         pairs.push(x.pkey < y.pkey ? [x, y] : [y, x])
       }
     }
@@ -233,7 +233,7 @@ function gapLabel(gap: number): string {
   return `signed up ${gap.toLocaleString('en-US')} ${gap === 1 ? 'day' : 'days'} apart`
 }
 
-/** Plain words for one reason chip (06 §Overview). */
+/** Plain words for one reason chip (06 §Overview), in the brief's field names (06 §Vocabulary). */
 export function reasonLabel(field: ScoredField, agrees: boolean, gap: number): string {
   switch (field) {
     case 'domain':
@@ -241,7 +241,7 @@ export function reasonLabel(field: ScoredField, agrees: boolean, gap: number): s
     case 'signup_gap':
       return gapLabel(gap)
     case 'source':
-      return agrees ? 'same source' : 'different source'
+      return agrees ? 'same acquisition source' : 'different acquisition source'
     case 'shared_device':
       return agrees ? 'same device in the app' : 'no shared device'
   }
@@ -251,7 +251,7 @@ export function reasonLabel(field: ScoredField, agrees: boolean, gap: number): s
 const MATCH_WORDS: Record<ScoredField, string> = {
   domain: 'email domain',
   signup_gap: 'signup week',
-  source: 'source',
+  source: 'acquisition source',
   shared_device: 'app device',
 }
 

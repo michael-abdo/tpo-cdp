@@ -45,7 +45,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { explain, type TipKey } from '../shared/glossary'
+import { explain, isGlossaryKey, type TipKey } from '../shared/glossary'
 
 export type { LucideIcon }
 
@@ -458,6 +458,19 @@ export function InfoTip({ term }: { term: TipKey }) {
         </span>,
         document.body,
       )}
+    </span>
+  )
+}
+
+/**
+ * An app event name as the brief writes it (app_open, read_story, link_click, login), with its plain
+ * gloss in an InfoTip from the glossary (06 §Vocabulary, 09 D-66); a name with no gloss shows as sent.
+ */
+export function EventName({ event }: { event: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="font-mono">{event}</span>
+      {isGlossaryKey(event) && <InfoTip term={event} />}
     </span>
   )
 }

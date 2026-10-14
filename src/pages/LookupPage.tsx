@@ -33,6 +33,7 @@ import {
   Button,
   Disclosure,
   ErrorLine,
+  EventName,
   Field,
   ICONS,
   Icon,
@@ -48,6 +49,8 @@ import type { Lookup, LookupSearch } from '../types'
 /** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
 const SUGGEST_DEBOUNCE_MS = 250
 const NO_MATCH = 'No profile matches — try part of the email'
+/** The page's one-line purpose, the brief's own words for it (06 §Vocabulary, 09 D-66). */
+const PURPOSE = 'Finds anyone: newsletter info, site visits and app activity in one view.'
 const LISTBOX_ID = 'lookup-suggestions'
 const HINT_ID = 'lookup-hint'
 /** A demo subject from 02 §Counts, offered as the one-click first step (06 §UI principles 6). */
@@ -55,8 +58,8 @@ const EXAMPLE = 'joy.hall830@protonmail.com'
 
 const KIND_LABEL: Record<Lookup['profile']['kind'], string> = {
   subscriber: 'Subscriber',
-  app_only: 'App-only user',
-  unknown_user_stub: 'Unknown app user (created from webhook)',
+  app_only: 'App account only',
+  unknown_user_stub: 'Unknown app account (created from webhook)',
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -66,11 +69,6 @@ function plural(n: number, one: string, many: string): string {
 /** The newest stored timestamp of a list (ISO strings sort by time), or null for an empty list. */
 function latest(timestamps: string[]): string | null {
   return timestamps.reduce<string | null>((max, ts) => (max === null || ts > max ? ts : max), null)
-}
-
-/** `app_open` → `App open`: an event name in words; the raw name stays in Technical details. */
-function eventLabel(event: string): string {
-  return capitalized(event.split('_').join(' '))
 }
 
 /** The bar is decoration; the words carry the number (principle 7: never colour alone). */
@@ -114,8 +112,8 @@ function Column({
 
 function Header({ data }: { data: Lookup }) {
   const { profile, newsletter, app } = data
-  // A reader with no email is named in words; the raw app id lives in Technical details (06 §UI principles 2, 4).
-  const identity = profile.email ?? 'App user with no email on file'
+  // A profile with no email is named in words; the raw app id lives in Technical details (06 §UI principles 2, 4).
+  const identity = profile.email ?? 'App account with no email on file'
   const facts: string[] = []
   // The kind word only when it says something the columns don't (principle 5).
   if (!(profile.kind === 'subscriber' && newsletter !== null)) facts.push(KIND_LABEL[profile.kind])
@@ -142,7 +140,7 @@ function Header({ data }: { data: Lookup }) {
               <span className="font-mono">{profile.kind}</span>
             </Field>
             {app !== null && (
-              <Field label="App user id">
+              <Field label="User ID">
                 <span className="font-mono">{app.user_id}</span>
               </Field>
             )}
@@ -163,7 +161,7 @@ function coldLine(coldSince: string, neverOpened: boolean): string {
 }
 
 function Newsletter({ data, coldSince }: { data: Lookup['newsletter']; coldSince: string | null }) {
-  if (data === null) return <Column title="Newsletter" icon={Mail} summary={<p>No newsletter record</p>} />
+  if (data === null) return <Column title="Newsletter info" icon={Mail} summary={<p>No newsletter record</p>} />
   const summary = (
     <>
       <p>
@@ -175,17 +173,17 @@ function Newsletter({ data, coldSince }: { data: Lookup['newsletter']; coldSince
     </>
   )
   return (
-    <Column title="Newsletter" icon={Mail} summary={summary}>
+    <Column title="Newsletter info" icon={Mail} summary={summary}>
       <Disclosure label="Details">
         <p className="text-sm text-gray-700">{DEFINITIONS.cold_since.doc}</p>
         <TechnicalDetails>
           <dl className="space-y-1">
             <Field label="Status">{data.status}</Field>
-            <Field label="Source">{data.source ?? 'none recorded'}</Field>
+            <Field label="Acquisition source">{data.source ?? 'none recorded'}</Field>
             <Field label="Signup date">{data.signup_date}</Field>
-            <Field label="Last open">{data.last_open_date ?? 'never'}</Field>
+            <Field label="Last open date">{data.last_open_date ?? 'never'}</Field>
             {coldSince !== null && <Field label="Cold date">{coldSince}</Field>}
-            <Field label="Rows merged into this profile">{data.merged_count}</Field>
+            <Field label="Rows deduped into this profile">{data.merged_count}</Field>
           </dl>
         </TechnicalDetails>
       </Disclosure>
@@ -194,13 +192,13 @@ function Newsletter({ data, coldSince }: { data: Lookup['newsletter']; coldSince
 }
 
 function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: boolean }) {
-  if (data === null) return <Column title="Website" icon={Globe} summary={<p>No website history</p>} />
+  if (data === null) return <Column title="Site visits" icon={Globe} summary={<p>No website history</p>} />
   const visits = data.events
   const before = visits.filter((e) => e.pre_signup).length
   const last = latest(visits.map((e) => e.event_ts))
   const summary =
     visits.length === 0 ? (
-      <p>No pages viewed yet</p>
+      <p>No site visits yet</p>
     ) : (
       <>
         <p>
@@ -216,7 +214,7 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
       </>
     )
   return (
-    <Column title="Website" icon={Globe} summary={summary}>
+    <Column title="Site visits" icon={Globe} summary={summary}>
       <Disclosure
         label={visits.length === 0 ? 'Details' : `Show ${plural(visits.length, 'visit', 'visits')}`}
       >
@@ -244,7 +242,7 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
         )}
         <TechnicalDetails>
           <dl className="space-y-1">
-            <Field label="Visitor id">
+            <Field label="Visitor ID">
               <span className="font-mono">{data.visitor_id}</span>
             </Field>
             <Field label="First UTM source">{data.first_utm_source ?? 'none'}</Field>
@@ -290,7 +288,7 @@ function AppActivity({
   afterSignup: boolean
   isStub: boolean
 }) {
-  if (data === null) return <Column title="App" icon={AppWindow} summary={<p>No app account</p>} />
+  if (data === null) return <Column title="App activity" icon={AppWindow} summary={<p>No app account</p>} />
   const events = data.events
   const last = latest(events.map((e) => e.event_ts))
   const summary = (
@@ -308,7 +306,7 @@ function AppActivity({
     </>
   )
   return (
-    <Column title="App" icon={AppWindow} summary={summary}>
+    <Column title="App activity" icon={AppWindow} summary={summary}>
       <Disclosure
         label={events.length === 0 ? 'Details' : `Show ${plural(events.length, 'app event', 'app events')}`}
       >
@@ -317,7 +315,9 @@ function AppActivity({
             {events.map((e, i) => (
               <li key={`${e.event_ts}-${i}`} className="rounded px-2 py-1">
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="text-gray-900">{eventLabel(e.event)}</span>
+                  <span className="text-gray-900">
+                    <EventName event={e.event} />
+                  </span>
                   {e.attached_via === 'login_stitch' && <Tag>Linked by login</Tag>}
                 </span>
                 <span className="block text-gray-700">{humanDateTime(e.event_ts)}</span>
@@ -327,7 +327,7 @@ function AppActivity({
         )}
         <dl className="space-y-1">
           <Field label="Added">
-            {data.from_csv ? 'Imported from the app user list' : 'Created from an app event'}
+            {data.from_csv ? 'Imported from the app accounts file' : 'Created from an app event'}
           </Field>
           <Field label="Devices">
             {data.devices.length === 0 ? 'none seen yet' : plural(data.devices.length, 'device', 'devices')}
@@ -335,13 +335,13 @@ function AppActivity({
         </dl>
         <TechnicalDetails>
           <dl className="space-y-1">
-            <Field label="App user id">
+            <Field label="User ID">
               <span className="font-mono">{data.user_id}</span>
             </Field>
-            <Field label="Created at">{data.created_at}</Field>
+            <Field label="Created date">{data.created_at}</Field>
             <Field label="Origin">{data.from_csv ? 'app_users.csv' : 'created from webhook'}</Field>
             {data.devices.length > 0 && (
-              <Field label="Device ids">
+              <Field label="Device IDs">
                 <span className="font-mono">{data.devices.join(', ')}</span>
               </Field>
             )}
@@ -446,7 +446,7 @@ function SuggestionList({
     <ul
       id={LISTBOX_ID}
       role="listbox"
-      aria-label="Matching readers"
+      aria-label="Matching profiles"
       className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface text-sm shadow-soft"
     >
       {matches.map((m, i) => {
@@ -483,7 +483,7 @@ function SuggestionList({
   )
 }
 
-/** A plain left click opens the reader here; with a modifier the browser opens a new tab and this page stays. */
+/** A plain left click opens the profile here; with a modifier the browser opens a new tab and this page stays. */
 function plainClick(e: MouseEvent): boolean {
   return e.button === 0 && !e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey
 }
@@ -639,7 +639,7 @@ export default function LookupPage() {
     message = noFallback ? `Type at least ${QUERY_FRAGMENT_MIN_LENGTH} letters to search.` : notFound.message
     messageVisible = true
   } else if (result !== null) {
-    message = `Showing profile for ${result.profile.email ?? 'an app user with no email on file'}.`
+    message = `Showing profile for ${result.profile.email ?? 'an app account with no email on file'}.`
   }
   // The one-click first step (principle 6): on the empty page and after a search that found nobody.
   // Near spellings are the better next step, so the example steps aside for them (principle 5).
@@ -649,10 +649,10 @@ export default function LookupPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Find a reader" icon={ICONS.lookup} />
+      <PageHeader title="Look up a subscriber" purpose={PURPOSE} icon={ICONS.lookup} />
       <form onSubmit={submit} className="max-w-xl space-y-1.5">
         <label htmlFor="lookup-q" className="block text-sm font-medium text-gray-900">
-          Email or app user id
+          Email or user ID
         </label>
         <div className="flex gap-2">
           <input
@@ -682,29 +682,29 @@ export default function LookupPage() {
         </div>
         {result === null && (
           <p id={HINT_ID} className="text-sm text-gray-600">
-            Type a reader's email or app id (starts with u_), or just part of it. Suggestions appear after{' '}
+            Type a subscriber's email or an app account's user ID (starts with u_), or just part of it. Suggestions appear after{' '}
             {QUERY_FRAGMENT_MIN_LENGTH} letters.
           </p>
         )}
         {result === null && (
-          <Disclosure label="More ways to find a reader">
+          <Disclosure label="More ways to look someone up">
             <p className="text-sm text-gray-700">
-              Find also opens a reader from a profile key, a device id or a website visitor id, copied from a
-              profile's Technical details. Suggestions search emails and app ids only.
+              Find also opens a profile from a profile key, a device ID or a visitor ID, copied from a
+              profile's Technical details. Suggestions search emails and user IDs only.
             </p>
             <TechnicalDetails>
               <dl className="space-y-1">
                 <Field label="Profile key">
                   <span className="font-mono">pk_…</span>
                 </Field>
-                <Field label="Device id">
-                  <span className="font-mono">d_…</span> (the device's most recent app user)
+                <Field label="Device ID">
+                  <span className="font-mono">d_…</span> (the device's most recent app account)
                 </Field>
-                <Field label="Website visitor id">
+                <Field label="Visitor ID">
                   <span className="font-mono">v_…</span> (visitors who signed up)
                 </Field>
               </dl>
-              <p>Ids are matched exactly as stored.</p>
+              <p>IDs are matched exactly as stored.</p>
             </TechnicalDetails>
           </Disclosure>
         )}
@@ -740,7 +740,7 @@ export default function LookupPage() {
         )}
       </div>
 
-      {/* While suggestions are open the old profile steps aside, so the current reader is never in doubt. */}
+      {/* While suggestions are open the old profile steps aside, so the current profile is never in doubt. */}
       {result !== null && !listboxShown && (
         <div className="space-y-4">
           <Header data={result} />

@@ -56,12 +56,12 @@ export const GOING_COLD_TOTAL_EXPLAIN = QUESTION('all active subscribers')
 
 /** The question behind the hidden-unsubscribed count. */
 export const GOING_COLD_HIDDEN_EXPLAIN =
-  'How many unsubscribed readers are at risk of going cold under the going_cold_risk definition?'
+  'How many unsubscribed subscribers are at risk of going cold under the going_cold_risk definition?'
 
 /** The question behind one source's row. */
 export function goingColdExplain(source: string | null): string {
   return QUESTION(
-    source === null ? 'active subscribers with no signup source recorded' : `active subscribers whose signup source is "${source}"`,
+    source === null ? 'active subscribers with no acquisition source recorded' : `active subscribers whose acquisition source is "${source}"`,
   )
 }
 

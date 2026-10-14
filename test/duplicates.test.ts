@@ -140,7 +140,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       expect(pair.reasons.map((r) => r.field)).toEqual([...SCORED_FIELDS])
       expect(pair.reasons.map((r) => r.agrees)).toEqual([true, true, true, false])
       expect(pair.suggestion).toBe(
-        'Could be the same person — the name, email domain, signup week and source match',
+        'Could be the same person — the name, email domain, signup week and acquisition source match',
       )
       expect(pair.pair_id).toBe(await pairId(...(await pkeysOf(pair))))
     }
@@ -162,7 +162,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       (p) => p.a.email.endsWith('@protonmail.com') && p.b.email.endsWith('@protonmail.com'),
     )
     expect(close?.reasons.filter((r) => r.agrees).map((r) => r.field)).toEqual(['domain', 'source'])
-    expect(close?.suggestion).toBe('Probably different people — only the name, email domain and source match')
+    expect(close?.suggestion).toBe('Probably different people — only the name, email domain and acquisition source match')
     const body = await duplicates()
     expect(body.review.some((p) => JOY_HALL.includes(p.a.email) || JOY_HALL.includes(p.b.email))).toBe(false)
   })
@@ -246,7 +246,7 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
     const none = { domain: false, signup_gap: false, source: false, shared_device: false }
     expect(suggestionFor('hidden', none)).toBe('Probably different people — only the name matches')
     expect(suggestionFor('hidden', { ...none, source: true })).toBe(
-      'Probably different people — only the name and source match',
+      'Probably different people — only the name and acquisition source match',
     )
     expect(suggestionFor('auto', { ...none, shared_device: true })).toBe(
       'Very likely the same person — the name and app device match',

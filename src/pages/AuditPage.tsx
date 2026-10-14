@@ -82,8 +82,8 @@ function resultLook(t: AuditTraceSummary) {
 
 /** Plain words for the seeded tools (scripts/tool-seeds.ts); any other tool is named in Technical details. */
 const TOOL_LABEL: Record<string, string> = {
-  segment: 'Built a list of readers',
-  aggregate: 'Counted readers',
+  segment: 'Built a segment',
+  aggregate: 'Counted subscribers, visits or events',
   query_sql: 'Ran a read-only query on the data',
 }
 
@@ -365,7 +365,7 @@ function TraceList() {
       <PageHeader
         title="AI audit log"
         icon={ICONS.audit}
-        purpose={`Every question sent to the assistant, newest first (the last ${LIST_LIMIT}). Open one to see exactly what the AI was sent and what it sent back.`}
+        purpose={`Every question sent to the AI assistant, newest first (the last ${LIST_LIMIT}). Open one to see exactly what the AI was sent and what it sent back.`}
         action={
           <Button
             variant="primary"
@@ -386,7 +386,7 @@ function TraceList() {
           action={
             <Link to="/assistant" className={`${linkClass} gap-1.5`}>
               <Icon icon={ICONS.assistant} />
-              Ask a question
+              Ask the AI assistant
             </Link>
           }
         >
