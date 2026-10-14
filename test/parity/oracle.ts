@@ -34,6 +34,8 @@ const NEW_SUBSCRIBER_DAYS = 30
 const APP_EVENTS_CAP = 10
 /** 02 §Derived "engagement_score": the site-visits cap (full credit at 5 visits). */
 const SITE_VISITS_CAP = 5
+// GAP: these m-values live only in worker/dedupe/score.ts (21 §6 G2); 09 D-62 calls them "a
+// documented assumption" without the numbers themselves.
 /** 09 D-62: the fuzzy-duplicate m-probabilities (a documented assumption, never measured). */
 const M_PROBABILITIES: Record<ScoredFieldName, number> = {
   domain: 0.8,
@@ -437,6 +439,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
   for (const [emailNorm, group] of merging) {
     const pkey = await pkeyForEmailNorm(secret, emailNorm)
     // email_raw: the untrimmed text of the lowest file line (02 §Dedupe "first spelling seen").
+    // GAP: no design doc says email_raw is kept verbatim, untrimmed, and never read (21 §6 G3).
     const emailRaw = group.rawByLine.reduce((best, r) => (r.line < best.line ? r : best)).raw
     const signupDate = group.signupDates.reduce((a, b) => (b.signup < a.signup ? b : a)).signup
     const status: 'active' | 'unsubscribed' = group.statuses.includes('unsubscribed')
@@ -531,6 +534,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
       }
       emailNorm = normed
     }
+    // GAP: web_events.id = 1-based index among kept rows (21 §6 G5); no design doc names this rule.
     events.push({ id: events.length + 1, visitor_id: visitorId, page, event_ts: eventTs, utm_source: utm })
     const v = visitorsBuild.get(visitorId) ?? {
       emails: new Set<string>(),
@@ -560,7 +564,9 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
 
   const visitors = new Map<string, ExpectedVisitor>()
   for (const [visitorId, v] of visitorsBuild) {
-    if (v.emails.size > 1) throw new Error(`oracle: visitor ${visitorId} carries 2+ different emails`)
+    // 21 §2.4: never print a raw id; cite the CSV line instead.
+    if (v.emails.size > 1)
+      throw new Error(`oracle: web_events.csv line ${v.eventLines[0]}'s visitor carries 2+ different emails`)
     const emailNorm = v.emails.size === 1 ? [...v.emails][0] : null
     const hash = await visitorHash(secret, visitorId)
     if (v.firstKey === null || v.firstPage === null) throw new Error('oracle: visitor with no events')
@@ -579,7 +585,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
   const app = parseCsvStrict(csvs.appUsers, 'app_users.csv')
   const appCol = columnIndex('app_users.csv', app.header, ['user_id', 'email', 'created_at'])
   const appUsers: ExpectedAppUser[] = []
-  const seenUserIds = new Set<string>()
+  const firstLineByUserId = new Map<string, number>()
   app.rows.forEach((row, i) => {
     const lineNo = app.lineNos[i]
     const userId = row[appCol.user_id].trim()
@@ -590,9 +596,11 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
         `oracle: app_users.csv line ${lineNo} is malformed (no quarantine path exists for this file on this data)`,
       )
     }
-    if (seenUserIds.has(userId))
-      throw new Error(`oracle: app_users.csv line ${lineNo} repeats user_id ${userId}`)
-    seenUserIds.add(userId)
+    // 21 §2.4: never print a raw id; cite both CSV lines instead.
+    const firstLine = firstLineByUserId.get(userId)
+    if (firstLine !== undefined)
+      throw new Error(`oracle: app_users.csv line ${lineNo} repeats line ${firstLine}'s user_id`)
+    firstLineByUserId.set(userId, lineNo)
     appUsers.push({
       csvLine: lineNo,
       user_id: userId,
