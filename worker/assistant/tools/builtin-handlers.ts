@@ -52,7 +52,7 @@ import { isIsoDate, SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../ing
 import type { SqlValue } from '../../ingest/sql'
 import { PREVIEW_DEFAULT_LIMIT } from '../../routes/segments'
 import { validateSqlAgainstViews } from '../gates/gate2-tool-authorizer'
-import { type ReadOnlyResult, runReadOnlySelect, SqlRunError } from '../gates/gate3-readonly-sql'
+import { type ReadOnlyResult, runReadOnlySelect, SqlRunError, SqlTooHeavyError } from '../gates/gate3-readonly-sql'
 import { viewSchemas } from '../schema-context'
 import {
   type CompiledModelSegment,
@@ -88,10 +88,10 @@ export interface ToolOutput {
  */
 export class ToolInputError extends Error {
   readonly problems: readonly string[]
-  readonly code: 'invalid_input' | 'query_failed'
+  readonly code: 'invalid_input' | 'query_failed' | 'sql_timeout' | 'sql_rows_cap'
   /** The SQL concerned, for ai_audit.sql; null when the call ran none. */
   readonly sql: string | null
-  constructor(problems: readonly string[], options: { code?: 'invalid_input' | 'query_failed'; sql?: string } = {}) {
+  constructor(problems: readonly string[], options: { code?: ToolInputError['code']; sql?: string } = {}) {
     super(`invalid tool input: ${problems.join('; ')}`)
     this.name = 'ToolInputError'
     this.problems = problems
@@ -406,12 +406,20 @@ function namedRows(result: ReadOnlyResult): ResultRow[] {
   return result.rows.map((cells) => Object.fromEntries(result.columns.map((c, i) => [c, cells[i]])) as ResultRow)
 }
 
-/** Gate 3 runs the SQL once; a database refusal goes back to the model as query_failed. */
-async function runChecked(db: D1Database, sql: string, params: readonly SqlValue[] = []): Promise<ReadOnlyResult> {
+/**
+ * Gate 3 runs the SQL once; a database refusal goes back to the model as query_failed, a timeout
+ * or an over-cap row scan as its own reason code (09 D-81 #2, #3), so ai_audit tells the three
+ * apart even though the model/UI sentence is the same plain "too heavy" message either way.
+ * Exported only so a test can inject `options.timeoutMs`/`rowsReadCap` against a real query
+ * (09 D-81's own test instructions: a parameter, never mocking D1); query_sql and a `query` row
+ * both call it with no options (the production defaults, SQL_TIME_LIMIT_MS/SQL_ROWS_READ_CAP).
+ */
+export async function runChecked(db: D1Database, sql: string, params: readonly SqlValue[] = [], options?: { timeoutMs?: number; rowsReadCap?: number }): Promise<ReadOnlyResult> {
   try {
-    return await runReadOnlySelect(db, sql, params)
+    return await runReadOnlySelect(db, sql, params, options)
   } catch (err) {
     if (err instanceof SqlRunError) throw new ToolInputError([err.message], { code: 'query_failed', sql: err.sql })
+    if (err instanceof SqlTooHeavyError) throw new ToolInputError([err.message], { code: err.reasonCode, sql: err.sql })
     throw err
   }
 }
