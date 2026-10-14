@@ -537,12 +537,6 @@ function maskSmallGroups(rows: readonly ResultRow[], columns: readonly string[],
   })
 }
 
-/** Reads a `params` field the pin-grammar wrote (board.ts `pin`/`approveInsightTool`) as a string array, or []. */
-function stringArrayField(params: Params, field: string): string[] {
-  const value = params[field]
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
-}
-
 /**
  * The "Explain this" question of a pinned tile. With no window it is the question the tile was
  * pinned from. With one, the tile's title and the dates it shows now lead, and the pinned question
@@ -557,7 +551,7 @@ export function explainQuestion(title: string, prompt: string, window: ResolvedW
 }
 
 /** A tile whose result would list individual subscribers (04 not_aggregate). */
-const NOT_AGGREGATE_MESSAGE = 'This tile lists individual subscribers; the board shows counts only. Pin a count or a segment instead.'
+export const NOT_AGGREGATE_MESSAGE = 'This tile lists individual subscribers; the board shows counts only. Pin a count or a segment instead.'
 /** A tile whose stored call no longer passes (a gate, a handler or 09 D-64a refused it). */
 const REFUSED_MESSAGE = 'This tile’s saved lookup no longer passes today’s checks, so it cannot run. Technical details say why.'
 /** A tile that names an assistant tool while the tool rows cannot load (no_tools, tool_config_error). */
@@ -630,8 +624,11 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     tile.params = params
     // D-64b pin-shape bookkeeping (board.ts `pin`, `approveInsightTool`), never a tool input field
     // (callInput strips it out below): which runtime treatment, if any, this tile's result needs.
+    // Only `pinShape` itself (which branch to take) comes from the stored params; the count and
+    // dimension columns a "totals" tile masks by come from the fresh classification below, never
+    // from params, so an edited execution_config.sql (D-41 rows are data) cannot drift the mask
+    // away from what the SQL actually does (09 D-64b finding).
     const pinShape = params.pin_shape === 'totals' || params.pin_shape === 'list' ? params.pin_shape : null
-    const identifierColumn = typeof params.identifier_column === 'string' ? params.identifier_column : null
     const { input, window } = callInput(params, TODAY)
     tile.window = window
     if (row.prompt !== null) tile.explain = explainQuestion(row.title, row.prompt, window)
@@ -646,15 +643,29 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     // check that allows a "list" shape's one bare identifier column); every other query row keeps
     // the plain D-64a check.
     const template = ctx.board.tools.byName.get(row.tool)?.query
+    // The fresh D-64b shape (null for a non-pinShape tile): computed once here, from the SQL that
+    // is actually about to run, and used below for the mask instead of the stale params this row
+    // was pinned with (09 D-64b "checked … on every board run", not just at pin time).
+    let freshShape: PinnableShape | null = null
     if (template !== undefined) {
       if (pinShape !== null) {
         const classified = classifyPinnableSql(template.sql)
         if (!classified.ok) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, classified.problems)
+        if (classified.shape !== pinShape) {
+          throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, [
+            `this tile's SQL now classifies as "${classified.shape}", not the "${pinShape}" shape it was pinned with; re-pin it`,
+          ])
+        }
+        freshShape = classified
       } else {
         const keyProblems = keyProjectionProblems(template.sql)
         if (keyProblems.length > 0) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, keyProblems)
       }
     }
+    // A pin-shape tile whose tool is no longer a query row (its handler_type changed under it)
+    // has nothing fresh to check against: fail closed rather than fall back to the stored params.
+    if (pinShape !== null && freshShape === null) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, ['this tile is no longer backed by a query tool'])
+    const identifierColumn = freshShape !== null && freshShape.shape === 'list' ? freshShape.identifierColumn : null
     const executed = await executeToolCall({ db: ctx.db, trace: ctx.trace, tools: ctx.board.tools }, { id: `tile-${row.id}`, name: row.tool, input })
     const output = executed.output
     if (output === null) {
@@ -711,9 +722,9 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
         ),
         summary: { ...tile.result.summary, rows_total: rowsTotal, rows_shown: Math.min(PERSON_LIST_CAP, rowsTotal) },
       }
-    } else if (tile.result !== null && pinShape === 'totals') {
-      const countColumns = stringArrayField(params, 'count_columns')
-      const dimensionColumns = new Set(stringArrayField(params, 'dimension_columns'))
+    } else if (tile.result !== null && pinShape === 'totals' && freshShape !== null && freshShape.shape === 'totals') {
+      const countColumns = freshShape.countColumns
+      const dimensionColumns = new Set(freshShape.dimensionColumns)
       tile.result = { ...tile.result, rows: maskSmallGroups(tile.result.rows, tile.result.columns, countColumns, dimensionColumns) }
     }
     tile.chart = pickChart({ columns: tile.result.columns, rows: tile.result.rows, segment: tile.segment }, row.chart)

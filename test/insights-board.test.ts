@@ -30,7 +30,7 @@ import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { requireJson, requireSession } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
-import { INSIGHT_PANEL, INSIGHT_PANELS, type Tile } from '../worker/insights/board'
+import { INSIGHT_PANEL, INSIGHT_PANELS, NOT_AGGREGATE_MESSAGE, type Tile } from '../worker/insights/board'
 import { assistantRoutes } from '../worker/routes/assistant'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
@@ -1458,6 +1458,52 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     // Approving twice (an already-enabled row) is 404, not a second tile.
     const again = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'again' } })
     expect(again.status).toBe(404)
+    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
+
+  it('a pinned "totals" tile masks by the SQL as it runs today, not the count/dimension columns it was pinned with (09 D-64b "on every board run")', async () => {
+    const smallest = await env.DB.prepare(
+      "SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS n FROM v_profiles GROUP BY source, status, substr(signup_date, 1, 7) ORDER BY n ASC LIMIT 1",
+    ).first<{ source: string | null; status: string; month: string; n: number }>()
+    expect(smallest!.n).toBeLessThan(5)
+    const sql =
+      'SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS subscribers FROM v_profiles ' +
+      'GROUP BY source, status, substr(signup_date, 1, 7)'
+    const answer = await askAnswer('how many subscribers by source, status and signup month, again?', [
+      { name: 'query_sql', input: { sql, explanation: 'subscribers by source, status and signup month, again' } },
+    ])
+    const tile = await pin({ audit_id: answer.audit_id })
+    expect(tile.status).toBe('ok')
+    const storedRow = await stored(tile.id)
+    const toolName = storedRow!.tool
+
+    // Edit the wrapped row's execution_config.sql to a still-Gate-2/3-legal but non-grammar query
+    // (HAVING), as if a D-41 row drifted under the pinned tile (its SQL is data: D-41). If runTile
+    // re-checked only the stored params and not this fresh SQL, this would still run as a trusted
+    // totals tile instead of refusing.
+    const drifted = `${sql} HAVING count(*) >= 1`
+    await env.DB.prepare('UPDATE assistant_tools SET execution_config = ? WHERE name = ?')
+      .bind(JSON.stringify({ sql: drifted, param_mapping: {} }), toolName)
+      .run()
+    const onBoard = (await board()).tiles.find((t) => t.id === tile.id)!
+    expect(onBoard.status).toBe('error')
+    expect(onBoard.error).toBe(NOT_AGGREGATE_MESSAGE)
+    expect(onBoard.error_details).toContain('HAVING is not allowed: groups under 5 people are hidden automatically at run time, whatever HAVING says')
+
+    // A drift that still classifies as "totals" but renames the count alias must be caught by the
+    // mask using the FRESH classification, not params.count_columns (which still says
+    // "subscribers"): the pre-fix code looked up row['subscribers'] on a row shaped {..., total},
+    // found undefined, and left the real small count unmasked.
+    const renamed =
+      'SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS total FROM v_profiles ' + 'GROUP BY source, status, substr(signup_date, 1, 7)'
+    await env.DB.prepare('UPDATE assistant_tools SET execution_config = ? WHERE name = ?')
+      .bind(JSON.stringify({ sql: renamed, param_mapping: {} }), toolName)
+      .run()
+    const onBoard2 = (await board()).tiles.find((t) => t.id === tile.id)!
+    expect(onBoard2.status).toBe('ok')
+    expect(onBoard2.result?.columns).toEqual(['source', 'status', 'month', 'total'])
+    const row = onBoard2.result!.rows.find((r) => r.source === smallest!.source && r.status === smallest!.status && r.month === smallest!.month)!
+    expect(row.total).toBe('< 5')
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
 })
