@@ -59,6 +59,7 @@ import {
   NOT_PINNABLE_OTHER_MESSAGE,
   PIN_FAILED_MESSAGE,
   REQUEST_APPROVAL_MESSAGE,
+  REQUEST_APPROVAL_OFFER_MESSAGE,
   TILE_RUN_FAILED_MESSAGE,
 } from '../../shared/insight-messages'
 import { TODAY } from '../../shared/config'
@@ -97,7 +98,7 @@ export const SORT_ORDER_MAX = 1_000_000_000
 
 // The level-1 sentences of the board (09 D-64a) live in shared/insight-messages.ts, so the UI tests
 // read the same home; re-exported here for the server's callers and tests.
-export { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_OTHER_MESSAGE, PIN_FAILED_MESSAGE, REQUEST_APPROVAL_MESSAGE, TILE_RUN_FAILED_MESSAGE }
+export { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_OTHER_MESSAGE, PIN_FAILED_MESSAGE, REQUEST_APPROVAL_MESSAGE, REQUEST_APPROVAL_OFFER_MESSAGE, TILE_RUN_FAILED_MESSAGE }
 /** A person-list tile's level-1 row cap (09 D-64b); the full list stays available via Segments/export. */
 export const PERSON_LIST_CAP = 10
 /** The builtin handlers whose lookups can be pinned; every `query` row can be too (09 D-64a). */
@@ -277,15 +278,18 @@ async function boardTools(db: D1Database): Promise<BoardTools> {
  *
  * The literal `query_sql` tool is handled on its own (09 D-64b): `sql`, when given, is classified
  * by the positive grammar, so a totals or a person-list query refuses with null (pinnable) and
- * anything else with REQUEST_APPROVAL_MESSAGE; callers that already know they are past that step
- * (pin() after wrapping the SQL as its own tool row, or a stored board row, which is never
- * literally `query_sql`) call with no `sql` and get the old hard refusal, same as a builtin row
- * that merely aliases query_sql's handler under another name (handled below, unaffected).
+ * anything else with REQUEST_APPROVAL_OFFER_MESSAGE — the preview form, since this is pinPeriod's
+ * read-only check (POST /api/assistant's `pin_refusal`): nothing has been queued yet, so the
+ * card's own "Request approval" action is what actually calls pin() and queues it. Callers that
+ * already know they are past that step (pin() after wrapping the SQL as its own tool row, or a
+ * stored board row, which is never literally `query_sql`) call with no `sql` and get the old hard
+ * refusal, same as a builtin row that merely aliases query_sql's handler under another name
+ * (handled below, unaffected).
  */
 function pinRefusal(tools: BoardTools, tool: string, sql: string | null = null): string | null {
   if (tool === 'query_sql') {
     if (sql === null) return NOT_PINNABLE_MESSAGE
-    return classifyPinnableSql(sql).ok ? null : REQUEST_APPROVAL_MESSAGE
+    return classifyPinnableSql(sql).ok ? null : REQUEST_APPROVAL_OFFER_MESSAGE
   }
   if (NEVER_PINNED.has(tool)) return NOT_PINNABLE_MESSAGE
   const loaded = tools.tools.byName.get(tool)

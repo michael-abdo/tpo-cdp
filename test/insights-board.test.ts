@@ -17,6 +17,7 @@ import {
   PERSON_LIST_CAP,
   PIN_FAILED_MESSAGE,
   REQUEST_APPROVAL_MESSAGE,
+  REQUEST_APPROVAL_OFFER_MESSAGE,
   SORT_ORDER_MAX,
   TILE_RUN_FAILED_MESSAGE,
 } from '../worker/insights/board'
@@ -367,7 +368,10 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     const answer = await askAnswer('how many subscribers come from each source?', [
       { name: 'query_sql', input: { sql, explanation: 'subscribers grouped by source, only sources over 10' } },
     ])
-    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_MESSAGE)
+    // The preview (pin_refusal) only reads the grammar; nothing is queued until the card's own
+    // "Request approval" action actually calls POST /api/insights (09 D-64b finding), so it gets
+    // the offer wording, never the "has been sent" sentence that POST's own 400 below earns.
+    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_OFFER_MESSAGE)
     const beforeTiles = await tileCount()
     const beforeTools = await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')
     const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
@@ -1485,7 +1489,7 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     // Window functions are Gate 2/3-legal (so this runs fine live) but not one of the two pinnable shapes.
     const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
     const answer = await askAnswer('rank each source', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked' } }])
-    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_MESSAGE)
+    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_OFFER_MESSAGE)
     const beforeTiles = await tileCount()
     const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
     expect(res.status).toBe(400)

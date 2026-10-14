@@ -16,14 +16,24 @@ export const NOT_PINNABLE_MESSAGE = "Answers written as free-form queries can't 
  */
 export const NOT_PINNABLE_OTHER_MESSAGE = 'Only counts, segments and saved question types can be pinned, and this answer is none of them.'
 /**
- * 400 `not_pinnable` for a free-form query_sql answer whose SQL does not pass the D-64b positive
- * grammar (totals, or a person list). The SQL is sent to the Growth team's approval list instead
- * of being discarded (09 D-64b "Request approval"); once a teammate approves it there, it pins
- * like any saved question type.
+ * Why a free-form query_sql answer does not match the D-64b positive grammar (totals, or a person
+ * list): the one clause REQUEST_APPROVAL_MESSAGE and REQUEST_APPROVAL_OFFER_MESSAGE share, written
+ * once (09 D-72 "say one thing in one place") since each needs it under a different ending.
  */
-export const REQUEST_APPROVAL_MESSAGE =
-  "This free-form query doesn't match an allowed shape (a total, or a plain list of people), so it can't pin itself. " +
-  "It has been sent to the Growth team's approval list instead; once approved there, it pins like any saved question."
+const GRAMMAR_REFUSAL = "This free-form query doesn't match an allowed shape (a total, or a plain list of people), so it can't pin itself."
+/**
+ * 400 `not_pinnable` for a free-form query_sql answer, returned ONLY once `pin()` has itself
+ * called requestApproval and so actually queued it: the one point where "has been sent" is true.
+ * Never reused as a preview, or the sentence would promise something that has not happened yet.
+ */
+export const REQUEST_APPROVAL_MESSAGE = `${GRAMMAR_REFUSAL} It has been sent to the Growth team's approval list instead; once approved there, it pins like any saved question.`
+/**
+ * The answer card's preview (`pin_refusal` of POST /api/assistant; pinPeriod only reads, never
+ * writes): the same grammar refusal as REQUEST_APPROVAL_MESSAGE, before anything is queued, so
+ * the card offers a "Request approval" action instead of claiming the queue already happened
+ * (09 D-64b finding).
+ */
+export const REQUEST_APPROVAL_OFFER_MESSAGE = `${GRAMMAR_REFUSAL} Send it to the Growth team for approval instead; once approved there, it pins like any saved question.`
 /** A tile whose lookup failed on the server side (a query the database refused, any other error): a retry may help (09 D-64a). */
 export const TILE_RUN_FAILED_MESSAGE = 'This tile could not run right now. Press Refresh to try again.'
 /** A pin whose first run or store failed on the server side (09 D-64a). */
