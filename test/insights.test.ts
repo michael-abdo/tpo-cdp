@@ -337,7 +337,11 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
     const explains = [body.total.explain, body.hidden_unsubscribed.explain, ...body.by_source.map((r) => r.explain)]
     explains.forEach(expectAskable)
     expect(new Set(explains).size).toBe(explains.length)
-    for (const e of explains) expect(e).toContain('going_cold_risk')
+    // The rule by what it means, from DEFINITIONS, never its code name (06 §UI principles 4; "Explain this" fills the Ask bar).
+    for (const e of explains) {
+      expect(e).toContain('at risk of going cold (opened an email in the last 30 days but not in the last 14, or will become cold within the next 7 days)')
+      expect(e).not.toContain('going_cold_risk')
+    }
     for (const row of body.by_source) {
       expect(row.explain).toContain(row.source === null ? 'no signup source recorded' : `"${row.source}"`)
     }

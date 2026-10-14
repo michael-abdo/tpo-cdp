@@ -22,7 +22,7 @@
 
 import { HOSTED_URL } from '../../shared/config'
 import { ApiError } from '../auth/middleware'
-import { pinWindow } from '../insights/board'
+import { pinPeriod } from '../insights/board'
 import { type AuditTrace, startTrace } from './audit/ai-audit'
 import { enforceGate1 } from './gates/gate1-input-sanitizer'
 import { guardPayload } from './gates/pii-guard'
@@ -53,9 +53,14 @@ export interface AssistantResponse extends AssistantResult {
   audit_id: string
   /**
    * The time period "Pin to board" would store for this answer, resolved on TODAY, or null when
-   * its lookup has none (worker/insights/board.ts pinWindow, the reading POST /api/insights does).
+   * its lookup has none (worker/insights/board.ts pinPeriod, the reading POST /api/insights does).
    */
   pin_window: { from: string; to: string } | null
+  /**
+   * The dates the pinned lookup sets itself when it takes no time period (a query row's built-in
+   * window), or null; the tile shows the same dates in its footer (board.ts pinPeriod, ownDates).
+   */
+  pin_own_dates: { from: string; to: string } | null
 }
 
 /** Assistant calls this session made in the last hour: distinct traces, not counting rate-limited ones. */
@@ -131,6 +136,11 @@ export async function answerQuestion(deps: AssistantDeps, question: string): Pro
 
   const hydrated = rehydrate(result, await loadEmailsByPkey(deps.db, collectPkeys(result)))
   // Two calendar dates from the trace's own audit rows (09 D-64); nothing else is added.
-  const window = await pinWindow(deps.db, trace.traceId)
-  return { ...hydrated, audit_id: trace.traceId, pin_window: window === null ? null : { from: window.from, to: window.to } }
+  const { window, own_dates } = await pinPeriod(deps.db, trace.traceId)
+  return {
+    ...hydrated,
+    audit_id: trace.traceId,
+    pin_window: window === null ? null : { from: window.from, to: window.to },
+    pin_own_dates: own_dates,
+  }
 }

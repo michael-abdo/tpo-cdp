@@ -1,7 +1,9 @@
 // Calendar dates in plain words (06 §UI principles 4: "Aug 1–31, 2026"). One home for both the
-// browser (src/format.ts re-exports these) and the Worker, which words a tile's time period into
-// its "Explain this" question (worker/insights/board.ts). Pure: reads the digits as stored, so no
-// time-zone shift and no clock.
+// browser (src/format.ts and src/insights/windows.ts re-export these) and the Worker, which words a
+// tile's time period into its "Explain this" question (worker/insights/board.ts). Pure: reads the
+// digits as stored, so no time-zone shift and no clock.
+
+import type { ResolvedWindow, RollingPreset } from './insight-window'
 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const STORED_DATE = /^(\d{4})-(\d{2})-(\d{2})/
@@ -32,4 +34,18 @@ export function humanRange(from: string, to: string): string {
   if (a[1] !== b[1]) return `${humanDate(from)} – ${humanDate(to)}`
   if (a[2] !== b[2]) return `${aMonth} ${Number(a[3])} – ${bMonth} ${Number(b[3])}, ${a[1]}`
   return `${aMonth} ${Number(a[3])}–${Number(b[3])}, ${a[1]}`
+}
+
+/** Every rolling preset of shared/insight-window.ts in words; the Record makes a new preset a type error here. */
+export const PRESET_LABEL: Record<RollingPreset, string> = {
+  last_month: 'Last month',
+  last_30_days: 'Last 30 days',
+  this_month: 'This month',
+}
+
+/** `Last month · Aug 1–31, 2026` for a rolling window, `Aug 1–31, 2026` for a fixed one. */
+export function windowText(window: ResolvedWindow): string {
+  const range = humanRange(window.from, window.to)
+  if (window.kind === 'rolling') return `${PRESET_LABEL[window.preset]} · ${range}`
+  return range
 }

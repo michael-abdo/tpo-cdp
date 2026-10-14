@@ -5,8 +5,9 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, toolSeedInsert } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { lastMonth, lastNDays } from '../shared/derive'
-import { SORT_ORDER_MAX } from '../worker/insights/board'
+import { BLOCKED_TILE_TITLE, INSIGHT_PARAMS_VERSION, KEY_PIECE_CHARS, SORT_ORDER_MAX } from '../worker/insights/board'
 import { detectWindow, resolveWindow } from '../shared/insight-window'
+import { sanitizeQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
 import { findPII, loadKnownEmails } from '../worker/assistant/gates/pii-guard'
 import { MODEL } from '../worker/assistant/build-request'
 import type { MessagesTransport } from '../worker/assistant/loop'
@@ -93,7 +94,7 @@ async function askRecorded(question: string, calls: Array<{ name: string; input:
 async function askAnswer(
   question: string,
   calls: Array<{ name: string; input: unknown }>,
-): Promise<{ audit_id: string; pin_window: { from: string; to: string } | null }> {
+): Promise<{ audit_id: string; pin_window: { from: string; to: string } | null; pin_own_dates: { from: string; to: string } | null }> {
   const app = new Hono<AppEnv>()
   app.use('/api/*', requireJson, requireSession)
   app.route('/api', assistantRoutes(() => recorded(calls)))
@@ -156,14 +157,17 @@ async function editTracedInput(auditId: string, input: unknown): Promise<void> {
   expect(res.meta.changes).toBe(1)
 }
 
-/** Stores a copy of a real pinned row under a new id with other params (stored-state drift, 09 D-47). */
-async function insertCopy(of: string, params: Record<string, unknown>, title: string): Promise<string> {
+/**
+ * Stores a copy of a real pinned row under a new id with other params, and optionally another
+ * prompt (stored-state drift, 09 D-47).
+ */
+async function insertCopy(of: string, params: Record<string, unknown>, title: string, prompt?: string): Promise<string> {
   const id = crypto.randomUUID()
   await env.DB.prepare(
     `INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at)
-     SELECT ?, ?, prompt, tool, tool_version, ?, chart, sort_order + 1, built_in, created_at FROM insights WHERE id = ?`,
+     SELECT ?, ?, coalesce(?, prompt), tool, tool_version, ?, chart, sort_order + 1, built_in, created_at FROM insights WHERE id = ?`,
   )
-    .bind(id, title, JSON.stringify(params), of)
+    .bind(id, title, prompt ?? null, JSON.stringify(params), of)
     .run()
   return id
 }
@@ -343,17 +347,66 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     expect(moved.sql).toContain("BETWEEN '2026-08-01' AND '2026-08-15'")
   })
 
-  it('"Explain this" on a pinned tile names the time period it shows now, not the one it was asked about', async () => {
+  it('"Explain this" on a pinned tile leads with its title and the dates it shows now; the pinned question follows', async () => {
     const question = 'how many Instagram signups went cold last month?'
     const tile = await pin({ audit_id: await askRecorded(question, [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
-    expect(tile.explain).toBe(`${question} (time period: Aug 1–31, 2026)`)
-    expect((await api(`/${tile.id}`, { method: 'PATCH', body: { window: { rolling: 'this_month' } } })).status).toBe(200)
+    expect(tile.explain).toBe(`Explain “${question}” for Aug 1–31, 2026 only (last month). It was pinned from: ${question}`)
+    const title = 'Instagram signups who went cold'
+    expect((await api(`/${tile.id}`, { method: 'PATCH', body: { title, window: { rolling: 'last_30_days' } } })).status).toBe(200)
     const after = (await board()).tiles.find((t) => t.id === tile.id)!
-    expect(after.window).toMatchObject({ from: '2026-09-01', to: '2026-09-28' })
-    expect(after.explain).toBe(`${question} (time period: Sep 1–28, 2026)`)
-    // A built-in tile keeps its panel's own question (09 D-39).
-    const builtIn = (await board()).tiles.find((t) => t.id === 'builtin-going-cold')!
-    expect(builtIn.explain).not.toContain('time period:')
+    expect(after.window).toMatchObject({ from: '2026-08-29', to: '2026-09-28' })
+    // The tile's period wins: its dates come first and "only"; "last month" is left as the pinned question's words.
+    expect(after.explain).toBe(`Explain “${title}” for Aug 29 – Sep 28, 2026 only (last 30 days). It was pinned from: ${question}`)
+    expect(sanitizeQuestion(after.explain).ok).toBe(true) // Ask accepts it (Gate 1)
+    expect((await api(`/${tile.id}`, { method: 'PATCH', body: { window: { fixed: ['2026-08-01', '2026-08-15'] } } })).status).toBe(200)
+    const fixed = (await board()).tiles.find((t) => t.id === tile.id)!
+    expect(fixed.explain).toBe(`Explain “${title}” for Aug 1–15, 2026 only. It was pinned from: ${question}`)
+  })
+
+  it('a built-in tile’s "Explain this" is its panel’s question (09 D-39), in plain words', async () => {
+    const { tiles } = await board()
+    for (const tile of tiles.filter((t) => t.built_in)) {
+      const panel = (await stored(tile.id).then((r) => JSON.parse(r!.params))) as { panel: string }
+      const res = await SELF.fetch(`http://cdp.test/api/insights/${panel.panel}`, { headers: { cookie } })
+      expect(res.status).toBe(200)
+      const body = await res.json<{ total?: { explain: string }; checks?: Array<{ explain: string }> }>()
+      // data-quality has no total: its first check's question stands for the panel (board.ts panelOutput).
+      const question = panel.panel === 'data-quality' ? body.checks![0].explain : body.total!.explain
+      expect(tile.explain, tile.id).toBe(question)
+      expect(tile.explain).not.toBe(tile.title)
+    }
+    // 06 §UI principles 4: "Explain this" fills the Ask bar at level 1, so no code name such as going_cold_risk.
+    for (const tile of tiles) expect(tile.explain, tile.id).not.toMatch(/[a-z]+_[a-z_]+/)
+  })
+
+  it('a lookup that sets its own dates (a query row) has no window; the answer and the tile name the same dates', async () => {
+    const answer = await askAnswer('which pages do new subscribers hit first?', [{ name: 'pages_new_subscribers_hit_first', input: {} }])
+    expect(answer.pin_window).toBeNull()
+    // 02 §Derived new_subscriber = TODAY − 30 .. TODAY.
+    expect(answer.pin_own_dates).toEqual({ from: '2026-08-29', to: '2026-09-28' })
+    const tile = await pin({ audit_id: answer.audit_id })
+    const segment = await askAnswer('build me a list of our most engaged readers', [{ name: 'segment', input: { status: ['active'] } }])
+    const segmentTile = await pin({ audit_id: segment.audit_id })
+    try {
+      expect(tile.window).toBeNull()
+      expect(tile.own_dates).toEqual(answer.pin_own_dates)
+      expect((await board()).tiles.find((t) => t.id === tile.id)!.own_dates).toEqual(answer.pin_own_dates)
+      // A segment sets no dates, whatever the model's answer said about time.
+      expect(segment.pin_own_dates).toBeNull()
+      expect(segmentTile.own_dates).toBeNull()
+      // A windowed lookup (its one BETWEEN became the window) reports the window, never own dates.
+      const windowed = await askAnswer('how many Instagram signups went cold last month?', [
+        { name: 'query_sql', input: { sql: WENT_COLD_AUGUST_SQL, explanation: 'Instagram active readers whose cold_since is in August' } },
+      ])
+      expect(windowed.pin_window).toEqual({ from: '2026-08-01', to: '2026-08-31' })
+      expect(windowed.pin_own_dates).toBeNull()
+      const windowedTile = await pin({ audit_id: windowed.audit_id })
+      expect(windowedTile.own_dates).toBeNull()
+      expect((await api(`/${windowedTile.id}`, { method: 'DELETE' })).status).toBe(204)
+    } finally {
+      // T-INS-6 runs every tile directly; a query row has no direct handler there.
+      for (const id of [tile.id, segmentTile.id]) await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(id).run()
+    }
   })
 })
 
@@ -413,6 +466,43 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     } finally {
       await env.DB.prepare("UPDATE assistant_tools SET enabled = 1 WHERE name = 'aggregate'").run()
     }
+  })
+
+  it('a row stored under another params version reports outdated (01 §insights); the rest of the board runs', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    const params = JSON.parse((await stored(tile.id))!.params) as Record<string, unknown>
+    const old = await insertCopy(tile.id, params, 'Saved by an older board')
+    await env.DB.prepare('UPDATE insights SET tool_version = ? WHERE id = ?').bind(INSIGHT_PARAMS_VERSION - 1, old).run()
+    try {
+      const { tiles } = await board()
+      const outdated = tiles.find((t) => t.id === old)!
+      expect(outdated).toMatchObject({ status: 'error', result: null, segment: null })
+      expect(outdated.error).toContain('older version of the board')
+      expect(tiles.filter((t) => t.id !== old).every((t) => t.status === 'ok')).toBe(true)
+    } finally {
+      await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(old).run()
+    }
+  })
+
+  it('a failed audit write fails the request (500), never a tile error; a pin then stores nothing (04, 03 row 11)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
+    const before = await tileCount()
+    await env.DB.prepare("CREATE TRIGGER audit_down BEFORE INSERT ON ai_audit BEGIN SELECT RAISE(ABORT, 'audit down'); END").run()
+    try {
+      const get = await api('')
+      expect(get.status).toBe(500)
+      expect((await get.json<{ error: string }>()).error).toBe('internal_error')
+      const post = await api('', { method: 'POST', body: { audit_id: auditId } })
+      expect(post.status).toBe(500)
+      expect((await post.json<{ error: string }>()).error).toBe('internal_error')
+      expect(await tileCount()).toBe(before)
+    } finally {
+      await env.DB.prepare('DROP TRIGGER audit_down').run()
+    }
+    expect((await api('')).status).toBe(200)
   })
 })
 
@@ -531,6 +621,16 @@ describe('T-INS-8: built-in tiles, PATCH, DELETE, session', () => {
     expect(chart.status).toBe(400)
     expect((await chart.json<{ error: string }>()).error).toBe('invalid_body')
     expect((await stored(list.id))!.chart).toBeNull()
+    // Read from the tool, not this run: with the segment tool turned off the run fails, and the override is still refused.
+    await env.DB.prepare("UPDATE assistant_tools SET enabled = 0 WHERE name = 'segment'").run()
+    try {
+      const off = await api(`/${list.id}`, { method: 'PATCH', body: { chart: 'table' } })
+      expect(off.status).toBe(400)
+      expect((await off.json<{ error: string }>()).error).toBe('invalid_body')
+      expect((await stored(list.id))!.chart).toBeNull()
+    } finally {
+      await env.DB.prepare("UPDATE assistant_tools SET enabled = 1 WHERE name = 'segment'").run()
+    }
     expect((await api(`/${list.id}`, { method: 'DELETE' })).status).toBe(204)
   })
 
@@ -580,6 +680,23 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     expect(await env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')).toBe(before)
   })
 
+  it('PATCH with a title holding an email is 400 blocked_pii (field "title"); the stored title is unchanged', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    for (const id of [tile.id, 'builtin-funnel']) {
+      const titleBefore = (await stored(id))!.title
+      const res = await api(`/${id}`, { method: 'PATCH', body: { title: `Readers like ${JOY}` } })
+      expect(res.status, id).toBe(400)
+      const text = await res.text()
+      expect(text).not.toContain(JOY)
+      const body = JSON.parse(text) as { error: string; details: Array<{ field: string }> }
+      expect(body.error).toBe('blocked_pii')
+      expect(body.details[0].field).toBe('title')
+      expect((await stored(id))!.title).toBe(titleBefore)
+    }
+    expect((await api(`/${tile.id}`, { method: 'DELETE' })).status).toBe(204)
+  })
+
   it('a pin whose rows name individual readers is refused: the board holds counts only', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const before = await tileCount()
@@ -588,6 +705,11 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       // A key inside a longer cell, and a key with its pk_ prefix cut off, name readers too.
       "SELECT ' ' || group_concat(pkey) AS ks, count(*) AS n FROM v_profiles WHERE source = 'instagram'",
       "SELECT substr(pkey, 4) AS k, engagement_score FROM v_profiles WHERE source = 'instagram' LIMIT 5",
+      // Any piece of a real key of KEY_PIECE_CHARS (8) hex or more names its reader, whatever the column is called.
+      "SELECT substr(pkey, 4, 15) AS k, signup_date, source FROM v_profiles LIMIT 5",
+      "SELECT substr(pkey, 1, 12) AS k, signup_date FROM v_profiles LIMIT 5",
+      "SELECT substr(visitor_hash, 5, 10) AS v, page FROM v_web_events LIMIT 5",
+      `SELECT substr(pkey, 9, ${KEY_PIECE_CHARS}) AS k, count(*) AS n FROM v_profiles GROUP BY k LIMIT 5`,
     ]) {
       const auditId = await askRecorded('list some Instagram readers', [{ name: 'query_sql', input: { sql, explanation: 'Instagram readers' } }])
       const res = await api('', { method: 'POST', body: { audit_id: auditId } })
@@ -626,6 +748,9 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     const drifted = [
       await insertCopy(aggregate.id, { ...aggregateParams, source: [JOY] }, 'Drifted params'),
       await insertCopy(sqlTile.id, { ...sqlParams, sql: sqlParams.sql.replace("source = 'instagram'", `source = '${JOY}'`) }, 'Drifted SQL'),
+      // The stored texts that leave on the tile as they are (title, prompt, and explain built from both).
+      await insertCopy(aggregate.id, aggregateParams, `Readers like ${JOY}`),
+      await insertCopy(aggregate.id, aggregateParams, 'Drifted prompt', `who is ${JOY}`),
     ]
     try {
       const res = await api('')
@@ -636,13 +761,21 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       const { tiles } = JSON.parse(text) as { tiles: Tile[] }
       for (const id of drifted) {
         const tile = tiles.find((t) => t.id === id)!
-        expect(tile).toMatchObject({ status: 'error', result: null, params: {}, sql: null, prompt: null })
+        // A blocked tile carries none of its stored text.
+        expect(tile).toMatchObject({ status: 'error', result: null, params: {}, sql: null, prompt: null, title: BLOCKED_TILE_TITLE, explain: BLOCKED_TILE_TITLE })
         expect(tile.error).toContain('personal-data check')
       }
       expect(tiles.filter((t) => !drifted.includes(t.id)).every((t) => t.status === 'ok')).toBe(true)
-      // The block is in the audit trail, without the email (03 row 11).
-      const blocked = await env.DB.prepare("SELECT error FROM ai_audit WHERE kind = 'blocked' AND error LIKE 'blocked_pii:% in audit_row' ORDER BY rowid DESC LIMIT 2").all<{ error: string }>()
-      expect(blocked.results).toHaveLength(2)
+      // The block is in the audit trail, without the email (03 row 11): one row per blocked tile of this run.
+      const runTrace = await env.DB.prepare("SELECT trace_id FROM ai_audit WHERE tool_name = 'insight_panel' ORDER BY rowid DESC LIMIT 1").first<string>('trace_id')
+      const blocked = await env.DB.prepare("SELECT error FROM ai_audit WHERE trace_id = ? AND kind = 'blocked'").bind(runTrace).all<{ error: string }>()
+      expect(blocked.results).toHaveLength(drifted.length)
+      expect(blocked.results.every((r) => /^blocked_pii: \w+ in audit_row$/.test(r.error))).toBe(true)
+      // A change to a blocked tile is never stored (fail safe, as a pin).
+      const rename = await api(`/${drifted[0]}`, { method: 'PATCH', body: { title: 'Renamed drifted tile' } })
+      expect(rename.status).toBe(400)
+      expect((await rename.json<{ error: string }>()).error).toBe('blocked_pii')
+      expect((await stored(drifted[0]))!.title).toBe('Drifted params')
     } finally {
       for (const id of drifted) await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(id).run()
     }

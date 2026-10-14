@@ -8,7 +8,7 @@
 // `explain` question for the "Explain this" link (09 D-39). Live query on every request; nothing
 // is cached (03 §No-restart).
 
-import { type DefinitionKey, goingColdRisk } from '../../shared/derive'
+import { DEFINITIONS, type DefinitionKey, goingColdRisk } from '../../shared/derive'
 
 /** The definitions the panel's numbers use, rendered from DEFINITIONS by the UI (02 §Derived). */
 export const GOING_COLD_DEFINITIONS: readonly DefinitionKey[] = ['going_cold_risk', 'cold_since']
@@ -48,15 +48,20 @@ interface SubscriberRow {
 // kind = 'subscriber': app-only and stub profiles have no open or cold date to judge.
 const ROWS_SQL = `SELECT source, status, last_open_date, cold_since FROM v_profiles WHERE kind = 'subscriber'`
 
-const QUESTION = (who: string) =>
-  `Of ${who}, how many are at risk of going cold under the going_cold_risk definition, and what share is that?`
+/**
+ * The rule in plain words, from its one runtime source (02 §Derived): "Explain this" puts the
+ * question in the Ask bar at level 1, so it names the rule by what it means, never by its code
+ * name (06 §UI principles 4), and the model still gets the exact rule.
+ */
+const RULE_WORDS = `at risk of going cold (${DEFINITIONS.going_cold_risk.doc.charAt(0).toLowerCase()}${DEFINITIONS.going_cold_risk.doc.slice(1).replace(/\.$/, '')})`
+
+const QUESTION = (who: string) => `Of ${who}, how many are ${RULE_WORDS}, and what share is that?`
 
 /** The question behind the panel's total. */
 export const GOING_COLD_TOTAL_EXPLAIN = QUESTION('all active subscribers')
 
 /** The question behind the hidden-unsubscribed count. */
-export const GOING_COLD_HIDDEN_EXPLAIN =
-  'How many unsubscribed readers are at risk of going cold under the going_cold_risk definition?'
+export const GOING_COLD_HIDDEN_EXPLAIN = `How many unsubscribed readers are ${RULE_WORDS}?`
 
 /** The question behind one source's row. */
 export function goingColdExplain(source: string | null): string {
