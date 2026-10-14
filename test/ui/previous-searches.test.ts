@@ -84,6 +84,17 @@ describe('T-SEG-4 Previous searches', () => {
     expect(kept).toEqual([...SEARCHES].reverse().slice(0, 5))
   })
 
+  it('a stored duplicate (same filters, one in FILTER_KEYS order and one with its keys reversed) reads as one, shows as one row, and a later recordSearch keeps one copy', () => {
+    const store = new MemoryStore()
+    const reversed = Object.fromEntries(Object.entries(SEARCHES[0]).reverse()) as unknown as SegmentFilters
+    store.setItem(STORAGE_KEY, JSON.stringify({ v: 1, items: [{ filters: SEARCHES[0] }, { filters: reversed }] }))
+    expect(readSearches(store)).toEqual([SEARCHES[0]])
+    const rows = visibleSearches(readSearches(store))
+    expect(rows.filter((r) => r.key === searchKey(SEARCHES[0]))).toHaveLength(1)
+    recordSearch(SEARCHES[1], store)
+    expect(stored(store)).toEqual({ v: 1, items: [{ filters: SEARCHES[1] }, { filters: SEARCHES[0] }] })
+  })
+
   it('reads at most 5, even when storage holds more', () => {
     const store = new MemoryStore()
     store.setItem(STORAGE_KEY, JSON.stringify({ v: 1, items: [...SEARCHES, BRIEF_EXAMPLE].map((filters) => ({ filters })) }))
