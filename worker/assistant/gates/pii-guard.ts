@@ -228,4 +228,18 @@ export function decodeAt(text: string): string {
   return text.replace(/%40/gi, '@')
 }
 
+/**
+ * The one redaction for a 400 `details` line or a `console.warn`/`console.error` log (09 D-70
+ * item 1, this round's fixer gap): decodes a percent-encoded "@" first (so "name%40host.tld"
+ * redacts exactly as "name@host.tld" would), then runs `redactEmails`, then masks any
+ * `RAW_ID_REGEX` match (`u_`/`d_`/`v_` + hex) as `[id]`. Every detail string on
+ * `worker/routes/segments.ts` (readBody's unknown field, filtersFrom's rethrown problems, and the
+ * export route through both) goes through this one function, so the response and the log always
+ * agree and neither can carry a raw address, its `%40` spelling, or a raw id.
+ */
+export function redactDetail(text: string): string {
+  const { text: withoutEmails } = redactEmails(decodeAt(text))
+  return withoutEmails.replace(new RegExp(RAW_ID_REGEX.source, 'gi'), '[id]')
+}
+
 const ALNUM = /[a-z0-9]/i

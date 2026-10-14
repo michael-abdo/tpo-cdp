@@ -4,7 +4,7 @@ import { TOOL_SEEDS } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { isNewSubscriber, noOpenInDays } from '../shared/derive'
 import { normalizeEmail } from '../shared/normalize'
-import { JOY } from './helpers/shared-ids'
+import { JOY, OWN_ACCOUNT } from './helpers/shared-ids'
 import { toApiError } from '../src/api-error'
 import { BRIEF_EXAMPLE, readSearches, type SearchStore, searchKey, STORAGE_KEY } from '../src/previous-searches'
 import { DEFAULT_FORM, fieldMessages, type Form, toFilters } from '../src/segment-form'
@@ -243,6 +243,31 @@ describe('segment request errors', () => {
       expect(body.details.some((d) => d.includes('@'))).toBe(false)
     }
     for (const call of warn.mock.calls) expect(JSON.stringify(call)).not.toContain(JOY)
+    warn.mockRestore()
+  })
+
+  it('a %40-encoded unknown filter key and a raw id unknown body field are redacted in the response and never reach console.warn raw (09 D-70 item 1, fixer round 2)', async () => {
+    const encodedJoy = JOY.replace('@', '%40')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const path of ['preview', 'export.csv']) {
+      const res = await post(path, { filters: { [encodedJoy]: 1 } })
+      expect(res.status).toBe(400)
+      const body = await res.json<{ error: string; details: string[] }>()
+      expect(body.details).toEqual(['unknown filter: [email]'])
+      expect(body.details.some((d) => d.includes('%40') || d.includes('@'))).toBe(false)
+    }
+    // OWN_ACCOUNT (u_ceed5f12, a real app user id, 09 D-47) spelled as an unknown top-level field.
+    const res2 = await post('preview', { filters: PRESET, [OWN_ACCOUNT]: true })
+    expect(res2.status).toBe(400)
+    const body2 = await res2.json<{ error: string; details: string[] }>()
+    expect(body2.details).toEqual(['unknown field: [id]'])
+    expect(body2.details.some((d) => d.includes(OWN_ACCOUNT))).toBe(false)
+    for (const call of warn.mock.calls) {
+      const logged = JSON.stringify(call)
+      expect(logged).not.toContain(encodedJoy)
+      expect(logged).not.toContain(JOY)
+      expect(logged).not.toContain(OWN_ACCOUNT)
+    }
     warn.mockRestore()
   })
 

@@ -11,7 +11,7 @@ import { Hono } from 'hono'
 import { SITE_PAGE_PATTERN } from '../../shared/segment-filters'
 import { ApiError } from '../auth/middleware'
 import type { AppEnv } from '../env'
-import { redactEmails } from '../assistant/gates/pii-guard'
+import { redactDetail } from '../assistant/gates/pii-guard'
 import {
   type CompiledSegment,
   compileSegment,
@@ -53,7 +53,7 @@ async function readBody(req: Request, route: string, allowed: readonly string[])
   }
   const unknown = Object.keys(body).filter((k) => !allowed.includes(k))
   if (unknown.length > 0) {
-    throw invalidBody(route, shape, unknown.map((k) => `unknown field: ${redactEmails(k).text}`))
+    throw invalidBody(route, shape, unknown.map((k) => `unknown field: ${redactDetail(k)}`))
   }
   return body as Record<string, unknown>
 }
@@ -64,7 +64,7 @@ function filtersFrom(body: Record<string, unknown>, route: string): SegmentFilte
     return parseFilters(body.filters)
   } catch (err) {
     if (err instanceof ApiError) {
-      const redacted = (err.details ?? []).map((d) => redactEmails(String(d)).text)
+      const redacted = (err.details ?? []).map((d) => redactDetail(String(d)))
       console.warn(JSON.stringify({ at: route, outcome: err.code, details: redacted }))
       throw new ApiError(err.status, err.code, err.message, redacted)
     }
