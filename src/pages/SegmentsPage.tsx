@@ -26,7 +26,7 @@ import { DEFINITIONS, type DefinitionKey, NEW_SUBSCRIBER_DAYS } from '../../shar
 import { GLOSSARY } from '../../shared/glossary'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 import { SUBSCRIBER_STATUSES } from '../../worker/ingest/quarantine'
-import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
+import { downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
   Button,
@@ -46,8 +46,9 @@ import {
 } from '../components'
 import { humanDate } from '../format'
 import { COLUMN_LABEL, DEFINITION_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
-import { clearSearches, type PreviousSearch, readSearches, recordSearch, visibleSearches } from '../previous-searches'
-import { DEFAULT_FORM, type Form, moreFiltersOn, toFilters, toForm } from '../segment-form'
+import { browserStore, clearSearches, type PreviousSearch, readSearches, visibleSearches } from '../previous-searches'
+import { DEFAULT_FORM, FIELD_ID, FIELD_LABEL, fieldMessages, type Form, type FormField, moreFiltersOn, toFilters, toForm } from '../segment-form'
+import { type PreviewResult, previewAndRecord } from '../segment-preview'
 import type { SegmentFilters, SegmentOptions, SegmentPreview, SegmentRow } from '../types'
 import { useGet } from '../useGet'
 
@@ -77,11 +78,8 @@ function coldMonthOptions(): { value: string; label: string }[] {
   })
 }
 
-/** An ok result keeps the filters the server echoed, so its notes and the export never describe an edited form. */
-type Result =
-  | { status: 'loading' }
-  | { status: 'error'; message: string; invalidFilters: boolean }
-  | { status: 'ok'; data: SegmentPreview; filters: SegmentFilters }
+/** The shown preview: none yet, counting, or what previewAndRecord gave. */
+type Result = { status: 'loading' } | PreviewResult
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`
@@ -132,6 +130,7 @@ export function DaysBox({
   onChange,
   tip,
   hint,
+  error,
 }: {
   id: string
   label: string
@@ -139,6 +138,8 @@ export function DaysBox({
   onChange: (v: string) => void
   tip?: ReactNode
   hint?: string
+  /** The server's problem with this box in plain words (src/segment-form.ts), shown under it. */
+  error?: string
 }) {
   const hintId = `${id}-hint`
   return (
@@ -158,7 +159,8 @@ export function DaysBox({
           inputMode="numeric"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          aria-describedby={hint === undefined ? undefined : hintId}
+          aria-invalid={error === undefined ? undefined : true}
+          aria-describedby={describedBy(hint === undefined ? undefined : hintId, error === undefined ? undefined : errorId(id))}
           className={numberClass}
         />
         <span className="text-sm text-gray-700">days</span>
@@ -168,8 +170,42 @@ export function DaysBox({
           {hint}
         </p>
       )}
+      <FieldError id={id} message={error} />
     </div>
   )
+}
+
+/** The id of the problem line under input `id`. */
+const errorId = (id: string) => `${id}-error`
+
+/** aria-describedby from the ids that are set; undefined when none is. */
+function describedBy(...ids: (string | undefined)[]): string | undefined {
+  const set = ids.filter((i): i is string => i !== undefined)
+  return set.length === 0 ? undefined : set.join(' ')
+}
+
+/**
+ * A rejected preview's problem with one box, in plain words, right under it (06 §Empty and error
+ * states): it names the field and its limit as the server stated them. Not a live region: the
+ * error line below the form is the alert and repeats every problem.
+ */
+export function FieldError({ id, message }: { id: string; message?: string }) {
+  if (message === undefined) return null
+  return (
+    <p id={errorId(id)} className="flex items-start gap-1.5 text-sm text-danger">
+      <Icon icon={ICONS.error} className="mt-0.5 size-4" />
+      <span>{message}</span>
+    </p>
+  )
+}
+
+/**
+ * The error line under the form for a rejected preview. With field-level problems it says the
+ * search didn't run and lists each one in plain words; otherwise it shows the server's message.
+ */
+export function PreviewError({ result }: { result: Extract<PreviewResult, { status: 'error' }> }) {
+  if (result.problems.length === 0) return <ErrorLine id={PREVIEW_ERROR_ID} message={result.message} />
+  return <ErrorLine id={PREVIEW_ERROR_ID} message="This search didn't run." next={result.problems.map((p) => p.message).join(' ')} />
 }
 
 export function MatchingRows({ filters, rows }: { filters: SegmentFilters; rows: SegmentRow[] }) {
@@ -328,18 +364,14 @@ export default function SegmentsPage() {
     setShowAll(false)
     setExportError(null)
     setCleared(false)
-    try {
-      const data = await postJson<SegmentPreview>('/api/segments/preview', { filters, limit: PREVIEW_LIMIT })
-      setResult({ status: 'ok', data, filters: data.filters })
-      setStored(recordSearch(data.filters))
-    } catch (err) {
-      focusKey.current = null
-      setResult({
-        status: 'error',
-        message: errorMessage(err),
-        invalidFilters: err instanceof ApiError && err.code === 'invalid_filters',
-      })
-    }
+    const { result: next, stored: after } = await previewAndRecord(
+      { filters, limit: PREVIEW_LIMIT },
+      (body) => postJson<SegmentPreview>('/api/segments/preview', body),
+      browserStore(),
+    )
+    if (next.status === 'error') focusKey.current = null
+    setResult(next)
+    if (after !== null) setStored(after)
   }
 
   /** Fills the form with filters (opening More filters when one is set) and previews them. */
@@ -395,6 +427,7 @@ export default function SegmentsPage() {
   }
 
   const daysBlank = form.days.trim() === ''
+  const fieldError: Partial<Record<FormField, string>> = result?.status === 'error' ? fieldMessages(result.problems) : {}
   const ok = result?.status === 'ok' ? result : null
   const hidden = ok !== null && !ok.filters.status.includes('unsubscribed') ? ok.data.hidden_unsubscribed : 0
   const heading = ok === null ? '' : countSentence(ok.data.count)
@@ -451,11 +484,13 @@ export default function SegmentsPage() {
         className="grid gap-5 rounded-xl border border-line bg-surface p-5 shadow-soft sm:grid-cols-2"
       >
         <div className="space-y-1">
-          <label htmlFor="status" className={labelClass}>
-            Status
+          <label htmlFor={FIELD_ID.status} className={labelClass}>
+            {FIELD_LABEL.status}
           </label>
           <select
-            id="status"
+            id={FIELD_ID.status}
+            aria-invalid={fieldError.status === undefined ? undefined : true}
+            aria-describedby={fieldError.status === undefined ? undefined : errorId(FIELD_ID.status)}
             value={form.status}
             onChange={(e) => setForm({ ...form, status: e.target.value as Form['status'] })}
             className={inputClass}
@@ -467,14 +502,17 @@ export default function SegmentsPage() {
             ))}
             <option value="all">Everyone (including unsubscribed)</option>
           </select>
+          <FieldError id={FIELD_ID.status} message={fieldError.status} />
         </div>
 
         <div className="space-y-1">
-          <label htmlFor="has-app" className={labelClass}>
-            App account
+          <label htmlFor={FIELD_ID.hasApp} className={labelClass}>
+            {FIELD_LABEL.hasApp}
           </label>
           <select
-            id="has-app"
+            id={FIELD_ID.hasApp}
+            aria-invalid={fieldError.hasApp === undefined ? undefined : true}
+            aria-describedby={fieldError.hasApp === undefined ? undefined : errorId(FIELD_ID.hasApp)}
             value={form.hasApp}
             onChange={(e) => setForm({ ...form, hasApp: e.target.value as Form['hasApp'] })}
             className={inputClass}
@@ -483,10 +521,14 @@ export default function SegmentsPage() {
             <option value="yes">Has an app account</option>
             <option value="no">No app account</option>
           </select>
+          <FieldError id={FIELD_ID.hasApp} message={fieldError.hasApp} />
         </div>
 
-        <fieldset className="space-y-1 sm:col-span-2" aria-describedby="sources-hint">
-          <legend className={labelClass}>Acquisition source</legend>
+        <fieldset
+          className="space-y-1 sm:col-span-2"
+          aria-describedby={describedBy('sources-hint', fieldError.sources === undefined ? undefined : errorId(FIELD_ID.sources))}
+        >
+          <legend className={labelClass}>{FIELD_LABEL.sources}</legend>
           <p id="sources-hint" className={hintClass}>
             Leave all unchecked for any.
           </p>
@@ -498,22 +540,24 @@ export default function SegmentsPage() {
               </label>
             ))}
           </div>
+          <FieldError id={FIELD_ID.sources} message={fieldError.sources} />
         </fieldset>
 
         <div className="space-y-1 sm:col-span-2">
-          <label htmlFor="days" className={labelClass}>
-            Haven't opened an email in at least
+          <label htmlFor={FIELD_ID.days} className={labelClass}>
+            {FIELD_LABEL.days}
           </label>
           <div className="flex items-center gap-2">
             <input
-              id="days"
+              id={FIELD_ID.days}
               type="number"
               min={1}
               step={1}
               inputMode="numeric"
               value={form.days}
               onChange={(e) => setForm({ ...form, days: e.target.value })}
-              aria-describedby="days-hint"
+              aria-invalid={fieldError.days === undefined ? undefined : true}
+              aria-describedby={describedBy('days-hint', fieldError.days === undefined ? undefined : errorId(FIELD_ID.days))}
               className={numberClass}
             />
             <span className="text-sm text-gray-700">days</span>
@@ -521,6 +565,7 @@ export default function SegmentsPage() {
           <p id="days-hint" className={hintClass}>
             Leave blank for anyone. Otherwise enter a whole number, 1 or more.
           </p>
+          <FieldError id={FIELD_ID.days} message={fieldError.days} />
           <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm has-disabled:cursor-not-allowed has-disabled:text-gray-500">
             <input
               type="checkbox"
@@ -530,8 +575,9 @@ export default function SegmentsPage() {
               aria-describedby={daysBlank ? 'never-hint' : undefined}
               onChange={(e) => setForm({ ...form, includeNeverOpened: e.target.checked })}
             />
-            Also include people who never opened
+            {FIELD_LABEL.includeNeverOpened}
           </label>
+          <FieldError id={FIELD_ID.includeNeverOpened} message={fieldError.includeNeverOpened} />
           {daysBlank && (
             <p id="never-hint" className={hintClass}>
               Enter a number of days first.
@@ -552,9 +598,9 @@ export default function SegmentsPage() {
                 <InfoTip term="engagement_score" />
               </legend>
               <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
-                <label htmlFor="engagement-from">from</label>
+                <label htmlFor={FIELD_ID.engagementFrom}>from</label>
                 <input
-                  id="engagement-from"
+                  id={FIELD_ID.engagementFrom}
                   type="number"
                   min={0}
                   max={100}
@@ -562,12 +608,13 @@ export default function SegmentsPage() {
                   inputMode="numeric"
                   value={form.engagementFrom}
                   onChange={(e) => setForm({ ...form, engagementFrom: e.target.value })}
-                  aria-describedby="engagement-hint"
+                  aria-invalid={fieldError.engagementFrom === undefined ? undefined : true}
+                  aria-describedby={describedBy('engagement-hint', fieldError.engagementFrom === undefined ? undefined : errorId(FIELD_ID.engagementFrom))}
                   className={numberClass}
                 />
-                <label htmlFor="engagement-to">to</label>
+                <label htmlFor={FIELD_ID.engagementTo}>to</label>
                 <input
-                  id="engagement-to"
+                  id={FIELD_ID.engagementTo}
                   type="number"
                   min={0}
                   max={100}
@@ -575,35 +622,41 @@ export default function SegmentsPage() {
                   inputMode="numeric"
                   value={form.engagementTo}
                   onChange={(e) => setForm({ ...form, engagementTo: e.target.value })}
-                  aria-describedby="engagement-hint"
+                  aria-invalid={fieldError.engagementTo === undefined ? undefined : true}
+                  aria-describedby={describedBy('engagement-hint', fieldError.engagementTo === undefined ? undefined : errorId(FIELD_ID.engagementTo))}
                   className={numberClass}
                 />
               </div>
               <p id="engagement-hint" className={hintClass}>
                 0 to 100. Leave either blank for no limit.
               </p>
+              <FieldError id={FIELD_ID.engagementFrom} message={fieldError.engagementFrom} />
+              <FieldError id={FIELD_ID.engagementTo} message={fieldError.engagementTo} />
             </fieldset>
 
             <fieldset className="grid gap-4 sm:grid-cols-2">
               <legend className={`${groupClass} mb-2`}>Newsletter info</legend>
               <DaysBox
-                id="signed-up-days"
-                label="Signed up in the last"
+                id={FIELD_ID.signedUpDays}
+                label={FIELD_LABEL.signedUpDays}
                 value={form.signedUpDays}
+                error={fieldError.signedUpDays}
                 onChange={(v) => setForm({ ...form, signedUpDays: v })}
                 tip={<InfoTip term="new_subscriber" />}
                 hint={NEW_SUBSCRIBERS_HINT}
               />
               <div className="space-y-1">
                 <div className="flex items-center gap-1">
-                  <label htmlFor="went-cold" className={labelClass}>
-                    Went cold
+                  <label htmlFor={FIELD_ID.wentCold} className={labelClass}>
+                    {FIELD_LABEL.wentCold}
                   </label>
                   <InfoTip term="cold" />
                 </div>
                 <select
-                  id="went-cold"
+                  id={FIELD_ID.wentCold}
                   value={form.wentCold}
+                  aria-invalid={fieldError.wentCold === undefined ? undefined : true}
+                  aria-describedby={fieldError.wentCold === undefined ? undefined : errorId(FIELD_ID.wentCold)}
                   onChange={(e) => setForm({ ...form, wentCold: e.target.value })}
                   className={inputClass}
                 >
@@ -615,21 +668,32 @@ export default function SegmentsPage() {
                     </option>
                   ))}
                 </select>
+                <FieldError id={FIELD_ID.wentCold} message={fieldError.wentCold} />
               </div>
             </fieldset>
 
             <fieldset className="grid gap-4 sm:grid-cols-2">
               <legend className={`${groupClass} mb-2`}>Site visits</legend>
-              <DaysBox id="site-days" label="Visited the site in the last" value={form.siteDays} onChange={(v) => setForm({ ...form, siteDays: v })} />
+              <DaysBox
+                id={FIELD_ID.siteDays}
+                label={FIELD_LABEL.siteDays}
+                value={form.siteDays}
+                error={fieldError.siteDays}
+                onChange={(v) => setForm({ ...form, siteDays: v })}
+              />
               <div className="space-y-1">
-                <label htmlFor="site-page" className={labelClass}>
-                  Page
+                <label htmlFor={FIELD_ID.sitePage} className={labelClass}>
+                  {FIELD_LABEL.sitePage}
                 </label>
                 <select
-                  id="site-page"
+                  id={FIELD_ID.sitePage}
                   value={form.sitePage}
                   onChange={(e) => setForm({ ...form, sitePage: e.target.value })}
-                  aria-describedby={options?.status === 'error' ? 'site-page-error' : undefined}
+                  aria-invalid={fieldError.sitePage === undefined ? undefined : true}
+                  aria-describedby={describedBy(
+                    options?.status === 'error' ? 'site-page-options-error' : undefined,
+                    fieldError.sitePage === undefined ? undefined : errorId(FIELD_ID.sitePage),
+                  )}
                   className={inputClass}
                 >
                   <option value="">Any page</option>
@@ -639,9 +703,10 @@ export default function SegmentsPage() {
                     </option>
                   ))}
                 </select>
+                <FieldError id={FIELD_ID.sitePage} message={fieldError.sitePage} />
                 {options?.status === 'loading' && <p className={hintClass}>Loading pages…</p>}
                 {options?.status === 'error' && (
-                  <ErrorLine id="site-page-error" message={options.message} next="Reload the page to try again." />
+                  <ErrorLine id="site-page-options-error" message={options.message} next="Reload the page to try again." />
                 )}
               </div>
             </fieldset>
@@ -651,13 +716,21 @@ export default function SegmentsPage() {
               <p id="app-hint" className={`${hintClass} sm:col-span-2`}>
                 Comes from live app events, so it counts only what the app has sent.
               </p>
-              <DaysBox id="app-days" label="Used the app in the last" value={form.appDays} onChange={(v) => setForm({ ...form, appDays: v })} />
+              <DaysBox
+                id={FIELD_ID.appDays}
+                label={FIELD_LABEL.appDays}
+                value={form.appDays}
+                error={fieldError.appDays}
+                onChange={(v) => setForm({ ...form, appDays: v })}
+              />
               <div className="space-y-1">
-                <label htmlFor="app-event" className={labelClass}>
-                  Event
+                <label htmlFor={FIELD_ID.appEvent} className={labelClass}>
+                  {FIELD_LABEL.appEvent}
                 </label>
                 <select
-                  id="app-event"
+                  id={FIELD_ID.appEvent}
+                  aria-invalid={fieldError.appEvent === undefined ? undefined : true}
+                  aria-describedby={fieldError.appEvent === undefined ? undefined : errorId(FIELD_ID.appEvent)}
                   value={form.appEvent}
                   onChange={(e) => setForm({ ...form, appEvent: e.target.value as Form['appEvent'] })}
                   className={inputClass}
@@ -669,6 +742,7 @@ export default function SegmentsPage() {
                     </option>
                   ))}
                 </select>
+                <FieldError id={FIELD_ID.appEvent} message={fieldError.appEvent} />
               </div>
             </fieldset>
           </div>
@@ -685,17 +759,7 @@ export default function SegmentsPage() {
         <EmptyState icon={ICONS.segments}>Choose who to include, then press Preview, or start from a previous search above.</EmptyState>
       )}
       {result?.status === 'loading' && <Loading label="Counting matching subscribers…" />}
-      {result?.status === 'error' && (
-        <ErrorLine
-          id={PREVIEW_ERROR_ID}
-          message={result.message}
-          next={
-            result.invalidFilters
-              ? 'Check the filters: days are whole numbers, 1 or more; engagement is 0 to 100, with “from” no higher than “to”.'
-              : undefined
-          }
-        />
-      )}
+      {result?.status === 'error' && <PreviewError result={result} />}
       {ok !== null && (
         <section aria-labelledby={RESULT_HEADING_ID} className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">

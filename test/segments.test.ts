@@ -4,7 +4,11 @@ import { TOOL_SEEDS } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { isNewSubscriber, noOpenInDays } from '../shared/derive'
 import { normalizeEmail } from '../shared/normalize'
-import { BRIEF_EXAMPLE, searchKey } from '../src/previous-searches'
+import { toApiError } from '../src/api-error'
+import { BRIEF_EXAMPLE, readSearches, type SearchStore, searchKey, STORAGE_KEY } from '../src/previous-searches'
+import { DEFAULT_FORM, fieldMessages, type Form, toFilters } from '../src/segment-form'
+import { type PreviewRequest, previewAndRecord } from '../src/segment-preview'
+import type { SegmentPreview } from '../src/types'
 import { EMAIL_REGEX, RAW_ID_REGEX } from '../shared/pii'
 import { FILTER_KEYS, FILTER_SCHEMA, type SegmentFilters } from '../shared/segment-filters'
 import { inputSchemaProblems } from '../worker/assistant/gates/gate2-tool-authorizer'
@@ -789,5 +793,129 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
   it('an event name outside the four is 400 invalid_filters', async () => {
     await expectInvalid({ app_event: 'purchase' }, 'app_event must be one of app_open, read_story, link_click, login')
     await expectInvalid({ app_active_within_days: 3651 }, 'app_active_within_days must be a whole number from 1 to 3650')
+  })
+})
+
+// The page's side of a preview, against the real Worker (09 D-69 review gaps 2 and 4). previewAndRecord
+// (src/segment-preview.ts) is what /segments runs; pagePost is postJson's rule (2xx → JSON, else
+// the envelope as the same ApiError, src/api-error.ts toApiError). The form values are the review's
+// error-path values (0, -5, 2.5, 99999; engagement from above to) and the brief's preset.
+
+/** postJson for POST /api/segments/preview, over SELF. */
+async function pagePost(body: PreviewRequest): Promise<SegmentPreview> {
+  const res = await post('preview', body)
+  if (!res.ok) throw await toApiError(res)
+  return res.json<SegmentPreview>()
+}
+
+/** An in-memory Storage that counts writes, for Previous searches (workerd has no localStorage). */
+class MemoryStore implements SearchStore {
+  readonly data = new Map<string, string>()
+  writes = 0
+  getItem(key: string) {
+    return this.data.get(key) ?? null
+  }
+  setItem(key: string, value: string) {
+    this.writes++
+    this.data.set(key, value)
+  }
+  removeItem(key: string) {
+    this.writes++
+    this.data.delete(key)
+  }
+}
+
+/** The page's flow for a form: toFilters, then previewAndRecord through the real route. */
+function submitForm(form: Partial<Form>, store: SearchStore | null = new MemoryStore()) {
+  return previewAndRecord({ filters: toFilters({ ...DEFAULT_FORM, ...form }), limit: 100 }, pagePost, store)
+}
+
+/** The plain problems of a rejected form, as the page shows them. */
+async function problemsOf(form: Partial<Form>) {
+  const { result, stored } = await submitForm(form)
+  expect(stored).toBeNull()
+  if (result.status !== 'error') throw new Error(`expected a 400 for ${JSON.stringify(form)}`)
+  return result.problems
+}
+
+describe('T-SEG-4 Previous searches record only a 200 preview, as the server echoed it', () => {
+  it('records the canonical echo, not what the browser sent', async () => {
+    const store = new MemoryStore()
+    // The browser sends Instagram as subscribers.csv spells it, twice; the server folds and dedupes it.
+    const sent = { status: ['active'] as const, source: ['Instagram', 'instagram'], days_since_open_gte: 30, include_never_opened: true, has_app: null }
+    const { result, stored } = await previewAndRecord({ filters: { ...sent, status: [...sent.status] }, limit: 100 }, pagePost, store)
+    expect(result.status).toBe('ok')
+    if (result.status !== 'ok') return
+    expect(result.data.count).toBe(PRESET_COUNT)
+    expect(result.filters).toEqual(BRIEF_EXAMPLE)
+    expect(stored).toEqual([BRIEF_EXAMPLE])
+    expect(JSON.parse(store.data.get(STORAGE_KEY) ?? 'null')).toEqual({ v: 1, items: [{ filters: BRIEF_EXAMPLE }] })
+    expect(store.data.get(STORAGE_KEY)).not.toContain('Instagram')
+  })
+
+  it('a rejected preview records nothing and leaves the earlier searches as they were', async () => {
+    const store = new MemoryStore()
+    await submitForm({ signedUpDays: '30' }, store)
+    const before = store.data.get(STORAGE_KEY)
+    const writes = store.writes
+    expect(readSearches(store)).toEqual([{ status: ['active'], include_never_opened: false, signed_up_within_days: 30, has_app: null }])
+    const { result, stored } = await submitForm({ signedUpDays: '0' }, store)
+    expect(result.status).toBe('error')
+    expect(stored).toBeNull()
+    expect(store.writes).toBe(writes)
+    expect(store.data.get(STORAGE_KEY)).toBe(before)
+  })
+})
+
+describe('T-SEG-7 a rejected days value names the field and its limit in plain words', () => {
+  const SIGNED_UP = 'Signed up in the last: enter a whole number of days from 1 to 3,650.'
+  for (const value of ['0', '-5', '2.5', '99999']) {
+    it(`Signed up in the last ${value} days → "${SIGNED_UP}"`, async () => {
+      const problems = await problemsOf({ signedUpDays: value })
+      expect(problems).toEqual([{ field: 'signedUpDays', message: SIGNED_UP }])
+      expect(fieldMessages(problems)).toEqual({ signedUpDays: SIGNED_UP })
+    })
+  }
+
+  it('the same words for the other day boxes, each naming its own field', async () => {
+    expect(await problemsOf({ siteDays: '0' })).toEqual([
+      { field: 'siteDays', message: 'Visited the site in the last: enter a whole number of days from 1 to 3,650.' },
+    ])
+    expect(await problemsOf({ appDays: '99999' })).toEqual([
+      { field: 'appDays', message: 'Used the app in the last: enter a whole number of days from 1 to 3,650.' },
+    ])
+    for (const value of ['0', '-5', '2.5'])
+      expect(await problemsOf({ days: value })).toEqual([
+        { field: 'days', message: "Haven't opened an email in at least: enter a whole number of days, 1 or more." },
+      ])
+    // No upper limit on "haven't opened in" (09 D-01): 99999 runs.
+    expect((await submitForm({ days: '99999' })).result.status).toBe('ok')
+  })
+
+  it('every problem of one request is named, in the server\'s order', async () => {
+    expect(await problemsOf({ days: '0', signedUpDays: '-5' })).toEqual([
+      { field: 'days', message: "Haven't opened an email in at least: enter a whole number of days, 1 or more." },
+      { field: 'signedUpDays', message: 'Signed up in the last: enter a whole number of days from 1 to 3,650.' },
+    ])
+  })
+
+  it('a month after TODAY\'s names the last month allowed', async () => {
+    expect(await problemsOf({ wentCold: '2026-10' })).toEqual([{ field: 'wentCold', message: 'Went cold: choose September 2026 or an earlier month.' }])
+  })
+})
+
+describe('T-SEG-9 a rejected engagement range names the field and the limit in plain words', () => {
+  it('from above to', async () => {
+    const problems = await problemsOf({ engagementFrom: '60', engagementTo: '40' })
+    expect(problems).toEqual([{ field: 'engagementFrom', message: 'Engagement: “from” must not be higher than “to”.' }])
+  })
+
+  it('outside 0 to 100', async () => {
+    expect(await problemsOf({ engagementTo: '101' })).toEqual([
+      { field: 'engagementTo', message: 'Engagement to: enter a whole number from 0 to 100.' },
+    ])
+    expect(await problemsOf({ engagementFrom: '-5' })).toEqual([
+      { field: 'engagementFrom', message: 'Engagement from: enter a whole number from 0 to 100.' },
+    ])
   })
 })

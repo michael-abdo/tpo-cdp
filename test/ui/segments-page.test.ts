@@ -8,6 +8,7 @@ import { addDays, DEFINITIONS, isNewSubscriber, NEW_SUBSCRIBER_DAYS } from '../.
 import { explain, GLOSSARY, isGlossaryKey } from '../../shared/glossary'
 import { DEFINITION_LABEL } from '../../src/labels'
 import { BRIEF_EXAMPLE } from '../../src/previous-searches'
+import { FIELD_ID, FIELD_LABEL } from '../../src/segment-form'
 import { DaysBox, MatchingRows, NEW_SUBSCRIBERS_HINT, RowDetails, SearchOutcome } from '../../src/pages/SegmentsPage'
 import type { SegmentRow } from '../../src/types'
 
@@ -85,7 +86,10 @@ describe('/segments: a search run from Previous searches shows its count beside 
   })
 
   it('"Went cold" left blank reads "Don\'t filter", never "Any subscriber" beside "Any time (cold now)"', () => {
-    const select = segmentsSource.slice(segmentsSource.indexOf('id="went-cold"'), segmentsSource.indexOf('</select>', segmentsSource.indexOf('id="went-cold"')))
+    const at = segmentsSource.indexOf('id={FIELD_ID.wentCold}')
+    expect(at).toBeGreaterThan(-1)
+    expect(FIELD_ID.wentCold).toBe('went-cold')
+    const select = segmentsSource.slice(at, segmentsSource.indexOf('</select>', at))
     expect(select).toContain('<option value="">Don\'t filter</option>')
     expect(select).toContain('<option value="any">Any time (cold now)</option>')
     expect(select).not.toContain('Any subscriber')
@@ -116,10 +120,11 @@ describe('/segments names "new subscribers" at level 1, beside "Signed up in the
   })
 
   it('the page gives the hint to the "Signed up in the last" box, in the Newsletter info group', () => {
-    const start = segmentsSource.indexOf('<DaysBox\n                id="signed-up-days"')
+    const start = segmentsSource.indexOf('<DaysBox\n                id={FIELD_ID.signedUpDays}')
     expect(start).toBeGreaterThan(segmentsSource.indexOf('>Newsletter info</legend>'))
     const box = segmentsSource.slice(start, segmentsSource.indexOf('/>', segmentsSource.indexOf('hint=', start)) + 2)
-    expect(box).toContain('label="Signed up in the last"')
+    expect(box).toContain('label={FIELD_LABEL.signedUpDays}')
+    expect(FIELD_LABEL.signedUpDays).toBe('Signed up in the last')
     expect(box).toContain('hint={NEW_SUBSCRIBERS_HINT}')
   })
 })
@@ -146,7 +151,8 @@ describe('/segments: subscriber fields in the brief\'s words (06 §Vocabulary, 0
   })
 
   it('the filter form calls the source "Acquisition source", the same words as the rows', () => {
-    expect(segmentsSource).toContain('<legend className={labelClass}>Acquisition source</legend>')
+    expect(segmentsSource).toContain('<legend className={labelClass}>{FIELD_LABEL.sources}</legend>')
+    expect(FIELD_LABEL.sources).toBe('Acquisition source')
   })
 })
 

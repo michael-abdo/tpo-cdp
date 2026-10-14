@@ -1,13 +1,27 @@
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import segmentsSource from '../../src/pages/SegmentsPage.tsx?raw'
 import { FILTER_KEYS, type FilterKey, type SegmentFilters } from '../../shared/segment-filters'
+import { DaysBox, PreviewError } from '../../src/pages/SegmentsPage'
 import { BRIEF_EXAMPLE } from '../../src/previous-searches'
-import { DEFAULT_FORM, FIELD_OF, moreFiltersOn, toFilters, toForm } from '../../src/segment-form'
+import {
+  DEFAULT_FORM,
+  FIELD_ID,
+  FIELD_OF,
+  type FormField,
+  filterProblems,
+  moreFiltersOn,
+  toFilters,
+  toForm,
+} from '../../src/segment-form'
 
-// The /segments form as data (09 D-69 review gap 3; 08 T-SEG-6).
+// The /segments form as data (09 D-69 review gaps 2, 3 and 4; 08 T-SEG-4, T-SEG-6, T-SEG-7, T-SEG-9).
 // Every filter object here is canonical, as POST /api/segments/preview echoes it (T-SEG-6), with
 // real values (09 D-47): sources from subscribers.csv, /shadrachs-picks from web_events.csv, the
 // windows and counts of 02 §Counts and 19-segments-spec §3 (30 days, Aug 2026, engagement 50,
-// read_story in the last 7 days).
+// read_story in the last 7 days). The server's own problem lines and their plain words are pinned
+// against the real Worker in test/segments.test.ts; here they are rendered.
 
 /** The canonical echo of `{}` (T-SEG-6): the defaults every echo holds. */
 const BASE: SegmentFilters = { status: ['active'], include_never_opened: false, has_app: null }
@@ -87,5 +101,103 @@ describe('T-SEG-6 the form round-trips every filter key (toFilters, toForm)', ()
   it('a box is sent as typed, never range-checked in the browser (02 §Normalization)', () => {
     for (const value of ['0', '-5', '2.5', '99999'])
       expect(toFilters({ ...DEFAULT_FORM, signedUpDays: value }).signed_up_within_days).toBe(Number(value))
+  })
+})
+
+/** The rendered HTML, and its text with tags removed and entities decoded. */
+function render(element: ReturnType<typeof createElement>): { html: string; text: string } {
+  const html = renderToString(element)
+  const text = html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return { html, text }
+}
+
+// The server's lines as worker/segments/compile.ts writes them; test/segments.test.ts pins that the
+// real Worker sends exactly these for the review's values and that the page turns them into these words.
+const SIGNED_UP_LINE = 'signed_up_within_days must be a whole number from 1 to 3650'
+const ORDER_LINE = 'engagement_gte must not be greater than engagement_lte'
+
+describe('T-SEG-7, T-SEG-9 a rejected preview names the field and the limit on screen', () => {
+  it('the error line says the search did not run and lists each problem in plain words', () => {
+    const { text } = render(
+      createElement(PreviewError, {
+        result: {
+          status: 'error',
+          message: 'The segment filters are not valid.',
+          problems: filterProblems([SIGNED_UP_LINE, ORDER_LINE]),
+        },
+      }),
+    )
+    expect(text).toBe(
+      "This search didn't run. Signed up in the last: enter a whole number of days from 1 to 3,650. Engagement: “from” must not be higher than “to”.",
+    )
+    expect(text).not.toMatch(/_|not valid/)
+  })
+
+  it('with no field-level problem the server message shows as it is', () => {
+    const { text } = render(
+      createElement(PreviewError, {
+        result: { status: 'error', message: 'Too many requests.', problems: [] },
+      }),
+    )
+    expect(text).toBe('Too many requests.')
+  })
+
+  it('the box with the problem shows it under itself, marked invalid and tied by aria-describedby', () => {
+    const [problem] = filterProblems([SIGNED_UP_LINE])
+    const { html, text } = render(
+      createElement(DaysBox, {
+        id: 'signed-up-days',
+        label: 'Signed up in the last',
+        value: '0',
+        onChange: () => {},
+        hint: 'hint',
+        error: problem.message,
+      }),
+    )
+    expect(text).toContain('Signed up in the last: enter a whole number of days from 1 to 3,650.')
+    expect(html).toContain('aria-invalid="true"')
+    expect(html).toContain('aria-describedby="signed-up-days-hint signed-up-days-error"')
+    expect(html).toContain('id="signed-up-days-error"')
+    const clean = render(
+      createElement(DaysBox, {
+        id: 'signed-up-days',
+        label: 'Signed up in the last',
+        value: '30',
+        onChange: () => {},
+        hint: 'hint',
+      }),
+    )
+    expect(clean.html).not.toContain('aria-invalid')
+    expect(clean.html).not.toContain('signed-up-days-error')
+  })
+
+  it('a line the page cannot read keeps the server words and names no field', () => {
+    expect(filterProblems(['filters must be an object', 42])).toEqual([
+      { field: null, message: 'filters must be an object' },
+    ])
+  })
+
+  it("the page puts every field's problem next to its box, and keeps none of its own limits", () => {
+    for (const field of Object.keys(FIELD_ID) as FormField[]) {
+      const shown =
+        segmentsSource.includes(`message={fieldError.${field}}`) ||
+        segmentsSource.includes(`error={fieldError.${field}}`)
+      expect(shown, field).toBe(true)
+    }
+    // The old fixed hint restated the limits (and missed the 3,650 days); the server's words replace it.
+    expect(segmentsSource).not.toContain('Check the filters: days are whole numbers')
+  })
+})
+
+describe('T-SEG-4 the page records a search only through previewAndRecord', () => {
+  it('SegmentsPage previews with previewAndRecord and never calls recordSearch itself', () => {
+    expect(segmentsSource).toContain('await previewAndRecord(')
+    expect(segmentsSource).not.toMatch(/\brecordSearch\b/)
   })
 })
