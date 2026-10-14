@@ -8,8 +8,8 @@
 // A hit throws `PiiBlockedError` (500 `blocked_pii`, 04 §POST /api/assistant). It never redacts
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
-import { normalizeEmail } from '../../../shared/normalize'
-import { EMAIL_REGEX, RAW_ID_REGEX } from '../../../shared/pii'
+import { normalizeEmail, normalizeQueryFragment } from '../../../shared/normalize'
+import { EMAIL_REGEX, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, RAW_ID_REGEX } from '../../../shared/pii'
 import { ApiError } from '../../auth/middleware'
 import type { AuditTrace } from '../audit/ai-audit'
 
@@ -31,10 +31,13 @@ export class KnownEmails {
   readonly size: number
   private readonly emails: ReadonlySet<string>
   private readonly shapes: ReadonlyMap<number, readonly number[]>
+  /** The local part of every known email with at least LOCAL_PART_MIN_CHARS characters (09 D-70 #1). */
+  private readonly localParts: ReadonlySet<string>
 
   constructor(emails: Iterable<string>) {
     const set = new Set<string>()
     const shapes = new Map<number, Set<number>>()
+    const localParts = new Set<string>()
     for (const email of emails) {
       const at = email.indexOf('@')
       if (at <= 0 || at !== email.lastIndexOf('@') || normalizeEmail(email) !== email) {
@@ -42,6 +45,7 @@ export class KnownEmails {
         throw new Error('pii-guard: a known email is not a normalized address with exactly one "@"')
       }
       set.add(email)
+      if (at >= LOCAL_PART_MIN_CHARS) localParts.add(email.slice(0, at))
       let lengths = shapes.get(at)
       if (lengths === undefined) shapes.set(at, (lengths = new Set()))
       lengths.add(email.length)
@@ -49,6 +53,12 @@ export class KnownEmails {
     this.emails = set
     this.size = set.size
     this.shapes = new Map([...shapes].map(([local, lengths]) => [local, [...lengths]]))
+    this.localParts = localParts
+  }
+
+  /** True when `token`, folded as a lookup fragment is, is the local part of a known email (09 D-70 #1). */
+  isLocalPart(token: string): boolean {
+    return this.localParts.has(normalizeQueryFragment(token))
   }
 
   /** True when any known email occurs anywhere in `text`, ignoring case. */
@@ -162,6 +172,26 @@ export function redactEmails(text: string): { text: string; count: number } {
   const redacted = text.replace(new RegExp(EMAIL_REGEX.source, 'gi'), () => {
     count += 1
     return '[email]'
+  })
+  return { text: redacted, count }
+}
+
+/**
+ * Gate 1's local-part redaction (09 D-70 #1): a known email's local part typed without its
+ * domain ("is joy.hall830 engaged?") becomes `[email]` too. Only whole tokens count: a maximal
+ * run of local-part characters (shared/pii.ts LOCAL_PART_TOKEN), less any leading or trailing
+ * dots (sentence punctuation), must equal a known local part of at least LOCAL_PART_MIN_CHARS
+ * characters, so "joy.hall8301" or "joy.hall83" stay as typed. Run after `redactEmails`, whose
+ * `[email]` holds no token that long.
+ */
+export function redactKnownLocalParts(text: string, known: KnownEmails): { text: string; count: number } {
+  let count = 0
+  const redacted = text.replace(new RegExp(LOCAL_PART_TOKEN.source, 'gi'), (token) => {
+    const start = token.length - token.replace(/^\.+/, '').length
+    const core = token.slice(start).replace(/\.+$/, '')
+    if (core.length < LOCAL_PART_MIN_CHARS || !known.isLocalPart(core)) return token
+    count += 1
+    return token.slice(0, start) + '[email]' + token.slice(start + core.length)
   })
   return { text: redacted, count }
 }

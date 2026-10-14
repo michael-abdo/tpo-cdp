@@ -9,6 +9,7 @@ import { goingColdRisk } from '../shared/derive'
 import { CANONICAL_SOURCES, canonicalSource, normalizeEmail } from '../shared/normalize'
 import type { DataQualityCheckKey as UiCheckKey } from '../src/types'
 import { sanitizeQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
+import { KnownEmails } from '../worker/assistant/gates/pii-guard'
 import { parseCsv } from '../worker/ingest/csv'
 import { DATA_QUALITY_CHECKS, type DataQuality, type DataQualityCheckKey } from '../worker/insights/data-quality'
 import type { Funnel } from '../worker/insights/funnel'
@@ -135,7 +136,8 @@ const round4 = (n: number, d: number) => Math.round((n / d) * 10000) / 10000
 function expectAskable(explain: string) {
   expect(explain.endsWith('?')).toBe(true)
   expect(explain).not.toContain('@')
-  expect(sanitizeQuestion(explain).ok).toBe(true)
+  // Redaction never blocks, so the known-email set does not change `ok`; the empty set suffices.
+  expect(sanitizeQuestion(explain, new KnownEmails([])).ok).toBe(true)
 }
 
 describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
