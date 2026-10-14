@@ -8,12 +8,14 @@
 // to refresh its list at once (src/events-poll.ts FetchKind 'sent'), without waiting on the 5 s
 // poll.
 
-import { type ChangeEvent, useEffect, useState } from 'react'
+import { type ChangeEvent, type KeyboardEvent, useEffect, useState } from 'react'
 import { APP_EVENTS, type AppEventName } from '../shared/app-events'
 import { QUERY_FRAGMENT_MIN_LENGTH } from '../shared/normalize'
 import { ApiError, errorMessage, getJson, postJson } from './api'
 import { Announcer, Button, Disclosure, ErrorLine, EventName, ICONS, Loading } from './components'
 import { resultText } from './events-test-words'
+import { optionId, useListNav } from './list-nav'
+import { ListboxOption } from './listbox'
 import type { LookupSearch, RecentEvent, TestEventResult } from './types'
 
 const SUGGEST_DEBOUNCE_MS = 250
@@ -75,21 +77,41 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
   const [userId, setUserId] = useState<string | null>(null)
   const [eventName, setEventName] = useState<AppEventName>(APP_EVENTS[0])
   const [sending, setSending] = useState(false)
-  const [result, setResult] = useState<{ text: string; eventId: string } | null>(null)
+  const [sentEventId, setSentEventId] = useState<string | null>(null)
+  // A counter rides along with the text so the same sentence twice in a row (Send, Send again,
+  // Send again on the same account+event) is still a change the screen reader announces, as
+  // src/pages/EventsPage.tsx's own `said` does for the same reason.
+  const [said, setSaid] = useState({ text: '', n: 0 })
   const [error, setError] = useState<string | null>(null)
+  // Esc dismisses the open list without discarding the typed fragment or re-querying; typing
+  // again (onInput) reopens it. (06 keyboard contract, WCAG 2.2 AA 4.1.2 via ../listbox.)
+  const [dismissed, setDismissed] = useState(false)
+  const nav = useListNav()
   const suggestions = useAccountSuggestions(fragment, userId === null)
-  const listShown = userId === null && suggestions.status !== 'idle'
+  const listShown = userId === null && suggestions.status !== 'idle' && !dismissed
+  const matches = suggestions.status === 'ok' ? suggestions.matches : []
 
   const pick = (m: AccountMatch) => {
     setUserId(m.user_id)
     setFragment(m.email ?? m.user_id)
+    nav.setActive(-1)
   }
 
   const onInput = (e: ChangeEvent<HTMLInputElement>) => {
     setFragment(e.target.value)
     setUserId(null)
-    setResult(null)
     setError(null)
+    setDismissed(false)
+    nav.setActive(-1)
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (!listShown) return
+    nav.onKeyDown(e, {
+      itemCount: matches.length,
+      onPick: (i) => pick(matches[i]),
+      onClose: () => setDismissed(true),
+    })
   }
 
   async function send(body: { user_id: string; event: AppEventName } | { resend: string }): Promise<void> {
@@ -97,7 +119,8 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
     setError(null)
     try {
       const data = await postJson<TestEventResult>('/api/events/test', body)
-      setResult({ text: resultText(data.outcome), eventId: data.event.event_id })
+      setSentEventId(data.event.event_id)
+      setSaid((s) => ({ text: resultText(data.outcome), n: s.n + 1 }))
       onSent(data.event)
     } catch (err) {
       setError(errorMessage(err))
@@ -124,11 +147,13 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
             type="text"
             role="combobox"
             aria-expanded={listShown}
-            aria-controls={LISTBOX_ID}
+            aria-controls={listShown ? LISTBOX_ID : undefined}
             aria-autocomplete="list"
+            aria-activedescendant={listShown && nav.active >= 0 ? optionId(LISTBOX_ID, nav.active) : undefined}
             autoComplete="off"
             value={fragment}
             onChange={onInput}
+            onKeyDown={onKeyDown}
             placeholder="Type part of a user ID, e.g. u_2b6447a3"
             className="block w-full min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink"
           />
@@ -141,20 +166,24 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
               aria-label="Matching app accounts"
               className="max-h-48 space-y-0.5 overflow-auto rounded-lg border border-line bg-surface-2 p-1"
             >
-              {suggestions.matches.length === 0 ? (
-                <li className="px-2 py-1 text-sm text-gray-600">No app account matches.</li>
+              {matches.length === 0 ? (
+                <li role="presentation" className="px-2 py-1 text-sm text-gray-600">
+                  No app account matches.
+                </li>
               ) : (
-                suggestions.matches.map((m) => (
-                  <li key={m.user_id} role="option" aria-selected={false}>
-                    <button
-                      type="button"
-                      onClick={() => pick(m)}
-                      className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-surface"
-                    >
-                      <span className="shrink-0 font-mono text-xs text-gray-600">{m.user_id}</span>
-                      {m.email !== null && <span className="truncate">{m.email}</span>}
-                    </button>
-                  </li>
+                matches.map((m, i) => (
+                  <ListboxOption
+                    key={m.user_id}
+                    id={optionId(LISTBOX_ID, i)}
+                    active={i === nav.active}
+                    onPick={() => pick(m)}
+                    className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-sm ${
+                      i === nav.active ? 'bg-surface' : ''
+                    }`}
+                  >
+                    <span className="shrink-0 font-mono text-xs text-gray-600">{m.user_id}</span>
+                    {m.email !== null && <span className="truncate">{m.email}</span>}
+                  </ListboxOption>
                 ))
               )}
             </ul>
@@ -172,8 +201,9 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
                   className="size-4"
                   checked={eventName === name}
                   onChange={() => setEventName(name)}
+                  aria-labelledby={`test-event-name-${name}`}
                 />
-                <EventName event={name} />
+                <EventName event={name} nameId={`test-event-name-${name}`} />
               </label>
             ))}
           </div>
@@ -183,12 +213,12 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
           <Button type="submit" variant="primary" icon={ICONS.events} disabled={userId === null || sending}>
             {sending ? 'Sending…' : 'Send'}
           </Button>
-          {result !== null && (
+          {sentEventId !== null && (
             <Button
               type="button"
               variant="secondary"
               disabled={sending}
-              onClick={() => void send({ resend: result.eventId })}
+              onClick={() => void send({ resend: sentEventId })}
             >
               Send again
             </Button>
@@ -196,7 +226,7 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
         </div>
 
         {error !== null && <ErrorLine message={error} />}
-        <Announcer message={result?.text ?? ''} visible={result !== null} />
+        <Announcer message={said.n % 2 === 0 ? said.text : `${said.text} `} visible={sentEventId !== null} />
       </form>
     </Disclosure>
   )

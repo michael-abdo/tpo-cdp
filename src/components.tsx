@@ -498,10 +498,12 @@ export function InfoTip({ term }: { term: TipKey }) {
  * An app event name as the brief writes it (app_open, read_story, link_click, login), with its plain
  * gloss in an InfoTip from the glossary (06 §Vocabulary, 09 D-66); a name with no gloss shows as sent.
  */
-export function EventName({ event }: { event: string }) {
+export function EventName({ event, nameId }: { event: string; nameId?: string }) {
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="font-mono">{event}</span>
+      <span id={nameId} className="font-mono">
+        {event}
+      </span>
       {isGlossaryKey(event) && <InfoTip term={event} />}
     </span>
   )

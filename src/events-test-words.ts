@@ -7,5 +7,5 @@
 import type { TestEventResult } from './types'
 
 export function resultText(outcome: TestEventResult['outcome']): string {
-  return outcome === 'duplicate' ? 'Already received: sent twice, stored once.' : "Received — it's the top row below."
+  return outcome === 'duplicate' ? 'Already received — stored once, not added again.' : "Received — it's the top row below."
 }

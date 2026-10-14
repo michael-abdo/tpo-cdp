@@ -275,9 +275,7 @@ export default function EventsPage() {
           )}
           {events === null ? null : events.length === 0 ? (
             <EmptyState icon={ICONS.events}>
-              <p>
-                No events yet — send one with <code className="font-mono">npm run webhook:send</code>
-              </p>
+              <p>No events yet — send one with "Send a test event" above.</p>
               <p className="mt-1 text-gray-600">The app sends events here as they happen. New ones appear here within {POLL_SECONDS} seconds.</p>
             </EmptyState>
           ) : (

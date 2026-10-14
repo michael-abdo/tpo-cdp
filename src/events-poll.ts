@@ -10,9 +10,9 @@ export const POLL_MS = 5_000
 /**
  * What started a fetch: the page opening, the 5-second poll, the Refresh button, or the
  * "Send a test event" panel (09 D-73). The panel's own result line already says what happened
- * in plain words ("Received — it's the top row below.", "Already received: sent twice, stored
- * once."), so a fetch it triggers says nothing through this announcer (D-72: one home for that
- * sentence) even when the new row is new to the list.
+ * in plain words ("Received — it's the top row below.", "Already received — stored once, not
+ * added again."), so a fetch it triggers says nothing through this announcer (D-72: one home for
+ * that sentence) even when the new row is new to the list.
  */
 export type FetchKind = 'initial' | 'poll' | 'manual' | 'sent'
 
