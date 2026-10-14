@@ -1,9 +1,12 @@
-import { env } from 'cloudflare:test'
+import { env, SELF } from 'cloudflare:test'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { HOSTED_URL } from '../shared/config'
 import { LOCAL_PART_MIN_CHARS } from '../shared/pii'
 import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { enforceGate1 } from '../worker/assistant/gates/gate1-input-sanitizer'
+import type { SegmentRow } from '../worker/segments/compile'
+import { segmentCsv } from '../worker/segments/export'
+import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 
@@ -27,6 +30,11 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 // - T-HARD-3: users u_f1cad5ce (app_users.csv:15, eli.clark874@icloud.com) and u_38e852b0
 //   (app_users.csv:11, sarah.edwards657@gmail.com) on eli's device `d_f1cad5ce`; event times are
 //   taken from the wall clock (the bound is relative to it, 09 D-70 #3), as T-WH-7 does.
+// - T-HARD-5: segment rows are real rows of the seeded export. The `@` cell is the real
+//   subscribers.csv:1788 address `@gmail.com` (quarantined by the seed, so it is put back into a
+//   real row's email by hand); `=`, `+` and `-` are the other D-70 #5 formula characters put in
+//   front of a real address, as injection probes (not business data), one also followed by a
+//   comma and the row's real source to show the RFC 4180 quoting is kept.
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -214,5 +222,50 @@ describe('T-HARD-3: an event time more than 24 h after the server clock is refus
     const after = await scoreOf(ELI.email)
     expect(after - before).toBeGreaterThanOrEqual(2)
     expect(after - before).toBeLessThanOrEqual(3)
+  })
+})
+
+const CRLF = '\r\n'
+
+/** POST /api/segments/<path> with a session from `ip` (a documentation address by default). */
+async function segmentsPost(path: string, body: unknown, cookie: string, ip?: string): Promise<Response> {
+  return SELF.fetch(`http://cdp.test/api/segments/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie, ...(ip === undefined ? {} : { 'cf-connecting-ip': ip }) },
+    body: JSON.stringify(body),
+  })
+}
+
+describe('T-HARD-5: the segment CSV export neutralizes formula cells (09 D-70 #5)', () => {
+  it('the real export of all 2,900 subscribers is unchanged: no cell starts with = + - @ or gets a quote', async () => {
+    const res = await segmentsPost('export.csv', { filters: { status: ['active', 'unsubscribed'] } }, await loginCookie())
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    const records = text.slice(0, -2).split(CRLF)
+    expect(records).toHaveLength(1 + 2900) // header + 02 §Counts subscribers
+    expect(text).not.toContain("'")
+    expect(text).not.toContain('"')
+  })
+
+  it("prefixes ' to a cell starting with = + - or @ and keeps RFC 4180 quoting", async () => {
+    const preview = await segmentsPost('preview', { filters: { status: ['active'], source: ['google'] }, limit: 1 }, await loginCookie())
+    const [real] = (await preview.json<{ rows: SegmentRow[] }>()).rows
+    expect(real.source).toBe('google')
+    const rows: SegmentRow[] = [
+      { ...real, email: '@gmail.com' },
+      { ...real, email: `=${real.email}` },
+      { ...real, email: `+${real.email}` },
+      { ...real, email: `-${real.email}` },
+      { ...real, email: `=${real.email},${real.source}` },
+    ]
+    const records = segmentCsv(rows).slice(0, -2).split(CRLF).slice(1)
+    const rest = segmentCsv([real]).slice(0, -2).split(CRLF)[1].slice(real.email.length)
+    expect(records).toEqual([
+      `'@gmail.com${rest}`,
+      `'=${real.email}${rest}`,
+      `'+${real.email}${rest}`,
+      `'-${real.email}${rest}`,
+      `"'=${real.email},${real.source}"${rest}`,
+    ])
   })
 })
