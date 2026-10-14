@@ -1510,7 +1510,7 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     const pendingId = await env.DB.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<string>('id')
     expect(pendingId).not.toBeNull()
 
-    const wrong = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: 'not-it', name: 'Growth', note: 'ranking view' } })
+    const wrong = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: 'not-it', name: 'Growth', note: 'ranking view', tool_name: 'sources_ranked', description: 'Ranks each acquisition source.' } })
     expect(wrong.status).toBe(403)
     expect((await wrong.json<{ error: string }>()).error).toBe('wrong_password')
     expect(await env.DB.prepare('SELECT enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<number>('enabled')).toBe(0)
@@ -1518,18 +1518,28 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     const beforeTiles = await tileCount()
     const ok = await api(`/approvals/${pendingId}/approve`, {
       method: 'POST',
-      body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'useful for the source review' },
+      body: {
+        password: env.TOOL_APPROVAL,
+        name: 'Growth',
+        note: 'useful for the source review',
+        tool_name: 'sources_ranked',
+        description: 'Ranks each acquisition source by name.',
+      },
     })
     expect(ok.status, await ok.clone().text()).toBe(201)
     const tile = await ok.json<Tile>()
     expect(tile.status).toBe('ok')
     expect(await tileCount()).toBe((beforeTiles ?? 0) + 1)
-    const toolRow = await env.DB.prepare('SELECT name, enabled, metadata FROM assistant_tools WHERE id = ?').bind(pendingId).first<{
+    const toolRow = await env.DB.prepare('SELECT name, description, enabled, metadata FROM assistant_tools WHERE id = ?').bind(pendingId).first<{
       name: string
+      description: string
       enabled: number
       metadata: string
     }>()
     expect(toolRow!.enabled).toBe(1)
+    // The model reads the approver's name and sentence, never the queued placeholder.
+    expect(toolRow).toMatchObject({ name: 'sources_ranked', description: 'Ranks each acquisition source by name.' })
+    expect(tile.tool).toBe('sources_ranked')
     const meta = JSON.parse(toolRow!.metadata)
     expect(meta.approval).toMatchObject({ by: 'Growth', note: 'useful for the source review' })
     // Unlike a grammar-approved pin's own wrapped row, an approved row carries no board_only tag:
@@ -1537,11 +1547,37 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     // becomes an ordinary, model-visible query tool (tool-loader.ts's own "fail safe toward
     // visibility" rule) the assistant can call on a later question, the same as any D-41 row.
     expect(meta.board_only).toBeUndefined()
-    expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toContain(toolRow!.name)
+    const seen = (await loadTools(env.DB)).definitions.find((d) => d.name === 'sources_ranked')
+    expect(seen?.description).toBe('Ranks each acquisition source by name.')
+    expect((await loadTools(env.DB)).definitions.some((d) => /^pending_|needs Growth team approval/.test(`${d.name} ${d.description}`))).toBe(false)
     // Approving twice (an already-enabled row) is 404, not a second tile.
-    const again = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'again' } })
+    const again = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'again', tool_name: 'sources_ranked_again', description: 'Ranks each source again.' } })
     expect(again.status).toBe(404)
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
+
+  it('T-INS-14 approval needs a real tool name and a one-line description: missing, malformed, placeholder-shaped, taken or PII-bearing ones are 400 and the row stays pending', async () => {
+    const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
+    const answer = await askAnswer('rank each source, named', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked' } }])
+    await api('', { method: 'POST', body: { audit_id: answer.audit_id } }) // queues the approval
+    const pendingId = await env.DB.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<string>('id')
+    const base = { password: env.TOOL_APPROVAL, name: 'Growth', note: 'naming check' }
+    const cases: [Record<string, string>, string][] = [
+      [{ ...base, description: 'Ranks each source.' }, 'invalid_body'], // no tool_name
+      [{ ...base, tool_name: 'sources_by_rank' }, 'invalid_body'], // no description
+      [{ ...base, tool_name: 'Sources Ranked', description: 'Ranks each source.' }, 'invalid_body'],
+      [{ ...base, tool_name: 'pending_sources', description: 'Ranks each source.' }, 'invalid_body'],
+      [{ ...base, tool_name: 'segment', description: 'Ranks each source.' }, 'invalid_body'], // taken by a seeded tool
+      [{ ...base, tool_name: 'sources_by_rank', description: `Ranks sources for ${JOY}.` }, 'blocked_pii'],
+    ]
+    for (const [body, error] of cases) {
+      const res = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body })
+      expect(res.status, JSON.stringify(body)).toBe(400)
+      expect((await res.json<{ error: string }>()).error).toBe(error)
+    }
+    const row = await env.DB.prepare('SELECT name, enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<{ name: string; enabled: number }>()
+    expect(row!.enabled).toBe(0)
+    expect(row!.name).toMatch(/^pending_/)
   })
 
   it('T-INS-14 approval, first run fails: the response is an error and the row stays enabled=0 on the approvals list', async () => {
@@ -1557,10 +1593,12 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     const beforeTiles = await tileCount()
     const res = await api(`/approvals/${pendingId}/approve`, {
       method: 'POST',
-      body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'ranked by pkey, should never run' },
+      body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'ranked by pkey, should never run', tool_name: 'subscribers_ranked', description: 'Ranks every subscriber.' },
     })
     expect(res.status).toBe(400)
     expect((await res.json<{ error: string }>()).error).toBe('not_aggregate')
+    // The failed attempt puts the queued placeholder name back, so nothing named subscribers_ranked exists.
+    expect(await env.DB.prepare("SELECT count(*) AS n FROM assistant_tools WHERE name = 'subscribers_ranked'").first<number>('n')).toBe(0)
     expect(await tileCount()).toBe(beforeTiles)
     // Fail safe: the row the approve attempt would have enabled is still disabled and still
     // listed as pending, so a human can see it was approved but never actually ran (09 D-64b
@@ -1573,7 +1611,7 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
   it('APPROVAL_LIMITER: the 11th approve attempt from one IP within a minute is 429, so TOOL_APPROVAL cannot be brute-forced', { timeout: 20_000 }, async () => {
     await awaitLimiterWindow(8_000)
     const ip = documentationIp()
-    const attempt = () => api('/approvals/does-not-exist/approve', { method: 'POST', ip, body: { password: 'not-it', name: 'x', note: 'y' } })
+    const attempt = () => api('/approvals/does-not-exist/approve', { method: 'POST', ip, body: { password: 'not-it', name: 'x', note: 'y', tool_name: 'probe_tool', description: 'probe' } })
     for (let i = 1; i <= 10; i++) {
       const res = await attempt()
       expect(res.status, `attempt ${i}`).not.toBe(429)
@@ -1582,7 +1620,7 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     expect(eleventh.status).toBe(429)
     expect((await eleventh.json<{ error: string }>()).error).toBe('rate_limited')
     // The limit is per IP: a different client still gets through to the ordinary 403.
-    const otherIp = await api('/approvals/does-not-exist/approve', { method: 'POST', ip: documentationIp(), body: { password: 'not-it', name: 'x', note: 'y' } })
+    const otherIp = await api('/approvals/does-not-exist/approve', { method: 'POST', ip: documentationIp(), body: { password: 'not-it', name: 'x', note: 'y', tool_name: 'probe_tool', description: 'probe' } })
     expect(otherIp.status).toBe(403)
   })
 

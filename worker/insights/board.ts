@@ -857,6 +857,11 @@ async function tracePrompt(db: D1Database, traceId: string): Promise<string | nu
 // ── D-64b: query_sql pins and human approval ────────────────────────────────────────────
 
 /** A fresh assistant_tools name: letters/digits only (TOOL_NAME, tool-loader.ts), so a uuid's dashes are stripped. */
+/** An approved question type's name (09 D-64b): the model calls the tool by it. */
+const APPROVED_TOOL_NAME = /^[a-z][a-z0-9_]{2,47}$/
+/** The one sentence the model reads about an approved question type. */
+const APPROVED_DESCRIPTION_MAX = 300
+
 const freshToolName = (prefix: string) => `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`
 
 /**
@@ -954,7 +959,10 @@ export async function listApprovals(db: D1Database): Promise<PendingApproval[]> 
 }
 
 /**
- * POST /api/insights/approvals/:id/approve {password, name, note} (09 D-64b): enables the pending
+ * POST /api/insights/approvals/:id/approve {password, name, note, tool_name, description} (09 D-64b):
+ * the approver also names the question type and says in one sentence what it answers, because an
+ * approved row becomes an ordinary model-visible tool and the model reads exactly that name and
+ * description (the queued row's `pending_<uuid>` and "needs approval" text are placeholders). Enables the pending
  * row (checked against the one shared TOOL_APPROVAL password — a wrong one is 403, logged with no
  * password value) and records who/why in its `metadata` JSON column (no new table or column for
  * that), then pins it like any other saved question type: run once, store only if it succeeds.
@@ -963,11 +971,17 @@ export async function listApprovals(db: D1Database): Promise<PendingApproval[]> 
  * protections every query row has: Gate 2/3 and the executor's own PII and key scans.
  */
 export async function approveInsightTool(db: D1Database, id: string, rawBody: unknown, correctPassword: string): Promise<Tile> {
-  const body = bodyObject(rawBody, ['password', 'name', 'note'])
-  for (const field of ['password', 'name', 'note'] as const) {
+  const body = bodyObject(rawBody, ['password', 'name', 'note', 'tool_name', 'description'])
+  for (const field of ['password', 'name', 'note', 'tool_name', 'description'] as const) {
     if (typeof body[field] !== 'string' || (body[field] as string).trim() === '') throw invalidBody([`${field} is required`])
   }
   const { password, name, note } = body as { password: string; name: string; note: string }
+  const toolName = (body.tool_name as string).trim()
+  const description = (body.description as string).trim()
+  if (!APPROVED_TOOL_NAME.test(toolName) || /^(pending|pinned)_/.test(toolName)) {
+    throw invalidBody(['tool_name must be 3 to 48 lower-case letters, digits or underscores, start with a letter, and not start with pending_ or pinned_'])
+  }
+  if (description.length > APPROVED_DESCRIPTION_MAX) throw invalidBody([`description must be at most ${APPROVED_DESCRIPTION_MAX} characters`])
   // Constant-time, like SITE_PASSWORD at login (worker/auth/login.ts): a `!==` compare here would
   // let a timing attack find TOOL_APPROVAL one byte at a time (09 D-64b finding).
   if (!constantTimeStringEq(password, correctPassword)) {
@@ -975,23 +989,26 @@ export async function approveInsightTool(db: D1Database, id: string, rawBody: un
     throw new ApiError(403, 'wrong_password', 'That password is not correct.')
   }
   const row = await db
-    .prepare('SELECT id, name, requested_from_trace, enabled FROM assistant_tools WHERE id = ?')
+    .prepare('SELECT id, name, description, requested_from_trace, enabled FROM assistant_tools WHERE id = ?')
     .bind(id)
-    .first<{ id: string; name: string; requested_from_trace: string | null; enabled: number }>()
+    .first<{ id: string; name: string; description: string; requested_from_trace: string | null; enabled: number }>()
   if (row === null || row.requested_from_trace === null || row.enabled === 1) {
     console.warn(JSON.stringify({ at: 'insights-board', outcome: 'approval_not_found', id }))
     throw new ApiError(404, 'not_found', 'There is no pending approval with this id.')
   }
 
+  const taken = await db.prepare('SELECT 1 AS hit FROM assistant_tools WHERE name = ? AND id <> ?').bind(toolName, id).first<number>('hit')
+  if (taken !== null) throw invalidBody(['tool_name is already used by another question type'])
+
   const prompt = await tracePrompt(db, row.requested_from_trace)
-  const title = prompt !== null ? defaultTitle(prompt) : row.name
-  await assertStorable(db, { title, question: prompt })
+  const title = prompt !== null ? defaultTitle(prompt) : toolName
+  await assertStorable(db, { title, question: prompt, tool_name: toolName, description })
   const max = await db.prepare('SELECT coalesce(max(sort_order), 0) AS m FROM insights').first<number>('m')
   const newRow: InsightRow = {
     id: crypto.randomUUID(),
     title,
     prompt,
-    tool: row.name,
+    tool: toolName,
     tool_version: INSIGHT_PARAMS_VERSION,
     params: '{}',
     chart: null,
@@ -1005,7 +1022,10 @@ export async function approveInsightTool(db: D1Database, id: string, rawBody: un
   // selects, so this flips `enabled` just long enough to try it, and reverts on any failure
   // before this function returns — never leaving an approved-but-untested row enabled with no
   // tile to show for it (09 D-64b finding: a 400 not_aggregate first run still left enabled=1).
-  await db.prepare("UPDATE assistant_tools SET enabled = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").bind(id).run()
+  await db
+    .prepare("UPDATE assistant_tools SET enabled = 1, name = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+    .bind(toolName, description, id)
+    .run()
   let stored = false
   try {
     const ctx = await openContext(db)
@@ -1030,10 +1050,13 @@ export async function approveInsightTool(db: D1Database, id: string, rawBody: un
       .run()
     stored = true
     // Audited (09 D-64b "name + note required, audited"): who approved which row and why, never the password.
-    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'tool_approved', tool: row.name, by: name, note }))
+    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'tool_approved', tool: toolName, queued_as: row.name, by: name, note }))
     return tile
   } finally {
-    if (!stored) await db.prepare('UPDATE assistant_tools SET enabled = 0 WHERE id = ?').bind(id).run()
+    if (!stored) {
+      // Back to the queued placeholder, so the row is listed as pending exactly as before.
+      await db.prepare('UPDATE assistant_tools SET enabled = 0, name = ?, description = ? WHERE id = ?').bind(row.name, row.description, id).run()
+    }
   }
 }
 
