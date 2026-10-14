@@ -30,6 +30,9 @@ import {
   pkeyForEmailNorm,
   type ExpectedQuarantine,
   type ExpectedRun,
+  type ExpectedVisitor,
+  type ExpectedEvent,
+  type ExpectedAppUser,
 } from './oracle'
 
 // This file is test/parity/run.ts: its own directory (dirname once) is test/parity, so two more
@@ -74,7 +77,7 @@ function query<T>(persistTo: string, step: string, sql: string): T[] {
   const res = spawnSync(
     'npx',
     ['wrangler', 'd1', 'execute', DB, '--local', `--persist-to=${persistTo}`, '--json', '--command', sql],
-    { cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' },
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   )
   if (res.error) throw new Error(`${step}: ${res.error.message}`)
   if (res.status !== 0) throw new Error(`${step}: exited with ${res.status ?? res.signal}: ${res.stdout}`)
@@ -282,6 +285,112 @@ async function main(): Promise<void> {
       const { missing, extra, mismatches } = diff('import_runs', expected, got, fields)
       missingTotal += missing.length
       extraTotal += extra.length
+      report.push(...mismatches)
+    }
+
+    // v_profiles (21 §4.1 item 2: all 11 non-key columns, same oracle fields T-PAR-2 uses).
+    {
+      const fields = [
+        'has_app', 'app_created_at', 'app_after_signup', 'first_page', 'first_utm_source',
+        'signup_date', 'status', 'source', 'last_open_date', 'cold_since', 'engagement_score',
+      ]
+      const rows = query<Row>(
+        persistTo,
+        'select v_profiles',
+        `SELECT pkey, kind, has_app, app_created_at, app_after_signup, first_page, first_utm_source,
+                signup_date, status, source, last_open_date, cold_since, engagement_score
+         FROM v_profiles WHERE kind != 'unknown_user_stub'`,
+      )
+      const got = new Map(rows.map((r) => [r.pkey as string, r]))
+      const expected = new Map<string, Row>()
+      for (const [pkey, s] of oracle.subscribers) {
+        expected.set(pkey, {
+          pkey,
+          has_app: s.app.has_app ? 1 : 0,
+          app_created_at: s.app.created_at_min,
+          app_after_signup: s.app.app_after_signup ? 1 : 0,
+          first_page: s.web.first_page,
+          first_utm_source: s.web.first_utm_source,
+          signup_date: s.signup_date,
+          status: s.status,
+          source: s.source,
+          last_open_date: s.last_open_date,
+          cold_since: s.cold_since,
+          engagement_score: s.profile.engagement_score,
+        })
+      }
+      for (const [pkey, a] of oracle.appOnlyProfiles) {
+        // app_only has no subscriber row: v_profiles LEFT JOINs subscribers, so every
+        // subscriber-sourced column is NULL (same as test/parity.test.ts's vProfilesTable()).
+        expected.set(pkey, {
+          pkey,
+          has_app: 1,
+          app_created_at: a.created_at,
+          app_after_signup: 0,
+          first_page: null,
+          first_utm_source: null,
+          signup_date: null,
+          status: null,
+          source: null,
+          last_open_date: null,
+          cold_since: null,
+          engagement_score: a.engagement_score,
+        })
+      }
+      const { missing, extra, mismatches } = diff('v_profiles', expected, got, fields)
+      missingTotal += missing.length
+      extraTotal += extra.length
+      report.push(...mismatches)
+    }
+
+    // web_visitors (21 §4.1 item 2: 2,028 visitors × 7 stored columns, keyed by visitor_hash).
+    {
+      const fields = ['visitor_id', 'email_norm', 'first_seen_ts', 'first_page', 'first_utm_source', 'signup_ts']
+      const rows = query<Row>(
+        persistTo,
+        'select web_visitors',
+        'SELECT visitor_id, visitor_hash, email_norm, first_seen_ts, first_page, first_utm_source, signup_ts FROM web_visitors',
+      )
+      const got = new Map(rows.map((r) => [r.visitor_hash as string, r]))
+      const expected = new Map([...oracle.visitors].map(([h, v]: [string, ExpectedVisitor]) => [h, v as unknown as Row]))
+      const { missing, extra, mismatches } = diff('web_visitors', expected, got, fields)
+      missingTotal += missing.length
+      extraTotal += extra.length
+      report.push(...mismatches)
+    }
+
+    // web_events (21 §4.1 item 2: 10,000 events × 4 stored columns, keyed by id).
+    {
+      const fields = ['visitor_id', 'page', 'event_ts', 'utm_source']
+      const rows = query<Row>(persistTo, 'select web_events', 'SELECT id, visitor_id, page, event_ts, utm_source FROM web_events')
+      const got = new Map(rows.map((r) => [String(r.id), r]))
+      const expected = new Map(oracle.events.map((e: ExpectedEvent) => [String(e.id), e as unknown as Row]))
+      const { missing, extra, mismatches } = diff('web_events', expected, got, fields)
+      missingTotal += missing.length
+      extraTotal += extra.length
+      report.push(...mismatches)
+    }
+
+    // app_users (21 §4.1 item 2: 930 rows × 3 stored columns, keyed by CSV line — user_id is PII).
+    {
+      const fields = ['email_norm', 'created_at', 'from_csv']
+      const rows = query<Row>(
+        persistTo,
+        'select app_users',
+        'SELECT user_id, email_norm, created_at, from_csv FROM app_users WHERE from_csv = 1',
+      )
+      const lineByUserId = new Map(oracle.appUsers.map((u: ExpectedAppUser) => [u.user_id, u.csvLine]))
+      const got = new Map<string, Row>()
+      let extraUserIds = 0
+      for (const r of rows) {
+        const line = lineByUserId.get(r.user_id as string)
+        if (line === undefined) extraUserIds++
+        else got.set(String(line), r)
+      }
+      const expected = new Map(oracle.appUsers.map((u: ExpectedAppUser) => [String(u.csvLine), u as unknown as Row]))
+      const { missing, extra, mismatches } = diff('app_users', expected, got, fields)
+      missingTotal += missing.length
+      extraTotal += extra.length + extraUserIds
       report.push(...mismatches)
     }
 
