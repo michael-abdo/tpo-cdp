@@ -185,7 +185,7 @@ describe('T-SEG-4 Previous searches', () => {
   it(
     'drops a stored item whose source is non-canonical, whatever shape it spells (a double-%40 email, an id glued ' +
       "to a word char, a bare known local part, or just an ordinary non-canonical word), and recordSearch never " +
-      'writes one (09 D-69 #6: the shared CANONICAL_SOURCES membership check in hasCanonicalSource, not pattern ' +
+      'writes one (09 D-69 #6: the schema\'s CANONICAL_SOURCES enum, checked by meetsSchema, not pattern ' +
       "matching each PII shape, is what closes this)",
     () => {
       const store = new MemoryStore()
@@ -210,6 +210,28 @@ describe('T-SEG-4 Previous searches', () => {
       expect(store.writes).toBe(writesBefore)
     },
   )
+
+  it('every key meets its whole schema rule, not only source: PII or free text in went_cold, site_visit_page, status or app_event, a mixed source list and an out-of-range number are dropped, and recordSearch never writes them (09 D-69 #6)', () => {
+    const store = new MemoryStore()
+    // Typed loosely on purpose: these are what a hand-edited copy or a bad caller could hold.
+    const bad = [
+      { ...ACTIVE, went_cold: JOY }, // pattern
+      { ...ACTIVE, went_cold: JOY.replace('@', '%40') },
+      { ...ACTIVE, went_cold: 'august' }, // free text, no PII shape
+      { ...ACTIVE, site_visit_page: `/${OWN_ACCOUNT}` },
+      { ...ACTIVE, site_visit_page: '/Shadrachs-Picks' }, // upper case breaks the pattern
+      { ...ACTIVE, status: [JOY.replace('@', '%40')] }, // items.enum
+      { ...ACTIVE, source: ['instagram', 'tiktok'] }, // every member, not some
+      { ...ACTIVE, app_event: 'purchase' }, // enum
+      { ...ACTIVE, engagement_gte: 101 }, // maximum
+      { ...ACTIVE, signed_up_within_days: 0 }, // minimum
+    ] as unknown as SegmentFilters[]
+    store.setItem(STORAGE_KEY, JSON.stringify({ v: 1, items: [...bad.map((filters) => ({ filters })), { filters: SEARCHES[3] }] }))
+    expect(readSearches(store)).toEqual([SEARCHES[3]])
+    const writesBefore = store.writes
+    for (const filters of bad) expect(recordSearch(filters, store)).toEqual([SEARCHES[3]])
+    expect(store.writes).toBe(writesBefore)
+  })
 
   it('drops bad JSON, another version, an unknown key, a wrong type or a missing echoed key, and the next write replaces them', () => {
     const store = new MemoryStore()

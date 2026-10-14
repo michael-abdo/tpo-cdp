@@ -11,8 +11,6 @@
 // whenever no stored item has its canonical key, so a new browser sees it first and Clear never
 // removes it.
 
-import { CANONICAL_SOURCES } from '../shared/normalize'
-import { EMAIL_REGEX, RAW_ID_REGEX } from '../shared/pii'
 import { FILTER_KEYS, FILTER_SCHEMA, type FilterKey, type SegmentFilters } from '../shared/segment-filters'
 
 export const STORAGE_KEY = 'tpo-cdp-previous-searches'
@@ -60,12 +58,36 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 const isFilterKey = (k: string): k is FilterKey => (FILTER_KEYS as readonly string[]).includes(k)
 
-/** A value has the JSON type FILTER_SCHEMA declares for its key (shapes only; the server checks ranges and patterns). */
-function hasSchemaType(key: FilterKey, value: unknown): boolean {
-  const types = [FILTER_SCHEMA[key].type].flat()
-  return types.some((t) => {
-    if (t === 'array') return Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string')
-    if (t === 'integer') return Number.isInteger(value)
+/**
+ * A value meets every rule FILTER_SCHEMA declares for its key: JSON type, enum, items.enum,
+ * pattern, minimum and maximum (09 D-69 #6). Every string key is an enum or a pattern, so a stored
+ * or recorded copy can never hold an email, a `%40` one, a raw id or any free text, whichever key
+ * it sits in; the server enforces the same schema before it echoes.
+ */
+function meetsSchema(key: FilterKey, value: unknown): boolean {
+  const rule = FILTER_SCHEMA[key]
+  return [rule.type].flat().some((t) => {
+    if (t === 'array') {
+      return (
+        Array.isArray(value) &&
+        value.length >= (rule.minItems ?? 1) &&
+        value.every((v) => typeof v === 'string' && (rule.items === undefined || rule.items.enum.includes(v)))
+      )
+    }
+    if (t === 'integer') {
+      return (
+        Number.isInteger(value) &&
+        (rule.minimum === undefined || (value as number) >= rule.minimum) &&
+        (rule.maximum === undefined || (value as number) <= rule.maximum)
+      )
+    }
+    if (t === 'string') {
+      return (
+        typeof value === 'string' &&
+        (rule.enum === undefined || rule.enum.includes(value)) &&
+        (rule.pattern === undefined || new RegExp(rule.pattern).test(value))
+      )
+    }
     if (t === 'null') return value === null
     return typeof value === t
   })
@@ -75,48 +97,21 @@ function hasSchemaType(key: FilterKey, value: unknown): boolean {
 const ECHOED_KEYS = ['status', 'include_never_opened', 'has_app'] as const satisfies readonly FilterKey[]
 
 /**
- * True when `filters`' JSON holds an email, a percent-encoded "@" or a raw `u_`/`d_`/`v_` id (09
- * D-69 #6). Every string filter key, `source` included, is already limited by an enum or a
- * pattern that bans these (shared/segment-filters.ts; `source` by `hasCanonicalSource` below).
- * This check is defense in depth for a hand-edited localStorage copy or a future bad echo that
- * bypassed that server-side enum, not a check on a free-string key — no filter key is free-string
- * any more. Mirrors worker/assistant/gates/pii-guard.ts `decodeAt`'s `%40` pattern without
- * importing worker code into the browser bundle (03 §Module layout; the ai-log's zod-bundling
- * mistake).
- */
-function holdsPII(filters: SegmentFilters): boolean {
-  const json = JSON.stringify(filters)
-  return EMAIL_REGEX.test(json) || RAW_ID_REGEX.test(json) || /%40/i.test(json)
-}
-
-/**
- * True when `filters.source`, if present, holds only CANONICAL_SOURCES members (09 D-69 #6: the
- * server now enforces this same enum in `worker/segments/compile.ts` parseFilters before it ever
- * echoes `source`, shared/normalize.ts being browser-safe lets this page require it too). One
- * membership check closes every PII shape `source` could hold at once — an email, a `%40` one, a
- * raw id or a bare known local part are all non-canonical — rather than pattern-matching each
- * shape; `holdsPII` stays as a second, independent backstop.
- */
-function hasCanonicalSource(filters: SegmentFilters): boolean {
-  return filters.source === undefined || filters.source.every((s) => (CANONICAL_SOURCES as readonly string[]).includes(s))
-}
-
-/**
- * A stored item this page can name and re-run: exactly `{filters}`, every key in FILTER_KEYS with
- * its schema type, every key an echo always holds (ECHOED_KEYS), `source` a subset of
- * CANONICAL_SOURCES (`hasCanonicalSource`) and no PII-shaped value (`holdsPII`). Anything else is
- * dropped on read, so a hand-edited copy (BRIEF_EXAMPLE without has_app, say) never shows as a
- * near-duplicate.
+ * A stored item this page can name and re-run: exactly `{filters}`, every key in FILTER_KEYS
+ * meeting its whole schema rule (`meetsSchema`, which leaves no key able to hold an email, a `%40`
+ * one or a raw id) and every key an echo always holds (ECHOED_KEYS). Anything else is dropped on read, so a hand-edited copy
+ * (BRIEF_EXAMPLE without has_app, say) never shows as a near-duplicate. recordSearch applies the
+ * same rule before it writes.
  */
 function storedFilters(item: unknown): SegmentFilters | null {
   if (!isRecord(item) || Object.keys(item).length !== 1 || !isRecord(item.filters)) return null
   const f = item.filters
   for (const [key, value] of Object.entries(f)) {
-    if (!isFilterKey(key) || !hasSchemaType(key, value)) return null
+    if (!isFilterKey(key) || !meetsSchema(key, value)) return null
   }
   if (ECHOED_KEYS.some((key) => f[key] === undefined)) return null
   const filters = f as unknown as SegmentFilters
-  return hasCanonicalSource(filters) && !holdsPII(filters) ? filters : null
+  return filters
 }
 
 /** The stored searches, newest first; [] when storage is missing, throws, or holds anything unexpected. */
@@ -159,14 +154,14 @@ function write(store: SearchStore, items: SegmentFilters[]): void {
 
 /**
  * Records the filters a 200 preview echoed: moves a repeat to the top, keeps the newest 5.
- * Returns the stored list as it now reads (unchanged when storage is unavailable, `filters.source`
- * holds a non-canonical value (`hasCanonicalSource`), or `filters` holds a PII-shaped value
- * (`holdsPII`, defense in depth): the server's own `source` enum check means a real echo never
- * reaches here, but recordSearch takes a typed SegmentFilters directly and must not trust the
- * type alone).
+ * Returns the stored list as it now reads (unchanged when storage is unavailable or `filters`
+ * fails the same rule a stored copy must pass, `storedFilters`: the server's schema check means a
+ * real echo always passes, but recordSearch takes a typed SegmentFilters directly and must not
+ * trust the type alone).
  */
 export function recordSearch(filters: SegmentFilters, store: SearchStore | null = browserStore()): SegmentFilters[] {
-  if (store === null || !hasCanonicalSource(filters) || holdsPII(filters)) return store === null ? [] : readSearches(store)
+  if (store === null) return []
+  if (storedFilters({ filters }) === null) return readSearches(store)
   const key = searchKey(filters)
   const items = [filters, ...readSearches(store).filter((f) => searchKey(f) !== key)].slice(0, MAX_PREVIOUS_SEARCHES)
   write(store, items)
