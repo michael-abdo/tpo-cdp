@@ -149,9 +149,9 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
   })
 })
 
-// The migration sequence (README "the nine migrations"; 03 §Module layout). Two merged branches once
-// each took the next number; this pins the order that applies on a fresh database (wrangler and
-// test/setup.ts apply the files in name order) and that the README's count tells the same story.
+// The migration sequence (README "the eleven migrations"; 03 §Module layout). Two merged branches
+// once each took the next number; this pins the order that applies on a fresh database (wrangler
+// and test/setup.ts apply the files in name order) and that the README's count tells the same story.
 describe('the migrations are one contiguous, ordered sequence', () => {
   const NAMES = [
     '0001_core',
@@ -164,11 +164,12 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     '0008_ai_audit_cache',
     '0009_tool_approval',
     '0010_drop_tool_approval',
+    '0011_drop_pending_approval_rows',
   ]
   const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
     .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
     .sort()
-  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven']
 
   it('migrations/ holds exactly these files, in this order', () => {
     expect(files).toEqual(NAMES)
@@ -193,6 +194,44 @@ describe('the migrations are one contiguous, ordered sequence', () => {
 describe('migration 0010 drops assistant_tools.requested_from_trace', () => {
   it('PRAGMA table_info(assistant_tools) no longer lists it', async () => {
     expect(await columnsOf('assistant_tools')).not.toContain('requested_from_trace')
+  })
+})
+
+// 0011_drop_pending_approval_rows.sql (09 D-77 cleanup: the queue left behind any row it had
+// already flagged). 0001..0011 have already applied by the time this file's tests run (an empty
+// table has nothing to delete), so this seeds the exact row shape 0009's removed requestApproval()
+// used to write (disabled 'query', name 'pending_<uuid>'), plus an approved look-alike, then
+// re-runs 0011's own statement text to prove it deletes the one and keeps the other.
+describe('migration 0011 drops leftover pending_ approval-queue rows', () => {
+  async function insertAssistantTool(id: string, name: string, enabled: 0 | 1): Promise<void> {
+    await env.DB.prepare(
+      `INSERT INTO assistant_tools (id, name, description, input_schema, handler_type, execution_config, enabled, sort_order, created_at, updated_at)
+       VALUES (?, ?, 'x', '{"type":"object"}', 'query', '{"sql":"select 1","param_mapping":{}}', ?, 1, 'now', 'now')`,
+    )
+      .bind(id, name, enabled)
+      .run()
+  }
+
+  it('deletes a disabled pending_ row and keeps an enabled approved row', async () => {
+    await insertAssistantTool('t-pending', 'pending_0123456789abcdef0123456789abcdef', 0)
+    await insertAssistantTool('t-approved', 'growth_signup_source_mix', 1)
+
+    const migration0011Files = import.meta.glob<string>('../migrations/0011_drop_pending_approval_rows.sql', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    })
+    const migration0011 = Object.values(migration0011Files)[0]
+    expect(migration0011, '0011 migration file text loaded').toBeDefined()
+    // Strip `--` line comments first: a few of this file's own comments contain a semicolon, and
+    // a naive split on ';' would otherwise cut a statement in the middle of one.
+    const sqlOnly = (migration0011 ?? '').replace(/^--.*$/gm, '')
+    for (const statement of sqlOnly.split(';').map((s) => s.trim()).filter(Boolean)) {
+      await env.DB.prepare(statement).run()
+    }
+
+    const { results } = await env.DB.prepare('SELECT id FROM assistant_tools ORDER BY id').all<{ id: string }>()
+    expect(results.map((row) => row.id)).toEqual(['t-approved'])
   })
 })
 
