@@ -5,11 +5,13 @@
 // about one names it as `properties.story` / `properties.link`.
 
 import { z } from 'zod'
+import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 
-/** The four events the app sends (R4.3); the CHECK on app_events.event in 0001_core.sql matches. */
-export const APP_EVENTS = ['app_open', 'read_story', 'link_click', 'login'] as const
-
-export type AppEventName = (typeof APP_EVENTS)[number]
+// The four event names (R4.3; the CHECK on app_events.event in 0001_core.sql matches) live in
+// shared/app-events.ts, their one home, so the "Send a test event" panel can pick from the same
+// list without a second copy (09 D-73, D-72).
+export { APP_EVENTS }
+export type { AppEventName }
 
 export const ID_MAX_CHARS = 64
 export const PROPERTY_VALUE_MAX_CHARS = 200
