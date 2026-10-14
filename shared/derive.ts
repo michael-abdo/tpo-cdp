@@ -167,11 +167,13 @@ export interface EngagementInput {
  * · site 25 × min(1, site_visits_last_30d/5). Never opened contributes 0 recency (09 D-14, D-35).
  */
 export function engagementScore(input: EngagementInput): number {
+  // The same formula counted in sixths of a point (recency 10·(30 − d), app 15·a, site 30·s), so the
+  // half-up rounding is exact: in floats 50 × (1 − 24/30) is 9.999…, which turned a 12.5 into 12.
   const days = daysSinceOpen(input.last_open_date)
-  const recency = days === null ? 0 : 50 * Math.max(0, 1 - days / 30)
-  const app = 25 * Math.min(1, Math.max(0, input.app_events_last_30d) / 10)
-  const site = 25 * Math.min(1, Math.max(0, input.site_visits_last_30d) / 5)
-  return Math.round(recency + app + site)
+  const recency = days === null ? 0 : 10 * Math.max(0, 30 - days)
+  const app = 15 * Math.min(10, Math.max(0, input.app_events_last_30d))
+  const site = 30 * Math.min(5, Math.max(0, input.site_visits_last_30d))
+  return Math.floor((recency + app + site + 3) / 6)
 }
 
 /** An app account exists for the subscriber's email. */
