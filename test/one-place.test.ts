@@ -68,12 +68,14 @@ export function exampleValue(placeholder: string): string | null {
   return value
 }
 
-/** Each placeholder example that a button, link or summary on the same screen shows again. */
+/** Each placeholder example that a button, link, summary or any other element on the same screen
+ * shows again — not only an action (09 D-72, m7): a plain hint beside the placeholder can read the
+ * same identifier, or spell out the same value, without being a button, link or summary. */
 export function exampleShownTwice(facts: ScreenFacts): string[] {
   const out: string[] = []
   for (const p of facts.placeholders) {
     const value = exampleValue(p.text)
-    for (const a of facts.actions) {
+    for (const a of [...facts.actions, ...facts.elements]) {
       const shared = p.identifiers.filter((id) => a.identifiers.includes(id))
       if (shared.length > 0) out.push(`placeholder and "${a.text.trim()}" both show ${shared.join(', ')}`)
       else if (value !== null && valueText(a.text).includes(value)) out.push(`placeholder and "${a.text.trim()}" both show ${value}`)
@@ -124,6 +126,11 @@ describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
   })
 
   it('the rules flag each flag_ fixture and pass each pass_ fixture', () => {
+    // So an emptied ONE_PLACE_FIXTURES map cannot pass this loop trivially (09 D-72): there must
+    // be real cases on both sides for the loop below to actually exercise.
+    const keys = Object.keys(ONE_PLACE_FIXTURES)
+    expect(keys.filter((k) => k.startsWith('flag_')).length).toBeGreaterThanOrEqual(9)
+    expect(keys.filter((k) => k.startsWith('pass_')).length).toBeGreaterThanOrEqual(4)
     for (const key of Object.keys(ONE_PLACE_FIXTURES) as (keyof typeof ONE_PLACE_FIXTURES)[]) {
       const found = offences({ [key]: env.SCREEN_TEXTS.onePlaceFixtures[key] })
       if (key.startsWith('flag_')) expect(found, key).not.toEqual([])

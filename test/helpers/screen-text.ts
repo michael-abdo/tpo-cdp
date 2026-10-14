@@ -124,6 +124,10 @@ export interface ScreenFacts {
   placeholders: { text: string; identifiers: string[] }[]
   /** Each button, link or summary: its child text and the identifiers its children read. */
   actions: { text: string; identifiers: string[] }[]
+  /** Every other element's direct children, joined into one run, with the identifiers any
+   * non-literal child reads: catches a plain hint (not a button, link or summary) that repeats a
+   * placeholder's example, by identifier or by value (09 D-72, m7). */
+  elements: { text: string; identifiers: string[] }[]
 }
 
 /**
@@ -189,16 +193,42 @@ export const ONE_PLACE_FIXTURES = {
   // A footer row rendering a DEFINITIONS doc next to a hint holding the same sentence (m6d).
   flag_definitions_doc_matches_hint:
     "<div><p>{DEFINITIONS.no_open_in_days.doc}</p><p>The brief's segment filter: at least N days since the last open, with a toggle that also includes everyone who never opened, whatever their signup date.</p></div>",
+  // The old Segments footer shape: a file-level array of DEFINITIONS entries, read through a
+  // destructured `.map`, so `def.doc` never appears as a direct `DEFINITIONS.key.doc` access (m6).
+  flag_footer_definitions_map:
+    "const FOOTER_DEFINITIONS = [{ label: \"Haven't opened in N days\", def: DEFINITIONS.no_open_in_days }]\n" +
+    'const x = <>{FOOTER_DEFINITIONS.map(({ label, def }) => (<p key={def.name}>{def.doc}</p>))}</>\n' +
+    "const y = <p>The brief's segment filter: at least N days since the last open, with a toggle that also includes everyone who never opened, whatever their signup date.</p>",
+  // An InfoTip's `term` names a glossary entry whose text a visible line already spells out (m3e).
+  flag_infotip_term_matches_text:
+    '<div><InfoTip term="ok" /><p>The last sync went through and nothing from this source needs a person.</p></div>',
   flag_sentence_twice:
     '<div><p>Type part of the email to see matches.</p><p className="mt-2">Type part of the email to see matches.</p></div>',
   flag_sentence_in_literal_and_jsx:
     "const HINT = 'Type part of the email to see matches.'\nconst x = <p>{HINT}</p>\nconst y = <p>Type part of the email to see matches.</p>",
+  // One sentence split across JsxText and a `{' '}` the way Prettier wraps a long line, repeated
+  // verbatim, unwrapped, elsewhere on the same screen (m2b).
+  flag_sentence_wrapped_and_plain:
+    "<div><p>Events show here as soon as the{' '}\n      app sends them.</p><p>Events show here as soon as the app sends them.</p></div>",
+  // "Try an example" through a named handler, one hop from its definition to EXAMPLE (m1b).
+  flag_example_named_handler:
+    "const tryExample = () => go(EXAMPLE)\nconst x = <input placeholder={`e.g. ${EXAMPLE}`} />\nconst y = <Button onClick={tryExample}>Try an example</Button>",
+  // "Try an example" through a link's `to`, never a handler or a child (m4b).
+  flag_example_link_to:
+    'const x = <input placeholder={`e.g. ${EXAMPLE}`} />\nconst y = <Link to={`/lookup?q=${EXAMPLE}`}>See an example profile</Link>',
+  // A hint beside the placeholder shows the example value again, through neither an action nor the
+  // placeholder itself (m7).
+  flag_example_shown_in_hint:
+    '<form><input placeholder={`e.g. ${EXAMPLE}`} /><p>For example: {EXAMPLE}</p></form>',
   pass_classes_twice:
     "const link = 'inline-flex min-h-6 items-center gap-1 rounded-md text-sm'\nconst x = <a className=\"inline-flex min-h-6 items-center gap-1 rounded-md text-sm\">Back</a>",
   pass_short_twice: '<div><p>Try again.</p><p>Try again.</p></div>',
   pass_hoisted:
     "const RETRY = 'Refresh the page to try again.'\nconst x = <ErrorLine next={RETRY} />\nconst y = <ErrorLine next={RETRY} />",
   pass_hint_placeholder: '<form><input placeholder="Search" /><button type="submit">Search</button></form>',
+  // An icon beside a sentence is not a second text-bearing child: no new duplicate (regression
+  // guard for the m2b join, which must not double-count a plain single-sentence paragraph).
+  pass_icon_beside_sentence: '<p>Full sentence here with five or more plain words.<Icon /></p>',
 } as const
 
 export type OnePlaceFixture = keyof typeof ONE_PLACE_FIXTURES
@@ -259,6 +289,61 @@ function textAndIdentifiers(
   return { text: parts.join(''), identifiers }
 }
 
+/**
+ * One JSX element's direct children, joined into a single text run the way the browser would
+ * render them: `JsxText` verbatim, a literal (`{' '}`, a template with no substitution) verbatim,
+ * and any other child (a dynamic expression, a nested element) as one fixed token plus the
+ * identifiers it reads, so a sentence Prettier wrapped across `{' '}` reads as the same run as its
+ * unwrapped copy, without merging text across an unrelated child (09 D-72, m2b). Whitespace
+ * (including a source line break around that `{' '}`, which is JSX formatting, not a paragraph
+ * break) is collapsed to a single space before the run is compared, so the wrapped copy normalizes
+ * exactly like its unwrapped twin. A dynamic child's identifier is tracked, never resolved to its
+ * file-level value here: `{NO_MATCH}` reading as literal words would double-count every constant
+ * used once as children text against the one occurrence its own `const` declaration already holds
+ * (09 D-72, the same "one constant, however many times it's read" rule `pass_hoisted` states); the
+ * one case that needs the value — a hint repeating a placeholder's own example — the identifier
+ * match already covers (`exampleShownTwice` in test/one-place.test.ts).
+ */
+function joinedElementChildren(ts: typeof TS, children: readonly TS.JsxChild[]): { text: string; identifiers: string[] } {
+  const OPAQUE = ' \u0000 '
+  const parts: string[] = []
+  const identifiers: string[] = []
+  for (const child of children) {
+    if (ts.isJsxText(child)) {
+      parts.push(child.text)
+    } else if (ts.isJsxExpression(child) && child.expression !== undefined) {
+      const expr = child.expression
+      if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
+        parts.push(expr.text)
+      } else {
+        parts.push(OPAQUE)
+        // Stops at a nested element/fragment (identifiersInExpr): that child is its own screen
+        // text, visited and resolved on its own; its attributes are not this run's words (found
+        // via a conditional `next={cond ? KEEPS_TRYING : …}` prop on a sibling self-closing
+        // element, whose own identifiers must not double-resolve into this one).
+        identifiers.push(...identifiersInExpr(ts, expr))
+      }
+    } else {
+      parts.push(OPAQUE)
+    }
+  }
+  return { text: parts.join('').replace(/[ \t\r\n]+/g, ' '), identifiers: [...new Set(identifiers)] }
+}
+
+/** Every Identifier's name under `node`, stopping at a nested JSX element, self-closing element or
+ * fragment (its own screen text, read separately): used only to keep `joinedElementChildren`'s
+ * identifier read scoped to the run it is actually joining (09 D-72). */
+function identifiersInExpr(ts: typeof TS, node: TS.Node): string[] {
+  const out: string[] = []
+  const visit = (n: TS.Node): void => {
+    if (ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n)) return
+    if (ts.isIdentifier(n)) out.push(n.text)
+    ts.forEachChild(n, visit)
+  }
+  visit(node)
+  return out
+}
+
 /** Every Identifier's name under `node`, in source order, duplicates included. */
 function identifiersIn(ts: typeof TS, node: TS.Node): string[] {
   const out: string[] = []
@@ -272,6 +357,97 @@ function identifiersIn(ts: typeof TS, node: TS.Node): string[] {
 
 /** A JSX attribute name written as a DOM-style event handler prop (`onClick`, `onSubmit`, …). */
 const HANDLER_ATTRIBUTE = /^on[A-Z]/
+
+/** Attributes that carry a destination, read the same way a handler is (09 D-72, m4b): a `<Link
+ * to={...}>` or `<a href={...}>` can show the same example a handler would go to. */
+const LINK_ATTRIBUTES = new Set(['to', 'href'])
+
+/**
+ * File-level `const NAME = (...) => body` / `function NAME(...) { body }` → every identifier in
+ * `body`. Resolves a handler identifier one hop (09 D-72, m1b): `onClick={tryExample}` where
+ * `const tryExample = () => go(EXAMPLE)` reads as `['go', 'EXAMPLE']`, the same as writing the
+ * arrow inline. Only one hop: a name `body` itself calls is not chased into its own definition.
+ */
+function fileFunctionIdentifiers(ts: typeof TS, file: TS.SourceFile): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const stmt of file.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name !== undefined && stmt.body !== undefined) {
+      out[stmt.name.text] = identifiersIn(ts, stmt.body)
+      continue
+    }
+    if (!ts.isVariableStatement(stmt)) continue
+    for (const decl of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) continue
+      const init = decl.initializer
+      if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) out[decl.name.text] = identifiersIn(ts, init.body)
+    }
+  }
+  return out
+}
+
+/** `{root, key}` for a bare `ROOT.KEY` property access whose `ROOT` is one `resolveRoots` names. */
+interface ArrayEntryRef {
+  root: string
+  key: string
+}
+
+/** One array element: '' → the element itself is a bare `ROOT.KEY`; a property name → that
+ * property's `ROOT.KEY` initializer, for an object-literal element such as `{ label, def }`. */
+type ArrayElementRefs = Record<string, ArrayEntryRef>
+
+/**
+ * File-level `const NAME = [ ROOT.KEY, ... ]` or `const NAME = [ { prop: ROOT.KEY, ... }, ... ]`,
+ * for `ROOT` in `resolveRoots` (GLOSSARY/DEFINITIONS): resolves the old Segments footer shape,
+ * `FOOTER_DEFINITIONS = [{ label: '…', def: DEFINITIONS.x }, …]`, read through `.map` (09 D-72, m6).
+ */
+function fileArrayConsts(ts: typeof TS, file: TS.SourceFile, resolveRoots: ReadonlySet<string>): Record<string, ArrayElementRefs[]> {
+  const asRef = (e: TS.Expression): ArrayEntryRef | null =>
+    ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression) && resolveRoots.has(e.expression.text)
+      ? { root: e.expression.text, key: e.name.text }
+      : null
+  const out: Record<string, ArrayElementRefs[]> = {}
+  for (const stmt of file.statements) {
+    if (!ts.isVariableStatement(stmt)) continue
+    for (const decl of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.initializer === undefined || !ts.isArrayLiteralExpression(decl.initializer)) continue
+      const elements: ArrayElementRefs[] = []
+      for (const el of decl.initializer.elements) {
+        const bare = asRef(el)
+        if (bare !== null) {
+          elements.push({ '': bare })
+          continue
+        }
+        if (!ts.isObjectLiteralExpression(el)) continue
+        const refs: ArrayElementRefs = {}
+        for (const p of el.properties) {
+          if (!ts.isPropertyAssignment(p) || !ts.isIdentifier(p.name)) continue
+          const ref = asRef(p.initializer)
+          if (ref !== null) refs[p.name.text] = ref
+        }
+        elements.push(refs)
+      }
+      if (elements.length > 0) out[decl.name.text] = elements
+    }
+  }
+  return out
+}
+
+/** Every `localName.prop` property access under `node` read as text, `prop`s in source order,
+ * duplicates removed. Skips a property read inside a structural attribute (`key`, `id`, …,
+ * NON_TEXT_ATTRIBUTES): `key={def.name}` names a React key, not a line this screen shows, so it
+ * must not credit `def.name`'s text just because a sibling `.map` call also reads `def.name` to
+ * render it (found reviewing the restored Segments footer, which keys both its disclosure and its
+ * Technical details `.map` off `def.name`). */
+function propsReadFrom(ts: typeof TS, file: TS.SourceFile, node: TS.Node, localName: string): string[] {
+  const out: string[] = []
+  const visit = (n: TS.Node): void => {
+    if (ts.isJsxAttribute(n) && NON_TEXT_ATTRIBUTES.has(n.name.getText(file))) return
+    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === localName) out.push(n.name.text)
+    ts.forEachChild(n, visit)
+  }
+  visit(node)
+  return [...new Set(out)]
+}
 
 /**
  * File-level `const NAME = '<literal>'` (or a no-substitution template) and aliases of one
@@ -347,17 +523,26 @@ export function glossaryAndDefinitionsTexts(ts: typeof TS, glossarySource: strin
   }
 }
 
+/** Tags whose `term` attribute names a glossary/DEFINITIONS key the component explains itself
+ * (`InfoTip`, and the local components that wrap one: `Chip`, `Metric`) (09 D-72, m3e). */
+const TIP_TAGS = new Set(['InfoTip', 'Chip', 'Metric'])
+
 /**
  * The facts T-UI-ONE reads from one screen file: its readable text (JSX text, string literals and
  * template chunks, skipping module specifiers and NON_TEXT_ATTRIBUTES, plus the text of any
- * `GLOSSARY.key.prop` / `DEFINITIONS.key.prop` property access `resolve` can read), every
- * placeholder, and every button, link or summary with what it says and the identifiers its
- * children AND its handler attributes (`onClick`, …) show (09 D-72, m1b).
+ * `GLOSSARY.key.prop` / `DEFINITIONS.key.prop` property access, any `term="key"` on an InfoTip/Chip/
+ * Metric, and any DEFINITIONS/GLOSSARY entry reached through a file-level array read by `.map`
+ * `resolve` can read), every placeholder, every button, link or summary with what it says and the
+ * identifiers its children AND its handler, `to` or `href` attributes show (one hop through a named
+ * handler's own body) (09 D-72, m1b/m3e/m4b/m6), and every other element's children, joined into
+ * one run (m2b/m7).
  */
 export function screenFacts(ts: typeof TS, fileName: string, code: string, resolve: ConstObjectTexts = {}): ScreenFacts {
   const file = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   const consts = fileConsts(ts, file)
-  const facts: ScreenFacts = { texts: [], placeholders: [], actions: [] }
+  const functionIdentifiers = fileFunctionIdentifiers(ts, file)
+  const arrayConsts = fileArrayConsts(ts, file, new Set(Object.keys(resolve)))
+  const facts: ScreenFacts = { texts: [], placeholders: [], actions: [], elements: [] }
   const visit = (node: TS.Node): void => {
     if (ts.isPropertyAccessExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
       const root = node.expression.expression.text
@@ -366,38 +551,87 @@ export function screenFacts(ts: typeof TS, fileName: string, code: string, resol
       const text = resolve[root]?.[key]?.[prop]
       if (text !== undefined) facts.texts.push(text)
     }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'map' &&
+      ts.isIdentifier(node.expression.expression)
+    ) {
+      const elements = arrayConsts[node.expression.expression.text]
+      const callback = node.arguments[0]
+      if (elements !== undefined && callback !== undefined && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))) {
+        const param = callback.parameters[0]?.name
+        const resolveProps = (elementProp: string, localName: string) => {
+          for (const prop of propsReadFrom(ts, file, callback.body, localName))
+            for (const el of elements) {
+              const ref = el[elementProp]
+              const text = ref === undefined ? undefined : resolve[ref.root]?.[ref.key]?.[prop]
+              if (text !== undefined) facts.texts.push(text)
+            }
+        }
+        if (param !== undefined && ts.isIdentifier(param)) resolveProps('', param.text)
+        else if (param !== undefined && ts.isObjectBindingPattern(param))
+          for (const be of param.elements)
+            if (ts.isBindingElement(be) && ts.isIdentifier(be.name))
+              resolveProps(be.propertyName !== undefined && ts.isIdentifier(be.propertyName) ? be.propertyName.text : be.name.text, be.name.text)
+      }
+    }
     if (ts.isJsxAttribute(node)) {
       const name = node.name.getText(file)
+      const owner = node.parent.parent
+      const ownerTag = ts.isJsxOpeningElement(owner) || ts.isJsxSelfClosingElement(owner) ? owner.tagName.getText(file) : null
+      if (name === 'term' && ownerTag !== null && TIP_TAGS.has(ownerTag) && node.initializer !== undefined && ts.isStringLiteral(node.initializer)) {
+        const key = node.initializer.text
+        const text = resolve.GLOSSARY?.[key]?.text ?? resolve.DEFINITIONS?.[key]?.doc
+        if (text !== undefined) facts.texts.push(text)
+      }
       if (NON_TEXT_ATTRIBUTES.has(name)) return
       if (name === 'placeholder' && node.initializer !== undefined)
         facts.placeholders.push(textAndIdentifiers(ts, node.initializer, consts))
     }
-    if (ts.isJsxElement(node) && ACTION_TAGS.has(node.openingElement.tagName.getText(file))) {
+    const tag = ts.isJsxElement(node) ? node.openingElement.tagName.getText(file) : null
+    if (tag !== null && ACTION_TAGS.has(tag) && ts.isJsxElement(node)) {
       const parts = node.children.map((child) => textAndIdentifiers(ts, child, consts))
-      const attrIdentifiers = node.openingElement.attributes.properties.flatMap((attr) =>
-        ts.isJsxAttribute(attr) && HANDLER_ATTRIBUTE.test(attr.name.getText(file)) && attr.initializer !== undefined
-          ? identifiersIn(ts, attr.initializer)
-          : [],
-      )
+      const attrIdentifiers = node.openingElement.attributes.properties.flatMap((attr) => {
+        if (!ts.isJsxAttribute(attr) || attr.initializer === undefined) return []
+        const name = attr.name.getText(file)
+        if (!HANDLER_ATTRIBUTE.test(name) && !LINK_ATTRIBUTES.has(name)) return []
+        const direct = identifiersIn(ts, attr.initializer)
+        return [...direct, ...direct.flatMap((id) => functionIdentifiers[id] ?? [])]
+      })
       facts.actions.push({
         text: parts.map((p) => p.text).join(''),
         identifiers: [...new Set([...parts.flatMap((p) => p.identifiers), ...attrIdentifiers])],
       })
+      // A button or link's own JsxText is still screen text (09 D-72): only its direct JsxText
+      // children, the same text the generic walk used to read before an action's children were
+      // tracked separately — never a literal nested inside an expression (e.g. a `??` fallback),
+      // which the generic StringLiteral read below already counts once on its own.
+      for (const child of node.children) if (ts.isJsxText(child) && child.text.trim() !== '') facts.texts.push(child.text)
+    } else if (ts.isJsxElement(node) || ts.isJsxFragment(node)) {
+      // The element's own children, joined into one run (09 D-72, m2b): this is the only place a
+      // JsxText child's words are read, so a sentence Prettier wraps across a `{' '}` is compared
+      // as one run, never as fragments that happen to dodge the duplicate check.
+      const joined = joinedElementChildren(ts, node.children)
+      if (joined.text.trim() !== '' || joined.identifiers.length > 0) facts.elements.push({ text: joined.text, identifiers: joined.identifiers })
+      if (joined.text.trim() !== '') facts.texts.push(joined.text)
     }
-    if (ts.isJsxText(node)) {
-      if (node.text.trim() !== '') facts.texts.push(node.text)
-    } else if (ts.isStringLiteral(node)) {
+    if (ts.isStringLiteral(node)) {
       const parent = node.parent
       const specifier =
         (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node
-      if (!specifier) facts.texts.push(node.text)
+      const jsxChild = ts.isJsxExpression(parent) && (ts.isJsxElement(parent.parent) || ts.isJsxFragment(parent.parent))
+      if (!specifier && !jsxChild) facts.texts.push(node.text)
     } else if (
       ts.isNoSubstitutionTemplateLiteral(node) ||
       ts.isTemplateHead(node) ||
       ts.isTemplateMiddle(node) ||
       ts.isTemplateTail(node)
     ) {
-      facts.texts.push(node.text)
+      const parent = node.parent
+      const jsxChild =
+        ts.isJsxExpression(parent) && (ts.isJsxElement(parent.parent) || ts.isJsxFragment(parent.parent))
+      if (!jsxChild) facts.texts.push(node.text)
     }
     ts.forEachChild(node, visit)
   }
