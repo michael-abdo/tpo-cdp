@@ -495,6 +495,10 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
   const JOY_DEVICE = 'd_ceed5f12' // her own app user id's hex (JOY_APP_USER = u_ceed5f12)
   const BRIEF_TS = '2026-09-28T14:22:05Z'
+  // One shared pool for this describe block's webhook sends: a fresh `eventIdPool()()` call
+  // always starts from the same first hex, so two tests calling it independently collide on the
+  // same event_id ("duplicate", 200) when D1 is not reset between them.
+  const nextEventId = eventIdPool()
 
   describe('Gate 1 redacts every disguise form of a known address, one mapping at a time', () => {
     const disguises: Array<[name: string, typed: string]> = [
@@ -515,6 +519,11 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
       ['spelled, upper case', `${JOY_LOCAL} AT protonmail DOT com`],
       ['zero-width between dot and hall', `joy.​hall830@protonmail.com`],
       ['soft hyphen inside protonmail', `${JOY_LOCAL}@proton­mail.com`],
+      // 09 D-79 fixer round (normalizeForScan's two-stage fold): a full-width bracketed disguise,
+      // a zero-width character splitting the bare spelled "at", and a full-width "%" before "40".
+      ['full-width bracket "[ａｔ]"/"[ｄｏｔ]"', `${JOY_LOCAL} [ａｔ] protonmail [ｄｏｔ] com`],
+      ['zero-width inside bare "at"', `${JOY_LOCAL} a​t protonmail dot com`],
+      ['full-width percent "％40"', `${JOY_LOCAL}％40protonmail.com`],
     ]
 
     it.each(disguises)('%s', async (_name, typed) => {
@@ -536,12 +545,56 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
     }
   })
 
+  it('no false positive: a bare "at <domain>" with no spelled "dot" is prose, not an email shape (09 D-79 fixer round)', async () => {
+    // The old mapping folded every lone "at" on its own ("signed up at instagram.com" became
+    // "signed up@instagram.com", which EMAIL_REGEX then read as local "up", domain
+    // "instagram.com"). The fix only folds the full spoken shape "<local> at <domain> dot <tld>",
+    // so a plain domain after "at" (no spelled "dot") stays untouched.
+    const known = await loadKnownEmails(env.DB)
+    for (const text of [
+      'Most new subscribers signed up at instagram.com last month.',
+      'https://thepourover.com/news/look-at-this.html',
+      '{"link":"https://thepourover.com/where-we-are-at-now.html"}',
+      'Readers clicked at thepourover.com/news for the story.',
+    ]) {
+      expect(redactEmails(text)).toEqual({ text, count: 0 })
+      expect(findPII(text, known), text).toBeNull()
+    }
+    expect(await enforceGate1(await startTrace(env.DB), 'who signed up at instagram.com last month?')).toMatchObject({
+      text: 'who signed up at instagram.com last month?',
+      emailsRedacted: 0,
+    })
+  })
+
+  it('no false positive: a webhook link with an "-at-" slug never blocks a real tool_result read of it (09 D-79 fixer round)', async () => {
+    // link_click accepts any http(s) URL with no "@" (04 §Webhook); a slug like "look-at-this"
+    // has "at" next to hyphens, not whitespace, so it must never be read as a spoken "at".
+    const link = `${HOSTED_URL}/news/look-at-this.html`
+    const res = await sendWebhook(
+      JSON.stringify({
+        event_id: nextEventId(),
+        event: 'link_click',
+        user_id: JOY_APP_USER,
+        device_id: JOY_DEVICE,
+        timestamp: BRIEF_TS,
+        properties: { link },
+      }),
+    )
+    expect(res.status).toBe(202)
+    const stored = await rows('SELECT link FROM v_app_events WHERE pkey = ? AND link = ?', joyPkey, link)
+    expect(stored).toHaveLength(1)
+    const known = await loadKnownEmails(env.DB)
+    expect(findPII(framed('query_sql', stored), known)).toBeNull()
+    const trace = await startTrace(env.DB)
+    await expect(guardPayload(trace, framed('query_sql', stored), 'tool_result', 'query_sql')).resolves.toBeUndefined()
+  })
+
   it('a webhook link holding JOY\u2019s bare local part is blocked before a tool result reaches the model', async () => {
     // 09 D-70 #2: an http(s) link with no "@" is accepted and stored as-is, so a bare local part
     // in a path (no email shape, no raw id) reached the model until the outbound scan checked
     // local parts too (09 D-79). Sent through the real signed webhook path (09 D-11).
     const link = `${HOSTED_URL}/u/${JOY_LOCAL}`
-    const eventId = eventIdPool()()
+    const eventId = nextEventId()
     const res = await sendWebhook(
       JSON.stringify({
         event_id: eventId,
@@ -600,11 +653,18 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
 
     it('dropping the spelled-out "at"/"dot" mapping would miss "joy at example dot com"', () => {
       expect(normalizeForScan(`${JOY_LOCAL} at protonmail dot com`).text).toBe(JOY)
-      // normalizeForScan folds every bare "at"/"dot" word on its own (it cannot know which ones
-      // form an address); the false-positive guarantee lives in EMAIL_REGEX needing both "@" and
-      // ".tld" together right after it, not in the normalizer refusing a lone word (see the
-      // false-positive test above, which checks redactEmails/findPII leave "meet at noon" alone).
-      expect(normalizeForScan('meet at noon').text).toBe('meet@noon')
+      // The mapping only folds the FULL spoken shape "<local> at <domain> dot <tld>" — it requires
+      // a spelled "dot" after "at", so a lone "at" in ordinary prose is left alone (09 D-79 fixer
+      // round; see the false-positive tests above for "signed up at instagram.com" and the rest).
+      expect(normalizeForScan('meet at noon').text).toBe('meet at noon')
+      expect(normalizeForScan('signed up at instagram.com').text).toBe('signed up at instagram.com')
+    })
+
+    it('narrowing the zero-width set back to the old five characters would miss U+2060 WORD JOINER (09 D-79 fixer round)', () => {
+      // shared/sql-sign.ts's FORMAT_CHARS (category Cf) is the one home for this set; it covers
+      // U+2060 WORD JOINER, which the old five-character list (U+200B-200D/FEFF/00AD) did not.
+      expect(normalizeForScan(`${JOY_LOCAL}⁠@protonmail.com`).text).toBe(JOY)
+      expect(normalizeForScan(`new.person⁠@gmail.com`).text).toBe('new.person@gmail.com')
     })
 
     it('dropping known_local_part from findPII would let the webhook-link scenario above through null, not a check', async () => {

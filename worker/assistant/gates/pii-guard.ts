@@ -174,20 +174,60 @@ function applySpans(
   return { text: result, count }
 }
 
-/**
- * The first check `payload` fails, or null when it is clean. Pure. Checked in this order: a
- * stored email anywhere in the text, the email shape on its own, a raw id, and (09 D-79, closing
- * the gap the self-audit found) a known local part with no "@" at all — the path a webhook
- * `link` like `…/u/joy.hall830` takes. Every check runs on one normalization of the payload
- * (shared/pii.ts normalizeForScan), so a disguised address or a disguised local part is caught
- * the same way as a plain one.
- */
-export function findPII(payload: unknown, known: KnownEmails): PiiCheck | null {
-  const text = normalizeForScan(serialize(payload)).text
+/** The four checks, in order, over one already-normalized text. */
+function checkNormalizedText(text: string, known: KnownEmails): PiiCheck | null {
   if (known.occursIn(text)) return 'known_email'
   if (EMAIL_REGEX.test(text)) return 'email_pattern'
   if (RAW_ID_REGEX.test(text)) return 'raw_id'
   if (findLocalPartSpans(text, known).length > 0) return 'known_local_part'
+  return null
+}
+
+/**
+ * Collects every string a person or the model actually wrote inside `payload` (every string
+ * value and every object key, at any depth), so each can be normalized and scanned on its own
+ * characters rather than on `JSON.stringify`'s escaped form of them (09 D-79 fixer round: a real
+ * newline or tab inside a string becomes the two characters `\n`/`\t` once serialized, which the
+ * `\s*`-based disguise mappings in `shared/pii.ts` never see as whitespace — "press\n[at]\nexample"
+ * reached the model because only the serialized, still-escaped text was ever scanned).
+ */
+function collectLeafStrings(payload: unknown, out: string[]): void {
+  if (typeof payload === 'string') {
+    out.push(payload)
+  } else if (Array.isArray(payload)) {
+    for (const v of payload) collectLeafStrings(v, out)
+  } else if (payload !== null && typeof payload === 'object') {
+    for (const [k, v] of Object.entries(payload)) {
+      out.push(k)
+      collectLeafStrings(v, out)
+    }
+  }
+}
+
+/**
+ * The first check `payload` fails, or null when it is clean. Pure. Checked in this order: a
+ * stored email anywhere in the text, the email shape on its own, a raw id, and (09 D-79, closing
+ * the gap the self-audit found) a known local part with no "@" at all — the path a webhook
+ * `link` like `…/u/joy.hall830` takes.
+ *
+ * Two passes (09 D-79 fixer round): first the whole payload serialized to one string (catches a
+ * match that spans two fields, or a match inside a bare string payload), then, when `payload` is
+ * not already a bare string, every individual string value and object key on its own
+ * (collectLeafStrings) — the pass that sees a disguise written with a real newline or tab, which
+ * JSON.stringify would otherwise turn into the two characters `\`+`n`/`\`+`t` before any check
+ * ran. Every text normalizeForScan sees is normalized once, never raw.
+ */
+export function findPII(payload: unknown, known: KnownEmails): PiiCheck | null {
+  const wholeHit = checkNormalizedText(normalizeForScan(serialize(payload)).text, known)
+  if (wholeHit !== null) return wholeHit
+  if (typeof payload !== 'string') {
+    const leaves: string[] = []
+    collectLeafStrings(payload, leaves)
+    for (const leaf of leaves) {
+      const hit = checkNormalizedText(normalizeForScan(leaf).text, known)
+      if (hit !== null) return hit
+    }
+  }
   return null
 }
 

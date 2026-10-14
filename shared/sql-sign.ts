@@ -26,7 +26,13 @@
  */
 
 const LISTED_FORMAT_CHARS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/gu
-const FORMAT_CHARS = /\p{Cf}/gu
+/**
+ * Every Unicode format character (category `Cf`). Exported as the one home for this set: 09
+ * D-79's `shared/pii.ts normalizeForScan` imports it too, so the PII disguise-stripping step and
+ * this SQL-sign check fold the same invisible characters (a word joiner or a bidi control
+ * dropped here but not there would be a second, narrower definition of the same fact).
+ */
+export const FORMAT_CHARS = /\p{Cf}/gu
 export type SqlSign = 'sql_fence' | 'select_line' | 'select_from'
 const NOT_WORD_BEFORE = '(?<![\\p{L}\\p{N}])'
 const NOT_WORD_AFTER = '(?![\\p{L}\\p{N}])'
