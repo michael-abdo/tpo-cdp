@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { env, SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { TODAY } from '../shared/config'
 import { webhookRoutes } from '../worker/routes/webhook'
 import wranglerConfig from '../wrangler.jsonc?raw'
 import { documentationIp, loginCookie } from './helpers/auth'
@@ -12,8 +13,7 @@ import { sendWebhook, signature as independentSignature, webhookSecret } from '.
 // data/*.csv (test/helpers/seed.ts); no network.
 // Inputs (09 D-11, D-47: real ids, minimal edits for the refusal paths):
 // - u_2b6447a3 is julia.evans230@gmail.com (app_users.csv:2, 02 §Counts demo subject): a real
-//   app account with no app_events rows yet in this file, so the "no device yet" branch is hit
-//   first and the "most recent device" branch is hit second, on the same account.
+//   app account with no app_events rows yet in this file.
 // - u_09acb8a4 is an app-only user (02 §Counts); u_does_not_exist occurs nowhere in data/*.csv
 //   (09 D-47: a real-shaped id that is simply not one of the real ones).
 const KNOWN_USER = 'u_2b6447a3'
@@ -101,15 +101,20 @@ describe('POST /api/events/test (09 D-73)', () => {
       email: KNOWN_USER_EMAIL,
     })
     expect(body.event.event_id).toMatch(/^evt_[0-9a-f]+$/)
-    expect(body.event.device_id).toMatch(/^d_[0-9a-f]+$/) // no prior device for this account in this file: a fresh one
+    expect(body.event.device_id).toMatch(/^d_[0-9a-f]+$/)
+    // 09 D-01 / 02 §Time: a demo event's timestamp is TODAY (shared/config.ts) plus the current
+    // UTC time of day, never wall-clock "now" — a mutant that used `new Date().toISOString()`
+    // directly would date the event after TODAY and fails this.
+    expect(body.event.event_ts.startsWith(TODAY)).toBe(true)
     const [first] = await recent()
     expect(first).toEqual(body.event)
   })
 
-  it("T-WH-PANEL-4b: a second send for the same account reuses that account's most recent device", async () => {
+  it('T-WH-PANEL-4b: a second send for the same account gets a fresh device, not the first send\'s (D-73 amended 2026-10-14: device reuse dropped)', async () => {
     const first = await (await sendTest({ user_id: KNOWN_USER, event: 'app_open' })).json<TestEventResponse>()
     const second = await (await sendTest({ user_id: KNOWN_USER, event: 'login' })).json<TestEventResponse>()
-    expect(second.event.device_id).toBe(first.event.device_id)
+    expect(second.event.device_id).not.toBe(first.event.device_id)
+    expect(second.event.device_id).toMatch(/^d_[0-9a-f]+$/)
   })
 
   it('T-WH-PANEL-5: Send again (resend) answers 200 duplicate and leaves app_events unchanged', async () => {
@@ -184,32 +189,27 @@ describe('POST /api/events/test (09 D-73)', () => {
     expect((await sendTest({ user_id: KNOWN_USER, event: 'app_open' }, first, documentationIp())).status).toBe(202)
   })
 
-  it("T-WH-PANEL-9: picks the account's most recent device by event time, not by insertion order", async () => {
+  it('T-WH-PANEL-9: two sends for the same account each get their own fresh device, never one already in app_events', async () => {
     const user = 'u_3ab82c73' // faith.wilson277@gmail.com (app_users.csv): untouched by the tests above
-    await env.DB.batch([
-      // Inserted FIRST (so it has the lower rowid) but with the LATER event_ts, so only reading
-      // event_ts (not rowid/insertion order) picks the right one: a mutant that orders by rowid
-      // DESC instead of event_ts DESC would pick d_older here, since it is inserted second.
-      env.DB.prepare(
-        `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
-         VALUES ('evt_panel9b', 'app_open', ?, 'd_newer', '2026-09-20T00:00:00Z', '2026-09-01T00:00:00Z')`,
-      ).bind(user),
-      env.DB.prepare(
-        `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
-         VALUES ('evt_panel9a', 'app_open', ?, 'd_older', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
-      ).bind(user),
-    ])
-    const res = await sendTest({ user_id: user, event: 'login' })
-    expect(res.status).toBe(202)
-    const body = await res.json<TestEventResponse>()
-    expect(body.event.device_id).toBe('d_newer')
+    await env.DB.prepare(
+      `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
+       VALUES ('evt_panel9a', 'app_open', ?, 'd_existing9', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
+    )
+      .bind(user)
+      .run()
+    const first = await (await sendTest({ user_id: user, event: 'login' })).json<TestEventResponse>()
+    const second = await (await sendTest({ user_id: user, event: 'app_open' })).json<TestEventResponse>()
+    for (const id of [first.event.device_id, second.event.device_id]) expect(id).toMatch(/^d_[0-9a-f]+$/)
+    expect(first.event.device_id).not.toBe('d_existing9')
+    expect(second.event.device_id).not.toBe('d_existing9')
+    expect(second.event.device_id).not.toBe(first.event.device_id)
   })
 
   it('T-WH-PANEL-9b: never moves device ownership to a different account (D-73 out of scope)', async () => {
     // A then B logs in on the same shared device, then an anonymous event on it resolves to B
-    // via login_stitch (the device's most recent identified user, by event_ts). A's own most
-    // recent device (by event_ts) is this same shared one. A panel send for A must not then move
-    // device_identity back to A: that would silently re-attribute B's own anonymous event to A,
+    // via login_stitch (the device's most recent identified user, by event_ts). A panel send for
+    // A must not touch that shared device at all (fresh device on every send, D-73 amended
+    // 2026-10-14): re-pointing it would silently re-attribute B's own anonymous event to A,
     // exactly the live bug this route must never reintroduce. Two accounts untouched elsewhere in
     // this file (09 D-11, app_users.csv): u_baba14aa (daniel.hill389), u_c0d06d19 (leah.stewart812).
     const userA = 'u_baba14aa'

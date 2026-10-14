@@ -10,15 +10,18 @@
 // requireJson + requireSession mount on /api/* in worker/index.ts, the same as every other
 // session POST; this route adds its own TEST_EVENT_LIMITER (09 D-70 #6 style: keyed by client,
 // not session). Two bodies: `{user_id, event}` builds a fresh event for a real app account
-// (user_id must exist in app_users, event one of APP_EVENTS); `{resend: event_id}` re-sends an
-// already-stored event's exact body unchanged. Either way the event is signed with
-// WEBHOOK_SECRET exactly as a client would and run through POST /webhooks/app itself, in
-// process (webhookRoutes.request, worker/routes/webhook.ts) — never a second copy of verify or
-// ingest. The secret and signature never leave this function: the response and every log line
-// here name only field names, outcomes and ids.
+// (user_id must exist in app_users, event one of APP_EVENTS, timestamp = demoTimestamp(), a
+// fresh `d_` device id on every send — D-73 amended 2026-10-14, so a test event can never
+// touch a real device's identity); `{resend: event_id}` re-sends an already-stored event's
+// exact body unchanged, device_id included, so a resend keeps the stored device. Either way
+// the event is signed with WEBHOOK_SECRET exactly as a client would and run through
+// POST /webhooks/app itself, in process (webhookRoutes.request, worker/routes/webhook.ts) —
+// never a second copy of verify or ingest. The secret and signature never leave this function:
+// the response and every log line here name only field names, outcomes and ids.
 
 import { Hono } from 'hono'
 import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
+import { demoTimestamp } from '../../shared/demo-timestamp'
 import { ApiError } from '../auth/middleware'
 import { type AppEnv, requireSecret } from '../env'
 import { feedEventById, recentEvents } from '../identity/resolve'
@@ -112,27 +115,6 @@ function freshId(prefix: string, bytes: number): string {
   return prefix + [...random].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/**
- * The account's most recent device from its own app_events rows, else a fresh one (09 D-73).
- * D-73 puts anonymous-device → login stitching out of scope for the panel: a test send must
- * never re-point device_identity at a different account. Reused only when device_identity has
- * no row for that device yet, or already names this same user_id; otherwise (another account
- * now owns it, by a later-or-equal login per the ingest upsert) a fresh device is used instead,
- * so the test event can never rewrite someone else's attribution.
- */
-async function deviceForAccount(db: D1Database, userId: string): Promise<string> {
-  const device = await db
-    .prepare('SELECT device_id FROM app_events WHERE user_id = ? ORDER BY event_ts DESC, rowid DESC LIMIT 1')
-    .bind(userId)
-    .first<string>('device_id')
-  // 8 bytes (64 bits), not 4: a fresh id must not collide with an existing anonymous device and
-  // silently stitch that device's anonymous events to this account on the next login resolution.
-  if (device === null) return freshId('d_', 8)
-  const owner = await db.prepare('SELECT user_id FROM device_identity WHERE device_id = ?').bind(device).first<string>('user_id')
-  if (owner !== null && owner !== userId) return freshId('d_', 8)
-  return device
-}
-
 eventRoutes.post('/events/test', async (c) => {
   // Its own limit (09 D-70 #6 style), independent of WEBHOOK_LIMITER inside POST /webhooks/app.
   const clientKey = c.req.header('cf-connecting-ip') ?? 'local'
@@ -160,8 +142,10 @@ eventRoutes.post('/events/test', async (c) => {
       event_id: freshId('evt_', 8),
       event: body.event,
       user_id: body.user_id,
-      device_id: await deviceForAccount(c.env.DB, body.user_id),
-      timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      // Always fresh (09 D-73 amended 2026-10-14): a test send must never re-point an
+      // existing device's identity, real or anonymous, at this account or any other.
+      device_id: freshId('d_', 8),
+      timestamp: demoTimestamp(),
     })
   }
 
