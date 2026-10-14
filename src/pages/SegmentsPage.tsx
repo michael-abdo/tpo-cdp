@@ -25,6 +25,7 @@ import { TODAY } from '../../shared/config'
 import { DEFINITIONS, type DefinitionKey, NEW_SUBSCRIBER_DAYS } from '../../shared/derive'
 import { GLOSSARY } from '../../shared/glossary'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
+import { SEGMENT_COLUMNS, SEGMENT_SORT_COLUMN } from '../../shared/segment-filters'
 import { SUBSCRIBER_STATUSES } from '../../worker/ingest/quarantine'
 import { downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
@@ -43,8 +44,9 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
+import { filtersAppliedView } from '../filters-applied'
 import { humanDate } from '../format'
-import { COLUMN_LABEL, DEFINITION_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
+import { columnLabel, COLUMN_LABEL, DEFINITION_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
 import { browserStore, clearSearches, type PreviousSearch, readSearches, visibleSearches } from '../previous-searches'
 import { DEFAULT_FORM, FIELD_ID, FIELD_LABEL, fieldMessages, type Form, type FormField, moreFiltersOn, toFilters, toForm } from '../segment-form'
 import { type PreviewResult, previewAndRecord } from '../segment-preview'
@@ -66,9 +68,6 @@ const FOOTER_DEFINITIONS: readonly DefinitionKey[] = ['days_since_open', 'no_ope
  * (09 D-30).
  */
 const FOOTER_PLAIN = FOOTER_DEFINITIONS.filter((key) => key !== 'no_open_in_days' && key !== 'cold')
-
-/** The CSV's columns as the export writes them (04 §Segments). */
-const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
 
 /** Router state set by "Open segment" on /insights (a tile or an AI answer). */
 function openedFilters(state: unknown): SegmentFilters | null {
@@ -234,6 +233,63 @@ export function RowDetails({ row }: { row: SegmentRow }) {
       <Field label={COLUMN_LABEL.source}>{sourceLabel(row.source)}</Field>
       <Field label="App account">{row.has_app ? 'Yes' : 'No'}</Field>
     </dl>
+  )
+}
+
+/**
+ * What the download has, beside Export CSV (06 §/segments, 09 D-76): every piece reads the one
+ * home the export itself uses, so this can never describe a different file than the one that
+ * downloads. SEGMENT_COLUMNS and SEGMENT_SORT_COLUMN (shared/segment-filters.ts) are the same
+ * array compileSegment reads to build the export's SELECT and ORDER BY; `filters` is the
+ * canonical object the server echoed for this result (POST /api/segments/preview's `filters`),
+ * read through the one filters-in-words renderer (src/filters-applied.ts) the Ask bar's answer
+ * card already uses. D-72: the row count repeats only as a number, in words the count sentence
+ * and segmentLabel do not already use, naming the one new fact — whether unsubscribed subscribers
+ * are part of the file.
+ */
+export function ExportFileDetails({ filters, count }: { filters: SegmentFilters; count: number }) {
+  const active = filters.status.includes('active')
+  const unsubscribed = filters.status.includes('unsubscribed')
+  const rows = plural(count, 'row', 'rows')
+  const note =
+    active && unsubscribed
+      ? `${rows}, including unsubscribed subscribers.`
+      : unsubscribed
+        ? `${rows}, all unsubscribed.`
+        : `${rows}. Unsubscribed subscribers are not included.`
+  // SegmentFilters is a closed, already-validated shape (shared/segment-filters.ts); filtersAppliedView
+  // takes the looser Record<string, unknown> its other caller (an AI-authored filters_applied) needs.
+  const applied = filtersAppliedView(filters as unknown as Record<string, unknown>)
+  return (
+    <div className="space-y-1">
+      <p className={hintClass}>{note}</p>
+      <Disclosure label="What's in the file">
+        <div className="space-y-2 text-sm text-gray-700">
+          <p>Columns, in file order: {SEGMENT_COLUMNS.map(columnLabel).join(', ')}.</p>
+          {/* SEGMENT_SORT_COLUMN names email today, a sorted-not-numeric column; "A to Z" only
+              reads right while that stays true (shared/segment-filters.ts). */}
+          <p>Sorted by {columnLabel(SEGMENT_SORT_COLUMN)}, A to Z.</p>
+          {applied.status === 'shown' ? (
+            <div>
+              <p>Filters applied:</p>
+              <dl className="space-y-1">
+                {applied.fields.map((f) => (
+                  <Field key={f.key} label={f.label}>
+                    {f.value}
+                  </Field>
+                ))}
+              </dl>
+            </div>
+          ) : (
+            <p>{applied.message}</p>
+          )}
+        </div>
+        <TechnicalDetails>
+          <p className="font-medium">Raw column headers, export order</p>
+          <p className="font-mono">{SEGMENT_COLUMNS.join(', ')}</p>
+        </TechnicalDetails>
+      </Disclosure>
+    </div>
   )
 }
 
@@ -793,6 +849,7 @@ export default function SegmentsPage() {
               </Button>
             )}
           </div>
+          {ok.data.count > 0 && <ExportFileDetails filters={ok.filters} count={ok.data.count} />}
           {exportError !== null && <ErrorLine message={exportError} next="Press Export CSV to try again." />}
 
           {ok.data.rows.length > 0 && (
@@ -822,9 +879,7 @@ export default function SegmentsPage() {
               <span className="font-mono">{DEFINITIONS[key].name}</span>: <span className="font-mono">{DEFINITIONS[key].formula}</span>
             </p>
           ))}
-          <p>
-            Preview shows at most {PREVIEW_LIMIT} rows. CSV columns: <span className="font-mono">{CSV_COLUMNS}</span>
-          </p>
+          <p>Preview shows at most {PREVIEW_LIMIT} rows. Export CSV's own columns are in "What's in the file", above.</p>
           {ok !== null && (
             <>
               <p className="pt-2 font-medium">Filters (as the server read them)</p>
