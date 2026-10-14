@@ -51,7 +51,7 @@ beforeAll(async () => {
   cookie = await loginCookie()
   const { results } = await env.DB.prepare(
     `SELECT p.pkey AS pkey, s.email_norm AS email, s.signup_date, s.source, s.status
-     FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm`,
+     FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm AND p.kind = 'subscriber'`,
   ).all<DedupeReader>()
   readers = results
 })
