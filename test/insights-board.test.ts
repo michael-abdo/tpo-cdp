@@ -1524,9 +1524,20 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     const tile = await ok.json<Tile>()
     expect(tile.status).toBe('ok')
     expect(await tileCount()).toBe((beforeTiles ?? 0) + 1)
-    const toolRow = await env.DB.prepare('SELECT enabled, metadata FROM assistant_tools WHERE id = ?').bind(pendingId).first<{ enabled: number; metadata: string }>()
+    const toolRow = await env.DB.prepare('SELECT name, enabled, metadata FROM assistant_tools WHERE id = ?').bind(pendingId).first<{
+      name: string
+      enabled: number
+      metadata: string
+    }>()
     expect(toolRow!.enabled).toBe(1)
-    expect(JSON.parse(toolRow!.metadata).approval).toMatchObject({ by: 'Growth', note: 'useful for the source review' })
+    const meta = JSON.parse(toolRow!.metadata)
+    expect(meta.approval).toMatchObject({ by: 'Growth', note: 'useful for the source review' })
+    // Unlike a grammar-approved pin's own wrapped row, an approved row carries no board_only tag:
+    // a human vouched for this SQL, so it pins like any other saved question type (09 D-64b) and
+    // becomes an ordinary, model-visible query tool (tool-loader.ts's own "fail safe toward
+    // visibility" rule) the assistant can call on a later question, the same as any D-41 row.
+    expect(meta.board_only).toBeUndefined()
+    expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toContain(toolRow!.name)
     // Approving twice (an already-enabled row) is 404, not a second tile.
     const again = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'again' } })
     expect(again.status).toBe(404)
