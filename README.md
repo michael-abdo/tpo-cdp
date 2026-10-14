@@ -39,7 +39,7 @@ Needs Node 20 or newer and npm. No Cloudflare account: `wrangler` runs workerd a
 git clone https://github.com/michael-abdo/tpo-cdp && cd tpo-cdp
 npm install --legacy-peer-deps      # the flag installs package-lock.json exactly as committed (why: docs/ai-log.md 2026-10-12)
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
-npm run db:migrate:local            # the seven migrations into the local D1
+npm run db:migrate:local            # the eight migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
 npm test                            # every test in workerd against a local D1; no network (count: [Tests](#tests))
 npm run parity -- --local           # D-75 parity oracle (21 §2.6 mode B) against a throwaway local D1; never the dev database

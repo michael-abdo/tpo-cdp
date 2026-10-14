@@ -15,6 +15,7 @@ import {
   NOT_PINNABLE_MESSAGE,
   NOT_PINNABLE_OTHER_MESSAGE,
   PIN_FAILED_MESSAGE,
+  REQUEST_APPROVAL_MESSAGE,
   SORT_ORDER_MAX,
   TILE_RUN_FAILED_MESSAGE,
 } from '../worker/insights/board'
@@ -324,25 +325,8 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     }
   })
 
-  it('a query_sql or insight_panel trace is 400 not_pinnable with the D-64a sentence; nothing is stored', async () => {
+  it('insight_panel is always 400 not_pinnable with the D-64a sentence; nothing is stored', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const explanation = 'Instagram active subscribers whose cold_since is in August'
-    // Free-form SQL is refused before any re-validation, whether its SQL would pass the gates or not.
-    for (const sql of [WENT_COLD_AUGUST_SQL, 'SELECT email_norm FROM subscribers LIMIT 1', "SELECT count(*) AS n FROM v_profiles /* every subscriber */"]) {
-      const answer = await askAnswer('how many Instagram signups went cold last month?', [{ name: 'query_sql', input: { sql: WENT_COLD_AUGUST_SQL, explanation } }])
-      // The answer card learns it up front: no time period to offer, the refusal sentence instead of Pin.
-      expect(answer.pin_refusal).toBe(NOT_PINNABLE_MESSAGE)
-      expect(answer.pin_window).toBeNull()
-      expect(answer.pin_own_dates).toBeNull()
-      await editTracedInput(answer.audit_id, { sql, explanation })
-      const before = await tileCount()
-      const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
-      expect(res.status, sql).toBe(400)
-      expect(await res.json()).toEqual({ error: 'not_pinnable', message: NOT_PINNABLE_MESSAGE })
-      expect(await tileCount()).toBe(before)
-    }
-    expect(NOT_PINNABLE_MESSAGE).toBe("Answers written as free-form queries can't be pinned. Ask the Growth team to add this as a saved question type.")
-
     // insight_panel is the board's own tool, never pinned: a real trace's call edited to name it (09 D-47).
     const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
     const edited = await env.DB.prepare(
@@ -356,22 +340,39 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'not_pinnable', message: NOT_PINNABLE_MESSAGE })
     expect(await tileCount()).toBe(before)
+    expect(NOT_PINNABLE_MESSAGE).toBe("Answers written as free-form queries can't be pinned. Ask the Growth team to add this as a saved question type.")
+  })
 
-    // With the query_sql row turned off, its answer is still not_pinnable with the D-64a sentence,
-    // never re-validated into invalid_pin: the refusal is by name, not by the loaded row.
-    const offAnswer = await askAnswer('how many Instagram signups went cold last month?', [
-      { name: 'query_sql', input: { sql: WENT_COLD_AUGUST_SQL, explanation } },
+  it('a query_sql answer whose SQL fails the D-64b positive grammar is 400 not_pinnable with "Request approval"; it queues once per trace', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // Runs fine (Gate 2/3 allow HAVING; it is a real successful tool call), but the D-64b grammar
+    // refuses HAVING outright (09 D-64b: a crafted HAVING cannot wave a small group through, since
+    // the small-group mask re-checks every row at every run regardless of it).
+    const sql = "SELECT source, count(*) AS subscribers FROM v_profiles GROUP BY source HAVING count(*) > 10"
+    const answer = await askAnswer('how many subscribers come from each source?', [
+      { name: 'query_sql', input: { sql, explanation: 'subscribers grouped by source, only sources over 10' } },
     ])
-    await env.DB.prepare("UPDATE assistant_tools SET enabled = 0 WHERE name = 'query_sql'").run()
-    try {
-      const offRes = await api('', { method: 'POST', body: { audit_id: offAnswer.audit_id } })
-      expect(offRes.status).toBe(400)
-      expect(await offRes.json()).toEqual({ error: 'not_pinnable', message: NOT_PINNABLE_MESSAGE })
-      expect(await tileCount()).toBe(before)
-    } finally {
-      await env.DB.prepare("UPDATE assistant_tools SET enabled = 1 WHERE name = 'query_sql'").run()
-    }
-    expect(offAnswer.pin_refusal).toBe(NOT_PINNABLE_MESSAGE)
+    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_MESSAGE)
+    const beforeTiles = await tileCount()
+    const beforeTools = await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')
+    const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; message: string; details: string[] }>()
+    expect(body.error).toBe('not_pinnable')
+    expect(body.message).toBe(REQUEST_APPROVAL_MESSAGE)
+    expect(body.details).toEqual(['HAVING is not allowed: groups under 5 people are hidden automatically at run time, whatever HAVING says'])
+    expect(await tileCount()).toBe(beforeTiles)
+    // Nothing pins, but the SQL is queued, disabled, for a human (09 D-64b "Request approval").
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')).toBe((beforeTools ?? 0) + 1)
+    const pending = await env.DB.prepare('SELECT enabled, requested_from_trace, execution_config FROM assistant_tools WHERE requested_from_trace = ?')
+      .bind(answer.audit_id)
+      .first<{ enabled: number; requested_from_trace: string; execution_config: string }>()
+    expect(pending).toMatchObject({ enabled: 0, requested_from_trace: answer.audit_id })
+    expect(JSON.parse(pending!.execution_config).sql).toContain('HAVING')
+
+    // Pinning the same trace again does not queue a second pending row.
+    await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<number>('n')).toBe(1)
   })
 
   it('a builtin row that aliases query_sql under another name is still not pinnable, at pin and on the board (09 D-64a)', async () => {
@@ -402,32 +403,24 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     }
   })
 
-  it('only segment and aggregate among the builtins pin: describe_schema and every other builtin is 400 not_pinnable', async () => {
+  it('describe_schema never pins (400 not_pinnable); segment, aggregate and a grammar-conforming query_sql all do (09 D-64, D-64b)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // A real input for each builtin that is not a count or a segment; a new builtin fails here until it is listed.
-    const inputs: Record<string, unknown> = {
-      query_sql: { sql: WENT_COLD_AUGUST_SQL, explanation: 'Instagram active subscribers whose cold_since is in August' },
-      describe_schema: {},
-    }
-    const others = Object.keys(BUILTIN_HANDLERS).filter((name) => name !== 'segment' && name !== 'aggregate')
-    expect(others.sort()).toEqual(Object.keys(inputs).sort())
-    for (const name of others) {
-      const answer = await askAnswer('what data can you see?', [{ name, input: inputs[name] }])
-      // The answer itself ran (a real successful tool call), so only D-64a stops the pin.
-      const call = await env.DB.prepare("SELECT tool_name FROM ai_audit WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'")
-        .bind(answer.audit_id)
-        .first<string>('tool_name')
-      expect(call).toBe(name)
-      // D-64a's sentence is about free-form queries; a schema answer gets a sentence that is true of it.
-      const message = name === 'query_sql' ? NOT_PINNABLE_MESSAGE : NOT_PINNABLE_OTHER_MESSAGE
-      expect(answer.pin_refusal, name).toBe(message)
-      expect(answer.pin_window).toBeNull()
-      const before = await tileCount()
-      const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
-      expect(res.status, name).toBe(400)
-      expect(await res.json()).toEqual({ error: 'not_pinnable', message })
-      expect(await tileCount()).toBe(before)
-    }
+    // describe_schema's answer is no query at all, so D-64a's free-form-query sentence would be
+    // untrue of it; it gets NOT_PINNABLE_OTHER_MESSAGE instead, unconditionally, unlike query_sql.
+    const others = Object.keys(BUILTIN_HANDLERS).filter((name) => name !== 'segment' && name !== 'aggregate' && name !== 'query_sql')
+    expect(others).toEqual(['describe_schema'])
+    const answer = await askAnswer('what data can you see?', [{ name: 'describe_schema', input: {} }])
+    const call = await env.DB.prepare("SELECT tool_name FROM ai_audit WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'")
+      .bind(answer.audit_id)
+      .first<string>('tool_name')
+    expect(call).toBe('describe_schema')
+    expect(answer.pin_refusal).toBe(NOT_PINNABLE_OTHER_MESSAGE)
+    expect(answer.pin_window).toBeNull()
+    const before = await tileCount()
+    const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'not_pinnable', message: NOT_PINNABLE_OTHER_MESSAGE })
+    expect(await tileCount()).toBe(before)
     expect(NOT_PINNABLE_OTHER_MESSAGE).toBe('Only counts, segments and saved question types can be pinned, and this answer is none of them.')
   })
 

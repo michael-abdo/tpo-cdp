@@ -7,8 +7,14 @@ export type AppEnv = {
   Variables: { session: { sub: string; exp: number } }
 }
 
-/** Secrets read as strings. ANTHROPIC_API_KEY is deliberately absent: it is probed lazily on the first assistant call (11 §Deploy). */
-const SECRET_NAMES = ['WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET'] as const
+/**
+ * Secrets read as strings. ANTHROPIC_API_KEY is deliberately absent: it is probed lazily on the
+ * first assistant call (11 §Deploy). TOOL_APPROVAL (09 D-64b) is a second shared password, like
+ * SITE_PASSWORD, checked only by POST /api/insights/approvals/:id/approve; it fails fast here
+ * like every other secret rather than lazily, so a deploy that forgets it is caught on its first
+ * request, not the first time someone tries to approve a query.
+ */
+const SECRET_NAMES = ['WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'TOOL_APPROVAL'] as const
 const LIMITER_NAMES = [
   'LOGIN_LIMITER',
   'WEBHOOK_LIMITER',
