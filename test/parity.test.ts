@@ -1147,6 +1147,27 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
 describe('T-PAR-8 store-side (webhook) cases', () => {
   const nextEventId = eventIdPool()
 
+  // 02 §Counts line 63 ("used the app in the last 7 days"), computed from the ORACLE's own
+  // resolveAppEvents (21 §2.3), never from a store SQL count: every event this describe block
+  // sends is recorded here in file order, and the count below re-resolves ownership from that
+  // in-memory list alone. Before any send it is the CSV-only oracle set (0 app events, by
+  // construction); each sendWebhook call below also pushes here, right after a 202.
+  const sentAppEvents: StoredAppEvent[] = []
+
+  /** Distinct resolved user_ids with an event at or after TODAY-6 (7 days inclusive), from the
+   * oracle's own device resolution over `sentAppEvents` alone (D-69 item 5, simplified: the
+   * app_active_within_days segment filter lives on the `segments` branch, not this one, 21 §7). */
+  function activeLast7FromOracle(): number {
+    const resolved = resolveAppEvents(sentAppEvents)
+    const cutoff = `${addDays(TODAY, -6)}T00:00:00Z`
+    const active = new Set<string>()
+    for (const e of sentAppEvents) {
+      const owner = e.user_id ?? resolved.deviceOwner.get(e.device_id) ?? null
+      if (owner !== null && e.event_ts >= cutoff) active.add(owner)
+    }
+    return active.size
+  }
+
   /** The subscriber a real app_users.csv user_id links to, by the oracle's own fold (never an
    * email local part in the error, 21 §2.4). */
   function subscriberForUserId(userId: string) {
@@ -1168,25 +1189,23 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(before?.engagement_score).toBe(28) // 02 §Counts, 09 D-53
 
     // 02 §Counts line 63: "used the app in the last 7 days: 0 on the seed (no app events)" —
-    // asserted here, before any webhook in this file sends one, not only the =1 check after.
-    const activeLast7Before = await env.DB.prepare(
-      'SELECT count(DISTINCT user_id) AS n FROM app_events WHERE user_id IS NOT NULL AND event_ts >= ?',
-    )
-      .bind(`${addDays(TODAY, -6)}T00:00:00Z`)
-      .first<number>('n')
-    expect(activeLast7Before).toBe(0)
+    // from the oracle's own set (0 from the CSV-only oracle set; 21 §2.3), not a store SQL count.
+    expect(activeLast7FromOracle()).toBe(0)
 
+    const eventId = nextEventId()
+    const timestamp = `${TODAY}T10:00:00Z`
     const res = await sendWebhook(
       JSON.stringify({
-        event_id: nextEventId(),
+        event_id: eventId,
         event: 'read_story',
         user_id: userId,
         device_id: 'd_2b6447a3',
-        timestamp: `${TODAY}T10:00:00Z`,
+        timestamp,
         properties: { story: 'supreme-court-ruling-explained' },
       }),
     )
     expect(res.status, await res.clone().text()).toBe(202)
+    sentAppEvents.push({ event_id: eventId, user_id: userId, device_id: 'd_2b6447a3', event_ts: timestamp })
 
     const after = await env.DB.prepare('SELECT engagement_score FROM profiles WHERE pkey = ?')
       .bind(subscriber.pkey)
@@ -1195,15 +1214,9 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(after?.engagement_score).toBe(expectedAfter)
     expect(after?.engagement_score).toBe(31) // 02 §Counts, 09 D-53
 
-    // D-69 item 5, simplified (the app_active_within_days segment filter is on the `segments`
-    // branch, not this one, 21 §7): a direct count of identified users with an event in the
-    // last 7 days. 0 before this webhook (seed has none), 1 right after.
-    const activeLast7 = await env.DB.prepare(
-      'SELECT count(DISTINCT user_id) AS n FROM app_events WHERE user_id IS NOT NULL AND event_ts >= ?',
-    )
-      .bind(`${addDays(TODAY, -6)}T00:00:00Z`)
-      .first<number>('n')
-    expect(activeLast7).toBe(1)
+    // 1 right after, by running the oracle's own resolveAppEvents over the sent events (21 §2.3),
+    // never a store SQL count.
+    expect(activeLast7FromOracle()).toBe(1)
   })
 
   it('F1 repro (hardest case #1, ranked first): emily.green827 at exactly 24 days since open, 0 site visits, scores the exact half-up 13 after one app event, never the float-rounded 12', async () => {
@@ -1233,6 +1246,45 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       .first<{ engagement_score: number }>()
     const expectedAfter = engagementScore(24, 1, 0)
     expect(expectedAfter).toBe(13) // exact half-up of 12.5; the fixed float formula would give 12
+    expect(after?.engagement_score, `pkey ${subscriber.pkey}`).toBe(expectedAfter)
+  })
+
+  it('T-PAR-8 app-events cap (M A2 guard): 11 real signed webhooks for one real linked subscriber store the exact capped-at-10 score, never an 11th-event score', async () => {
+    // Real app_users.csv line 568 (09 D-11, D-47): u_9ecb49d6, hope.hall130@gmail.com — a
+    // different real linked subscriber than julia.evans230's test above, as this item requires.
+    const userId = 'u_9ecb49d6'
+    const subscriber = subscriberForUserId(userId)
+    if (subscriber === undefined) throw new Error('parity: expected app_users.csv line 568 fixture missing from the oracle')
+    expect(subscriber.days_since_open).toBe(5)
+    expect(subscriber.web.site_visits_30d).toBe(0)
+    expect(subscriber.profile.engagement_score).toBe(42) // seed: 0 app events
+
+    const EVENT_COUNT = 11
+    for (let i = 0; i < EVENT_COUNT; i++) {
+      const res = await sendWebhook(
+        JSON.stringify({
+          event_id: nextEventId(),
+          event: 'read_story',
+          user_id: userId,
+          device_id: 'd_9ecb49d6',
+          timestamp: `${TODAY}T0${i < 10 ? '0' : '1'}:${String((i % 10) * 5).padStart(2, '0')}:00Z`,
+          properties: { story: `cap-guard-story-${i}` },
+        }),
+      )
+      expect(res.status, await res.clone().text()).toBe(202)
+    }
+
+    const after = await env.DB.prepare('SELECT engagement_score FROM profiles WHERE pkey = ?')
+      .bind(subscriber.pkey)
+      .first<{ engagement_score: number }>()
+    // The oracle's own cap: min(APP_EVENTS_CAP, 11) === min(APP_EVENTS_CAP, 10), so 11 real events
+    // must store exactly the same score as the cap itself (21 §2.1 "exact arithmetic"). A mutant
+    // that lowers the app cap below 10 (e.g. Math.min(10 -> 9) in shared/derive.ts) stores a
+    // different number here and fails this assertion.
+    const expectedAfter = engagementScore(subscriber.days_since_open, EVENT_COUNT, subscriber.web.site_visits_30d)
+    const expectedAtCap = engagementScore(subscriber.days_since_open, 10, subscriber.web.site_visits_30d)
+    expect(expectedAfter).toBe(expectedAtCap)
+    expect(expectedAfter).toBe(67)
     expect(after?.engagement_score, `pkey ${subscriber.pkey}`).toBe(expectedAfter)
   })
 
