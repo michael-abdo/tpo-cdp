@@ -661,8 +661,9 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
     })
 
     it('narrowing the zero-width set back to the old five characters would miss U+2060 WORD JOINER (09 D-79 fixer round)', () => {
-      // shared/sql-sign.ts's FORMAT_CHARS (category Cf) is the one home for this set; it covers
-      // U+2060 WORD JOINER, which the old five-character list (U+200B-200D/FEFF/00AD) did not.
+      // shared/sql-sign.ts's INVISIBLE_CHARS (category Cf plus Default_Ignorable_Code_Point) is
+      // the one home for this set; it covers U+2060 WORD JOINER, which the old five-character
+      // list (U+200B-200D/FEFF/00AD) did not.
       expect(normalizeForScan(`${JOY_LOCAL}⁠@protonmail.com`).text).toBe(JOY)
       expect(normalizeForScan(`new.person⁠@gmail.com`).text).toBe('new.person@gmail.com')
     })
@@ -681,6 +682,106 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
       expect(/@/.test(JOY)).toBe(true)
       expect(findPII(JOY, known)).toBe('known_email')
     })
+  })
+})
+
+// T-PII-6 (09 D-79 fixer round 2): e560cb3 fixed the false positive on ordinary "at"/"dot" prose
+// by dropping the bare spelled-"dot" fold and requiring the spelled "at" fold's domain to carry
+// its own spelled "dot" — but that also broke every disguise that is not itself a spelled "dot"
+// right next to "at" (a bracketed or escaped "@" whose domain's dot is spelled, or vice versa)
+// and a known local part typed with a spelled "dot" ("joy dot hall830", no "at" at all). Item 1
+// restores the bare fold (unconditional: a dot alone is never an email shape) and lets the
+// spelled "at" fold's domain accept a disguised dot in ANY listed form. Item 2 widens the
+// invisible-character set FORMAT_CHARS (category Cf) left out. Item 5 stops the restored bare
+// fold from turning ordinary chart prose ("the dot plot", "random dot points") into a manufactured
+// "@" by requiring the spelled shape's domain to end in a real TLD.
+describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and more invisible characters are stripped (09 D-79 fixer round 2)', () => {
+  const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
+
+  it('item 1: every string the self-audit found still returning 200 with the address now folds (model answers)', () => {
+    for (const text of ['press [at] example dot com', 'press@example dot com', 'press at example [dot] com']) {
+      expect(normalizeForScan(text).text, text).toBe('press@example.com')
+    }
+    expect(normalizeForScan('Write to joy dot hall830.').text).toBe('Write to joy.hall830.')
+  })
+
+  it('item 1: the outbound scan blocks every one of those model answers (email_pattern or known_local_part, never null)', async () => {
+    const known = await loadKnownEmails(env.DB)
+    for (const text of ['press [at] example dot com', 'press@example dot com', 'press at example [dot] com']) {
+      expect(findPII({ text: `${text} is a working address.` }, known), text).toBe('email_pattern')
+    }
+    expect(() => assertNoPII({ text: 'Write to joy dot hall830.' }, known, 'model_output')).toThrow(PiiBlockedError)
+    try {
+      assertNoPII({ text: 'Write to joy dot hall830.' }, known, 'model_output')
+    } catch (err) {
+      expect(err).toBeInstanceOf(PiiBlockedError)
+      expect((err as PiiBlockedError).check).toBe('known_local_part')
+    }
+  })
+
+  it('item 1: Gate 1 redacts the same disguised questions, and a spelled known local part with no "@" at all', async () => {
+    for (const [question, redacted] of [
+      ['is press [at] example dot com engaged?', 'is [email] engaged?'],
+      ['is press at example [dot] com engaged?', 'is [email] engaged?'],
+      ['is joy dot hall830 engaged?', 'is [email] engaged?'],
+    ] as const) {
+      const sanitized = await enforceGate1(await startTrace(env.DB), question)
+      expect(sanitized.text, question).toBe(redacted)
+      expect(sanitized.emailsRedacted, question).toBe(1)
+    }
+  })
+
+  it('mutation check: removing the bare spelled-"dot" fold would miss "joy dot hall830" (no "@", no bracket, no "at")', () => {
+    // data/*.csv has no "." in a local part written with a spelled "dot" and no "at": this is
+    // exactly the shape the regression missed, since it is not inside the "<local> at <domain>"
+    // shape at all.
+    expect(normalizeForScan('joy dot hall830').text).toBe('joy.hall830')
+  })
+
+  it('item 2: more invisible characters are dropped (U+034F, U+FE0F, U+180B, U+115F, U+3164), including spliced into a known local part', async () => {
+    const known = await loadKnownEmails(env.DB)
+    const invisibles = ['͏', '️', '᠋', 'ᅟ', 'ㅤ']
+    for (const ch of invisibles) {
+      const label = `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`
+      expect(normalizeForScan(`press${ch}@example.com`).text, label).toBe('press@example.com')
+      expect(findPII({ text: `Write to press${ch}@example.com.` }, known), label).toBe('email_pattern')
+      const splicedLocal = `${JOY_LOCAL.slice(0, 3)}${ch}${JOY_LOCAL.slice(3)}`
+      expect(normalizeForScan(splicedLocal).text, label).toBe(JOY_LOCAL)
+      const sanitized = await enforceGate1(await startTrace(env.DB), `is ${splicedLocal} engaged?`)
+      expect(sanitized.text, label).toBe('is [email] engaged?')
+      expect(sanitized.emailsRedacted, label).toBe(1)
+    }
+  })
+
+  it('mutation check: narrowing the invisible set back to \\p{Cf} alone would miss U+034F and U+FE0F', () => {
+    expect(normalizeForScan('press͏@example.com').text).toBe('press@example.com')
+    expect(normalizeForScan('press️@example.com').text).toBe('press@example.com')
+  })
+
+  it('item 5: ordinary chart prose with a spelled "dot" stays prose — its last word is not a real TLD', async () => {
+    const known = await loadKnownEmails(env.DB)
+    for (const text of ['Look at the dot plot below.', 'Click at random dot points.', 'The spike at launch dot see the tile.']) {
+      expect(normalizeForScan(text).text, text).not.toContain('@')
+      expect(redactEmails(text), text).toEqual({ text, count: 0 })
+      expect(findPII(text, known), text).toBeNull()
+    }
+    expect(await enforceGate1(await startTrace(env.DB), 'Look at the dot plot below.')).toMatchObject({
+      text: 'Look at the dot plot below.',
+      emailsRedacted: 0,
+    })
+  })
+
+  it('item 5: a real disguised address with a real TLD still blocks (the TLD check is not a new false negative)', async () => {
+    const known = await loadKnownEmails(env.DB)
+    expect(findPII('joy.hall830 at protonmail dot com', known)).toBe('known_email')
+    expect(findPII('new.person at gmail dot com', known)).toBe('email_pattern')
+    expect(findPII('new.person at gmail dot co dot uk', known)).toBe('email_pattern')
+  })
+
+  it('mutation check: accepting any word as the spelled shape\'s TLD would turn "the dot plot" into an email again', () => {
+    const text = normalizeForScan('Look at the dot plot below.').text
+    expect(text).toBe('Look at the.plot below.')
+    expect(text).not.toContain('@')
   })
 })
 

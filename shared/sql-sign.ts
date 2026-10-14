@@ -26,13 +26,19 @@
  */
 
 const LISTED_FORMAT_CHARS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/gu
-/**
- * Every Unicode format character (category `Cf`). Exported as the one home for this set: 09
- * D-79's `shared/pii.ts normalizeForScan` imports it too, so the PII disguise-stripping step and
- * this SQL-sign check fold the same invisible characters (a word joiner or a bidi control
- * dropped here but not there would be a second, narrower definition of the same fact).
- */
+/** Every Unicode format character (category `Cf`); this check's own stripping, unchanged by item 2 below. */
 export const FORMAT_CHARS = /\p{Cf}/gu
+/**
+ * Every Unicode format character (category `Cf`) plus every other default-ignorable code point
+ * (09 D-79 fixer round item 2): `Cf` alone misses some invisible characters a model can still
+ * splice into a disguised address \u2014 U+034F COMBINING GRAPHEME JOINER, U+FE0F VARIATION
+ * SELECTOR-16, U+180B MONGOLIAN FREE VARIATION SELECTOR ONE, U+115F HANGUL CHOSEONG FILLER,
+ * U+3164 HANGUL FILLER, none of which are category `Cf`, all of which are
+ * `Default_Ignorable_Code_Point`. Exported as the one home for this wider set: 09 D-79's
+ * `shared/pii.ts normalizeForScan` imports it (not `FORMAT_CHARS`) for its stage-1 drop, so the
+ * PII disguise-stripping step is not narrowed to `Cf` the way this SQL-sign check still is.
+ */
+export const INVISIBLE_CHARS = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu
 export type SqlSign = 'sql_fence' | 'select_line' | 'select_from'
 const NOT_WORD_BEFORE = '(?<![\\p{L}\\p{N}])'
 const NOT_WORD_AFTER = '(?![\\p{L}\\p{N}])'
