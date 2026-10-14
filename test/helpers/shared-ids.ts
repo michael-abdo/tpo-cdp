@@ -10,15 +10,20 @@ import type { SeedCsvs } from '../../worker/ingest/link'
 // test/ui/lookup-profile.test.ts (the page). Pure, so both test projects can import it. Every
 // value introduced occurs in data/*.csv or is a removal (09 D-47):
 // - a second app account for joy.hall830@protonmail.com: her row app_users.csv:303 (u_ceed5f12,
-//   2026-09-03) copied with the user_id's last character removed (u_ceed5f1) and created_at set to
-//   2026-08-22 (julia.evans230's, app_users.csv:2), so the new account is her earliest;
-// - a second web visitor: her /subscribe row web_events.csv:5421 copied with visitor_id set to
-//   v_569d3a387c, a real anonymous visitor (web_events.csv:13, 5 rows, first seen 2026-07-01), so
-//   that visitor's whole history links to her as her earliest browser.
+//   2026-09-03) copied with the user_id's "1" removed (u_ceed5f2) and created_at set to 2026-08-22
+//   (julia.evans230's, app_users.csv:2). The new account is her earliest, yet its id sorts AFTER
+//   u_ceed5f12 and it is inserted last, so "earliest first" can only pass by created_at, never by
+//   id or insertion order (both share the prefix u_ceed5f, so a user-id search finds both);
+// - a second web visitor v_e792b1c600, a real anonymous visitor whose one row (web_events.csv:5440,
+//   2026-09-03) comes after joy's first row (5400), so it is inserted after hers. It gets a copy of
+//   web_events.csv:13 (the real visitor v_569d3a387c's '/' row, 2026-07-01 01:29:54) and a copy of
+//   joy's /subscribe row 5421, both appended with its visitor_id. It is then her earliest browser,
+//   yet its id sorts AFTER v_c9e136fd6d and it is inserted last: "earliest first" can only pass
+//   by first_seen_ts.
 
 export const JOY = 'joy.hall830@protonmail.com'
-export const SECOND_ACCOUNT = 'u_ceed5f1'
-export const SECOND_VISITOR = 'v_569d3a387c'
+export const SECOND_ACCOUNT = 'u_ceed5f2'
+export const SECOND_VISITOR = 'v_e792b1c600'
 
 /** A copy of a real parsed row by its file line. */
 export function rowAt(csv: ParsedCsv, lineNo: number): string[] {
@@ -48,7 +53,10 @@ export function sharedIdCsvs(): SeedCsvs {
   append(csvs.app_users, [SECOND_ACCOUNT, JOY, julia[2]])
   const subscribe = rowAt(csvs.web_events, 5421)
   check('web_events.csv:5421', subscribe, ['v_c9e136fd6d', '/subscribe', '2026-09-02 20:40:04', '', JOY])
-  check('web_events.csv:13 visitor', rowAt(csvs.web_events, 13).slice(0, 1), [SECOND_VISITOR])
+  const early = rowAt(csvs.web_events, 13)
+  check('web_events.csv:13', early, ['v_569d3a387c', '/', '2026-07-01 01:29:54', '', ''])
+  check('web_events.csv:5440', rowAt(csvs.web_events, 5440), [SECOND_VISITOR, '/subscribe', '2026-09-03 00:36:15', 'instagram', ''])
+  append(csvs.web_events, [SECOND_VISITOR, ...early.slice(1)])
   append(csvs.web_events, [SECOND_VISITOR, ...subscribe.slice(1)])
   return csvs
 }

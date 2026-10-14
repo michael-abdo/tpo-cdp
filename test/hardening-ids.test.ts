@@ -20,10 +20,11 @@ import { JOY, rowAt, SECOND_ACCOUNT, SECOND_VISITOR, sharedIdCsvs } from './help
 //   test/helpers/shared-ids.ts derives them.
 // - T-HARD-9 /subscribe variants: joy's /subscribe row with the page given a query built from
 //   the file's own column name and value (`?utm_source=instagram`) or a trailing slash; every
-//   /subscribe row of the real file rewritten the same way; real pages (/about, /) with an email.
+//   /subscribe row of the real file rewritten the same way; real pages (/about, /), real pages
+//   joined under /subscribe (/subscribe/about) and /subscribe with a letter removed, with an email.
 // - T-HARD-9 sources: chloe.reed603's real pair (subscribers.csv:70 and :2269, 2026-08-12,
 //   Instagram) with the source removed from one row and the signup set to 2026-07-01 or
-//   2026-07-20 (both occur in subscribers.csv), the source set to Facebook (also in the file).
+//   2026-07-20 (both occur in subscribers.csv), or the source set to Facebook (also in the file).
 
 const JOY_SUBSCRIBE_TS = csvTimestampToIso('2026-09-02 20:40:04')
 
@@ -72,7 +73,9 @@ describe('T-HARD-4 lookup returns every app account and web visitor of one profi
     const [other, own] = visitors
     expect(own.events).toHaveLength(9)
     expect(own.events.filter((e) => e.pre_signup)).toHaveLength(3)
-    expect(other.events).toHaveLength(6) // its 5 real rows + the copied /subscribe row
+    expect(other.events).toHaveLength(3) // its 1 real row + the copied '/' and /subscribe rows
+    // The earliest is neither the lowest id nor the first inserted (test/helpers/shared-ids.ts).
+    expect(SECOND_ACCOUNT > 'u_ceed5f12' && SECOND_VISITOR > 'v_c9e136fd6d').toBe(true)
     for (const v of visitors)
       for (const e of v.events) expect(e.pre_signup, `${v.visitor_id} ${e.event_ts}`).toBe(e.event_ts < JOY_SUBSCRIBE_TS!)
   })
@@ -96,13 +99,16 @@ describe('T-HARD-4 lookup returns every app account and web visitor of one profi
     for (const q of [SECOND_ACCOUNT, 'u_ceed5f12', SECOND_VISITOR, 'v_c9e136fd6d']) expect(await lookup(q), q).toEqual(byEmail)
   })
 
-  it('partial lookup lists the profile once, by email or by a user id both accounts start with', async () => {
+  it('partial lookup lists the profile once: by email with its earliest account, by a user id prefix with the lowest matching id', async () => {
     type Search = { matches: { pkey: string; email: string | null; user_id: string | null }[] }
     const pkey = await pkeyForEmail(piiKeySecret(), JOY)
     const byEmail = await get<Search>('/api/lookup/search?q=joy.hall830')
     expect(byEmail.matches).toEqual([expect.objectContaining({ pkey, email: JOY, user_id: SECOND_ACCOUNT })])
+    // Both accounts start with u_ceed5f; 04 names the lowest matching user_id for this group.
     const byUser = await get<Search>('/api/lookup/search?q=u_ceed5f')
-    expect(byUser.matches).toEqual([expect.objectContaining({ pkey, email: JOY, user_id: SECOND_ACCOUNT })])
+    expect(byUser.matches).toEqual([expect.objectContaining({ pkey, email: JOY, user_id: 'u_ceed5f12' })])
+    const bySecond = await get<Search>(`/api/lookup/search?q=${SECOND_ACCOUNT}`)
+    expect(bySecond.matches).toEqual([expect.objectContaining({ pkey, email: JOY, user_id: SECOND_ACCOUNT })])
   })
 })
 
@@ -121,9 +127,13 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
     }
   })
 
-  it('an email on any other real page still fails the seed loudly', () => {
+  it('an email on any other page still fails the seed loudly, even one that starts with /subscribe', () => {
     const subscribe = rowAt(realCsvs().web_events, 5421)
-    for (const page of ['/about', '/', '/about?utm_source=instagram'])
+    // Real pages, real pages joined under /subscribe, and /subscribe with its last letter removed:
+    // only the exact path /subscribe (query string and one trailing slash removed) links.
+    const pages = ['/about', '/', '/about?utm_source=instagram', '/subscribe/about', '/subscribe/news/ai-regulation-bill']
+    pages.push('/subscribe/about?utm_source=instagram', '/subscrib', '/subscrib?utm_source=instagram', '/subscrib/')
+    for (const page of pages)
       expect(() => visitorOf([[subscribe[0], page, ...subscribe.slice(2)]]), page).toThrow('only /subscribe rows link')
   })
 
@@ -172,6 +182,13 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
           merged_count: 3,
         })
       }
+    })
+
+    it('on a signup tie the earlier-seen non-blank row wins, in either order', () => {
+      // The real pair shares 2026-08-12; line 70 given Facebook (in the file) instead of Instagram.
+      const facebook70 = [real70[0], real70[1], real70[2], 'Facebook', real70[4]]
+      expect(merged([facebook70, real2269])?.source).toBe('facebook')
+      expect(merged([real2269, facebook70])?.source).toBe('instagram')
     })
 
     it('blank only when every row is blank', () => {

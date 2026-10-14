@@ -80,20 +80,20 @@ describe('T-HARD-4 the Look up page shows every app account and web visitor (09 
   it('starts from two of each, earliest first', () => {
     expect(data.app!.accounts.map((a) => a.user_id)).toEqual([SECOND_ACCOUNT, 'u_ceed5f12'])
     expect(data.web!.visitors.map((v) => [v.visitor_id, v.events.length])).toEqual([
-      [SECOND_VISITOR, 6],
+      [SECOND_VISITOR, 3],
       ['v_c9e136fd6d', 9],
     ])
   })
 
   it('level 1 counts across both and says how many', () => {
     const html = rendered(data)
-    expect(html).toContain('15 visits from 2 browsers')
+    expect(html).toContain('12 visits from 2 browsers')
     expect(html).toContain('2 app accounts, the first joined Aug 22, 2026, before signing up')
   })
 
   it('Details and Technical details list each one under its own heading, with its own ids', () => {
     const html = rendered(data)
-    for (const part of ['Browser 1 of 2 · 6 visits', 'Browser 2 of 2 · 9 visits', 'App account 1 of 2', 'App account 2 of 2'])
+    for (const part of ['Browser 1 of 2 · 3 visits', 'Browser 2 of 2 · 9 visits', 'App account 1 of 2', 'App account 2 of 2'])
       expect(html).toContain(part)
     expect(html).toContain('App account 2 of 2 · joined Sep 3, 2026')
     for (const id of [`>${SECOND_ACCOUNT}<`, '>u_ceed5f12<', `>${SECOND_VISITOR}<`, '>v_c9e136fd6d<']) expect(html).toContain(id)

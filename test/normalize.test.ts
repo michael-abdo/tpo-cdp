@@ -187,7 +187,7 @@ describe('T-HARD-8 one email fold (09 D-70 item 8)', () => {
     // 2,995 − 8 blank subscriber rows, 930 app accounts, the 1,400 visitors' /subscribe emails and more.
     expect(spellings.length).toBeGreaterThan(5000)
     // Raw spellings with case or whitespace are among them, so the fold is exercised, not just identity.
-    expect(spellings.some((e) => e !== e.trim().toLowerCase())).toBe(true)
+    expect(spellings.some((e) => normalizeEmail(e) !== e)).toBe(true)
     for (const raw of spellings) {
       const email = normalizeEmail(raw)
       if (email !== null) expect(normalizeQueryFragment(raw), raw).toBe(email)
