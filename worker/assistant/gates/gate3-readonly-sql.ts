@@ -26,8 +26,10 @@
 // through those same handlers (board.ts → tool-executor.ts → builtin-handlers.ts). Fixed-SQL
 // builtins (segment, aggregate, describe_schema) never call this function and are unaffected:
 //   1. `checkPlan`: EXPLAIN QUERY PLAN on the already Gate-2/Gate-3-checked SQL, refused (nothing
-//      else runs) when it shows a cartesian/unindexed nested scan — see `isTopLevelFullScan`'s
-//      doc comment for the rule and how it was checked against every legitimate query.
+//      else runs) when it shows a cartesian/unindexed nested scan, at any nesting level; an
+//      EXPLAIN that itself fails is logged (`plan_check_unavailable`), never swallowed silently,
+//      and lets the real run report its own failure normally — see `cartesianScans`' doc comment
+//      for the scan rule and how it was checked against every legitimate query.
 //   2. a time limit (SQL_TIME_LIMIT_MS): the real run races a timer. D1 has no server-side
 //      statement timeout, so losing the race only stops this Worker's wait for the query — D1
 //      keeps running it to its own limits in the background (README "Known gaps").
@@ -135,8 +137,8 @@ export class SqlTooHeavyError extends Error {
   }
 }
 
-/** Internal: the timer side of the race in runReadOnlySelect; never escapes this module. */
-class SqlTimeoutError extends Error {}
+/** The timer side of the race in runReadOnlySelect; exported only so a test can race it directly against a real pending promise (09 D-81 #2), never thrown past raceTimeout itself. */
+export class SqlTimeoutError extends Error {}
 
 const PUNCT = new Set(['(', ')', ',', '.', ';', '+', '-', '*', '/', '%', '<', '>', '=', '!', '|', '&', '~'])
 const WORD = /[A-Za-z_][A-Za-z0-9_$]*/y
@@ -311,47 +313,107 @@ export interface ReadOnlyResult {
   rows: SqlCell[][]
 }
 
-/** One row of `EXPLAIN QUERY PLAN`'s result (SQLite's own shape; `id` is unused here). */
+/** One row of `EXPLAIN QUERY PLAN`'s result (SQLite's own shape; `id` is the row's own plan-node id). */
 interface PlanRow {
+  id: number
   parent: number
   detail: string
 }
 
+/** `SCAN CONSTANT ROW` never reads a real relation (a UNION branch's literal row, 09 D-81 #1). */
+const SCAN_CONSTANT_ROW = 'SCAN CONSTANT ROW'
+
+/** True for a plan row that scans a real relation: `SCAN …` but not the constant-row placeholder. */
+function isRealScan(row: PlanRow): boolean {
+  return /^SCAN\b/.test(row.detail) && row.detail !== SCAN_CONSTANT_ROW
+}
+
 /**
- * True for a plan row that is a full, unindexed scan of a real relation at the outer query's own
- * level (09 D-81 #1). `parent = 0` is EXPLAIN QUERY PLAN's own marker for "belongs to the outer
- * SELECT, not inside a nested thing": a view's internal joins (every v_* view here is a JOIN of
- * several tables) run under their own MATERIALIZE/CO-ROUTINE node, and so does every branch of a
- * UNION/INTERSECT/EXCEPT and every IN/EXISTS subquery — none of those ever carries `parent = 0`.
- * `SCAN` (as opposed to `SEARCH … (col=?)`) means SQLite visits every row of that relation with no
- * key from elsewhere narrowing it: the normal, single way a nested-loop join starts (one driving
- * SCAN, then every other relation reached by an indexed SEARCH on the join's own column) stays
- * at exactly one top-level SCAN; a second one means a second relation is driven independently,
- * with nothing searching it by a key the first relation supplies — a comma join or `JOIN … ON 1 =
- * 1` of two views, the cartesian the self-audit found, and the only way this codebase's own
- * query_sql/query-row SQL ever produces two.
- *
- * Checked live against the real seed (D1 EXPLAIN QUERY PLAN, 2026-10-14): every legitimate
- * query_sql/query-row SQL this repo runs (the brief's query row, every T-AI-2/"query_sql through
- * Gates 2 and 3" probe in test/gate2.test.ts including the real `v_profiles JOIN v_web_events ON
- * w.pkey = p.pkey`, every grammar-pin SQL test/insights-board.test.ts runs, a UNION of two
- * single-view counts, and a `pkey IN (SELECT … FROM v_web_events …)` subquery) shows at most one;
- * both `v_profiles p, v_web_events w` (comma join) and `v_profiles p JOIN v_web_events w ON 1 =
- * 1` show two, and ran a 151M-row, 23-second aggregate scan on this same small seed before Gate
- * 3's forced LIMIT could help (count(*) cannot short-circuit on a LIMIT) — the exact risk D-81
- * exists for.
+ * True when `row`'s own plan scope — walking its `parent` chain up through EXPLAIN QUERY PLAN's
+ * own tree — sits inside a `CORRELATED …` node (09 D-81 #1, the self-audit's case A: a scalar
+ * subquery run once per outer row). `seen` guards a cycle EXPLAIN never actually produces; it
+ * only keeps this loop from looping forever if one somehow did.
  */
-function isTopLevelFullScan(row: PlanRow): boolean {
-  return row.parent === 0 && /^SCAN\b/.test(row.detail)
+function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>): boolean {
+  const seen = new Set<number>()
+  let parentId = row.parent
+  while (parentId !== 0 && !seen.has(parentId)) {
+    seen.add(parentId)
+    const parent = byId.get(parentId)
+    if (parent === undefined) return false
+    if (/^CORRELATED\b/.test(parent.detail)) return true
+    parentId = parent.parent
+  }
+  return false
+}
+
+/**
+ * The plan rows that make this SQL a cartesian/unindexed-nested-scan refusal (09 D-81 #1), or an
+ * empty array when none do. Two shapes, both found live against the real seed (D1 EXPLAIN QUERY
+ * PLAN, 2026-10-14) and both missed by an earlier version of this function that only ever looked
+ * at `parent = 0` (the self-audit's finding: every v_* view here is NOT flattened to its base
+ * tables at the outer query's own level — `v_profiles` alone plans as two MATERIALIZE/CO-ROUTINE
+ * subtrees plus several SEARCHes, all legitimately at `parent = 0`, so "more than one SCAN at
+ * parent = 0" was both too strict in spirit and, for a cartesian moved one level down, not strict
+ * enough):
+ *   1. Two or more full scans of a real relation (`isRealScan`) sharing one immediate parent
+ *      scope — a comma join or `JOIN … ON 1 = 1` of two views, wherever it sits: at the outer
+ *      query's own level, inside a UNION branch, inside a `FROM (SELECT …)`, inside `IN (SELECT
+ *      …)`, or inside a scalar `(SELECT …)`. A normal nested-loop join (one driving SCAN, every
+ *      other relation reached by an indexed SEARCH on the join's own column) only ever puts one
+ *      SCAN in any one scope; a second one there means a second relation is driven independently
+ *      with nothing searching it by a key the first supplies.
+ *   2. A full scan of a real relation whose enclosing scope is a `CORRELATED …` subquery: run
+ *      once per outer row, the same cost as a cartesian even though it is only ever one SCAN in
+ *      its own scope.
+ * Checked live against every legitimate query_sql/query-row SQL this repo runs (the brief's query
+ * row, every grammar-pin SQL test/insights-board.test.ts runs, every T-AI-2/"query_sql through
+ * Gates 2 and 3" probe in test/gate2.test.ts including the real `v_profiles JOIN v_web_events ON
+ * w.pkey = p.pkey`, a UNION of two single-view counts, a `pkey IN (SELECT … FROM v_app_events)`
+ * subquery, a `FROM (SELECT … FROM v_funnel)` subquery, the row_number() grammar-pin SQL, and
+ * `v_source_app_conversion`'s own CORRELATED SCALAR SUBQUERY, which reaches its relation by an
+ * indexed SEARCH, never a SCAN): none is refused. A comma/`ON 1 = 1` cartesian of two views is
+ * refused the same way wherever it is nested (a UNION branch, a FROM/IN/scalar subquery), and a
+ * correlated scalar subquery that scans its relation (`SELECT p.pkey, (SELECT count(*) FROM
+ * v_web_events w WHERE w.utm_source = p.source) FROM v_profiles p`, which read 1,096,962 rows
+ * before the self-audit's forced-run measurement) is refused by rule 2.
+ *
+ * Known, accepted gaps this still misses (README "Known gaps"): a low-cardinality equi-join
+ * SQLite answers with `SEARCH … USING AUTOMATIC COVERING INDEX` instead of a second SCAN, and a
+ * join on a range condition (`ON w.pkey > p.pkey`) that SQLite answers with an indexed `SEARCH
+ * (pkey<?)` on one side — both real scans in neither case, so neither shape trips this check,
+ * and both are still capped only by the after-the-fact row-scan cap (#3). This also refuses one
+ * legitimate pattern no query here uses: a share-of-total comma join against a scalar subquery
+ * total (`FROM v_profiles p, (SELECT count(*) FROM v_profiles) t`), which plans as two top-level
+ * SCANs; it is over-refusal, not a parity break, since nothing seeded or tested writes that shape.
+ */
+function cartesianScans(rows: readonly PlanRow[]): PlanRow[] {
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  const scans = rows.filter(isRealScan)
+  const byParent = new Map<number, PlanRow[]>()
+  for (const scan of scans) byParent.set(scan.parent, [...(byParent.get(scan.parent) ?? []), scan])
+  const flagged = new Set<PlanRow>()
+  for (const group of byParent.values()) if (group.length > 1) for (const scan of group) flagged.add(scan)
+  for (const scan of scans) if (hasCorrelatedAncestor(scan, byId)) flagged.add(scan)
+  return [...flagged]
+}
+
+/** `plan_check_unavailable` (09 D-81 #1; CLAUDE.md "no empty catch {}"): logged, never swallowed. */
+function logPlanCheckUnavailable(sql: string, err: unknown): void {
+  console.error(JSON.stringify({ at: 'gate3-readonly-sql', outcome: 'plan_check_unavailable', reason: sanitizeSqlError(err), sql }))
 }
 
 /**
  * EXPLAIN QUERY PLAN on the checked SQL (09 D-81 #1); throws GateDenied('gate3') before the real
- * query runs when it shows more than one top-level full scan (isTopLevelFullScan). A plan EXPLAIN
- * itself cannot produce (a genuine syntax or semantic error the lexer's own checks did not catch)
- * is not this function's problem: it returns normally and the real run below reports the same
- * failure it always has, sanitized, as SqlRunError — this function only ever adds a refusal, never
- * swallows one.
+ * query runs when `cartesianScans` flags any plan row. When EXPLAIN itself throws, this never
+ * swallows it silently (CLAUDE.md "no empty catch {}"): the structured reason is logged
+ * (`plan_check_unavailable`) first. It then lets the real run below happen rather than deny the
+ * call, because EXPLAIN QUERY PLAN fails on exactly the SQL shapes the real run would also fail
+ * on (a genuine syntax/semantic error the lexer's own checks did not catch, e.g. `GROUP BY` with
+ * nothing after it) — denying here would turn that failure from the database's own sanitized
+ * SqlRunError/`query_failed` (what the model needs to fix its SQL) into an opaque `gate3_denied`.
+ * The log line is this function's signal that the plan check did not run for a call that still
+ * ran (or still failed) the ordinary way; it is not itself a refusal.
  */
 async function checkPlan(db: D1Database, sql: string, params: readonly SqlValue[]): Promise<void> {
   let rows: PlanRow[]
@@ -361,17 +423,18 @@ async function checkPlan(db: D1Database, sql: string, params: readonly SqlValue[
       .bind(...params)
       .all<PlanRow>()
     rows = result.results
-  } catch {
+  } catch (err) {
+    logPlanCheckUnavailable(sql, err)
     return
   }
-  const scans = rows.filter(isTopLevelFullScan)
-  if (scans.length > 1) {
+  const scans = cartesianScans(rows)
+  if (scans.length > 0) {
     throw new GateDenied(
       'gate3',
       [
-        `the query plan shows ${scans.length} unindexed table scans with nothing joining them (a cartesian/cross join): ${scans
+        `the query plan shows ${scans.length} unindexed table scans with nothing indexed joining them (a cartesian/cross join, or a correlated subquery scanning once per outer row): ${scans
           .map((s) => s.detail)
-          .join('; ')}; add a join condition an index can use, or narrow the WHERE clause`,
+          .join('; ')}; add a join condition or a correlated lookup an index can use, or narrow the WHERE clause`,
       ],
       sql,
     )
@@ -380,13 +443,16 @@ async function checkPlan(db: D1Database, sql: string, params: readonly SqlValue[
 
 /**
  * Rejects `promise` with SqlTimeoutError after `ms` if it has not settled by then. `ms <= 0`
- * rejects immediately with no timer at all (there is nothing to wait for): the one way a test can
- * inject a timeout that reliably beats a real query without mocking D1, since a local D1 call
- * can resolve inside the same tick a `setTimeout(fn, 0)` is still queued behind. `promise` itself
- * is never cancelled either way (D1 has no cancel; it keeps running in the background, README
- * "Known gaps").
+ * rejects immediately with no timer at all (there is nothing to wait for): one way a test can
+ * inject a timeout that reliably beats a real query without mocking D1; the other, for exercising
+ * the real `ms > 0` timer path (09 D-81 #2), is racing this function directly against a promise
+ * that is genuinely still pending (test/sql-limits.test.ts). `promise` itself is never cancelled
+ * either way (D1 has no cancel; it keeps running in the background, README "Known gaps") — and,
+ * measured live in workerd against this seed's local D1, a long real query blocks the isolate so
+ * completely that the timer below has never been seen to win against one (README "Known gaps");
+ * it is exercised here only against an ordinary pending promise, not a real heavy D1 call.
  */
-async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   if (ms <= 0) throw new SqlTimeoutError()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<never>((_, reject) => {
