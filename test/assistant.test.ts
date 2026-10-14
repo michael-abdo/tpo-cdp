@@ -970,7 +970,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
       outputs: [seg],
       capped: false,
     })
-    expect(segment.result).toMatchObject({ type: 'segment', text: '177 readers match.', partial: false, segment: { count: 177 } })
+    expect(segment.result).toMatchObject({ type: 'segment', text: '177 subscribers match.', partial: false, segment: { count: 177 } })
     expect(segment.result.table?.rows).toEqual(seg.rows)
     const table = respond({ modelText: finalText('', { type: 'table', text: sql, window: null, filters_applied: {}, definitions_used: [] }), outputs: [seg], capped: false })
     expect(table.result).toMatchObject({ type: 'table', text: 'Here is the table you asked for.', partial: false })
@@ -981,7 +981,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     const capped = respond({ modelText: sql, outputs: [seg], capped: true })
     expect(capped.result.text).toBe(`${ANSWER_SENTENCE} The assistant reached its limit of 5 tool rounds before it finished, so this answer is incomplete.`)
     expect(capped.notes.sqlDiscarded).toBe('select_from')
-    expect(discardSentence('segment', 1)).toBe('1 reader matches.')
+    expect(discardSentence('segment', 1)).toBe('1 subscriber matches.')
     expect(() => discardSentence('segment', null)).toThrow(/has a count/)
   })
 
@@ -1010,7 +1010,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     const res = await ask(appWith(transport), cookie, "Instagram subscribers who haven't opened in 30 days")
     expect(res.status).toBe(200)
     const body = await res.json<{ text: string; type: string; partial: boolean; segment: { count: number }; audit_id: string }>()
-    expect(body).toMatchObject({ type: 'segment', text: '177 readers match.', partial: false, segment: { count: 177 } })
+    expect(body).toMatchObject({ type: 'segment', text: '177 subscribers match.', partial: false, segment: { count: 177 } })
     const rows = await auditRows('trace_id', body.audit_id)
     expect(rows.map((r) => `${r.kind}/${r.status}/${r.tool_name}`)).toEqual([
       'model_request/success/null',

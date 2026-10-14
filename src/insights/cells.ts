@@ -22,7 +22,7 @@ export function cellText(column: string, value: AssistantCell): string {
   if (value === null) {
     if (column === 'last_open_date') return 'Never opened'
     if (column === 'source') return 'Unknown'
-    if (column === 'utm_source' || column === 'first_utm_source') return 'No campaign source'
+    if (column === 'utm_source' || column === 'first_utm_source') return 'No UTM source'
     if (column === 'first_page') return 'No tracked visit'
     if (isRateColumn(column)) return 'No data'
     return 'None'

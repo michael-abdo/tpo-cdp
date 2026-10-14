@@ -3,8 +3,8 @@
 // newsletter signup (02 §Linking 6, 09 D-15). An app created before signup, or on the signup day,
 // is not a conversion: the rule is `app_after_signup` (02 §Derived), stored in v_profiles, the
 // same column the assistant's `source_to_app` metric sums, so "Explain this" reproduces these
-// numbers. Every status is counted: the panel describes the whole list, so each `explain`
-// question asks the assistant to include unsubscribed readers (its default is active only,
+// numbers. Every status is counted: the panel describes every subscriber, so each `explain`
+// question asks the assistant to include unsubscribed ones (its default is active only,
 // 02 §Defaults). Live query on every request; nothing is cached (03 §No-restart).
 
 import type { DefinitionKey } from '../../shared/derive'
@@ -49,14 +49,14 @@ const TOTAL_SQL = `SELECT ${COUNTS_SQL}`
 const BY_SOURCE_SQL = `SELECT source, ${COUNTS_SQL} GROUP BY source ORDER BY rate DESC, subscribers DESC, source`
 
 const QUESTION = (who: string) =>
-  `Of ${who}, including unsubscribed readers, how many created an app account after the day they signed up for the newsletter, and what share is that?`
+  `Of ${who}, including unsubscribed ones, how many created an app account after the day they signed up for the newsletter, and what share is that?`
 
 /** The question behind the panel's total. */
 export const SOURCE_APP_TOTAL_EXPLAIN = QUESTION('all subscribers')
 
 /** The question behind one source's row. */
 export function sourceAppExplain(source: string | null): string {
-  return QUESTION(source === null ? 'subscribers with no signup source recorded' : `subscribers whose signup source is "${source}"`)
+  return QUESTION(source === null ? 'subscribers with no acquisition source recorded' : `subscribers whose acquisition source is "${source}"`)
 }
 
 export async function sourceAppConversion(db: D1Database): Promise<SourceAppConversion> {

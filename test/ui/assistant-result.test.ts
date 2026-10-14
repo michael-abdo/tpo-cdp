@@ -52,7 +52,7 @@ function render(data: AssistantResponse): { html: string; text: string } {
 describe("/insights' answer card renders the model's filters_applied only through the D-58 screen", () => {
   it('clean filters show in words under "How this answer was worked out" and as raw JSON in Technical details', () => {
     const { text } = render(answer(REAL))
-    expect(text).toContain('Signed up from')
+    expect(text).toContain('Acquisition source')
     expect(text).toContain('Instagram')
     expect(text).toContain(JSON.stringify(REAL))
     expect(text).not.toContain(FILTERS_HIDDEN_MESSAGE)
@@ -74,7 +74,7 @@ describe("/insights' answer card renders the model's filters_applied only throug
       }
       expect(text, name).not.toMatch(/\bselect\b/i)
       // Hidden whole: not even the clean filters beside the SQL are shown.
-      expect(text, name).not.toContain('Signed up from')
+      expect(text, name).not.toContain('Acquisition source')
       expect(text, name).not.toContain('"window_from"')
       expect(text, name).toContain(FILTERS_HIDDEN_MESSAGE)
       // The rest of the answer still shows.
@@ -85,7 +85,7 @@ describe("/insights' answer card renders the model's filters_applied only throug
   it('the known false positive (README Known gaps): the word select before the window_* keys hides the block', () => {
     const { text } = render(answer({ note: 'select readers', ...REAL }))
     expect(text).toContain(FILTERS_HIDDEN_MESSAGE)
-    expect(text).not.toContain('Signed up from')
+    expect(text).not.toContain('Acquisition source')
   })
 
   it('hidden filters with no time period and no definitions still give the sentence, not "names no … filters"', () => {

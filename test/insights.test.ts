@@ -187,7 +187,7 @@ describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
     explains.forEach(expectAskable)
     expect(new Set(explains).size).toBe(explains.length)
     for (const row of body.by_source) {
-      expect(row.explain).toContain(row.source === null ? 'no signup source recorded' : `"${row.source}"`)
+      expect(row.explain).toContain(row.source === null ? 'no acquisition source recorded' : `"${row.source}"`)
     }
     // The panel counts every status, so the question must ask the assistant to as well (02 §Defaults).
     for (const e of explains) expect(e).toContain('including unsubscribed')
@@ -343,7 +343,7 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
       expect(e).not.toContain('going_cold_risk')
     }
     for (const row of body.by_source) {
-      expect(row.explain).toContain(row.source === null ? 'no signup source recorded' : `"${row.source}"`)
+      expect(row.explain).toContain(row.source === null ? 'no acquisition source recorded' : `"${row.source}"`)
     }
     expect(body.hidden_unsubscribed.explain).toContain('unsubscribed')
   })

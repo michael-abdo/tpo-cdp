@@ -87,8 +87,8 @@ function resultLook(t: AuditTraceSummary) {
 
 /** Plain words for the seeded tools (scripts/tool-seeds.ts); any other tool is named in Technical details. */
 const TOOL_LABEL: Record<string, string> = {
-  segment: 'Built a list of readers',
-  aggregate: 'Counted readers',
+  segment: 'Built a segment',
+  aggregate: 'Counted subscribers, visits or events',
   query_sql: 'Ran a read-only query on the data',
   insight_panel: 'Re-ran a built-in board tile',
 }

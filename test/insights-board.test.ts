@@ -489,6 +489,26 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     }
     // 06 §UI principles 4: "Explain this" fills the Ask bar at level 1, so no code name such as going_cold_risk.
     for (const tile of tiles) expect(tile.explain, tile.id).not.toMatch(/[a-z]+_[a-z_]+/)
+    // 09 D-66, 06 §Vocabulary: the brief's words in every question the board hands to Ask — each
+    // tile's, and every per-row question of the four panels (going-cold's names its definition key).
+    // (A pinned tile's question is the teammate's own words, so only the built-in tiles are ours.)
+    const retired = /\breaders?\b|\bapp users?\b|\bnewsletter list\b/i
+    for (const tile of tiles.filter((t) => t.built_in)) expect(tile.explain, tile.id).not.toMatch(retired)
+    const questions: string[] = []
+    const collect = (value: unknown): void => {
+      if (Array.isArray(value)) value.forEach(collect)
+      else if (typeof value === 'object' && value !== null)
+        for (const [key, inner] of Object.entries(value)) {
+          if (key === 'explain' && typeof inner === 'string') questions.push(inner)
+          else collect(inner)
+        }
+    }
+    for (const panel of INSIGHT_PANELS) {
+      const res = await SELF.fetch(`http://cdp.test/api/insights/${panel}`, { headers: { cookie } })
+      collect(await res.json())
+    }
+    expect(questions.length).toBeGreaterThan(15)
+    for (const question of questions) expect(question).not.toMatch(retired)
   })
 
   it('a lookup that sets its own dates (a query row) has no window; the answer and the tile name the same dates', async () => {

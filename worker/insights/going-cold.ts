@@ -66,7 +66,7 @@ export const GOING_COLD_HIDDEN_EXPLAIN = `How many subscribers who unsubscribed 
 /** The question behind one source's row. */
 export function goingColdExplain(source: string | null): string {
   return QUESTION(
-    source === null ? 'active subscribers with no signup source recorded' : `active subscribers whose signup source is "${source}"`,
+    source === null ? 'active subscribers with no acquisition source recorded' : `active subscribers whose acquisition source is "${source}"`,
   )
 }
 

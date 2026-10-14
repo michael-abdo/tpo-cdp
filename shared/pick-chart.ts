@@ -6,7 +6,7 @@
  *
  * The rules, first match wins:
  *   1. an override (the tile's `chart` column, 01 §insights) wins
- *   2. a segment result (`segment` present)                      → segment (count + "Open list")
+ *   2. a segment result (`segment` present)                      → segment (count + "Open segment")
  *   3. no rows or no columns                                     → table (its empty state)
  *   4. one row, one column, and that cell is a number            → number (one big number)
  *   5. first column is time, every other column is a number      → line

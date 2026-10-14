@@ -1,6 +1,7 @@
 // Plain words for stored values, column names and filter keys (06 §UI principles 4). Display maps
 // only: the values sent to the API and the raw names shown in Technical details stay as they are.
-// /segments and /insights read the same maps, so a reader's fields carry the same words on each.
+// /segments and /insights read the same maps, so a subscriber's fields carry the same words on each.
+// Field words are the brief's own (06 §Vocabulary, 09 D-66): Signup date, Acquisition source, Last open date, UTM source.
 
 import type { DefinitionKey } from '../shared/derive'
 import type { DataQualityCheckKey } from './types'
@@ -27,20 +28,20 @@ export const statusLabel = (s: string) => STATUS_LABEL[s] ?? s
  */
 export const COLUMN_LABEL = {
   email: 'Email',
-  pkey: 'Reader key',
+  pkey: 'Profile key',
   status: 'Status',
-  source: 'Signed up from',
-  signup_date: 'Signed up',
-  last_open_date: 'Last opened',
+  source: 'Acquisition source',
+  signup_date: 'Signup date',
+  last_open_date: 'Last open date',
   engagement_score: 'Engagement',
   has_app: 'Uses the app',
   signup_month: 'Signup month',
   cold_month: 'Month they went cold',
   first_page: 'First page visited',
-  utm_source: 'Campaign source',
+  utm_source: 'UTM source',
   event: 'App event',
   subscribers: 'Subscribers',
-  cold: 'Cold readers',
+  cold: 'Cold subscribers',
   went_cold: 'Went cold',
   with_app_after_signup: 'Got the app after signing up',
   rate: 'Rate',
@@ -58,8 +59,8 @@ export const COLUMN_LABEL = {
 
 /** The data-quality checks (worker/insights/data-quality.ts DATA_QUALITY_CHECKS) in words; the "Gaps in the data" tile's rows. */
 export const CHECK_LABEL: Record<DataQualityCheckKey, string> = {
-  subscribers_without_source: 'Subscribers with no signup source',
-  subscribers_unexpected_source: 'Subscribers with a signup source we don’t recognise',
+  subscribers_without_source: 'Subscribers with no acquisition source',
+  subscribers_unexpected_source: 'Subscribers with an acquisition source we don’t recognise',
   page_views_without_utm: 'Site visits with no UTM source',
   page_views_unexpected_utm: 'Site visits with a UTM source we don’t recognise',
   app_users_not_on_list: 'App accounts whose email is not a subscriber',
@@ -70,7 +71,7 @@ export const checkLabel = (key: string) => (CHECK_LABEL as Record<string, string
 /** Segment filter keys (FILTER_KEYS) and the aggregate inputs a model may echo in filters_applied. */
 export const FILTER_LABEL: Readonly<Record<string, string>> = {
   status: 'Status',
-  source: 'Signed up from',
+  source: 'Acquisition source',
   days_since_open_gte: "Haven't opened an email in at least",
   include_never_opened: 'Also includes people who never opened',
   has_app: 'Uses the app',

@@ -116,7 +116,7 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
     const { html } = chart('bar', BAR)
     expect(html).toMatch(/<div aria-hidden="true">[\s\S]*<svg/)
     const table = tableText(html)
-    expect(table).toContain('Campaign source')
+    expect(table).toContain('UTM source')
     for (const [utm, n] of UTM) {
       expect(table).toContain(utm === 'twitter' ? 'twitter' : utm.charAt(0).toUpperCase() + utm.slice(1))
       expect(table).toContain(n.toLocaleString('en-US'))
@@ -136,7 +136,7 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
   it('table: the rows are the text, with plain column names', () => {
     const { text } = chart('table', TABLE)
     expect(text).toContain('Instagram')
-    expect(text).toContain('Signed up')
+    expect(text).toContain('Signup date')
     expect(text).toContain('Sep 2, 2026')
   })
 
@@ -144,7 +144,7 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
     const { html, text } = chart('segment', { columns: [], rows: [] }, PRESET)
     expect(text).toContain('177 subscribers match')
     // The filters in the words of src/filters-applied.ts (one home); has_app null ("any") is not listed.
-    expect(text).toContain("Status: Active · Signed up from: Instagram · Haven't opened an email in at least: 30 days · Also includes people who never opened: Yes")
+    expect(text).toContain("Status: Active · Acquisition source: Instagram · Haven't opened an email in at least: 30 days · Also includes people who never opened: Yes")
     expect(text).not.toContain('Uses the app')
     expect(text).toContain('Open segment')
     expect(text).not.toMatch(/reader|Open list/i)
