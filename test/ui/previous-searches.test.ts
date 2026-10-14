@@ -141,6 +141,22 @@ describe('T-SEG-4 Previous searches', () => {
     expect(visibleSearches(readSearches()).map((r) => r.example)).toEqual([true])
   })
 
+  it('drops a stored item whose integer-typed key holds a non-integer number (M31: Number.isInteger, not typeof value === "number")', () => {
+    const store = new MemoryStore()
+    store.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        v: 1,
+        items: [
+          { filters: { ...ACTIVE, days_since_open_gte: 2.5 } },
+          { filters: { ...ACTIVE, engagement_gte: 50.5 } },
+          { filters: SEARCHES[3] },
+        ],
+      }),
+    )
+    expect(readSearches(store)).toEqual([SEARCHES[3]])
+  })
+
   it('drops bad JSON, another version, an unknown key, a wrong type or a missing echoed key, and the next write replaces them', () => {
     const store = new MemoryStore()
     for (const raw of ['{', '"x"', JSON.stringify({ v: 2, items: [{ filters: SEARCHES[0] }] }), JSON.stringify({ v: 1 })]) {
