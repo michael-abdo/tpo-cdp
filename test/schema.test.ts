@@ -200,8 +200,9 @@ describe('migration 0010 drops assistant_tools.requested_from_trace', () => {
 // 0011_drop_pending_approval_rows.sql (09 D-77 cleanup: the queue left behind any row it had
 // already flagged). 0001..0011 have already applied by the time this file's tests run (an empty
 // table has nothing to delete), so this seeds the exact row shape 0009's removed requestApproval()
-// used to write (disabled 'query', name 'pending_<uuid>'), plus an approved look-alike, then
-// re-runs 0011's own statement text to prove it deletes the one and keeps the other.
+// used to write (disabled 'query', name 'pending_<uuid>'), plus three look-alikes that each miss
+// one half of the real shape, then re-runs 0011's own statement text to prove it deletes only the
+// real shape.
 describe('migration 0011 drops leftover pending_ approval-queue rows', () => {
   async function insertAssistantTool(id: string, name: string, enabled: 0 | 1): Promise<void> {
     await env.DB.prepare(
@@ -212,9 +213,17 @@ describe('migration 0011 drops leftover pending_ approval-queue rows', () => {
       .run()
   }
 
-  it('deletes a disabled pending_ row and keeps an enabled approved row', async () => {
+  it('deletes only a disabled pending_ row, keeping every row missing either half of that shape', async () => {
+    // The real shape requestApproval() wrote: disabled, name "pending_<uuid>".
     await insertAssistantTool('t-pending', 'pending_0123456789abcdef0123456789abcdef', 0)
+    // An approved row: enabled, renamed away from "pending_" by the approver (real shape, kept).
     await insertAssistantTool('t-approved', 'growth_signup_source_mix', 1)
+    // Disabled but not "pending_"-named (an ordinary disabled Growth row) -- misses the name half;
+    // kept only if the migration's `name LIKE 'pending\_%'` clause is still there.
+    await insertAssistantTool('t-other-disabled', 'manual_disabled_row', 0)
+    // "pending_"-named but enabled -- cannot happen for real (approving always renames), but it is
+    // the only way to prove the migration's `enabled = 0` clause is load-bearing, not redundant.
+    await insertAssistantTool('t-enabled-pending', 'pending_fedcba9876543210fedcba9876543210', 1)
 
     const migration0011Files = import.meta.glob<string>('../migrations/0011_drop_pending_approval_rows.sql', {
       query: '?raw',
@@ -231,7 +240,7 @@ describe('migration 0011 drops leftover pending_ approval-queue rows', () => {
     }
 
     const { results } = await env.DB.prepare('SELECT id FROM assistant_tools ORDER BY id').all<{ id: string }>()
-    expect(results.map((row) => row.id)).toEqual(['t-approved'])
+    expect(results.map((row) => row.id)).toEqual(['t-approved', 't-enabled-pending', 't-other-disabled'])
   })
 })
 
