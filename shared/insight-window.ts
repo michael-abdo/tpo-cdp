@@ -4,14 +4,14 @@
  * every run, or a fixed pair of dates. `today` is always `TODAY` from shared/config.ts in the
  * Worker (02 §Time); it is a parameter so the functions stay pure and the UI can label a preset.
  *
- * The presets reuse 02 §Derived, never a second formula:
- *   - last_month    "last month" = the previous calendar month relative to today (09 D-10)
- *   - last_30_days  "last N days" with N = 30 = today − 30 .. today (the same window as
- *                   `lastNDays(30)` and `new_subscriber`; T-INS-5 pins the equality)
- *   - this_month    the first day of today's month .. today
+ * The presets call 02 §Derived in shared/derive.ts, never a second formula:
+ *   - last_month    lastMonth(today): the previous calendar month (09 D-10)
+ *   - last_30_days  lastNDays(30, today): today − 30 .. today, the `new_subscriber` window
+ *   - this_month    the first day of today's month .. today (no 02 §Derived row)
+ * T-INS-5 checks both reused presets against derive.ts on several days, month ends included.
  * All ends are inclusive `YYYY-MM-DD` calendar dates.
  */
-import { addDays } from './derive'
+import { lastMonth, lastNDays } from './derive'
 
 export const ROLLING_PRESETS = ['last_month', 'last_30_days', 'this_month'] as const
 export type RollingPreset = (typeof ROLLING_PRESETS)[number]
@@ -46,10 +46,9 @@ function presetDates(preset: RollingPreset, today: string): { from: string; to: 
   const m = Number(today.slice(5, 7)) - 1
   switch (preset) {
     case 'last_month':
-      // Day 0 of this month is the last day of the previous one.
-      return { from: utcDate(y, m - 1, 1), to: utcDate(y, m, 0) }
+      return lastMonth(today)
     case 'last_30_days':
-      return { from: addDays(today, -30), to: today }
+      return lastNDays(30, today)
     case 'this_month':
       return { from: utcDate(y, m, 1), to: today }
   }

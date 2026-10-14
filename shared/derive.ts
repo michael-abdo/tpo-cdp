@@ -53,18 +53,24 @@ export interface DateWindow {
   to: string
 }
 
-/** `TODAY − N .. TODAY` (02 §Derived "last N days"). */
-export function lastNDays(n: number): DateWindow {
+/**
+ * `TODAY − N .. TODAY` (02 §Derived "last N days"). `today` defaults to TODAY; the Insights board
+ * passes it so a pinned tile's rolling window uses this same formula (shared/insight-window.ts).
+ */
+export function lastNDays(n: number, today: string = TODAY): DateWindow {
   if (!Number.isInteger(n) || n < 0)
     throw new Error(`derive: lastNDays needs a non-negative integer, got ${n}`)
-  return { from: addDays(TODAY, -n), to: TODAY }
+  return { from: addDays(today, -n), to: today }
 }
 
-/** The previous calendar month relative to TODAY: `{ from: '2026-08-01', to: '2026-08-31' }` (09 D-10). */
-export function lastMonth(): DateWindow {
-  const today = new Date(dayMs(TODAY))
-  const from = Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)
-  const to = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0)
+/**
+ * The previous calendar month relative to TODAY: `{ from: '2026-08-01', to: '2026-08-31' }` (09 D-10).
+ * `today` defaults to TODAY, as for lastNDays.
+ */
+export function lastMonth(today: string = TODAY): DateWindow {
+  const day = new Date(dayMs(today))
+  const from = Date.UTC(day.getUTCFullYear(), day.getUTCMonth() - 1, 1)
+  const to = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), 0)
   return { from: toIsoDate(from), to: toIsoDate(to) }
 }
 

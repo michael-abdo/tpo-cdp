@@ -4,7 +4,7 @@ import { Hono } from 'hono'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, type ToolSeed, toolSeedInsert } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
-import { lastMonth, lastNDays } from '../shared/derive'
+import { DEFINITIONS, lastMonth, lastNDays } from '../shared/derive'
 import {
   BLOCKED_TILE_TITLE,
   INSIGHT_PARAMS_VERSION,
@@ -470,6 +470,18 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     expect(resolveWindow({ fixed: ['2026-08-01', '2026-08-15'] }, TODAY)).toEqual({ kind: 'fixed', from: '2026-08-01', to: '2026-08-15' })
     expect(detectWindow('2026-08-01', '2026-08-31', TODAY)).toEqual({ rolling: 'last_month' })
     expect(detectWindow('2026-08-01', '2026-08-15', TODAY)).toEqual({ fixed: ['2026-08-01', '2026-08-15'] })
+  })
+
+  it('the reused presets are 02 §Derived itself: last_month = lastMonth(today), last_30_days = lastNDays(30, today), on any day', () => {
+    // One home per definition (09 D-68): the board must not carry its own month or 30-day formula.
+    // Month ends, a year boundary and a leap day, so a second formula that agrees only on TODAY fails.
+    for (const today of [TODAY, '2026-01-01', '2026-03-31', '2024-03-01', '2028-02-29', '2026-12-31']) {
+      expect(resolveWindow({ rolling: 'last_month' }, today)).toEqual({ kind: 'rolling', preset: 'last_month', ...DEFINITIONS.last_month.fn(today) })
+      expect(resolveWindow({ rolling: 'last_30_days' }, today)).toEqual({ kind: 'rolling', preset: 'last_30_days', ...DEFINITIONS.last_n_days.fn(30, today) })
+    }
+    expect(DEFINITIONS.last_month.fn('2026-01-01')).toEqual({ from: '2025-12-01', to: '2025-12-31' })
+    expect(DEFINITIONS.last_month.fn('2024-03-01')).toEqual({ from: '2024-02-01', to: '2024-02-29' })
+    expect(DEFINITIONS.last_n_days.fn(30, '2026-03-31')).toEqual({ from: '2026-03-01', to: '2026-03-31' })
   })
 
   it('a pinned went-cold aggregate returns 46 for last month; a fixed window stays fixed; PATCH re-resolves', async () => {
