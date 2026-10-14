@@ -12,8 +12,13 @@
 // account (no email on file)" for a webhook-created user with no email (06 sketches
 // "unknown user u_…"; principle 2 moves the u_ id to Technical details), plus a "Linked after login"
 // tag (06's "stitched") when an anonymous event is attached through its device's login
-// (attached_via login_stitch). Level 2 (row Details): when it happened in the app and the link, in
-// words; Technical details: device id, second-precise UTC times, raw names, ids and pk_ keys. Events are sent from the terminal with `npm run webhook:send` (11 §Verify).
+// (attached_via login_stitch), explained once above the table. Level 2 (row Details): when it
+// happened in the app; Technical details: device id, second-precise UTC times, raw ids and pk_
+// keys (the event name and the link are in the row already, 09 D-72). Events arrive from the
+// app's real webhook, from the terminal (`npm run webhook:send`, 11 §Verify), or
+// from the "Send a test event" panel just below the header (09 D-73): either way the list picks
+// a new row up at once (events-poll.ts FetchKind 'sent' says nothing extra here, since the
+// panel's own result line already names the outcome, D-72).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
@@ -34,8 +39,9 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
-import { humanDateTime, utc } from '../format'
 import { eventsAnnouncement, type FetchKind, POLL_MS } from '../events-poll'
+import { TestEventPanel } from '../events-test-panel'
+import { humanDateTime, utc } from '../format'
 import type { RecentEvent, RecentEvents } from '../types'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -89,12 +95,8 @@ function EventDetails({ e }: { e: RecentEvent }) {
     <div className="space-y-2">
       <dl className="space-y-1">
         <Field label="Happened in app">{humanDateTime(e.event_ts)}</Field>
-        {stitched(e) && <Field label="Linked by login">Yes, after this device logged in</Field>}
       </dl>
       <TechnicalDetails>
-        <p>
-          event: <span className="font-mono">{e.event}</span>
-        </p>
         <p>
           device_id: <span className="font-mono break-all">{e.device_id}</span>
         </p>
@@ -145,6 +147,8 @@ function columns(now: number): Column<RecentEvent>[] {
 }
 
 const POLL_SECONDS = POLL_MS / 1000
+/** The next step under a failed fetch; how often the page tries is said once, under "How this list updates" (09 D-72). */
+const KEEPS_TRYING = 'The page keeps trying on its own.'
 
 /** The page's lists: the last good one (kept through a failed fetch) and the latest error. */
 interface Shown {
@@ -157,6 +161,10 @@ interface Shown {
 export default function EventsPage() {
   const [shown, setShown] = useState<Shown | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // The main action is the single most prominent control (06 §UI principles 1): while the panel
+  // is open, Send is it, so Refresh steps down to secondary; closed, Refresh is the page's own
+  // main action again.
+  const [testPanelOpen, setTestPanelOpen] = useState(false)
   // A counter rides along with the text so the same sentence twice in a row is still a change
   // the screen reader announces (Announcer: "change `message`").
   const [said, setSaid] = useState({ text: '', n: 0 })
@@ -242,11 +250,17 @@ export default function EventsPage() {
         purpose="The last 20 events the app sent, newest first."
         icon={ICONS.events}
         action={
-          <Button variant="primary" icon={ICONS.loading} onClick={refresh} disabled={shown === null || refreshing}>
+          <Button
+            variant={testPanelOpen ? 'secondary' : 'primary'}
+            icon={ICONS.loading}
+            onClick={refresh}
+            disabled={shown === null || refreshing}
+          >
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
       />
+      <TestEventPanel onSent={() => void load('sent')} onOpenChange={setTestPanelOpen} />
       <Disclosure label="How this list updates">
         <p className="text-sm text-gray-700">
           The list updates itself every {POLL_SECONDS} seconds while this tab is in view. These times are live, so they can be later than the date in the top bar.
@@ -260,19 +274,12 @@ export default function EventsPage() {
           {shown.error !== null && (
             <ErrorLine
               message={shown.error}
-              next={
-                events === null
-                  ? `The page tries again every ${POLL_SECONDS} seconds.`
-                  : `The list below is from the last update; the page tries again every ${POLL_SECONDS} seconds.`
-              }
+              next={events === null ? KEEPS_TRYING : `The list below is from the last update. ${KEEPS_TRYING}`}
             />
           )}
           {events === null ? null : events.length === 0 ? (
             <EmptyState icon={ICONS.events}>
-              <p>
-                No events yet — send one with <code className="font-mono">npm run webhook:send</code>
-              </p>
-              <p className="mt-1 text-gray-600">The app sends events here as they happen. New ones appear here within {POLL_SECONDS} seconds.</p>
+              <p>No events yet — send one with “Send a test event” above.</p>
             </EmptyState>
           ) : (
             <div className="space-y-3">

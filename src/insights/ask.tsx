@@ -173,9 +173,7 @@ export function AnswerCard({
       )}
       <p className="whitespace-pre-wrap text-base leading-relaxed text-ink">{data.text}</p>
       {data.partial && (
-        <p className="text-sm text-ink-muted">
-          The assistant did not finish cleanly, so this answer may be missing parts. The audit log shows each step it took.
-        </p>
+        <p className="text-sm text-ink-muted">The assistant did not finish cleanly, so this answer may be missing parts.</p>
       )}
 
       {kind === 'segment' && data.segment !== null ? (

@@ -143,9 +143,8 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       expect(Object.keys(pair.a)).toEqual(['email', 'signup_date', 'source', 'status'])
       expect(pair.reasons.map((r) => r.field)).toEqual([...SCORED_FIELDS])
       expect(pair.reasons.map((r) => r.agrees)).toEqual([true, true, true, false])
-      expect(pair.suggestion).toBe(
-        'Could be the same person — the name, email domain, signup week and acquisition source match',
-      )
+      // The review band's suggestion is just the verdict; the reasons above already name what matches (09 D-72).
+      expect(pair.suggestion).toBe('Could be the same person')
       expect(pair.pair_id).toBe(await pairId(...(await pkeysOf(pair))))
     }
     // The D-62 chance check, as 02 states it: 16 observed, ≈ 17 expected.
@@ -166,7 +165,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       (p) => p.a.email.endsWith('@protonmail.com') && p.b.email.endsWith('@protonmail.com'),
     )
     expect(close?.reasons.filter((r) => r.agrees).map((r) => r.field)).toEqual(['domain', 'source'])
-    expect(close?.suggestion).toBe('Probably different people — only the name, email domain and acquisition source match')
+    expect(close?.suggestion).toBe('Probably different people')
     const body = await duplicates()
     expect(body.review.some((p) => JOY_HALL.includes(p.a.email) || JOY_HALL.includes(p.b.email))).toBe(false)
   })
@@ -246,15 +245,16 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
     expect(Math.min(...top.map((p) => p.score))).toBeGreaterThan(Math.max(...rest.map((p) => p.score)))
   })
 
-  it('the suggestion follows the band and names what matches beyond the name', () => {
+  it('review and auto bands say just the verdict; "only the name matches" is reserved for the no-other-match (hidden) case (09 D-72)', () => {
     const none = { domain: false, signup_gap: false, source: false, shared_device: false }
     expect(suggestionFor('hidden', none)).toBe('Probably different people — only the name matches')
-    expect(suggestionFor('hidden', { ...none, source: true })).toBe(
-      'Probably different people — only the name and acquisition source match',
-    )
-    expect(suggestionFor('auto', { ...none, shared_device: true })).toBe(
-      'Very likely the same person — the name and app device match',
-    )
+    expect(suggestionFor('review', none)).toBe('Could be the same person')
+    expect(suggestionFor('hidden', { ...none, source: true })).toBe('Probably different people')
+    expect(suggestionFor('review', { ...none, source: true })).toBe('Could be the same person')
+    expect(suggestionFor('auto', { ...none, shared_device: true })).toBe('Very likely the same person')
+    // What else matches is never repeated in the sentence: the chips are its one home.
+    for (const band of ['hidden', 'review', 'auto'] as const)
+      expect(suggestionFor(band, { domain: true, signup_gap: true, source: true, shared_device: true })).not.toMatch(/domain|signup|source|device/)
   })
 
   it('the band edges are D-62\'s: auto ≥ 90, review 50–89, hidden < 50', () => {
@@ -411,7 +411,7 @@ describe('T-DUP-2: a shared device from a real signed login stitch is a hard lin
       ['shared_device', true],
     ])
     expect(top.reasons[3].label).toBe('same device in the app')
-    expect(top.suggestion).toBe('Very likely the same person — the name and app device match')
+    expect(top.suggestion).toBe('Very likely the same person')
     expect(body.weights?.shared_device.agreeing).toBe(1)
     expect(body.weights?.shared_device.u).toBeCloseTo(1 / 1704, 12)
     expect(body.to_review).toBe(before.to_review + 1)

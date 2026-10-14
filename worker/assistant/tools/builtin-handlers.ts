@@ -12,7 +12,9 @@
 //   parseFilters and compiled by the builder's WHERE translation (compileModelSegment in
 //   worker/segments/compile.ts) over v_profiles, so it reads only a PII-free view (05 §Exactly
 //   what the model receives, "Structural"; 07 §H) and applies the builder's rules. Its count and
-//   hidden-unsubscribed count equal the builder's (T-AI-3 pins 177 / 55). Rows come out most
+//   hidden-unsubscribed count equal the builder's (T-AI-3 pins 177 / 55). Its site-visit and
+//   app-activity filters are IN-subqueries on v_web_events and v_app_events, also PII-free views
+//   (09 D-69); `definitions_used` names every definition the filters applied. Rows come out most
 //   engaged first (stored engagement_score descending, then pkey; 09 D-56), the path for "our
 //   most engaged readers" (R5.2).
 // - `aggregate` also reads only v_* views. Every value is a bound parameter; every SQL fragment
@@ -42,7 +44,8 @@
 
 import { z } from 'zod'
 import { TODAY } from '../../../shared/config'
-import { DEFINITIONS, type DefinitionKey } from '../../../shared/derive'
+import { addDays, DEFINITIONS, type DefinitionKey, lastNDays } from '../../../shared/derive'
+import { WENT_COLD_ANY } from '../../../shared/segment-filters'
 import { canonicalSource } from '../../../shared/normalize'
 import { ApiError } from '../../auth/middleware'
 import { isIsoDate, SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../ingest/quarantine'
@@ -132,11 +135,25 @@ async function countModelSegment(db: D1Database, segment: CompiledModelSegment):
   return n
 }
 
+/** True when "signed up in the last N days" is exactly the new_subscriber window (02 §Derived). */
+function isNewSubscriberWindow(days: number): boolean {
+  const { from } = lastNDays(days)
+  return DEFINITIONS.new_subscriber.fn(from) && !DEFINITIONS.new_subscriber.fn(addDays(from, -1))
+}
+
+/** The definitions a segment's filters applied, in FILTER_KEYS order (19 §4 "Assistant"). */
 function segmentDefinitions(filters: SegmentFilters): DefinitionKey[] {
   const used: DefinitionKey[] = []
   if (filters.days_since_open_gte !== undefined) used.push('no_open_in_days', 'days_since_open')
+  if (filters.went_cold !== undefined) used.push(filters.went_cold === WENT_COLD_ANY ? 'cold' : 'went_cold_in', 'cold_since')
+  if (filters.signed_up_within_days !== undefined) {
+    if (isNewSubscriberWindow(filters.signed_up_within_days)) used.push('new_subscriber')
+    used.push('last_n_days')
+  }
+  if (filters.engagement_gte !== undefined || filters.engagement_lte !== undefined) used.push('engagement_score')
   if (filters.has_app !== null) used.push('has_app')
-  return used
+  if (filters.site_visit_within_days !== undefined || filters.app_active_within_days !== undefined) used.push('last_n_days')
+  return [...new Set(used)]
 }
 
 const segmentHandler: BuiltinHandler = {

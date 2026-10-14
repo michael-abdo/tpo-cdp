@@ -137,7 +137,7 @@ export function PinDialog({
                 <input type="radio" name="pin-window" checked={choice === 'rolling'} onChange={() => setChoice('rolling')} className="mt-1" />
                 <span>
                   Rolling: {PRESET_LABEL[preset].toLowerCase()}
-                  <span className="block text-ink-muted">Moves with today; now {humanRange(pinWindow.from, pinWindow.to)}.</span>
+                  <span className="block text-ink-muted">Moves with today.</span>
                 </span>
               </label>
             )}

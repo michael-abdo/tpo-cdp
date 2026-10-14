@@ -82,11 +82,22 @@ const SCHEMA_KEYWORDS = new Set([
   'maxItems',
   'minLength',
   'maxLength',
+  'pattern',
   'additionalProperties',
 ])
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isCompilablePattern(pattern: string): boolean {
+  try {
+    new RegExp(pattern, 'u')
+    return true
+  } catch (err) {
+    if (err instanceof SyntaxError) return false
+    throw err
+  }
 }
 
 /** Problems with one (sub)schema, each prefixed with its JSON path. Pure. */
@@ -108,6 +119,11 @@ export function schemaProblems(schema: unknown, path: string): string[] {
   }
   for (const key of ['minimum', 'maximum', 'minItems', 'maxItems', 'minLength', 'maxLength']) {
     if (schema[key] !== undefined && typeof schema[key] !== 'number') problems.push(`${path}.${key} must be a number`)
+  }
+  if (schema.pattern !== undefined) {
+    // Gate 2 compiles it with the u flag, as JSON Schema's ECMA-262 patterns; refuse one it could not run.
+    if (typeof schema.pattern !== 'string') problems.push(`${path}.pattern must be a string`)
+    else if (!isCompilablePattern(schema.pattern)) problems.push(`${path}.pattern is not a valid regular expression`)
   }
   if (schema.properties !== undefined) {
     if (!isObject(schema.properties)) problems.push(`${path}.properties must be an object`)

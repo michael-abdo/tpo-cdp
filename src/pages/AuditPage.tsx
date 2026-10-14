@@ -3,9 +3,11 @@
 // when, the question as the AI received it (emails already replaced by [email]), the result and
 // the tokens used, with a Refresh button. Each question opens its trace.
 // The trace (GET /api/audit/:trace_id): every stored step in order, each kind in plain words
-// (sent to the AI, looked up data, blocked) with its result at level 1; level 2 (Details) holds
-// timing, tokens and rows found; Technical details holds the raw names, ids, second-precise UTC
-// times and the stored request_json, response_json and SQL exactly as stored (06 §UI principles 2).
+// (sent to the AI, looked up data, blocked) with its result at level 1 (the rows found, the tokens
+// used); level 2 (Details) holds timing and the token split; Technical details holds the raw names,
+// ids, second-precise UTC times and the stored request_json, response_json and SQL exactly as
+// stored (06 §UI principles 2). One thing in one place (09 D-72): a blocked step's title carries its
+// status, the list's Result tag alone says a board run sent nothing to the AI.
 // A search box counts matches in that stored text, so searching "@" shows zero (12 beat 5); the
 // count is announced politely. The re-hydrated result is never stored (05 §Re-hydration), so it
 // is on /insights only. Board runs (/insights re-running its tiles with no AI call, 09 D-64) are not
@@ -154,9 +156,12 @@ export function Step({ row, title, matches }: { row: AuditRow; title: string; ma
     <li className="space-y-2 rounded-xl bg-surface p-5 shadow-soft">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-semibold text-ink">{title}</h2>
-        <Tag tone={STEP_LOOK[row.status].tone} icon={STEP_LOOK[row.status].icon}>
-          {STEP_STATUS[row.status]}
-        </Tag>
+        {/* A blocked step's title already says "Blocked"; its tag would say it again (09 D-72). */}
+        {row.kind !== 'blocked' && (
+          <Tag tone={STEP_LOOK[row.status].tone} icon={STEP_LOOK[row.status].icon}>
+            {STEP_STATUS[row.status]}
+          </Tag>
+        )}
         {matches !== null && matches > 0 && (
           <Tag tone="accent" icon={ICONS.search}>{matches === 1 ? '1 match' : `${fmt(matches)} matches`}</Tag>
         )}
@@ -171,7 +176,6 @@ export function Step({ row, title, matches }: { row: AuditRow; title: string; ma
               {fmt(row.tokens_in ?? 0)} sent, {fmt(row.tokens_out ?? 0)} received
             </Field>
           )}
-          {row.row_count !== null && <Field label="Rows found">{fmt(row.row_count)}</Field>}
           {row.model !== null && <Field label="AI model">{row.model}</Field>}
         </dl>
         <TechnicalDetails>
@@ -300,8 +304,7 @@ function TraceView({ traceId }: { traceId: string }) {
           <Button icon={ICONS.search} onClick={() => setSearch('@')}>Search for “@”</Button>
         </div>
         <p id="trace-search-hint" className="text-sm text-gray-600">
-          Searches everything sent to and from the AI for this question. Every email has an @, so “@” should
-          find nothing.
+          Every email has an @, so “@” should find nothing.
         </p>
         <Announcer message={searchResult} visible />
       </div>
@@ -329,7 +332,8 @@ function traceColumns(): Column<AuditTraceSummary>[] {
         <Link to={`/audit/${t.trace_id}`} className={`${linkClass} break-words`}>
           {t.question ??
             (t.outcome === 'board_run'
-              ? `Board refresh: ${fmt(t.tool_calls)} ${t.tool_calls === 1 ? 'tile' : 'tiles'} re-ran, nothing sent to the AI`
+              ? // The Result tag beside it says "Board refresh, no AI call" (09 D-72).
+                `${fmt(t.tool_calls)} ${t.tool_calls === 1 ? 'tile' : 'tiles'} re-ran`
               : t.reached_ai
                 ? 'Sent to the AI; its reply was blocked, so the question was not stored'
                 : 'Stopped before it reached the AI')}
@@ -417,7 +421,7 @@ function TraceList() {
             </Link>
           }
         >
-          No questions yet. Ask one, then come back to see what the AI was sent.
+          No questions yet.
         </EmptyState>
       ) : (
         <ResponsiveTable

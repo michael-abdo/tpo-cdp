@@ -149,7 +149,7 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
   })
 })
 
-// The migration sequence (README "the six migrations"; 03 §Module layout). Two merged branches once
+// The migration sequence (README "the seven migrations"; 03 §Module layout). Two merged branches once
 // each took the next number; this pins the order that applies on a fresh database (wrangler and
 // test/setup.ts apply the files in name order) and that the README's count tells the same story.
 describe('the migrations are one contiguous, ordered sequence', () => {
@@ -160,6 +160,7 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     '0004_duplicate_reviews',
     '0005_ai_audit_client',
     '0006_insights',
+    '0007_profiles_email_index',
   ]
   const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
     .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
@@ -178,7 +179,23 @@ describe('the migrations are one contiguous, ordered sequence', () => {
 
   it('the README says how many there are', () => {
     const said = /\bthe (\w+) migrations into the local D1\b/.exec(readme)?.[1]
-    expect(said, 'README names the migration count ("the six migrations")').toBeDefined()
+    expect(said, 'README names the migration count ("the seven migrations")').toBeDefined()
     expect(WORDS.indexOf(said ?? ''), `README says "${said}"`).toBe(files.length)
+  })
+})
+
+// 0007_profiles_email_index.sql (19 §0 F3, §5.4; 09 D-69): without this index the three T-WH-10 /
+// T-SEG-9 / T-SEG-11 queries still return the right rows, only slower, so a no-op migration would
+// pass silently until vitest's timeout. Pin the index itself, not just its speed.
+describe('migration 0007 creates the profiles(email_norm) index', () => {
+  it('sqlite_master lists an index named profiles_email on profiles(email_norm)', async () => {
+    const { results } = await env.DB.prepare(
+      "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+    )
+      .bind('profiles_email')
+      .all<{ name: string; tbl_name: string; sql: string }>()
+    expect(results).toHaveLength(1)
+    expect(results[0]?.tbl_name).toBe('profiles')
+    expect(results[0]?.sql).toMatch(/\(email_norm\)/)
   })
 })

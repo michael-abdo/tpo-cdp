@@ -247,33 +247,23 @@ export function reasonLabel(field: ScoredField, agrees: boolean, gap: number): s
   }
 }
 
-/** What each agreeing field adds to "the name … match" in the suggestion. */
-const MATCH_WORDS: Record<ScoredField, string> = {
-  domain: 'email domain',
-  signup_gap: 'signup week',
-  source: 'acquisition source',
-  shared_device: 'app device',
-}
-
-function joined(words: readonly string[]): string {
-  if (words.length <= 1) return words.join('')
-  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
-}
-
 function leadFor(band: Band): string {
+  if (band === 'hidden') return 'Probably different people'
   return band === 'auto' ? 'Very likely the same person' : 'Could be the same person'
 }
 
-/** The one-line plain suggestion (06 §Overview); the default is "Probably different people — only the name matches". */
+/**
+ * The one-line plain suggestion (06 §Overview): the review and auto bands say only the verdict —
+ * the reason chips beside it already say which fields match, and the name itself matched every
+ * candidate pair, so repeating "the name matches" there would say that fact twice (09 D-72, one
+ * thing in one place). "— only the name matches" is reserved for the one case where the name is
+ * the sole basis for anything: a hidden-band pair where nothing else agrees either.
+ */
 export function suggestionFor(band: Band, agreement: Agreement): string {
-  const matched = SCORED_FIELDS.filter((f) => agreement[f]).map((f) => MATCH_WORDS[f])
-  if (matched.length === 0) {
-    return band === 'hidden'
-      ? 'Probably different people — only the name matches'
-      : `${leadFor(band)} — the name matches`
-  }
-  const what = `${joined(['the name', ...matched])} match`
-  return band === 'hidden' ? `Probably different people — only ${what}` : `${leadFor(band)} — ${what}`
+  const lead = leadFor(band)
+  const onlyName = !SCORED_FIELDS.some((f) => agreement[f])
+  if (band === 'hidden' && onlyName) return `${lead} — only the name matches`
+  return lead
 }
 
 /** `dp_` + the first 16 hex characters of SHA-256 over the two pkeys in sorted order. */

@@ -595,6 +595,27 @@ describe('T-WH-11 signature headers', () => {
     expect(await res.json()).toMatchObject({ error: 'invalid_event', details: [{ field: 'body' }] })
   })
 
+  it("rejects a wrong signature even under the exact header set the events/test panel sends (content-type, timestamp, signature, cf-connecting-ip; 09 D-73): a verify bypass keyed to this route's own header shape would otherwise go undetected", async () => {
+    const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
+    const timestamp = String(nowSeconds())
+    const wrongSignature = await signature('not-the-real-secret', timestamp, new TextEncoder().encode(body))
+    expect(wrongSignature).not.toBe(await signature(webhookSecret(), timestamp, new TextEncoder().encode(body)))
+    const rows = await count('app_events')
+    const res = await SELF.fetch('http://cdp.test/webhooks/app', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-webhook-timestamp': timestamp,
+        'x-webhook-signature': wrongSignature,
+        'cf-connecting-ip': '198.51.100.9',
+      },
+      body,
+    })
+    expect(res.status).toBe(401)
+    expect((await res.json<{ error: string }>()).error).toBe('bad_signature')
+    expect(await count('app_events')).toBe(rows)
+  })
+
   it('accepts a header time inside the window and answers an identical replay with 200 duplicate', async () => {
     const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
     const request = await signedRequest(body, { timestamp: String(nowSeconds() - 290) })

@@ -7,15 +7,18 @@
 export const SEGMENT_PIN_NOTE =
   'The tile keeps how many subscribers match these filters and a link to the segment. It does not keep their order or names.'
 
+/** The next step two pin errors share, written once (09 D-72). */
+const ASK_AGAIN = 'Ask the question again, then pin the new answer.'
+
 /** Next steps for the 04 POST /api/insights errors that have one; the message is the envelope's. */
 export function pinNext(code: string | null): string | undefined {
   switch (code) {
     case 'nothing_to_pin':
       return 'This answer did not come from a data lookup, so there is nothing to re-run. Ask a question about subscribers, site visits or app activity.'
     case 'not_found':
-      return 'Ask the question again, then pin the new answer.'
+      return ASK_AGAIN
     case 'invalid_pin':
-      return 'The lookup behind this answer has changed since it was asked. Ask the question again, then pin the new answer.'
+      return `The lookup behind this answer has changed since it was asked. ${ASK_AGAIN}`
     case 'not_pinnable':
       return 'You can still ask it in other words: an answer that is a count, a segment or a saved question type can be pinned.'
     case 'internal_error':

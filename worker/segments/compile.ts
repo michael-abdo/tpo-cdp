@@ -1,33 +1,39 @@
 // Segment filters → bound SQL (04 §/api/segments/preview, 03 §Module layout; R3, 09 D-07,
-// D-30, D-46). Pure: a parsed filter object in, SQL text and its parameters out. Every value is
-// a bound `?`, TODAY included, so the SQL text is its own placeholders-only `sql_shape`. The
-// days-since-open comparison is the `DEFINITIONS.days_since_open.sql` fragment from
-// shared/derive.ts, never a re-typed formula. Source values are canonicalized by
-// shared/normalize.ts, never by SQL (02 §Normalization). The builder's SQL reads tables, not
-// v_* views: its rows carry the email, which the UI may see (03 §Other request flows). The
-// assistant's segment tool compiles the same filters, through the same WHERE builder, over
-// v_profiles only (`compileModelSegment`), so the model's tool never reads a table.
+// D-30, D-46, D-69). Pure: a parsed filter object in, SQL text and its parameters out. Every value
+// is a bound `?`, TODAY and every date included, so the SQL text is its own placeholders-only
+// `sql_shape`. Each date comparison is a `DEFINITIONS.*.sql` fragment from shared/derive.ts with
+// its dates computed there (lastNDays, wentColdWindow), never a re-typed formula. Source values are
+// canonicalized by shared/normalize.ts, never by SQL (02 §Normalization). The filter keys, their
+// limits and patterns live in shared/segment-filters.ts (19 §5.5); this file is their one
+// validator. The builder's SQL reads tables for the subscriber row: its rows carry the email,
+// which the UI may see (03 §Other request flows). The assistant's segment tool compiles the same
+// filters, through the same WHERE builder, over v_profiles (`compileModelSegment`), so the
+// model's tool never reads a table. Site visits and app activity are, in both, an uncorrelated
+// `pkey IN (SELECT pkey FROM v_web_events | v_app_events …)` (19 §0 F3, §4): the identity rule of
+// app events lives once, in v_app_events, and only positive filters exist, because those views'
+// pkey is NULL for anonymous rows and `NOT IN` over a NULL is never true.
 
+import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 import { TODAY } from '../../shared/config'
-import { DEFINITIONS } from '../../shared/derive'
-import { canonicalSource } from '../../shared/normalize'
+import { DEFINITIONS, type DateWindow, lastNDays, wentColdWindow } from '../../shared/derive'
+import { CANONICAL_SOURCES, canonicalSource } from '../../shared/normalize'
+import {
+  ENGAGEMENT_MAX,
+  ENGAGEMENT_MIN,
+  FILTER_KEYS,
+  type SegmentFilters,
+  SITE_PAGE_PATTERN,
+  WENT_COLD_ANY,
+  WENT_COLD_PATTERN,
+  WITHIN_DAYS_MAX,
+  WITHIN_DAYS_MIN,
+} from '../../shared/segment-filters'
 import { ApiError } from '../auth/middleware'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../ingest/quarantine'
 import type { SqlValue } from '../ingest/sql'
 
-/** The validated filter object (04 §/api/segments/preview); the assistant's segment tool takes the same one. */
-export interface SegmentFilters {
-  /** Default `['active']` (02 §Defaults, 09 D-07). */
-  status: SubscriberStatus[]
-  /** Canonical source names; absent = any source. */
-  source?: string[]
-  /** "no open in N days" (02 §Derived, 09 D-30); absent = no recency filter. */
-  days_since_open_gte?: number
-  /** With `days_since_open_gte`, also match everyone who never opened, whatever their signup date. */
-  include_never_opened: boolean
-  /** `null` or absent = either. */
-  has_app: boolean | null
-}
+/** The validated filter object and its keys: one home, shared/segment-filters.ts (19 §5.5). */
+export { FILTER_KEYS, type SegmentFilters }
 
 export interface CompiledSegment {
   /** One SELECT over the segment's rows in the 04 export column order, ordered by email. */
@@ -80,9 +86,6 @@ export function toSegmentRow(raw: RawSegmentRow): SegmentRow {
   return { ...raw, engagement_score: raw.engagement_score, has_app: raw.has_app === 1 }
 }
 
-/** Every filter key 04 defines; the assistant's segment tool row may name only these (tools/tool-loader.ts). */
-export const FILTER_KEYS = ['status', 'source', 'days_since_open_gte', 'include_never_opened', 'has_app'] as const
-
 const DEFAULT_STATUS: SubscriberStatus[] = ['active']
 
 /**
@@ -99,6 +102,34 @@ const DAYS_SINCE_OPEN_SQL = (() => {
   return parts.join('?')
 })()
 
+/** A DEFINITIONS window fragment split at its column: `<column><rest>`, `:name`s turned into `?` in order. */
+interface WindowFragment {
+  column: 'cold_since' | 'signup_date'
+  rest: string
+  names: readonly string[]
+}
+
+/**
+ * Checks at module load that `fragment` starts with `column` and holds exactly the placeholders
+ * `names`, in that order, and turns each into a positional `?` (D1 binds positional
+ * parameters). Fails loud if derive.ts changes a fragment's shape, rather than compiling SQL that
+ * binds the wrong date.
+ */
+function windowFragment(fragment: string, column: WindowFragment['column'], names: readonly string[]): WindowFragment {
+  const found = [...fragment.matchAll(/:(\w+)/g)].map((m) => m[1])
+  if (!fragment.startsWith(`${column} `) || JSON.stringify(found) !== JSON.stringify(names)) {
+    throw new Error(`segments: DEFINITIONS fragment ${JSON.stringify(fragment)} must compare ${column} with ${names.map((n) => `:${n}`).join(', ')}`)
+  }
+  return { column, rest: fragment.slice(column.length).replace(/:\w+/g, '?'), names }
+}
+
+const COLD_NOW = windowFragment(DEFINITIONS.cold.sql, 'cold_since', ['today'])
+const WENT_COLD_IN = windowFragment(DEFINITIONS.went_cold_in.sql, 'cold_since', ['from', 'to'])
+const SIGNED_UP_IN = windowFragment(DEFINITIONS.new_subscriber.sql, 'signup_date', ['from', 'to'])
+
+const WENT_COLD = new RegExp(WENT_COLD_PATTERN)
+const SITE_PAGE = new RegExp(SITE_PAGE_PATTERN)
+
 function invalid(problems: string[]): ApiError {
   return new ApiError(400, 'invalid_filters', 'The segment filters are not valid.', problems)
 }
@@ -111,12 +142,43 @@ function stringList(value: unknown, key: string, problems: string[]): string[] |
   return value
 }
 
+function wholeNumberIn(raw: Record<string, unknown>, key: string, min: number, max: number, problems: string[]): number | undefined {
+  const value = raw[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    problems.push(`${key} must be a whole number from ${min} to ${max}`)
+    return undefined
+  }
+  return value
+}
+
+/** `value` matches `pattern`, or a problem naming the key (never the value: it is untrusted input). */
+function patterned(raw: Record<string, unknown>, key: string, pattern: RegExp, rule: string, problems: string[]): string | undefined {
+  const value = raw[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    problems.push(`${key} must be ${rule}`)
+    return undefined
+  }
+  return value
+}
+
 /**
- * Validates a request's `filters` and applies the defaults. Unknown keys, non-canonical status
- * values (only `active` and `unsubscribed`, exactly as stored), empty lists, blank sources and a
- * `days_since_open_gte` that is not a whole number of at least 1 are rejected with 400
- * invalid_filters, every problem listed. N starts at 1 because the derive.ts fragment is the
- * unclamped day difference: at N = 0 an open dated after TODAY would compare as negative, while
+ * Validates a request's `filters` and returns the canonical object (19 §2 "Dedupe", §5.2), keys
+ * in FILTER_KEYS order: status and source sorted and deduped, defaults applied (`status`
+ * ['active'], `has_app` null), `include_never_opened` false whenever `days_since_open_gte` is
+ * absent, an engagement bound at its end of the range (0, 100) dropped as no filter, every other
+ * absent key omitted. Equal filters therefore give byte-equal JSON, the Previous searches key.
+ *
+ * Rejected with 400 invalid_filters, every problem listed: unknown keys; non-canonical status
+ * values (only `active` and `unsubscribed`, exactly as stored); empty lists; blank sources; a
+ * `days_since_open_gte` that is not a whole number of at least 1; a `*_within_days` outside
+ * 1–3650; an engagement bound outside 0–100 or `engagement_gte` above `engagement_lte`; a
+ * `went_cold` that is not `any` or `YYYY-MM`, or a month after TODAY's month; a `site_visit_page`
+ * outside its pattern; an `app_event` that is not one of the four app events.
+ *
+ * `days_since_open_gte` starts at 1 because the derive.ts fragment is the unclamped day
+ * difference: at N = 0 an open dated after TODAY would compare as negative, while
  * `days_since_open` clamps it to 0. Any N ≥ 1 gives the same answer either way.
  */
 export function parseFilters(input: unknown): SegmentFilters {
@@ -126,7 +188,10 @@ export function parseFilters(input: unknown): SegmentFilters {
   const raw = input as Record<string, unknown>
   const problems: string[] = []
   for (const key of Object.keys(raw)) {
-    if (!(FILTER_KEYS as readonly string[]).includes(key)) problems.push(`unknown filter: ${key}`)
+    // No key text: an unknown filter key is a client's text, never echoed back or logged (04
+    // row 33's "the log names only how many"; 09 D-70 item 1, fixer round 4). The response's
+    // `details` array still carries one entry per unknown key, so its length is the count.
+    if (!(FILTER_KEYS as readonly string[]).includes(key)) problems.push('unknown filter')
   }
 
   let status = DEFAULT_STATUS
@@ -135,7 +200,7 @@ export function parseFilters(input: unknown): SegmentFilters {
     if (list !== undefined) {
       const bad = list.filter((s) => !(SUBSCRIBER_STATUSES as readonly string[]).includes(s))
       if (bad.length > 0) problems.push(`status values must be one of ${SUBSCRIBER_STATUSES.join(', ')}`)
-      else status = [...new Set(list as SubscriberStatus[])]
+      else status = [...new Set(list as SubscriberStatus[])].sort()
     }
   }
 
@@ -145,7 +210,17 @@ export function parseFilters(input: unknown): SegmentFilters {
     if (list !== undefined) {
       const canonical = list.map(canonicalSource)
       if (canonical.some((s) => s === null)) problems.push('source values must not be blank')
-      else source = [...new Set(canonical as string[])]
+      else {
+        const unique = [...new Set(canonical as string[])].sort()
+        // Capped before the membership check: many distinct values (canonical or not) would
+        // otherwise all reach the membership check and, if ever this list grows, bind that many
+        // SQL variables (19 §0 F7: today 7 canonical names, so 100 distinct values would try to
+        // bind as many as 100 of them before this cap, hitting SQLite's "too many SQL variables").
+        if (unique.length > CANONICAL_SOURCES.length) problems.push(`source must name at most ${CANONICAL_SOURCES.length} sources`)
+        else if (unique.some((s) => !(CANONICAL_SOURCES as readonly string[]).includes(s))) {
+          problems.push(`source values must be one of ${CANONICAL_SOURCES.join(', ')}`)
+        } else source = unique
+      }
     }
   }
 
@@ -164,13 +239,41 @@ export function parseFilters(input: unknown): SegmentFilters {
     problems.push('has_app must be true, false or null')
   }
 
+  const wentCold = patterned(raw, 'went_cold', WENT_COLD, `"${WENT_COLD_ANY}" or a month written YYYY-MM`, problems)
+  // TODAY's month is the last one a subscriber can have gone cold in (went_cold_in: <= TODAY).
+  if (wentCold !== undefined && wentCold !== WENT_COLD_ANY && wentCold > TODAY.slice(0, 7)) {
+    problems.push(`went_cold must not be a month after ${TODAY.slice(0, 7)}`)
+  }
+  const signedUp = wholeNumberIn(raw, 'signed_up_within_days', WITHIN_DAYS_MIN, WITHIN_DAYS_MAX, problems)
+  const engagementGte = wholeNumberIn(raw, 'engagement_gte', ENGAGEMENT_MIN, ENGAGEMENT_MAX, problems)
+  const engagementLte = wholeNumberIn(raw, 'engagement_lte', ENGAGEMENT_MIN, ENGAGEMENT_MAX, problems)
+  if (engagementGte !== undefined && engagementLte !== undefined && engagementGte > engagementLte) {
+    problems.push('engagement_gte must not be greater than engagement_lte')
+  }
+  const siteDays = wholeNumberIn(raw, 'site_visit_within_days', WITHIN_DAYS_MIN, WITHIN_DAYS_MAX, problems)
+  const sitePage = patterned(raw, 'site_visit_page', SITE_PAGE, 'a site path such as /about: "/" then lowercase letters, digits, "/" or "-"', problems)
+  const appDays = wholeNumberIn(raw, 'app_active_within_days', WITHIN_DAYS_MIN, WITHIN_DAYS_MAX, problems)
+  const appEvent = raw.app_event
+  if (appEvent !== undefined && !(APP_EVENTS as readonly unknown[]).includes(appEvent)) {
+    problems.push(`app_event must be one of ${APP_EVENTS.join(', ')}`)
+  }
+
   if (problems.length > 0) throw invalid(problems)
+  const hasDays = days !== undefined
   return {
     status,
     ...(source === undefined ? {} : { source }),
-    ...(days === undefined ? {} : { days_since_open_gte: days as number }),
-    include_never_opened: includeNeverOpened === true,
+    ...(hasDays ? { days_since_open_gte: days as number } : {}),
+    include_never_opened: hasDays && includeNeverOpened === true,
+    ...(wentCold === undefined ? {} : { went_cold: wentCold }),
+    ...(signedUp === undefined ? {} : { signed_up_within_days: signedUp }),
+    ...(engagementGte === undefined || engagementGte === ENGAGEMENT_MIN ? {} : { engagement_gte: engagementGte }),
+    ...(engagementLte === undefined || engagementLte === ENGAGEMENT_MAX ? {} : { engagement_lte: engagementLte }),
     has_app: (hasApp as boolean | null | undefined) ?? null,
+    ...(siteDays === undefined ? {} : { site_visit_within_days: siteDays }),
+    ...(sitePage === undefined ? {} : { site_visit_page: sitePage }),
+    ...(appDays === undefined ? {} : { app_active_within_days: appDays }),
+    ...(appEvent === undefined ? {} : { app_event: appEvent as AppEventName }),
   }
 }
 
@@ -180,8 +283,12 @@ function placeholders(n: number): string {
 
 /** How one relation spells the columns a segment's WHERE reads. */
 interface SegmentRelation {
-  /** A column of the subscriber row (status, source, last_open_date) as this relation names it. */
-  column(name: 'status' | 'source' | 'last_open_date'): string
+  /** A column of the subscriber row as this relation names it. */
+  column(name: 'status' | 'source' | 'last_open_date' | 'signup_date' | 'cold_since'): string
+  /** The stored engagement_score (09 D-46). */
+  engagement: string
+  /** The profile's pseudonymous key, which v_web_events and v_app_events carry (05 §Pseudonymous key). */
+  pkey: string
   /** True exactly when the subscriber has an app account. */
   hasApp: string
 }
@@ -189,18 +296,63 @@ interface SegmentRelation {
 /** The builder's relation: tables, so its rows can carry the email the UI shows (03 §Other request flows). */
 const TABLES: SegmentRelation = {
   column: (name) => `s.${name}`,
+  engagement: 'p.engagement_score',
+  pkey: 'p.pkey',
   hasApp: 'EXISTS (SELECT 1 FROM app_users a WHERE a.email_norm = s.email_norm)',
 }
 
-/** The assistant's relation: v_profiles only, the view 01 §PII-free views lets the model read. */
+/** The assistant's relation: v_profiles, the view 01 §PII-free views lets the model read. */
 const MODEL_VIEW: SegmentRelation = {
   column: (name) => name,
+  engagement: 'engagement_score',
+  pkey: 'pkey',
   hasApp: '(has_app = 1)',
+}
+
+/** `<column> <comparison>` with the fragment's placeholders bound from `values`, in fragment order. */
+function windowClause(
+  fragment: WindowFragment,
+  rel: SegmentRelation,
+  values: Record<string, string>,
+  params: SqlValue[],
+): string {
+  for (const name of fragment.names) {
+    const value = values[name]
+    if (value === undefined) throw new Error(`segments: no value for :${name} of the ${fragment.column} fragment`)
+    params.push(value)
+  }
+  return `${rel.column(fragment.column)}${fragment.rest}`
+}
+
+/**
+ * `<pkey> IN (SELECT pkey FROM <view> WHERE …)` for one event filter (19 §4 "Same visit / same
+ * event"): the window and the page or event narrow the same rows. Uncorrelated, so SQLite runs the
+ * subquery once (19 §0 F3). Event times are full timestamps; `event_ts >= 'YYYY-MM-DD'` holds from
+ * that day's first second, with no upper bound, so a live event after TODAY counts (09 D-01).
+ */
+function eventClause(
+  rel: SegmentRelation,
+  view: 'v_web_events' | 'v_app_events',
+  window: DateWindow | null,
+  match: { column: 'page' | 'event'; value: string } | null,
+  params: SqlValue[],
+): string {
+  const conditions: string[] = []
+  if (window !== null) {
+    conditions.push('event_ts >= ?')
+    params.push(window.from)
+  }
+  if (match !== null) {
+    conditions.push(`${match.column} = ?`)
+    params.push(match.value)
+  }
+  return `${rel.pkey} IN (SELECT pkey FROM ${view} WHERE ${conditions.join(' AND ')})`
 }
 
 /**
  * The one filter → WHERE translation, used by the builder and the assistant's segment tool, so
- * both apply the same rules to the same filter object (T-AI-3 pins equal counts).
+ * both apply the same rules to the same filter object (T-AI-3 pins equal counts). Clauses follow
+ * FILTER_KEYS order.
  */
 function segmentWhere(filters: SegmentFilters, rel: SegmentRelation): { where: string; params: SqlValue[] } {
   const where: string[] = []
@@ -222,8 +374,42 @@ function segmentWhere(filters: SegmentFilters, rel: SegmentRelation): { where: s
     where.push(filters.include_never_opened ? `(${opened} OR ${lastOpen} IS NULL)` : opened)
   }
 
+  if (filters.went_cold !== undefined) {
+    // `any` = cold now (`cold`); a month = `went_cold_in(month)` (02 §Derived, 09 D-10).
+    where.push(
+      filters.went_cold === WENT_COLD_ANY
+        ? windowClause(COLD_NOW, rel, { today: TODAY }, params)
+        : windowClause(WENT_COLD_IN, rel, { ...wentColdWindow(filters.went_cold) }, params),
+    )
+  }
+
+  if (filters.signed_up_within_days !== undefined) {
+    where.push(windowClause(SIGNED_UP_IN, rel, { ...lastNDays(filters.signed_up_within_days) }, params))
+  }
+
+  if (filters.engagement_gte !== undefined) {
+    where.push(`${rel.engagement} >= ?`)
+    params.push(filters.engagement_gte)
+  }
+  if (filters.engagement_lte !== undefined) {
+    where.push(`${rel.engagement} <= ?`)
+    params.push(filters.engagement_lte)
+  }
+
   if (filters.has_app !== null) {
     where.push(`${filters.has_app ? '' : 'NOT '}${rel.hasApp}`)
+  }
+
+  if (filters.site_visit_within_days !== undefined || filters.site_visit_page !== undefined) {
+    const window = filters.site_visit_within_days === undefined ? null : lastNDays(filters.site_visit_within_days)
+    const page = filters.site_visit_page === undefined ? null : { column: 'page' as const, value: filters.site_visit_page }
+    where.push(eventClause(rel, 'v_web_events', window, page, params))
+  }
+
+  if (filters.app_active_within_days !== undefined || filters.app_event !== undefined) {
+    const window = filters.app_active_within_days === undefined ? null : lastNDays(filters.app_active_within_days)
+    const event = filters.app_event === undefined ? null : { column: 'event' as const, value: filters.app_event }
+    where.push(eventClause(rel, 'v_app_events', window, event, params))
   }
   return { where: where.join(' AND '), params }
 }
@@ -248,7 +434,7 @@ export function compileSegment(filters: SegmentFilters): CompiledSegment {
 /** Columns of a segment row as the assistant's segment tool returns it: the pkey in place of the email. */
 export const MODEL_SEGMENT_COLUMNS = ['pkey', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app'] as const
 
-/** The assistant's segment: the same filters over v_profiles, keyed by pkey (05 §Strategy). */
+/** The assistant's segment: the same filters over the v_* views, keyed by pkey (05 §Strategy). */
 export interface CompiledModelSegment {
   /** The segment's rows, MODEL_SEGMENT_COLUMNS in order, most engaged first; the caller appends `LIMIT ?`. */
   rowsSql: string
@@ -258,8 +444,9 @@ export interface CompiledModelSegment {
 }
 
 /**
- * The same filters compiled over v_profiles, the only relation this SQL names (05 §Exactly what
- * the model receives, "Structural"). Rows come out most engaged first: the stored
+ * The same filters compiled over v_profiles, with site visits and app activity as IN-subqueries
+ * on v_web_events and v_app_events: only v_* views, never a table (05 §Exactly what the model
+ * receives, "Structural"). Rows come out most engaged first: the stored
  * engagement_score descending, pkey breaking ties (09 D-56, D-46: an ORDER BY on the stored
  * column, no formula). That is the path for "our most engaged readers" (R5.2); the builder keeps
  * its email order (04). status IN (…) drops the profiles that have no subscriber row.

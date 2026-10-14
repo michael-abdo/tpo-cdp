@@ -12,6 +12,9 @@
 // Disclosure (06 §UI principles 2): level 1 = who, status, signup, last open and one summary per
 // column; "Details" per column = visit / event lists; "Technical details" = ids, keys, merge
 // counts, second-precise UTC times, raw field values and formulas.
+// One thing in one place (09 D-72): the demo subject is the placeholder only (no "Try an example"
+// button), the hint adds only what the label and placeholder do not say, and an app account's
+// user ID is in the App activity column's Technical details, not the header's.
 // Several app accounts or website visitors on one profile (09 D-70 item 4, 04 `app.accounts`,
 // `web.visitors`): level 1 counts across all of them and says how many; Details and Technical
 // details list each one under its own heading, earliest first.
@@ -31,6 +34,8 @@ import { COLD_DAYS, DEFINITIONS, isCold } from '../../shared/derive'
 import { QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
 import { ApiError, errorMessage, getJson } from '../api'
 import { AppWindow, Globe, Mail } from 'lucide-react'
+import { optionId, useListNav } from '../list-nav'
+import { ListboxOption } from '../listbox'
 import {
   Announcer,
   Button,
@@ -52,11 +57,13 @@ import type { Lookup, LookupAppAccount, LookupSearch, LookupVisitor } from '../t
 /** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
 const SUGGEST_DEBOUNCE_MS = 250
 const NO_MATCH = 'No profile matches — try part of the email'
+/** After a 404 or a no-match, the lead-in to the suggestion list, said once (09 D-72). */
+const ONE_OF_THESE = 'Did you mean one of these?'
 /** The page's one-line purpose, the brief's own words for it (06 §Vocabulary, 09 D-66). */
 const PURPOSE = 'Finds anyone: newsletter info, site visits and app activity in one view.'
 const LISTBOX_ID = 'lookup-suggestions'
 const HINT_ID = 'lookup-hint'
-/** A demo subject from 02 §Counts, offered as the one-click first step (06 §UI principles 6). */
+/** A demo subject from 02 §Counts, shown as the placeholder: the one place the example lives (09 D-72). */
 const EXAMPLE = 'joy.hall830@protonmail.com'
 
 const KIND_LABEL: Record<Lookup['profile']['kind'], string> = {
@@ -114,7 +121,7 @@ function Column({
 }
 
 function Header({ data }: { data: Lookup }) {
-  const { profile, newsletter, app } = data
+  const { profile, newsletter } = data
   // A profile with no email is named in words; the raw app id lives in Technical details (06 §UI principles 2, 4).
   const identity = profile.email ?? 'App account with no email on file'
   const facts: string[] = []
@@ -142,16 +149,10 @@ function Header({ data }: { data: Lookup }) {
             <Field label="Kind">
               <span className="font-mono">{profile.kind}</span>
             </Field>
-            {app !== null && (
-              <Field label="User ID">
-                <span className="font-mono">{app.accounts.map((a) => a.user_id).join(', ')}</span>
-              </Field>
-            )}
             <Field label="Score formula">
               <span className="font-mono">{DEFINITIONS.engagement_score.formula}</span>
             </Field>
           </dl>
-          <p>All timestamps are UTC.</p>
         </TechnicalDetails>
       </Disclosure>
     </div>
@@ -526,7 +527,7 @@ function useSuggestions(path: string | null): SuggestState | null {
   return settled.state
 }
 
-/** The listbox of matches (06 keyboard contract: ↑/↓ moves, Enter picks, Esc closes). */
+/** The listbox of matches (06 keyboard contract: ↑/↓ moves, Enter picks, Esc closes; ../listbox). */
 function SuggestionList({
   matches,
   truncated,
@@ -548,26 +549,20 @@ function SuggestionList({
       {matches.map((m, i) => {
         const isActive = i === active
         return (
-          <li
+          <ListboxOption
             key={m.pkey}
-            id={`${LISTBOX_ID}-${i}`}
-            role="option"
-            aria-selected={isActive}
-            // mousedown, not click: the input keeps focus, so the list is not closed first.
-            onMouseDown={(e) => {
-              e.preventDefault()
-              onPick(m)
-            }}
-            // The active row gets a bar and a fill, not a faint tint alone (principle 7).
-            className={`flex cursor-pointer flex-wrap gap-x-3 border-l-4 px-3 py-2 hover:bg-gray-50 ${
-              isActive ? 'border-blue-600 bg-blue-50' : 'border-transparent'
-            }`}
+            id={optionId(LISTBOX_ID, i)}
+            active={isActive}
+            onPick={() => onPick(m)}
+            // The active row's bar-and-fill treatment (principle 7) lives in the shared
+            // ListboxOption now, not here (D-72).
+            className="flex cursor-pointer flex-wrap gap-x-3 px-3 py-2 hover:bg-gray-50"
           >
             <span className="break-all font-medium text-gray-900">{m.email ?? m.user_id}</span>
             {/* The kind only when it is not the usual one (principle 5). */}
             {m.kind !== 'subscriber' && <span className="text-gray-700">{KIND_LABEL[m.kind]}</span>}
             {m.status !== null && <span className="text-gray-700">{capitalized(m.status)}</span>}
-          </li>
+          </ListboxOption>
         )
       })}
       {truncated && (
@@ -604,7 +599,7 @@ function DidYouMean({ suggestions, onPick }: { suggestions: Suggestion[]; onPick
   }
   return (
     <div className="space-y-1 text-sm text-gray-800">
-      <p>Did you mean one of these?</p>
+      <p>{ONE_OF_THESE}</p>
       <ul className="space-y-0.5">
         {suggestions.map((s) => (
           <li key={s.pkey}>{link(s)}</li>
@@ -619,7 +614,8 @@ export default function LookupPage() {
   const q = params.get('q')
   const [input, setInput] = useState(q ?? '')
   const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(-1)
+  const nav = useListNav()
+  const { active } = nav
   /** The no-match block: focus moving into it (Tab to a "Did you mean" link) keeps the list open. */
   const nearbyRef = useRef<HTMLDivElement>(null)
   const fragment = useDebounced(input, SUGGEST_DEBOUNCE_MS)
@@ -654,7 +650,7 @@ export default function LookupPage() {
   function go(key: string) {
     setInput(key)
     setOpen(false)
-    setActive(-1)
+    nav.setActive(-1)
     setParams({ q: key })
   }
 
@@ -666,7 +662,7 @@ export default function LookupPage() {
   function pickNearby(email: string) {
     setInput(email)
     setOpen(false)
-    setActive(-1)
+    nav.setActive(-1)
   }
 
   function onBlur(e: FocusEvent<HTMLInputElement>) {
@@ -677,30 +673,21 @@ export default function LookupPage() {
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    setActive(-1)
+    nav.setActive(-1)
     // Find again on the same unmatched q re-opens its fallback list; otherwise the list closes.
     setOpen(input === q && state?.status === 'not_found')
     setParams(input === '' ? {} : { q: input })
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) {
       if (!searchable(input)) return
       e.preventDefault()
-      if (!open) {
-        setOpen(true)
-        return
-      }
-      const step = e.key === 'ArrowDown' ? 1 : -1
-      setActive((i) => Math.max(-1, Math.min(matches.length - 1, i + step)))
-    } else if (e.key === 'Enter' && open && active >= 0 && active < matches.length) {
-      e.preventDefault()
-      pick(matches[active])
-    } else if (e.key === 'Escape' && open) {
-      e.preventDefault()
-      setOpen(false)
-      setActive(-1)
+      setOpen(true)
+      return
     }
+    if (!open) return
+    nav.onKeyDown(e, { itemCount: matches.length, onPick: (i) => pick(matches[i]), onClose: () => setOpen(false) })
   }
 
   // The fallback after a 404 is the list itself; with the list closed (Esc) the 404 message stays.
@@ -727,7 +714,7 @@ export default function LookupPage() {
           : `${NO_MATCH}. Did you mean ${nearby.map((m) => m.email).join(' or ')}?`
       messageVisible = nearby.length === 0
     } else {
-      const lead = notFound !== null ? `${notFound.message} Did you mean one of these? ` : ''
+      const lead = notFound !== null ? `${notFound.message} ${ONE_OF_THESE} ` : ''
       const more = suggested.truncated ? ', more if you keep typing' : ''
       message = `${lead}${plural(suggested.matches.length, 'match', 'matches')}${more}.`
     }
@@ -737,11 +724,6 @@ export default function LookupPage() {
   } else if (result !== null) {
     message = `Showing profile for ${result.profile.email ?? 'an app account with no email on file'}.`
   }
-  // The one-click first step (principle 6): on the empty page and after a search that found nobody.
-  // Near spellings are the better next step, so the example steps aside for them (principle 5).
-  const showExample =
-    nearby.length === 0 &&
-    ((state === null && !listShown) || (notFound !== null && (zeroMatches || !listShown)))
 
   return (
     <div className="space-y-5">
@@ -759,13 +741,13 @@ export default function LookupPage() {
             aria-controls={listboxShown ? LISTBOX_ID : undefined}
             aria-autocomplete="list"
             aria-describedby={result === null ? HINT_ID : undefined}
-            aria-activedescendant={listboxShown && active >= 0 ? `${LISTBOX_ID}-${active}` : undefined}
+            aria-activedescendant={listboxShown && active >= 0 ? optionId(LISTBOX_ID, active) : undefined}
             autoComplete="off"
             value={input}
             onChange={(e) => {
               setInput(e.target.value)
               setOpen(true)
-              setActive(-1)
+              nav.setActive(-1)
             }}
             onKeyDown={onKeyDown}
             onBlur={onBlur}
@@ -778,15 +760,14 @@ export default function LookupPage() {
         </div>
         {result === null && (
           <p id={HINT_ID} className="text-sm text-gray-600">
-            Type a subscriber's email or an app account's user ID (starts with u_), or just part of it. Suggestions appear after{' '}
-            {QUERY_FRAGMENT_MIN_LENGTH} letters.
+            Part of it is enough: matches appear after {QUERY_FRAGMENT_MIN_LENGTH} letters. A user ID starts with u_.
           </p>
         )}
         {result === null && (
           <Disclosure label="More ways to look someone up">
             <p className="text-sm text-gray-700">
-              Find also opens a profile from a profile key, a device ID or a visitor ID, copied from a
-              profile's Technical details. Suggestions search emails and user IDs only.
+              Find also opens a profile from a profile key, a device ID or a visitor ID copied from a
+              profile's Technical details; no matches are listed for these.
             </p>
             <TechnicalDetails>
               <dl className="space-y-1">
@@ -810,7 +791,9 @@ export default function LookupPage() {
         {listShown && suggestions.status === 'loading' && <Loading label="Finding matches…" />}
         {listShown && suggestions.status === 'error' && <ErrorLine message={suggestions.message} />}
         {listboxShown && notFound !== null && (
-          <p className="text-sm text-gray-800">{notFound.message} Did you mean one of these?</p>
+          <p className="text-sm text-gray-800">
+            {notFound.message} {ONE_OF_THESE}
+          </p>
         )}
         {listboxShown && (
           <SuggestionList
@@ -829,11 +812,6 @@ export default function LookupPage() {
           </div>
         )}
         <Announcer message={message} visible={messageVisible} />
-        {showExample && (
-          <Button icon={ICONS.next} onClick={() => go(EXAMPLE)}>
-            Try an example: {EXAMPLE}
-          </Button>
-        )}
       </div>
 
       {/* While suggestions are open the old profile steps aside, so the current profile is never in doubt. */}
