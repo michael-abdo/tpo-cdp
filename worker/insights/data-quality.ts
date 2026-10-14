@@ -67,11 +67,18 @@ const IN_CANONICAL = `(${CANONICAL_SOURCES.map(() => '?').join(', ')})`
 const IMPORT_SQL = `SELECT coalesce(sum(rows_in), 0) AS rows_in, coalesce(sum(rows_out), 0) AS rows_out,
   coalesce(sum(merged), 0) AS merged, coalesce(sum(quarantined), 0) AS quarantined FROM import_runs`
 const QUARANTINE_SQL = `SELECT file, reason, count(*) AS "rows" FROM quarantine GROUP BY file, reason ORDER BY file, reason`
+// app_users_not_on_list's `of` (app_users_not_on_list's `explain`, below) is "all app accounts
+// with an email", so the denominator stays email-scoped: migrations/0011 (09 D-78(b)) gives a
+// kind = 'unknown_user_stub' row has_app = 1 by its user_id link, not an email, so it is excluded
+// here the same way it is excluded from every other email-keyed v_profiles read (e.g.
+// source-app.ts's WHERE kind = 'subscriber'). Without the kind filter, a stub inflates `of` by
+// one per stub while `app_users WHERE email_norm IS NOT NULL` stays unchanged (test/webhook.test.ts
+// T-WH-6 regression case).
 const PROFILES_SQL = `SELECT
   coalesce(sum(kind = 'subscriber'), 0) AS subscribers,
   coalesce(sum(kind = 'subscriber' AND source IS NULL), 0) AS subscribers_without_source,
   coalesce(sum(kind = 'subscriber' AND source NOT IN ${IN_CANONICAL}), 0) AS subscribers_unexpected_source,
-  coalesce(sum(has_app), 0) AS app_users,
+  coalesce(sum(has_app AND kind <> 'unknown_user_stub'), 0) AS app_users,
   coalesce(sum(kind = 'app_only'), 0) AS app_users_not_on_list
 FROM v_profiles`
 const WEB_SQL = `SELECT

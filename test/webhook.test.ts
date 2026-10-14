@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { HOSTED_URL, TODAY } from '../shared/config'
 import { pkeyForEmail, pkeyForUnknownUser } from '../shared/pseudonym'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
+import { dataQuality } from '../worker/insights/data-quality'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import {
@@ -446,6 +447,32 @@ describe('T-WH-6 an unknown user_id', () => {
       .bind(stubKey)
       .all<{ event: string }>()
     expect(healed.map((r) => r.event)).toEqual(['read_story', 'app_open'])
+  })
+
+  it('never inflates data-quality app_users_not_on_list.of: a stub has no email to count it against (09 D-78(b) regression)', async () => {
+    // u_f2411d1: data/app_users.csv's real u_f2411d1c (line 9) with its last character removed
+    // (09 D-47), unused as either a known or an unknown id anywhere else in this file.
+    const unknown = 'u_f2411d1'
+    expect(await count('app_users WHERE user_id = ?', unknown)).toBe(0)
+    // 02 §Counts: 930 app_users rows load from the CSV, every one with an email (test/insights.
+    // test.ts's APP_ACCOUNTS); the two earlier T-WH-6 cases already added stub rows, so this
+    // also proves the "of" does not drift per pre-existing stub, not just on a fresh seed.
+    const APP_ACCOUNTS_WITH_EMAIL = 930
+    const before = await dataQuality(env.DB)
+    const ofBefore = before.checks.find((c) => c.key === 'app_users_not_on_list')!.of
+    expect(ofBefore).toBe(APP_ACCOUNTS_WITH_EMAIL)
+    expect(await count('app_users WHERE email_norm IS NOT NULL')).toBe(APP_ACCOUNTS_WITH_EMAIL)
+
+    const res = await post(event({ user_id: unknown, device_id: 'd_f2411d1' }))
+    expect(res.status).toBe(202)
+    expect(await count('app_users WHERE user_id = ?', unknown)).toBe(1)
+
+    // The new stub's v_profiles row carries has_app = 1 (migrations/0011, by its user_id link,
+    // not an email), so worker/insights/data-quality.ts's email-scoped "of" must still read 930,
+    // never 931, and the raw email count it mirrors must not have moved either.
+    const after = await dataQuality(env.DB)
+    expect(after.checks.find((c) => c.key === 'app_users_not_on_list')!.of).toBe(APP_ACCOUNTS_WITH_EMAIL)
+    expect(await count('app_users WHERE email_norm IS NOT NULL')).toBe(APP_ACCOUNTS_WITH_EMAIL)
   })
 })
 
