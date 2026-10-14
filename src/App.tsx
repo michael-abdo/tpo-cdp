@@ -5,13 +5,17 @@
 // whose 401 sends the browser back to /login (src/api.ts).
 // Shell a11y (06 §UI principles 7): "Skip to content" link, aria-current on the nav, focus moves to
 // the new page's <h1> on navigation, and document.title follows the route.
+// "Techy" (06 §Nav, 09 D-71): App events and AI audit log fold into one dropdown, last in the nav,
+// following the WAI-ARIA disclosure-navigation pattern (NavGroupMenu below).
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { TODAY } from '../shared/config'
 import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
-import { ErrorLine, Icon, ICONS, type LucideIcon } from './components'
+import { ErrorLine, Icon, ICONS } from './components'
+import { flatNavLinks, NAV, type NavGroupEntry, underNav } from './nav'
 import { effectiveTheme, setTheme, type Theme } from './theme'
 import AuditPage from './pages/AuditPage'
 import EventsPage from './pages/EventsPage'
@@ -20,16 +24,6 @@ import LoginPage from './pages/LoginPage'
 import LookupPage from './pages/LookupPage'
 import OverviewPage from './pages/OverviewPage'
 import SegmentsPage from './pages/SegmentsPage'
-
-/** Nav labels are the brief's words for each screen (06 §Vocabulary, 09 D-66, D-67; principles 1, 4); "Insights" is D-64's. */
-const NAV: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
-  { to: '/', label: 'Overview', icon: ICONS.overview },
-  { to: '/lookup', label: 'Look up', icon: ICONS.lookup },
-  { to: '/segments', label: 'Segments', icon: ICONS.segments },
-  { to: '/events', label: 'App events', icon: ICONS.events },
-  { to: '/insights', label: 'Insights', icon: ICONS.insights },
-  { to: '/audit', label: 'AI audit log', icon: ICONS.audit },
-]
 
 const APP_NAME = 'TPO Mini CDP'
 
@@ -44,6 +38,118 @@ function navClass({ isActive }: { isActive: boolean }): string {
 
 const quietButton =
   'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap text-ink-muted transition-colors duration-150 hover:bg-surface-2 hover:text-ink'
+
+/** Gap between the panel and the viewport edge, and its width, px (06 §UI principles 9: never wider than the screen). */
+const NAV_MENU_EDGE = 16
+const NAV_MENU_WIDTH = 200
+
+/**
+ * "Techy" (06 §Nav, 09 D-71): a WAI-ARIA disclosure-navigation button that reveals App events and
+ * AI audit log as real NavLinks. Click, Enter or Space toggles it; Esc closes it and returns focus
+ * to the button; a click outside closes it; picking a link closes it; nothing traps focus (Tab
+ * moves on to whatever sits after the button once the panel is open, since the panel's own links
+ * sit right after it in the DOM). The button reads as current (same soft fill + weight as a NavLink,
+ * navClass) whenever /events, /audit or /audit/:traceId is the route, with a visually-hidden
+ * "(current section)" standing in for aria-current, which only ever names one real page (D-67's
+ * comment on /audit/:traceId moves here: underNav's prefix match is what keeps "AI audit log"
+ * current on a trace page). The panel is portalled to <body> and fixed-positioned, clamped inside
+ * the viewport (phone width included), for the same reasons InfoTip is (components.tsx): it must
+ * not be clipped by the header's own stacking or widen the page. Skipped where there is no
+ * `document.body` (a server render, as test/ui/routes.test.ts renders the app without a DOM); the
+ * live app always has one.
+ */
+function NavGroupMenu({ group }: { group: NavGroupEntry }) {
+  const { pathname } = useLocation()
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const wrap = useRef<HTMLSpanElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const current = group.items.some((item) => underNav(pathname, item.to))
+
+  useLayoutEffect(() => {
+    const b = button.current
+    const p = panel.current
+    if (!open || b === null || p === null) return
+    const r = b.getBoundingClientRect()
+    const width = Math.min(NAV_MENU_WIDTH, window.innerWidth - 2 * NAV_MENU_EDGE)
+    const left = Math.min(Math.max(NAV_MENU_EDGE, r.right - width), window.innerWidth - NAV_MENU_EDGE - width)
+    p.style.width = `${width}px`
+    p.style.left = `${left}px`
+    p.style.top = `${r.bottom + 4}px`
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target
+      if (!(t instanceof Node) || !(wrap.current?.contains(t) || panel.current?.contains(t))) close()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      close()
+      button.current?.focus()
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  return (
+    <span ref={wrap} className="inline-flex">
+      <button
+        ref={button}
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+        className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150 ${
+          current
+            ? 'bg-accent-soft font-semibold text-accent-strong'
+            : 'text-ink-muted hover:bg-surface-2 hover:text-ink'
+        }`}
+      >
+        <Icon icon={group.icon} />
+        {group.label}
+        {current && <span className="sr-only"> (current section)</span>}
+        <Icon
+          icon={ICONS.navCaret}
+          className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {typeof document !== 'undefined' &&
+        document.body &&
+        createPortal(
+          <div
+            ref={panel}
+            id={id}
+            hidden={!open}
+            className="fixed z-30 rounded-lg border border-line-strong bg-surface p-1 shadow-soft"
+          >
+            <ul className="flex flex-col gap-0.5">
+              {group.items.map((item) => (
+                <li key={item.to}>
+                  <NavLink to={item.to} className={navClass} onClick={() => setOpen(false)}>
+                    <Icon icon={item.icon} />
+                    {item.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>,
+          document.body,
+        )}
+    </span>
+  )
+}
 
 /** Light/dark switch (09 D-60): says the theme it switches TO, remembered per browser. */
 function ThemeToggle() {
@@ -83,13 +189,18 @@ function TopBar() {
     }
   }
 
-  // Only Overview needs `end`: on /audit/:traceId, "AI audit log" stays marked as the current page.
-  const links = NAV.map((item) => (
-    <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
-      <Icon icon={item.icon} />
-      {item.label}
-    </NavLink>
-  ))
+  // Only Overview needs `end`. Techy (09 D-71) marks itself current for /events, /audit and
+  // /audit/:traceId with its own logic (NavGroupMenu's `underNav`), not a NavLink.
+  const links = NAV.map((item) =>
+    item.kind === 'group' ? (
+      <NavGroupMenu key={item.label} group={item} />
+    ) : (
+      <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
+        <Icon icon={item.icon} />
+        {item.label}
+      </NavLink>
+    ),
+  )
   const logoutButton = (
     <button type="button" onClick={logout} className={quietButton}>
       <Icon icon={ICONS.logout} />
@@ -174,9 +285,7 @@ function Shell() {
   const focusedFor = useRef(pathname)
 
   useEffect(() => {
-    const page = NAV.find(
-      (item) => item.to === pathname || (item.to !== '/' && pathname.startsWith(`${item.to}/`)),
-    )
+    const page = flatNavLinks(NAV).find((item) => underNav(pathname, item.to))
     document.title = page ? `${page.label} · ${APP_NAME}` : APP_NAME
     if (focusedFor.current === pathname) return
     focusedFor.current = pathname

@@ -8,8 +8,8 @@
 import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import readme from '../README.md?raw'
-import appSource from '../src/App.tsx?raw'
 import componentsSource from '../src/components.tsx?raw'
+import navSource from '../src/nav.ts?raw'
 import eventsSource from '../src/pages/EventsPage.tsx?raw'
 import lookupSource from '../src/pages/LookupPage.tsx?raw'
 import overviewSource from '../src/pages/OverviewPage.tsx?raw'
@@ -21,12 +21,13 @@ import { SOURCES } from '../shared/sources'
 import { COLUMN_LABEL, FILTER_LABEL } from '../src/labels'
 import { FILES } from '../src/needs-review'
 import { VOCABULARY_SCAN } from './helpers/screen-text'
-import { retiredIn } from './helpers/vocabulary'
+import { navArrayText, retiredIn } from './helpers/vocabulary'
 
 function offences(files: Record<string, readonly string[]>): string[] {
   const out: string[] = []
   for (const [path, texts] of Object.entries(files))
-    for (const text of texts) for (const name of retiredIn(text)) out.push(`${path}: ${name} in "${text.trim()}"`)
+    for (const text of texts)
+      for (const name of retiredIn(text)) out.push(`${path}: ${name} in "${text.trim()}"`)
   return out
 }
 
@@ -34,15 +35,27 @@ function offences(files: Record<string, readonly string[]>): string[] {
 const attributeValues = (code: string, tag: string, attribute: string) =>
   [...code.matchAll(new RegExp(`<${tag}\\s+${attribute}="([^"]+)"`, 'g'))].map((m) => m[1])
 
-describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () => {
+describe("T-VOC-1 the brief's words everywhere (09 D-66, 06 §Vocabulary)", () => {
   it('scans every file it names: all of src/ but the Segments page, the glossary, the registry, the definitions and the server sentences', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
     for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
     // Pinned on their own (not only via VOCABULARY_SCAN, which this would check against itself):
     // the definitions and the server sentences 08 T-VOC-1 names.
-    for (const file of ['shared/derive.ts', 'shared/glossary.ts', 'shared/sources.ts', 'worker/dedupe/score.ts', 'worker/assistant/respond.ts', 'worker/assistant/system-prompt.ts'])
+    for (const file of [
+      'shared/derive.ts',
+      'shared/glossary.ts',
+      'shared/sources.ts',
+      'worker/dedupe/score.ts',
+      'worker/assistant/respond.ts',
+      'worker/assistant/system-prompt.ts',
+    ])
       expect(scanned).toContain(file)
-    for (const page of ['src/App.tsx', 'src/pages/OverviewPage.tsx', 'src/pages/LookupPage.tsx', 'src/labels.ts'])
+    for (const page of [
+      'src/App.tsx',
+      'src/pages/OverviewPage.tsx',
+      'src/pages/LookupPage.tsx',
+      'src/labels.ts',
+    ])
       expect(scanned).toContain(page)
     expect(scanned).not.toContain('src/pages/SegmentsPage.tsx')
     expect(scanned.filter((p) => p.startsWith('src/')).length).toBeGreaterThan(15)
@@ -51,7 +64,10 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
   it('the guard flags each retired term and lets the brief\'s question and "screen reader" through', () => {
     expect(retiredIn('Find a reader')).toEqual(['reader(s)', 'Find a reader'])
     expect(retiredIn('Built a list of readers')).toEqual(['reader(s)', 'Build a list'])
-    expect(retiredIn('App users whose email is not on the newsletter list')).toEqual(['Newsletter list', 'App users'])
+    expect(retiredIn('App users whose email is not on the newsletter list')).toEqual([
+      'Newsletter list',
+      'App users',
+    ])
     expect(retiredIn('build me a list of our most engaged readers')).toEqual([])
     expect(retiredIn('"Build me a list of our most engaged readers"')).toEqual([])
     expect(retiredIn('Most engaged readers this week')).toEqual(['reader(s)'])
@@ -74,39 +90,88 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(offences({ 'renderSystemPrompt()': prompt.split('\n') })).toEqual([])
   })
 
-  it('no README line holds a retired term outside the brief\'s own question', () => {
+  it("no README line holds a retired term outside the brief's own question", () => {
     expect(offences({ 'README.md': readme.split('\n') })).toEqual([])
   })
 
-  it('nav labels are the 06 words (D-67): Look up, Segments, App events, and Insights in place of AI assistant and Growth (D-64)', () => {
-    const nav = appSource.slice(appSource.indexOf('const NAV'), appSource.indexOf(']\n', appSource.indexOf('const NAV')))
-    const labels = [...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])
-    expect(labels).toEqual(['Overview', 'Look up', 'Segments', 'App events', 'Insights', 'AI audit log'])
+  it('nav labels are the 06 words (D-67, D-71): Look up, Segments and Insights in place of AI assistant and Growth (D-64); App events and AI audit log fold into "Techy", last', () => {
+    const nav = navArrayText(navSource)
+    // Every label in document order: the four top-level pages, then Techy, then its two children.
+    expect([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])).toEqual([
+      'Overview',
+      'Look up',
+      'Segments',
+      'Insights',
+      'Techy',
+      'App events',
+      'AI audit log',
+    ])
+    // Only a top-level entry carries `kind:`; App events and AI audit log sit inside Techy's `items`
+    // array, which has none, so this also proves they are not top-level (test/ui/nav.test.ts checks
+    // the same invariant against the live NAV array, which this file cannot import: src/App.tsx has
+    // real JSX, which tsconfig.worker.json, this file's project, does not parse).
+    const topLevel = [...nav.matchAll(/kind: '(link|group)',\s*(?:to: '[^']*',\s*)?label: '([^']+)'/g)].map(
+      (m) => ({
+        kind: m[1],
+        label: m[2],
+      }),
+    )
+    expect(topLevel).toEqual([
+      { kind: 'link', label: 'Overview' },
+      { kind: 'link', label: 'Look up' },
+      { kind: 'link', label: 'Segments' },
+      { kind: 'link', label: 'Insights' },
+      { kind: 'group', label: 'Techy' },
+    ])
   })
 
-  it('Look up: title, purpose and the three column titles are the brief\'s', () => {
+  it("Look up: title, purpose and the three column titles are the brief's", () => {
     expect(lookupSource).toContain('title="Look up a subscriber"')
-    expect(lookupSource).toContain("'Finds anyone: newsletter info, site visits and app activity in one view.'")
+    expect(lookupSource).toContain(
+      "'Finds anyone: newsletter info, site visits and app activity in one view.'",
+    )
     expect(new Set(attributeValues(lookupSource, 'Column', 'title'))).toEqual(
       new Set(['Newsletter info', 'Site visits', 'App activity']),
     )
     // Field labels a person reads on the profile (06 §Vocabulary subscriber, web and app fields).
     const fields = new Set(attributeValues(lookupSource, 'Field', 'label'))
-    for (const label of ['Status', 'Acquisition source', 'Signup date', 'Last open date', 'Visitor ID', 'First UTM source', 'User ID', 'Created date'])
+    for (const label of [
+      'Status',
+      'Acquisition source',
+      'Signup date',
+      'Last open date',
+      'Visitor ID',
+      'First UTM source',
+      'User ID',
+      'Created date',
+    ])
       expect(fields).toContain(label)
   })
 
-  it('source names and units are the brief\'s: beehiiv, Website, App accounts, App events', () => {
+  it("source names and units are the brief's: beehiiv, Website, App accounts, App events", () => {
     expect(SOURCES.map((s) => s.name)).toEqual(['beehiiv', 'Website', 'App accounts', 'App events'])
     expect(SOURCES.map((s) => s.unit[1])).toEqual(['subscribers', 'website visits', 'app accounts', 'events'])
     expect(SOURCES.map((s) => s.unit[0])).toEqual(['subscriber', 'website visit', 'app account', 'event'])
   })
 
   it('headline tiles read Subscribers · Active subscribers · App accounts · App events', () => {
-    const tiles = [GLOSSARY.subscribers_signed_up, GLOSSARY.subscribers_active, GLOSSARY.app_accounts, GLOSSARY.events_received]
-    expect(tiles.map((t) => t.term)).toEqual(['Subscribers', 'Active subscribers', 'App accounts', 'App events'])
+    const tiles = [
+      GLOSSARY.subscribers_signed_up,
+      GLOSSARY.subscribers_active,
+      GLOSSARY.app_accounts,
+      GLOSSARY.events_received,
+    ]
+    expect(tiles.map((t) => t.term)).toEqual([
+      'Subscribers',
+      'Active subscribers',
+      'App accounts',
+      'App events',
+    ])
     // The Overview shows exactly these entries, in this order, labelled by the glossary term.
-    const headline = overviewSource.slice(overviewSource.indexOf('const HEADLINE'), overviewSource.indexOf(']\n', overviewSource.indexOf('const HEADLINE')))
+    const headline = overviewSource.slice(
+      overviewSource.indexOf('const HEADLINE'),
+      overviewSource.indexOf(']\n', overviewSource.indexOf('const HEADLINE')),
+    )
     expect([...headline.matchAll(/term: '([^']+)'/g)].map((m) => m[1])).toEqual([
       'subscribers_signed_up',
       'subscribers_active',
@@ -141,7 +206,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(FILTER_LABEL.source).toBe('Acquisition source')
   })
 
-  it('the app\'s event names show as the brief writes them, each with a plain gloss', () => {
+  it("the app's event names show as the brief writes them, each with a plain gloss", () => {
     for (const event of ['app_open', 'read_story', 'link_click', 'login'] as const) {
       expect(GLOSSARY[event].term).toBe(event)
       expect(GLOSSARY[event].text.length).toBeGreaterThan(10)

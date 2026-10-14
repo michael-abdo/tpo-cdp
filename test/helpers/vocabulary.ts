@@ -23,3 +23,27 @@ export function retiredIn(text: string): string[] {
   const cleaned = ALLOWED.reduce((t, allowed) => t.replace(allowed, ''), text)
   return RETIRED.filter((r) => r.pattern.test(cleaned)).map((r) => r.name)
 }
+
+/**
+ * The `export const NAV = [...]` array literal's own source text from src/nav.ts (09 D-71), found
+ * by balancing brackets rather than assuming a line shape — the nested Techy group's own `items: […]`
+ * closes on an indented line too, which a naive "first ']' at a line start" search would stop at.
+ * src/nav.ts imports icons from src/components.tsx, a .tsx module with real JSX; test/vocabulary.test.ts
+ * and test/insights-vocabulary.test.ts run under tsconfig.worker.json, which has no "jsx" option, so
+ * they read the array as text (`?raw`) rather than importing it (which would pull components.tsx's
+ * JSX into a program that cannot parse it).
+ */
+export function navArrayText(appSource: string): string {
+  const start = appSource.indexOf('const NAV')
+  if (start === -1) throw new Error('no "const NAV" declaration in the given source')
+  const open = appSource.indexOf('[', appSource.indexOf('=', start))
+  let depth = 0
+  for (let i = open; i < appSource.length; i++) {
+    if (appSource[i] === '[') depth++
+    else if (appSource[i] === ']') {
+      depth--
+      if (depth === 0) return appSource.slice(open, i + 1)
+    }
+  }
+  throw new Error('the NAV array has no matching close bracket')
+}
