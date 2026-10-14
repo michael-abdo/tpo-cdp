@@ -8,6 +8,7 @@ import { BAR_TOP_CATEGORIES, type ChartKind, pickChart } from '../../shared/pick
 import { AnswerCard } from '../../src/insights/ask'
 import { BoardGrid, TileActions } from '../../src/insights/board'
 import { cellText } from '../../src/insights/cells'
+import { ownDatesText } from '../../src/insights/windows'
 import { InsightChart } from '../../src/insights/charts'
 import type { ChartResult, ChartSegment } from '../../src/insights/shapes'
 import type { AssistantResponse, InsightTile } from '../../src/types'
@@ -194,6 +195,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       partial: false,
       audit_id: crypto.randomUUID(),
       pin_window: { from: '2026-08-01', to: '2026-08-31' },
+      pin_own_dates: null,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
     expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>[\s\S]*?Pin to board/)
@@ -202,10 +204,10 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
     expect(text).toContain('Fixed: Aug 1–31, 2026')
   })
 
-  it('a lookup with its own dates (pin_window null) offers no time period choice, only the dates as text', () => {
-    // The recorded segment answer to "build me a list of our most engaged readers": the score's
-    // 30-day lookback is the answer's window, but the segment tool takes no window, so the server
-    // reports pin_window null (04 POST /api/assistant).
+  it('a segment answer names no dates in the dialog, even when the model’s answer gave a window', () => {
+    // The recorded segment answer to "build me a list of our most engaged readers": the model named
+    // a 30-day window in its answer, but the segment's filters carry no dates, so the server reports
+    // pin_window and pin_own_dates null (04 POST /api/assistant) and its tile says "As of".
     const data: AssistantResponse = {
       type: 'segment',
       text: 'Here are your most engaged active readers.',
@@ -217,11 +219,66 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       partial: false,
       audit_id: crypto.randomUUID(),
       pin_window: null,
+      pin_own_dates: null,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: 'build me a list of our most engaged readers', onPinned: () => {} }))
     expect(html).not.toContain('type="radio"')
     expect(html).not.toContain('<fieldset')
-    expect(text).toContain('uses its own dates (Aug 29 – Sep 28, 2026)')
+    expect(text).not.toContain('Time period:')
+    expect(text).not.toContain('Set by this question')
+  })
+
+  it('a lookup that sets its own dates: the dialog and the tile footer name the same dates in the same words', () => {
+    // The recorded answer to "which pages do new subscribers hit first?" (the query row; 02 §Derived
+    // new_subscriber = TODAY − 30 .. TODAY); the dialog is what is under test, so the table is left out.
+    const dates = { from: '2026-08-29', to: '2026-09-28' }
+    const data: AssistantResponse = {
+      type: 'answer',
+      text: 'Most new subscribers first landed on the home page.',
+      table: null,
+      segment: null,
+      window: dates,
+      filters_applied: {},
+      definitions_used: ['new_subscriber'],
+      partial: false,
+      audit_id: crypto.randomUUID(),
+      pin_window: null,
+      pin_own_dates: dates,
+    }
+    const words = ownDatesText(dates)
+    expect(words).toBe('Set by this question · Aug 29 – Sep 28, 2026')
+    const dialog = render(createElement(AnswerCard, { data, question: 'which pages do new subscribers hit first?', onPinned: () => {} }))
+    expect(dialog.html).not.toContain('type="radio"')
+    expect(dialog.text).toContain(`Time period: ${words}`)
+    const tile: InsightTile = { ...pinned, tool: 'pages_new_subscribers_hit_first', window: null, own_dates: dates, chart: 'bar', result: { ...BAR, summary: {} }, params: {} }
+    const footer = render(createElement(BoardGrid, { tiles: [tile], onChanged: () => {}, onRemoved: () => {}, onExplain: () => {} }))
+    expect(footer.text).toContain(words)
+    expect(footer.text).not.toContain('As of')
+  })
+
+  it('a stale answer (the Ask bar holds another question) says so in words, with no lowered opacity', () => {
+    const data: AssistantResponse = {
+      type: 'answer',
+      text: '46 active Instagram signups went cold in August 2026.',
+      table: null,
+      segment: null,
+      window: { from: '2026-08-01', to: '2026-08-31' },
+      filters_applied: {},
+      definitions_used: ['went_cold_in'],
+      partial: false,
+      audit_id: crypto.randomUUID(),
+      pin_window: { from: '2026-08-01', to: '2026-08-31' },
+      pin_own_dates: null,
+    }
+    const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {}, stale: true }))
+    const section = /<section[^>]*>/.exec(html)?.[0] ?? ''
+    expect(section).toContain('data-stale')
+    // The card's own classes: no opacity, which lowered every text and control under 4.5:1 (axe, 06 §UI principles 7).
+    expect(section).not.toContain('opacity')
+    expect(text).toContain('Earlier question')
+    expect(text).toContain(`This answer is for your earlier question: “${BRIEF_Q1}”.`)
+    const fresh = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
+    expect(/<section[^>]*>/.exec(fresh.html)?.[0]).not.toContain('data-stale')
   })
 })
 
@@ -233,6 +290,7 @@ const pinned: InsightTile = {
   built_in: false,
   sort_order: 50,
   window: AUGUST,
+  own_dates: null,
   chart: 'number',
   chart_override: null,
   result: { ...NUMBER, summary: {} },
@@ -288,6 +346,16 @@ describe('tile options (06 §/insights tile menu)', () => {
     expect(text).toContain('Rolling: last 30 days (Aug 29 – Sep 28, 2026)')
     expect(text).toContain('Rolling: this month (Sep 1–28, 2026)')
     expect(text).toContain('A rolling period moves with today')
+    // The tile shows last month and its title says so: no hint.
+    expect(text).not.toContain('use Rename')
+  })
+
+  it('the time period form offers Rename when the title names another period than the one picked', () => {
+    const moved: InsightTile = { ...pinned, window: { kind: 'rolling', preset: 'last_30_days', from: '2026-08-29', to: '2026-09-28' } }
+    const { text } = render(
+      createElement(TileActions, { tile: moved, above: null, below: null, onChanged: () => {}, onRemoved: () => {}, onExplain: () => {}, onClose: () => {}, initialMode: 'window' }),
+    )
+    expect(text).toContain('The title says “last month”. After saving, use Rename so it matches the new period.')
   })
 
   it('a tile shows its window in words as a button that changes it, and "Updated just now"', () => {

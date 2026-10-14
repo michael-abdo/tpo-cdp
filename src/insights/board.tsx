@@ -4,7 +4,8 @@
 // time period in words and "Updated just now" (the board was fetched for this view; the exact UTC
 // time is in Technical details, so the page reads no wall clock, 02 §Time). The time period is
 // itself a button that opens "Change time period" directly (three clicks: period → choice → Save);
-// a tile with no period says "As of <TODAY>". One tile's error shows on that tile only. Level 2 =
+// a lookup that sets its own dates names them ("Set by this question · Aug 29 – Sep 28, 2026", the
+// same words as the pin dialog); a tile with neither says "As of <TODAY>". One tile's error shows on that tile only. Level 2 =
 // the tile's "Options" panel: Change time period · Change chart · Rename · Move up/down · Remove
 // (not on built-in tiles, which the server refuses with 409) · Explain this (fills the Ask bar) ·
 // Technical details. Focus never drops to the page: a form takes focus when it opens, and Cancel
@@ -24,7 +25,7 @@ import { CHART_LABEL, chartFits } from './shapes'
 import type { RollingPreset } from '../../shared/insight-window'
 import { CHART_OVERRIDES } from '../../shared/pick-chart'
 import { tileElementId } from './questions'
-import { PRESET_LABEL, PRESETS, windowText } from './windows'
+import { ownDatesText, PRESET_LABEL, PRESETS, windowText } from './windows'
 
 const CHOICES: readonly ChartChoice[] = CHART_OVERRIDES
 
@@ -54,6 +55,8 @@ function WindowForm({ tile, onSave, onCancel, saving }: { tile: InsightTile; onS
   const name = useId()
   const hintId = useId()
   const checked = useFocusOnOpen<HTMLInputElement>()
+  // A title naming a preset ("…last month") reads wrong once the period changes: say so, once.
+  const titlePeriod = PRESETS.find((preset) => tile.title.toLowerCase().includes(PRESET_LABEL[preset].toLowerCase()))
   function submit(e: FormEvent) {
     e.preventDefault()
     onSave({ window: pick === 'fixed' ? { fixed: [from, to] } : { rolling: pick } })
@@ -82,6 +85,11 @@ function WindowForm({ tile, onSave, onCancel, saving }: { tile: InsightTile; onS
           Fixed dates
         </label>
       </fieldset>
+      {titlePeriod !== undefined && titlePeriod !== pick && (
+        <p className="text-xs text-ink">
+          The title says “{PRESET_LABEL[titlePeriod].toLowerCase()}”. After saving, use Rename so it matches the new period.
+        </p>
+      )}
       {pick === 'fixed' && (
         <div className="flex flex-wrap gap-3">
           <label className="space-y-1 text-sm">
@@ -170,7 +178,15 @@ function RemoveConfirm({ tile, saving, onRemove, onCancel }: { tile: InsightTile
         Remove “{tile.title}” from the board? You can pin it again from a new answer.
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button icon={ICONS.remove} disabled={saving} className="border-danger-line text-danger" onClick={onRemove}>
+        {/* aria-disabled, not disabled, while it works: a disabled button drops focus to the page. */}
+        <Button
+          icon={ICONS.remove}
+          aria-disabled={saving}
+          className="border-danger-line text-danger aria-disabled:cursor-wait"
+          onClick={() => {
+            if (!saving) onRemove()
+          }}
+        >
           {saving ? 'Removing…' : 'Remove'}
         </Button>
         <Button onClick={onCancel} disabled={saving}>
@@ -245,9 +261,16 @@ export function TileActions({
     try {
       await action()
       setSaving(false)
+      if (removed) {
+        // The tile is about to unmount: no list item takes focus back (the [mode] effect would pull
+        // it into a node that is then removed, dropping focus to the page). The page moves focus to
+        // the board heading instead (InsightsPage removed()).
+        opener.current = null
+        onRemoved(done)
+        return
+      }
       setMode('list')
-      if (removed) onRemoved(done)
-      else onChanged(done)
+      onChanged(done)
     } catch (err) {
       console.error('insights: tile change failed', tile.id, err)
       setError(errorMessage(err))
@@ -389,6 +412,13 @@ function Tile({
       id={tileElementId(tile.id)}
       tabIndex={-1}
       aria-labelledby={headingId}
+      // Esc closes the open panel wherever focus is in the tile, the Options toggle included (06 §UI principles 7).
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && open !== null) {
+          e.stopPropagation()
+          close()
+        }
+      }}
       className="flex min-w-0 scroll-mt-4 flex-col gap-3 rounded-xl border border-line bg-surface p-4 shadow-soft sm:p-5"
     >
       <div className="flex items-start gap-2">
@@ -408,12 +438,7 @@ function Tile({
         </Button>
       </div>
       {open !== null && (
-        <div
-          id={panelId}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') close()
-          }}
-        >
+        <div id={panelId}>
           <TileActions
             key={open}
             initialMode={open}
@@ -454,6 +479,11 @@ function Tile({
             {windowText(tile.window)}
             <span className="sr-only">: change time period for {tile.title}</span>
           </button>
+        ) : tile.own_dates !== null ? (
+          <span className="inline-flex items-center gap-1">
+            <Icon icon={ICONS.window} className="size-3.5" />
+            {ownDatesText(tile.own_dates)}
+          </span>
         ) : (
           <span className="inline-flex items-center gap-1">
             <Icon icon={ICONS.today} className="size-3.5" />

@@ -193,6 +193,8 @@ export interface AssistantResponse {
   audit_id: string
   /** The time period "Pin to board" would store, or null when the lookup has none (04, 09 D-64). */
   pin_window: { from: string; to: string } | null
+  /** The dates the pinned lookup sets itself when it takes no time period; the tile's footer shows them too. */
+  pin_own_dates: { from: string; to: string } | null
 }
 
 export type AuditStatus = 'success' | 'error' | 'blocked'
@@ -261,6 +263,8 @@ export interface InsightTile {
   sort_order: number
   /** Resolved against TODAY by the server (shared/insight-window.ts). */
   window: ResolvedWindow | null
+  /** The dates the lookup sets itself when it has no window (a query row's built-in period), or null. */
+  own_dates: { from: string; to: string } | null
   /** The chart drawn: the override when set, else pickChart on the result. */
   chart: ChartKind
   chart_override: ChartChoice | null

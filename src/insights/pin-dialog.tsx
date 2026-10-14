@@ -2,9 +2,13 @@
 // question) and, when the pinned lookup takes a time period, the choice "Rolling: last month" or
 // "Fixed: Aug 1–31, 2026". Whether it takes one is the server's answer (`pin_window` of POST
 // /api/assistant, the same reading POST /api/insights does), so the dialog never offers a choice
-// the pin would drop; a lookup with its own dates shows them as plain text. The browser sends only
-// the trace id and the title (04: never a tool, params or SQL); the server stores the window
-// rolling when it equals a preset, else fixed. When the person chose the other kind, one PATCH sets it.
+// the pin would drop. A lookup that sets its own dates (`pin_own_dates`, a query row's built-in
+// period) shows them in the same words the tile's footer will (ownDatesText); a lookup with neither
+// says nothing about time, as its tile says "As of <TODAY>". The browser sends only the trace id
+// and, when the person changed it, the title (04: never a tool, params or SQL; an unchanged title is
+// left to the server, which names the tile after the Gate 1-redacted question, so a question that
+// held an email still pins). The server stores the window rolling when it equals a preset, else
+// fixed. When the person chose the other kind, one PATCH sets it.
 // The native <dialog> gives the focus trap, Esc to close and the backdrop; focus goes back to the
 // button that opened it (06 §UI principles 7).
 
@@ -14,7 +18,7 @@ import { Button, ErrorLine, ICONS } from '../components'
 import { humanRange } from '../format'
 import type { InsightWindow } from '../../shared/insight-window'
 import type { InsightPatch, InsightTile } from '../types'
-import { matchingPreset, PRESET_LABEL } from './windows'
+import { matchingPreset, ownDatesText, PRESET_LABEL } from './windows'
 
 type Choice = 'rolling' | 'fixed'
 
@@ -35,7 +39,7 @@ export function PinDialog({
   onClose,
   auditId,
   question,
-  answerWindow,
+  ownDates,
   pinWindow,
   onPinned,
 }: {
@@ -43,8 +47,8 @@ export function PinDialog({
   onClose: () => void
   auditId: string
   question: string
-  /** The dates the answer covered (AssistantResponse.window). */
-  answerWindow: { from: string; to: string } | null
+  /** The dates the pinned lookup sets itself (AssistantResponse.pin_own_dates). */
+  ownDates: { from: string; to: string } | null
   /** The time period the pin stores, or null when its lookup has none (AssistantResponse.pin_window). */
   pinWindow: { from: string; to: string } | null
   onPinned: (tile: InsightTile, note: string | null) => void
@@ -71,7 +75,7 @@ export function PinDialog({
     setError(null)
     let tile: InsightTile
     try {
-      tile = await postJson<InsightTile>('/api/insights', { audit_id: auditId, title })
+      tile = await postJson<InsightTile>('/api/insights', title === question ? { audit_id: auditId } : { audit_id: auditId, title })
     } catch (err) {
       console.error('insights: pin failed', err)
       setError({ message: errorMessage(err), code: err instanceof ApiError ? err.code : null })
@@ -110,7 +114,7 @@ export function PinDialog({
         <h2 id={titleId} className="font-display text-lg font-medium">
           Pin to board
         </h2>
-        <p className="text-sm text-ink-muted">The tile re-runs this lookup each time the board opens. The AI is not asked again.</p>
+        <p className="text-sm text-ink-muted">The tile asks the same question of today’s data each time the board opens. The AI is not asked again.</p>
         <div className="space-y-1">
           <label htmlFor={inputId} className="block text-sm font-medium text-ink">
             Tile title
@@ -124,10 +128,10 @@ export function PinDialog({
             className="min-h-11 w-full rounded-lg border border-line-strong bg-page px-3 py-2 text-base text-ink"
           />
         </div>
-        {pinWindow === null && answerWindow !== null && (
+        {pinWindow === null && ownDates !== null && (
           <p className="text-sm text-ink">
-            <span className="font-medium">Time period:</span> uses its own dates ({humanRange(answerWindow.from, answerWindow.to)}).
-            <span className="block text-ink-muted">The lookup behind this answer sets them, so the tile keeps them.</span>
+            <span className="font-medium">Time period:</span> {ownDatesText(ownDates)}
+            <span className="block text-ink-muted">The question itself sets these dates, so the tile always uses them.</span>
           </p>
         )}
         {pinWindow !== null && (

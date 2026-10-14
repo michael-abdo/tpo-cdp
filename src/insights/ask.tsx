@@ -72,7 +72,10 @@ export function AnswerCard({
   data: AssistantResponse
   question: string
   onPinned: (tile: InsightTile, note: string | null) => void
-  /** The Ask bar now holds another question ("Explain this"): this answer is dimmed and says so. */
+  /**
+   * The Ask bar now holds another question ("Explain this"): the card gets a dashed border and says
+   * so in words. No opacity: every text and control keeps its full contrast (06 §UI principles 7).
+   */
   stale?: boolean
 }) {
   const [exporting, setExporting] = useState(false)
@@ -123,9 +126,15 @@ export function AnswerCard({
   return (
     <section
       aria-labelledby="answer-heading"
-      className={`space-y-4 rounded-xl border border-line bg-surface p-5 shadow-soft sm:p-6 ${stale ? 'opacity-60' : ''}`}
+      data-stale={stale ? '' : undefined}
+      className={`space-y-4 rounded-xl border bg-surface p-5 shadow-soft sm:p-6 ${stale ? 'border-dashed border-line-strong' : 'border-line'}`}
     >
-      {stale && <p className="text-sm font-medium text-ink">This answer is for your earlier question: “{question}”.</p>}
+      {stale && (
+        <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
+          <Tag icon={ICONS.assistant}>Earlier question</Tag>
+          This answer is for your earlier question: “{question}”.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <h2 id="answer-heading" className="mr-auto font-display text-lg font-medium text-ink">
           Answer
@@ -183,7 +192,7 @@ export function AnswerCard({
       <p className="text-sm">
         <Link
           to={`/audit/${data.audit_id}`}
-          className="inline-flex min-h-6 items-center gap-1.5 text-blue-700 underline underline-offset-2 hover:text-blue-900"
+          className="inline-flex min-h-6 items-center gap-1.5 text-accent underline underline-offset-2 hover:text-accent-strong"
         >
           <Icon icon={ICONS.audit} />
           See exactly what the AI saw for this answer
@@ -201,13 +210,13 @@ export function AnswerCard({
               </Field>
             ))}
         </dl>
-        {filters.status === 'hidden' && <p className="text-sm text-gray-700">{filters.message}</p>}
+        {filters.status === 'hidden' && <p className="text-sm text-ink-muted">{filters.message}</p>}
         {data.definitions_used.length > 0 && (
           <dl className="space-y-2 text-sm">
             {data.definitions_used.map((key) => (
               <div key={key}>
-                <dt className="font-medium text-gray-900">{DEFINITION_LABEL[key]}</dt>
-                <dd className="text-gray-700">{DEFINITIONS[key].doc}</dd>
+                <dt className="font-medium text-ink">{DEFINITION_LABEL[key]}</dt>
+                <dd className="text-ink-muted">{DEFINITIONS[key].doc}</dd>
               </div>
             ))}
           </dl>
@@ -263,7 +272,7 @@ export function AnswerCard({
         onClose={closePin}
         auditId={data.audit_id}
         question={question}
-        answerWindow={data.window}
+        ownDates={data.pin_own_dates}
         pinWindow={data.pin_window}
         onPinned={(tile, note) => {
           setPinOpen(false)
@@ -386,7 +395,7 @@ export function AskSection({
           {state.code !== null && state.code !== 'invalid_body' && (
             <p className="text-sm text-ink-muted">
               This attempt is listed in the{' '}
-              <Link to="/audit" className="text-blue-700 underline underline-offset-2 hover:text-blue-900">
+              <Link to="/audit" className="text-accent underline underline-offset-2 hover:text-accent-strong">
                 AI audit log
               </Link>
               .
