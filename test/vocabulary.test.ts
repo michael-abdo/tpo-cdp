@@ -9,8 +9,10 @@ import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import readme from '../README.md?raw'
 import appSource from '../src/App.tsx?raw'
+import componentsSource from '../src/components.tsx?raw'
 import eventsSource from '../src/pages/EventsPage.tsx?raw'
 import lookupSource from '../src/pages/LookupPage.tsx?raw'
+import overviewSource from '../src/pages/OverviewPage.tsx?raw'
 import { discoverViewSchemas } from '../worker/assistant/schema-context'
 import { renderSystemPrompt } from '../worker/assistant/system-prompt'
 import { DEFINITIONS } from '../shared/derive'
@@ -31,8 +33,12 @@ const RETIRED: readonly { name: string; pattern: RegExp }[] = [
   { name: 'Newsletter list', pattern: /\bnewsletter list\b/i },
   { name: 'App users', pattern: /\bapp users?\b/i },
 ]
-/** Phrases that may hold a retired word: the brief's question (R5.2) and assistive technology. */
-const ALLOWED = [/most engaged readers/gi, /screen[- ]readers?/gi]
+/**
+ * Phrases that may hold a retired word: the brief's question (R5.2), whole, and assistive technology.
+ * Only the full question passes (08 T-VOC-1 "the exact brief question"); "most engaged readers" on its
+ * own, as a label or a sentence, is still flagged.
+ */
+const ALLOWED = [/build me a list of our most engaged readers/gi, /screen[- ]readers?/gi]
 
 function retiredIn(text: string): string[] {
   const cleaned = ALLOWED.reduce((t, allowed) => t.replace(allowed, ''), text)
@@ -54,7 +60,10 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
   it('scans every file it names: all of src/ but the Segments page, the glossary, the registry, the definitions and the server sentences', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
     for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
-    expect(scanned).toContain('shared/derive.ts')
+    // Pinned on their own (not only via VOCABULARY_SCAN, which this would check against itself):
+    // the definitions and the server sentences 08 T-VOC-1 names.
+    for (const file of ['shared/derive.ts', 'shared/glossary.ts', 'shared/sources.ts', 'worker/dedupe/score.ts', 'worker/assistant/respond.ts', 'worker/assistant/system-prompt.ts'])
+      expect(scanned).toContain(file)
     for (const page of ['src/App.tsx', 'src/pages/OverviewPage.tsx', 'src/pages/LookupPage.tsx', 'src/labels.ts'])
       expect(scanned).toContain(page)
     expect(scanned).not.toContain('src/pages/SegmentsPage.tsx')
@@ -66,6 +75,9 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(retiredIn('Built a list of readers')).toEqual(['reader(s)', 'Build a list'])
     expect(retiredIn('App users whose email is not on the newsletter list')).toEqual(['Newsletter list', 'App users'])
     expect(retiredIn('build me a list of our most engaged readers')).toEqual([])
+    expect(retiredIn('"Build me a list of our most engaged readers"')).toEqual([])
+    expect(retiredIn('Most engaged readers this week')).toEqual(['reader(s)'])
+    expect(retiredIn('The most engaged readers come first.')).toEqual(['reader(s)'])
     expect(retiredIn('so screen readers hear each change')).toEqual([])
     expect(retiredIn('app_users.csv')).toEqual([])
   })
@@ -115,6 +127,15 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
   it('headline tiles read Subscribers · Active subscribers · App accounts · App events', () => {
     const tiles = [GLOSSARY.subscribers_signed_up, GLOSSARY.subscribers_active, GLOSSARY.app_accounts, GLOSSARY.events_received]
     expect(tiles.map((t) => t.term)).toEqual(['Subscribers', 'Active subscribers', 'App accounts', 'App events'])
+    // The Overview shows exactly these entries, in this order, labelled by the glossary term.
+    const headline = overviewSource.slice(overviewSource.indexOf('const HEADLINE'), overviewSource.indexOf(']\n', overviewSource.indexOf('const HEADLINE')))
+    expect([...headline.matchAll(/term: '([^']+)'/g)].map((m) => m[1])).toEqual([
+      'subscribers_signed_up',
+      'subscribers_active',
+      'app_accounts',
+      'events_received',
+    ])
+    expect(overviewSource).toContain('label={GLOSSARY[h.term].term} term={h.term}')
     // merged = "deduped" (06 §Vocabulary dedupe + link).
     expect(GLOSSARY.merged.term).toBe('Deduped')
   })
@@ -150,5 +171,8 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     // Both pages that list events render the name through EventName (name + its gloss InfoTip).
     expect(eventsSource).toContain('<EventName event={e.event} />')
     expect(lookupSource).toContain('<EventName event={e.event} />')
+    // EventName itself shows the gloss (InfoTip portals to document.body, so it is not server-rendered here).
+    const eventName = componentsSource.slice(componentsSource.indexOf('export function EventName'))
+    expect(eventName.slice(0, eventName.indexOf('\n}\n'))).toContain('<InfoTip term={event} />')
   })
 })
