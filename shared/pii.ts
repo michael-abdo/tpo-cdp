@@ -118,16 +118,18 @@ const DOTTED = `${LABEL}(?:\\.${LABEL})*`
 const DOTTED_WITH_DOT = `${LABEL}(?:\\.${LABEL})+`
 
 /**
- * The real top-level domains stage 2b's spelled "at" fold accepts as a disguised domain's TLD
- * (09 D-79 fixer round item 5): every TLD data/*.csv uses (`com`), plus the other common ones a
- * teammate or the model might type. One home, so ordinary prose that merely contains the word
+ * The top-level domains stage 2b's spelled "at" fold accepts as a disguised domain's TLD (09 D-79):
+ * every two-letter country code (`de`, `ai`, `ca`, `uk`…) plus the common generic ones, so a
+ * spelled address with any of them ("press at example dot de") folds; an 11-entry list let
+ * those through (the closure review's regression). One home, so ordinary prose that merely contains the word
  * "dot" before some other noun ("Look at the dot plot below.", "Click at random dot points.")
  * never manufactures an "@" that was never there — its last label ("plot", "points") is not a
  * real TLD, so the match stays prose; a genuine disguised address ("protonmail dot com", "gmail
  * dot co dot uk") always ends in one of these. Matched case-insensitively by the `i` flag, never
  * by lowercasing the candidate (T-NORM-3: one home for case-folding, shared/normalize.ts).
  */
-const DISGUISED_EMAIL_TLD_RE = /^(?:com|org|net|edu|gov|io|co|us|uk|me|info)$/i
+const DISGUISED_EMAIL_TLD_RE =
+  /^(?:[a-z]{2}|com|org|net|edu|gov|mil|int|info|biz|name|pro|app|dev|xyz|online|site|tech|store|shop|blog|email|news|media|cloud|live|life|world|today|space|website|club|agency|digital|studio|design|global)$/i
 
 // Stage 2a: one pass over the stage-1 (format-characters-dropped, NFKC-folded) text, left to
 // right, with no gaps. The bracket and escape "@" forms are tried first (longest, most
@@ -220,6 +222,9 @@ function applyAtShape(disguiseTokens: readonly DisguiseToken[]): ScanToken[] {
     const [domainStart, domainEnd] = domainRange
     let disguised = false
     for (let i = domainStart; i < domainEnd; i += 1) if (disguiseTokens[i]!.disguisedDot) { disguised = true; break }
+    // A spelled "dot" in the name part marks it as a disguised address too ("new dot person at
+    // gmail.com"); a plain word before "at" ("signed up at instagram.com") never does.
+    for (let i = localRange[0]; i < localRange[1] && !disguised; i += 1) if (disguiseTokens[i]!.disguisedDot) disguised = true
     const domain = midText.slice(domainStart, domainEnd)
     const tld = domain.slice(domain.lastIndexOf('.') + 1)
     if (disguised && DISGUISED_EMAIL_TLD_RE.test(tld)) foldRanges.push([localRange[1], domainRange[0]])

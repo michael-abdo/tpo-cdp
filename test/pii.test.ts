@@ -698,6 +698,16 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
 describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and more invisible characters are stripped (09 D-79 fixer round 2)', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
 
+  it('a spelled address with any two-letter or common generic TLD is caught, and a spelled dot in the name part counts too (09 D-79 closure)', () => {
+    const known = new KnownEmails([])
+    for (const text of ['press at example dot de', 'press at example dot ai', 'new.person at gmail dot ca', 'new dot person at gmail.com', 'sales at shop dot store']) {
+      expect(findPII(text, known), text).toBe('email_pattern')
+    }
+    for (const text of ['signed up at instagram.com', 'Look at the dot plot below.', 'meet at noon', 'data dot com']) {
+      expect(findPII(text, known), text).toBeNull()
+    }
+  })
+
   it('item 1: every string the self-audit found still returning 200 with the address now folds (model answers)', () => {
     for (const text of ['press [at] example dot com', 'press@example dot com', 'press at example [dot] com']) {
       expect(normalizeForScan(text).text, text).toBe('press@example.com')
