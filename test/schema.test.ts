@@ -149,7 +149,7 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
   })
 })
 
-// The migration sequence (README "the eight migrations"; 03 §Module layout). Two merged branches once
+// The migration sequence (README "the nine migrations"; 03 §Module layout). Two merged branches once
 // each took the next number; this pins the order that applies on a fresh database (wrangler and
 // test/setup.ts apply the files in name order) and that the README's count tells the same story.
 describe('the migrations are one contiguous, ordered sequence', () => {
@@ -161,7 +161,8 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     '0005_ai_audit_client',
     '0006_insights',
     '0007_profiles_email_index',
-    '0008_tool_approval',
+    '0008_ai_audit_cache',
+    '0009_tool_approval',
   ]
   const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
     .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
@@ -180,7 +181,7 @@ describe('the migrations are one contiguous, ordered sequence', () => {
 
   it('the README says how many there are', () => {
     const said = /\bthe (\w+) migrations into the local D1\b/.exec(readme)?.[1]
-    expect(said, 'README names the migration count ("the eight migrations")').toBeDefined()
+    expect(said, 'README names the migration count ("the nine migrations")').toBeDefined()
     expect(WORDS.indexOf(said ?? ''), `README says "${said}"`).toBe(files.length)
   })
 })
@@ -198,5 +199,20 @@ describe('migration 0007 creates the profiles(email_norm) index', () => {
     expect(results).toHaveLength(1)
     expect(results[0]?.tbl_name).toBe('profiles')
     expect(results[0]?.sql).toMatch(/\(email_norm\)/)
+  })
+})
+
+// 0008_ai_audit_cache.sql (09 D-74; design 20 §3 R2): the two usage-meter columns R1's prompt
+// caching is proven from. A no-op migration would pass every other test silently, so pin the
+// columns themselves on ai_audit, nullable (rows written before this migration carry NULL).
+describe('migration 0008 adds the cache usage meters to ai_audit', () => {
+  it('ai_audit gains cache_read_tokens and cache_write_tokens, both nullable INTEGER', async () => {
+    const { results } = await env.DB.prepare('PRAGMA table_info(ai_audit)').all<{ name: string; type: string; notnull: number }>()
+    for (const name of ['cache_read_tokens', 'cache_write_tokens']) {
+      const column = results.find((c) => c.name === name)
+      expect(column, name).toBeDefined()
+      expect(column?.type).toBe('INTEGER')
+      expect(column?.notnull).toBe(0)
+    }
   })
 })

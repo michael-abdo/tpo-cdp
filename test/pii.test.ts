@@ -18,6 +18,7 @@ import {
   PiiBlockedError,
 } from '../worker/assistant/gates/pii-guard'
 import { discoverViewSchemas, type ViewSchema, viewSchemas } from '../worker/assistant/schema-context'
+import { renderSystemPrompt } from '../worker/assistant/system-prompt'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
 import { seedDatabase } from './helpers/seed'
@@ -193,11 +194,18 @@ describe('T-PII-1: a request built from a real profile question carries no PII',
     expect(MAX_TOKENS).toBe(8192) // 09 D-57, pinned as a literal; no temperature/top_p/top_k key (above)
     expect(first.tools).toEqual(TOOLS)
     expect(first.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user'])
+    // 09 D-74 / design 20 §3 R1: the system prompt is one text block with an ephemeral cache
+    // breakpoint, and nothing else about the rendered prompt changes.
+    expect(first.system).toEqual([{ type: 'text', text: renderSystemPrompt(views), cache_control: { type: 'ephemeral' } }])
   })
 
   it('the system prompt holds TODAY, every definition, every view column and the 05 rules', () => {
-    const system = buildModelRequest({ views, tools: TOOLS, question: { text: 'q' } as SanitizedQuestion, rounds: [] }).system
-    if (typeof system !== 'string') throw new Error('system prompt is not a string')
+    const request = buildModelRequest({ views, tools: TOOLS, question: { text: 'q' } as SanitizedQuestion, rounds: [] })
+    if (!Array.isArray(request.system)) throw new Error('system prompt is not the cached text-block array')
+    const [block] = request.system
+    if (block?.type !== 'text') throw new Error('system[0] is not a text block')
+    expect(block.cache_control).toEqual({ type: 'ephemeral' })
+    const system = block.text
     expect(system).toContain(`Today is ${TODAY}`)
     for (const definition of Object.values(DEFINITIONS)) {
       expect(system).toContain(definition.doc)
