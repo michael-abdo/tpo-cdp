@@ -112,13 +112,23 @@ function freshId(prefix: string, bytes: number): string {
   return prefix + [...random].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/** The account's most recent device from its own app_events rows, else a fresh one (09 D-73). */
+/**
+ * The account's most recent device from its own app_events rows, else a fresh one (09 D-73).
+ * D-73 puts anonymous-device → login stitching out of scope for the panel: a test send must
+ * never re-point device_identity at a different account. Reused only when device_identity has
+ * no row for that device yet, or already names this same user_id; otherwise (another account
+ * now owns it, by a later-or-equal login per the ingest upsert) a fresh device is used instead,
+ * so the test event can never rewrite someone else's attribution.
+ */
 async function deviceForAccount(db: D1Database, userId: string): Promise<string> {
   const device = await db
     .prepare('SELECT device_id FROM app_events WHERE user_id = ? ORDER BY event_ts DESC, rowid DESC LIMIT 1')
     .bind(userId)
     .first<string>('device_id')
-  return device ?? freshId('d_', 4)
+  if (device === null) return freshId('d_', 4)
+  const owner = await db.prepare('SELECT user_id FROM device_identity WHERE device_id = ?').bind(device).first<string>('user_id')
+  if (owner !== null && owner !== userId) return freshId('d_', 4)
+  return device
 }
 
 eventRoutes.post('/events/test', async (c) => {

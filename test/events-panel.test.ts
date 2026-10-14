@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import wranglerConfig from '../wrangler.jsonc?raw'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
+import { sendWebhook } from './helpers/webhook'
 
 // POST /api/events/test (04 §POST /api/events/test, 06 §/events panel, 09 D-73): the "Send a
 // test event" panel's server route. T-WH-PANEL-1..9 (08). The test D1 holds the real seed of
@@ -185,21 +186,53 @@ describe('POST /api/events/test (09 D-73)', () => {
   it("T-WH-PANEL-9: picks the account's most recent device by event time, not by insertion order", async () => {
     const user = 'u_3ab82c73' // faith.wilson277@gmail.com (app_users.csv): untouched by the tests above
     await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
-         VALUES ('evt_panel9a', 'app_open', ?, 'd_older', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
-      ).bind(user),
-      // Inserted second but with the earlier event_ts, so only reading event_ts (not rowid/insertion
-      // order) picks the right one.
+      // Inserted FIRST (so it has the lower rowid) but with the LATER event_ts, so only reading
+      // event_ts (not rowid/insertion order) picks the right one: a mutant that orders by rowid
+      // DESC instead of event_ts DESC would pick d_older here, since it is inserted second.
       env.DB.prepare(
         `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
          VALUES ('evt_panel9b', 'app_open', ?, 'd_newer', '2026-09-20T00:00:00Z', '2026-09-01T00:00:00Z')`,
+      ).bind(user),
+      env.DB.prepare(
+        `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
+         VALUES ('evt_panel9a', 'app_open', ?, 'd_older', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
       ).bind(user),
     ])
     const res = await sendTest({ user_id: user, event: 'login' })
     expect(res.status).toBe(202)
     const body = await res.json<TestEventResponse>()
     expect(body.event.device_id).toBe('d_newer')
+  })
+
+  it('T-WH-PANEL-9b: never moves device ownership to a different account (D-73 out of scope)', async () => {
+    // A then B logs in on the same shared device, then an anonymous event on it resolves to B
+    // via login_stitch (the device's most recent identified user, by event_ts). A's own most
+    // recent device (by event_ts) is this same shared one. A panel send for A must not then move
+    // device_identity back to A: that would silently re-attribute B's own anonymous event to A,
+    // exactly the live bug this route must never reintroduce. Two accounts untouched elsewhere in
+    // this file (09 D-11, app_users.csv): u_baba14aa (daniel.hill389), u_c0d06d19 (leah.stewart812).
+    const userA = 'u_baba14aa'
+    const userB = 'u_c0d06d19'
+    const send = async (eventId: string, event: string, userId: string | null, ts: string) => {
+      const res = await sendWebhook(
+        JSON.stringify({ event_id: eventId, event, user_id: userId, device_id: 'd_shared9b', timestamp: ts }),
+      )
+      expect(res.status).toBe(202)
+    }
+    await send('evt_panel9b_a_open', 'app_open', userA, '2026-09-01T00:00:00Z')
+    await send('evt_panel9b_b_login', 'login', userB, '2026-09-10T00:00:00Z')
+    await send('evt_panel9b_anon_read', 'read_story', null, '2026-09-11T00:00:00Z')
+
+    const res = await sendTest({ user_id: userA, event: 'login' })
+    expect(res.status).toBe(202)
+    const body = await res.json<TestEventResponse>()
+    // A gets a fresh device, never the shared one B now owns.
+    expect(body.event.device_id).not.toBe('d_shared9b')
+
+    const owner = await env.DB.prepare('SELECT user_id FROM device_identity WHERE device_id = ?').bind('d_shared9b').first<string>('user_id')
+    expect(owner).toBe(userB)
+    const anonResolved = (await recent()).find((e) => e.event_id === 'evt_panel9b_anon_read')
+    expect(anonResolved).toMatchObject({ user_id: userB, attached_via: 'login_stitch' })
   })
 })
 
@@ -225,11 +258,79 @@ describe('T-WH-PANEL-10: the panel reuses verify and ingest, it never re-impleme
     expect(text).not.toMatch(/\bingestEvent\(/)
     expect(text).not.toMatch(/\bverifyWebhook\(/)
     expect(text).not.toMatch(/crypto\.subtle\.sign\(/) // the HMAC math stays in webhookMac
+    // Tighter than the above: no import of the ingest module or its parser at all, and no raw
+    // INSERT into app_events — a mutant could otherwise satisfy the regexes above with a second,
+    // differently-named copy of the same logic.
+    expect(text).not.toMatch(/from '\.\.\/webhooks\/ingest'/)
+    expect(text).not.toMatch(/\bparseWebhookEvent\b/)
+    expect(text).not.toMatch(/INSERT\s+(OR\s+\w+\s+)?INTO\s+app_events/i)
   })
 
   it('fails loud on any status but 202/200 from the inner webhook call, so a broken signature cannot pass silently', () => {
     const text = code['../worker/routes/events.ts']
     expect(text).toMatch(/webhookRes\.status !== 202 && webhookRes\.status !== 200/)
-    expect(text).toMatch(/throw new Error/)
+    expect(text).toMatch(/throw new Error\(`events\/test: POST \/webhooks\/app answered/)
+  })
+
+  it('runtime proof: a Send logs the real webhook route\'s own "stored" line, a Send again its own "duplicate" line', async () => {
+    const logged: string[] = []
+    const origInfo = console.info
+    console.info = (...args: unknown[]) => logged.push(args.map(String).join(' '))
+    try {
+      const sent = await (await sendTest({ user_id: KNOWN_USER, event: 'app_open' })).json<TestEventResponse>()
+      expect(logged.some((l) => l.includes('"at":"webhook"') && l.includes('"outcome":"stored"') && l.includes('"status":202'))).toBe(true)
+      logged.length = 0
+      await sendTest({ resend: sent.event.event_id })
+      expect(logged.some((l) => l.includes('"at":"webhook"') && l.includes('"outcome":"duplicate"') && l.includes('"status":200'))).toBe(true)
+    } finally {
+      console.info = origInfo
+    }
+  })
+})
+
+describe('T-WH-PANEL-11: fails loud when the inner webhook refuses a self-built resend', () => {
+  it('a resend whose stored event_ts now lies beyond the 24h future bound (09 D-70 #3) is a 500 internal_error, logged with the inner status', async () => {
+    // A real app_users id (09 D-47), a fresh row with only the timestamp edited to break the
+    // webhook's own future bound: storedEventBody() rebuilds the body from this row unchanged,
+    // so the inner POST /webhooks/app now refuses it with 400, and this route must not swallow
+    // that refusal as a success.
+    const futureTs = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    await env.DB.prepare(
+      `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
+       VALUES ('evt_panel11_future', 'app_open', ?, 'd_panel11_future', ?, ?)`,
+    )
+      .bind(KNOWN_USER, futureTs, new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'))
+      .run()
+
+    const logged: string[] = []
+    const origError = console.error
+    console.error = (...args: unknown[]) => logged.push(args.map(String).join(' '))
+    try {
+      const res = await sendTest({ resend: 'evt_panel11_future' })
+      expect(res.status).toBe(500)
+      expect(await res.json()).toEqual({ error: 'internal_error', message: 'Something went wrong on the server. The error has been logged.' })
+      expect(
+        logged.some(
+          (l) => l.includes('"at":"unhandled"') && l.includes('events/test: POST /webhooks/app answered'),
+        ),
+      ).toBe(true)
+    } finally {
+      console.error = origError
+    }
+  })
+})
+
+describe('T-WH-PANEL-12: the same CSRF/body rules as every other session POST (09 D-73)', () => {
+  it('a non-JSON content type is 415 unsupported_media_type, and nothing is written', async () => {
+    const before = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+    const res = await SELF.fetch('http://cdp.test/api/events/test', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain', cookie, 'cf-connecting-ip': documentationIp() },
+      body: JSON.stringify({ user_id: KNOWN_USER, event: 'app_open' }),
+    })
+    expect(res.status).toBe(415)
+    expect(await res.json()).toMatchObject({ error: 'unsupported_media_type' })
+    const after = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+    expect(after).toBe(before)
   })
 })
