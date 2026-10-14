@@ -130,6 +130,20 @@ export function normalizeEmail(raw: string): string | null {
   return EMAIL_RE.test(folded) ? folded : null
 }
 
+/**
+ * D-78: whether a web_events.csv `page` links like `/subscribe` — its own copy of
+ * worker/ingest/web.ts's `isSubscribePage`, never imported. Case-insensitive on the path only;
+ * any query string is dropped first and at most one trailing slash is stripped, so
+ * `/subscribe?utm_source=x`, `/subscribe/` and `/Subscribe` all match, `/subscribe/about` and
+ * `/subscrib` do not.
+ */
+export function oracleIsSubscribePage(page: string): boolean {
+  const query = page.indexOf('?')
+  const bare = (query === -1 ? page : page.slice(0, query)).toLowerCase()
+  const stripped = bare.endsWith('/') && bare !== '/' ? bare.slice(0, -1) : bare
+  return stripped === '/subscribe'
+}
+
 /** Trim, lowercase, `twitter → x`; blank → `null`; anything else passes through lowercased (02 §Normalization). */
 export function canonicalSource(raw: string): string | null {
   const folded = raw.trim().toLowerCase()
@@ -263,7 +277,15 @@ function daysSinceOpen(lastOpenDate: string | null): number | null {
 // §2.2 Canonical expected record
 // ---------------------------------------------------------------------------------------------
 
-export type QuarantineReason = 'blank_row' | 'invalid_email' | 'missing_field' | 'bad_date'
+export type QuarantineReason =
+  | 'blank_row'
+  | 'invalid_email'
+  | 'missing_field'
+  | 'bad_date'
+  | 'unknown_status'
+  | 'misplaced_email'
+  | 'conflicting_email'
+  | 'duplicate_user_id'
 
 export interface ExpectedQuarantine {
   file: 'subscribers' | 'web_events' | 'app_users'
@@ -434,11 +456,9 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     if (signup === '' || status === '') return q('missing_field')
     const lastOpenRaw = row[subCol.last_open_date].trim()
     if (!isIsoDate(signup) || (lastOpenRaw !== '' && !isIsoDate(lastOpenRaw))) return q('bad_date')
-    if (status !== 'active' && status !== 'unsubscribed') {
-      throw new Error(
-        `oracle: subscribers.csv line ${lineNo} has status "${status}", not active/unsubscribed`,
-      )
-    }
+    // D-78: a status that is present but not active/unsubscribed is quarantined, not thrown
+    // (the oracle's own copy of worker/ingest/quarantine.ts's classifySubscriberRow rule).
+    if (status !== 'active' && status !== 'unsubscribed') return q('unknown_status')
 
     const source = canonicalSource(row[subCol.acquisition_source])
     const group = merging.get(emailNorm) ?? {
@@ -533,32 +553,41 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
 
   web.rows.forEach((row, i) => {
     const lineNo = web.lineNos[i]
+    const q = (reason: QuarantineReason): void => {
+      quarantine.push({ file: 'web_events', line_no: lineNo, reason, raw_row: toCsvRecord(row) })
+    }
+    if (row.every((field) => field.trim() === '')) return q('blank_row')
     const visitorId = row[webCol.visitor_id].trim()
     const page = row[webCol.page].trim()
     const rawTs = row[webCol.timestamp].trim()
-    const utm = canonicalSource(row[webCol.utm_source])
     const emailRaw = row[webCol.email].trim()
-    const m = TS_RE.exec(rawTs)
-    if (visitorId === '' || page === '' || !m) {
-      throw new Error(
-        `oracle: web_events.csv line ${lineNo} is malformed (no quarantine path exists for this file on this data)`,
-      )
-    }
-    const eventTs = `${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`
+    // Order mirrors worker/ingest/web.ts's classifyWebRow (09 D-78), re-derived independently:
+    // blank_row, missing_field, invalid_email, bad_date, misplaced_email.
+    if (visitorId === '' || page === '' || rawTs === '') return q('missing_field')
     let emailNorm: string | null = null
     if (emailRaw !== '') {
-      const normed = normalizeEmail(emailRaw)
-      if (normed === null) throw new Error(`oracle: web_events.csv line ${lineNo} has an unparsable email`)
-      const bare = page.split('?')[0]
-      const strippedPage = bare.endsWith('/') && bare !== '/' ? bare.slice(0, -1) : bare
-      if (strippedPage !== '/subscribe') {
-        throw new Error(`oracle: web_events.csv line ${lineNo} carries an email on a non-/subscribe row`)
-      }
-      emailNorm = normed
+      emailNorm = normalizeEmail(emailRaw)
+      if (emailNorm === null) return q('invalid_email')
     }
+    const m = TS_RE.exec(rawTs)
+    if (!m) return q('bad_date')
+    const eventTs = `${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`
+    const utm = canonicalSource(row[webCol.utm_source])
+    // D-78: a case-insensitive /subscribe match (query string and one trailing slash still
+    // count), the oracle's own copy — never worker/ingest/web.ts's isSubscribePage.
+    if (emailNorm !== null && !oracleIsSubscribePage(page)) return q('misplaced_email')
+
+    // Stateful (needs the visitor map, so it stays here rather than in the checks above): a
+    // second, different /subscribe email for a visitor that already has one is quarantined and
+    // not added as an event; the visitor keeps its first email (file order, D-78).
+    const existing = visitorsBuild.get(visitorId)
+    if (emailNorm !== null && existing !== undefined && existing.emails.size > 0 && !existing.emails.has(emailNorm)) {
+      return q('conflicting_email')
+    }
+
     // GAP: web_events.id = 1-based index among kept rows (21 §6 G5); no design doc names this rule.
     events.push({ id: events.length + 1, visitor_id: visitorId, page, event_ts: eventTs, utm_source: utm })
-    const v = visitorsBuild.get(visitorId) ?? {
+    const v = existing ?? {
       emails: new Set<string>(),
       firstKey: null,
       firstPage: null,
@@ -586,7 +615,8 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
 
   const visitors = new Map<string, ExpectedVisitor>()
   for (const [visitorId, v] of visitorsBuild) {
-    // 21 §2.4: never print a raw id; cite the CSV line instead.
+    // The conflicting_email check above now keeps every visitor's `emails` set at size <= 1 (a
+    // conflicting row is quarantined, never merged); this stays as a defense of that invariant.
     if (v.emails.size > 1)
       throw new Error(`oracle: web_events.csv line ${v.eventLines[0]}'s visitor carries 2+ different emails`)
     const emailNorm = v.emails.size === 1 ? [...v.emails][0] : null
@@ -610,18 +640,25 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
   const firstLineByUserId = new Map<string, number>()
   app.rows.forEach((row, i) => {
     const lineNo = app.lineNos[i]
-    const userId = row[appCol.user_id].trim()
-    const emailNorm = normalizeEmail(row[appCol.email])
-    const createdAt = row[appCol.created_at].trim()
-    if (userId === '' || emailNorm === null || !isIsoDate(createdAt)) {
-      throw new Error(
-        `oracle: app_users.csv line ${lineNo} is malformed (no quarantine path exists for this file on this data)`,
-      )
+    const q = (reason: QuarantineReason): void => {
+      quarantine.push({ file: 'app_users', line_no: lineNo, reason, raw_row: toCsvRecord(row) })
     }
-    // 21 §2.4: never print a raw id; cite both CSV lines instead.
+    // Order mirrors worker/ingest/app.ts's classifyAppRow (09 D-78): blank_row, missing_field
+    // (email), invalid_email, missing_field (user_id/created_at), bad_date — then, once a row
+    // can become an app user, the stateful duplicate_user_id check below.
+    if (row.every((field) => field.trim() === '')) return q('blank_row')
+    const emailRaw = row[appCol.email].trim()
+    if (emailRaw === '') return q('missing_field')
+    const emailNorm = normalizeEmail(emailRaw)
+    if (emailNorm === null) return q('invalid_email')
+    const userId = row[appCol.user_id].trim()
+    const createdAt = row[appCol.created_at].trim()
+    if (userId === '' || createdAt === '') return q('missing_field')
+    if (!isIsoDate(createdAt)) return q('bad_date')
+    // 21 §2.4: never print a raw id; cite both CSV lines instead (this one is now in the
+    // quarantine's own raw_row, same as every other reason).
     const firstLine = firstLineByUserId.get(userId)
-    if (firstLine !== undefined)
-      throw new Error(`oracle: app_users.csv line ${lineNo} repeats line ${firstLine}'s user_id`)
+    if (firstLine !== undefined) return q('duplicate_user_id')
     firstLineByUserId.set(userId, lineNo)
     appUsers.push({
       csvLine: lineNo,
@@ -718,16 +755,32 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
 
   const webRowsIn = web.rows.length
   const appRowsIn = app.rows.length
+  // `quarantine` now holds every file's rows (web_events and app_users push onto it above too),
+  // so each run's count is filtered by file rather than the whole array's length.
+  const quarantinedCount = (file: ExpectedQuarantine['file']): number =>
+    quarantine.filter((row) => row.file === file).length
   const importRuns: ExpectedRun[] = [
     {
       file: 'subscribers',
       rows_in: subRowsIn,
       rows_out: subscribers.size,
       merged: subMerged,
-      quarantined: quarantine.length,
+      quarantined: quarantinedCount('subscribers'),
     },
-    { file: 'web_events', rows_in: webRowsIn, rows_out: events.length, merged: 0, quarantined: 0 },
-    { file: 'app_users', rows_in: appRowsIn, rows_out: appUsers.length, merged: 0, quarantined: 0 },
+    {
+      file: 'web_events',
+      rows_in: webRowsIn,
+      rows_out: events.length,
+      merged: 0,
+      quarantined: quarantinedCount('web_events'),
+    },
+    {
+      file: 'app_users',
+      rows_in: appRowsIn,
+      rows_out: appUsers.length,
+      merged: 0,
+      quarantined: quarantinedCount('app_users'),
+    },
   ]
 
   return {
