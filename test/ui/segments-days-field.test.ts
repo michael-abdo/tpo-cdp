@@ -1,5 +1,13 @@
+/// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest'
+import { DEFINITIONS } from '../../shared/derive'
 import { DAYS_ERROR_ID, DAYS_HINT_ID, daysFieldState, DAYS_INVALID_NEXT } from '../../src/segments-days-field'
+
+const segmentsPageSource = import.meta.glob<string>('../../src/pages/SegmentsPage.tsx', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})['../../src/pages/SegmentsPage.tsx']
 
 // /segments' days field accessible-error state (09 D-72, 06 principle 8: an error says what to do
 // next). Found by the W-UI review: an invalid days value (0, 2.5) gave an error line with no fix
@@ -36,5 +44,43 @@ describe("/segments #days field: aria-invalid + aria-describedby + the error's n
     // a checkbox, so "the box" could be read as asking to tick it).
     expect(state.next).toContain("Haven't opened an email in at least")
     expect(state.next?.toLowerCase()).not.toContain('check the')
+  })
+})
+
+// A level-1 hint says only what the control's own label doesn't (09 D-72, D-55, 06 principle 2/4);
+// the full DEFINITIONS doc, for a non-technical reader, belongs in the level-2 "How these filters
+// work" disclosure (restored from main), not retyped beside the field. Found by the W-UI review:
+// 22cdff6 put all three .doc sentences into always-visible level-1 helper text.
+describe('/segments level-1 hints vs the level-2 "How these filters work" disclosure (09 D-72)', () => {
+  it('days-hint and the never-opened hint never render a DEFINITIONS .doc (the long, edge-case definition)', () => {
+    expect(segmentsPageSource).toBeDefined()
+    const hints = segmentsPageSource.slice(
+      segmentsPageSource.indexOf('id={DAYS_HINT_ID}'),
+      segmentsPageSource.indexOf('<Button type="submit"'),
+    )
+    for (const key of ['days_since_open', 'no_open_in_days', 'cold'] as const)
+      expect(hints).not.toContain(`DEFINITIONS.${key}.doc`)
+    expect(hints).toContain('DEFINITIONS.no_open_in_days.plain')
+    expect(hints).toContain('DEFINITIONS.cold.plain')
+  })
+
+  it('the disclosure shows every filter doc once, beside a plain heading, for the D-30 reconciliation', () => {
+    const definitionsArray = segmentsPageSource.slice(
+      segmentsPageSource.indexOf('const FOOTER_DEFINITIONS'),
+      segmentsPageSource.indexOf('/** The CSV'),
+    )
+    for (const key of ['days_since_open', 'no_open_in_days', 'cold'] as const) expect(definitionsArray).toContain(`DEFINITIONS.${key}`)
+    const footer = segmentsPageSource.slice(segmentsPageSource.lastIndexOf('<Disclosure label="How these filters work"'))
+    expect(footer).toContain('FOOTER_DEFINITIONS.map(({ label, def })')
+    expect(footer).toContain('{def.doc}')
+    expect(footer).toContain('{def.formula}')
+  })
+
+  it("no_open_in_days.plain and cold.plain are short, new facts, not a retyping of the field's or checkbox's own label", () => {
+    const plain = `${DEFINITIONS.no_open_in_days.plain} ${DEFINITIONS.cold.plain}`.toLowerCase()
+    expect(plain).not.toContain('also include people who never opened')
+    expect(plain).not.toContain("haven't opened an email in at least")
+    expect(DEFINITIONS.no_open_in_days.plain?.length).toBeLessThan(DEFINITIONS.no_open_in_days.doc.length)
+    expect(DEFINITIONS.cold.plain?.length).toBeLessThan(DEFINITIONS.cold.doc.length)
   })
 })

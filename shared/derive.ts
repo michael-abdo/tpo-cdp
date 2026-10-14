@@ -174,6 +174,11 @@ export interface Definition {
   formula: string
   /** SQL comparison fragment over the stored column, with `:today` bound to TODAY (09 D-46). */
   sql?: string
+  /** A short plain-language fact for a level-1 hint beside a control (09 D-72, D-55): only what
+   * the control's own label doesn't already say. Optional; `doc` (level 2 / Technical details)
+   * stays the full definition. The one source for this fact, so a page reads it rather than
+   * retyping it. */
+  plain?: string
   fn: (...args: never[]) => unknown
 }
 
@@ -197,6 +202,7 @@ export const DEFINITIONS = {
     doc: `True when the cold date has arrived: no open in ${COLD_DAYS} or more days, or never opened and signed up ${COLD_DAYS} or more days ago.`,
     formula: 'cold_since <= TODAY',
     sql: 'cold_since <= :today',
+    plain: `"Cold" (Overview) waits ${COLD_DAYS} days after signup.`,
     fn: isCold,
   },
   went_cold_in: {
@@ -209,6 +215,7 @@ export const DEFINITIONS = {
     name: 'no open in N days',
     doc: "The brief's segment filter: at least N days since the last open, with a toggle that also includes everyone who never opened, whatever their signup date.",
     formula: 'days_since_open >= N, plus never-openers when includeNeverOpened',
+    plain: 'Counts them whatever their signup date.',
     fn: noOpenInDays,
   },
   new_subscriber: {
