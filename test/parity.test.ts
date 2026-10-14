@@ -692,9 +692,15 @@ describe('T-PAR-4 web visitors + events', () => {
 
     // Hardest case #6 (the exact same-second tie) and case #5 (the 101 visitors whose first
     // /subscribe row shifted pre_signup) must be in the set this actually calls the API for.
-    const mustCover = new Set(['pk_0cf23009b4c8295e', 'pk_b8ba809aee5088e2', 'pk_dcb1088ffcd058db'])
-    for (const pkey of mustCover) {
-      if (!linked.some((s) => s.pkey === pkey)) throw new Error(`parity: expected linked subscriber ${pkey} missing from the oracle`)
+    // Named by their CSV emails, not their pkeys: a pkey is HMAC(PII_KEY_SECRET, email), and a fresh
+    // clone's .dev.vars holds its own secret (README: any string works). Failures name the case only.
+    const mustCover = [
+      ['case #6 same-second tie', 'hannah.adams474@gmail.com'],
+      ['case #5 pre-signup cut', 'matthew.thomas453@protonmail.com'],
+      ['case #5 pre-signup cut', 'john.evans244@gmail.com'],
+    ] as const
+    for (const [label, email] of mustCover) {
+      if (!linked.some((s) => s.email_norm === email)) throw new Error(`parity: the ${label} subscriber is missing from the oracle's linked set`)
     }
 
     let totalEventsFromApp = 0

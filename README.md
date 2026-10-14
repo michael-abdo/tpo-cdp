@@ -43,7 +43,7 @@ npm run db:migrate:local            # the eleven migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
 npm test                            # every test in workerd against a local D1; no network (count: [Tests](#tests))
 npm run parity -- --local           # D-75 parity oracle (21 §2.6 mode B) against a throwaway local D1; never the dev database
-npm run dev                         # http://localhost:5173; sign in with the SITE_PASSWORD you put in .dev.vars
+npm run dev                         # http://localhost:5173 (another port: npm run dev -- --port 5174); sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
 `npm run dev` keeps running; stop it with Ctrl-C. `npm test` does not need the dev server or the seed. A plain `npm install` also works today (checked with npm 10.9 and 11.6), but npm 11 then adds `"peer": true` lines to the lockfile.
