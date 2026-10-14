@@ -88,6 +88,14 @@ export function isSourceId(value: string): value is SourceId {
   return BY_ID.has(value)
 }
 
+/**
+ * Which sources get the gated "Automatic daily sync" switch (09 D-80, 22-pages/00-plan.md D3:
+ * beehiiv and App accounts — GA4 can't carry an email, so a Website/GA4 pull would break site-visit
+ * linking; Website keeps Upload only). Kept here, the one home of source ids (08 T-SRC-2: Overview
+ * spells no source id as a literal), not in OverviewPage.tsx.
+ */
+export const DAILY_SYNC_SOURCE_IDS: readonly SourceId[] = ['subscribers', 'app_users']
+
 /** The registry entry for an id; an id outside the registry is a bug, so it throws (fail loud). */
 export function sourceById(id: string): Source {
   const source = BY_ID.get(id)

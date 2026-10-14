@@ -22,15 +22,17 @@ import { Check, Copy, Smartphone, UserCheck, Users, X } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { TODAY } from '../../shared/config'
-import { type CheckKind, LOADS_BY_LABEL } from '../../shared/sources'
+import { type CheckKind, DAILY_SYNC_SOURCE_IDS, LOADS_BY_LABEL } from '../../shared/sources'
 import { countOf, GLOSSARY, type GlossaryKey } from '../../shared/glossary'
 import { errorMessage, getJson, postJson } from '../api'
 import {
   Announcer,
   Button,
+  ComingSoonTag,
   EmptyState,
   ErrorLine,
   Field,
+  GatedNote,
   ICONS,
   Icon,
   InfoTip,
@@ -44,6 +46,7 @@ import {
   TechnicalDetails,
   type LucideIcon,
 } from '../components'
+import { useGated } from '../use-gated'
 import { capitalized, humanDate, humanDateTime, utc } from '../format'
 import { sourceLabel } from '../labels'
 import { asWritten, csvName, needsReview, type QuarantinedRow, reviewGroups } from '../needs-review'
@@ -282,11 +285,56 @@ function RunCard({ source, run }: { source: CsvSource; run: SourceRun }) {
   )
 }
 
+/**
+ * The gated load bar (09 D-80, 22-pages/overview.md §2a-2b): first child of a CSV source's
+ * History tab, above the run cards. "Upload a new file" and "Run again" share one gate
+ * (`csv_upload`, D-72: one chip, one note for the feature); "Automatic daily sync" is a second,
+ * separate gate, shown only on the sources DAILY_SYNC_SOURCE_IDS names. Gated now: activating any
+ * control only reveals its note and announces it — no file input exists, no switch moves, no
+ * request goes out.
+ */
+export function LoadBar({ source }: { source: CsvSource }) {
+  const upload = useGated('csv_upload')
+  const sync = useGated('daily_sync')
+  const showSync = DAILY_SYNC_SOURCE_IDS.includes(source.id)
+  const muted =
+    'inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-muted'
+  return (
+    <div className="space-y-2 rounded-lg border border-line bg-surface p-3">
+      <div className="flex flex-wrap items-start gap-3">
+        <div role="group" aria-label={upload.feature.label} className="flex flex-wrap items-center gap-2">
+          <button type="button" {...upload.bind} onClick={upload.activate} className={muted}>
+            <Icon icon={ICONS.upload} />
+            {upload.feature.label}
+          </button>
+          <button type="button" {...upload.bind} onClick={upload.activate} className={muted}>
+            <Icon icon={ICONS.refresh} />
+            Run again
+          </button>
+          <ComingSoonTag />
+        </div>
+        {showSync && (
+          <div className="flex items-center gap-2 sm:ml-auto">
+            <button type="button" role="switch" aria-checked="false" {...sync.bind} onClick={sync.activate} className={muted}>
+              <Icon icon={ICONS.schedule} />
+              {sync.feature.label}
+            </button>
+            <ComingSoonTag />
+          </div>
+        )}
+      </div>
+      <GatedNote id={upload.noteId} activated={upload.activated} text={upload.feature.note} />
+      {showSync && <GatedNote id={sync.noteId} activated={sync.activated} text={sync.feature.note} />}
+    </div>
+  )
+}
+
 /** Level 2 for one source: a CSV's run history, or the webhook's events received (06 §Overview 2). */
 function SourceHistory({ source }: { source: AnySource }) {
   if (source.kind === 'webhook') return <WebhookHistory source={source} />
   return (
     <div className="space-y-2">
+      <LoadBar source={source} />
       {source.runs.length === 0 ? (
         <p className="text-sm text-ink-muted">No sync has run yet.</p>
       ) : (
@@ -816,9 +864,35 @@ function SourcesSection() {
   return <SourcesTable sources={(fresh ?? state.data).sources} onReviewed={refresh} refreshError={refreshError} />
 }
 
+/**
+ * The gated "Settings for definitions" button (09 D-80, 22-pages/overview.md §2c): the Overview
+ * header's unused action slot, so it renders in every state — loading, error, empty and the data
+ * view alike, the one home of this entry (D-72's "settings has two homes" resolved: no nav item).
+ */
+export function SettingsButton() {
+  const gated = useGated('definition_settings')
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          {...gated.bind}
+          onClick={gated.activate}
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-muted"
+        >
+          <Icon icon={ICONS.settings} />
+          {gated.feature.label}
+        </button>
+        <ComingSoonTag />
+      </div>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
+  )
+}
+
 export default function OverviewPage() {
   const state = useGet<Overview>('/api/overview')
-  const header = <PageHeader title={TITLE} purpose={PURPOSE} icon={ICONS.overview} />
+  const header = <PageHeader title={TITLE} purpose={PURPOSE} icon={ICONS.overview} action={<SettingsButton />} />
 
   if (state === null || state.status === 'loading') {
     return (

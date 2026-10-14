@@ -29,7 +29,7 @@ export const GLOSSARY = {
   },
   csv: {
     term: 'CSV file',
-    text: 'A spreadsheet file exported from another tool. The setup script loads it; there is no upload button yet.',
+    text: 'A spreadsheet file exported from another tool.',
   },
   webhook: {
     term: 'Webhook',
