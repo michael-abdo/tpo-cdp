@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import appCsv from '../data/app_users.csv?raw'
 import subscribersCsv from '../data/subscribers.csv?raw'
 import webCsv from '../data/web_events.csv?raw'
-import { needsReview, reviewGroups } from '../src/needs-review'
+import { needsReview, reviewGroups, type QuarantinedRow } from '../src/needs-review'
 import type { Overview, QuarantineList } from '../src/types'
 import { QUARANTINE_REASONS } from '../worker/ingest/quarantine'
 import { FILE_HEADERS, quarantineFields } from '../worker/routes/quarantine'
@@ -207,5 +207,69 @@ describe('Rows to fix tab logic (src/needs-review.ts) on the real answers', () =
     const { rows } = await (await quarantine('?reason=blank_row')).json<QuarantineList>()
     expect(rows).toHaveLength(8)
     expect(reviewGroups(rows)).toEqual([])
+  })
+
+  // 09 D-78: the real seed has none of these 4 reasons (the real data triggers none of them), so
+  // each group here is built from a synthetic QuarantinedRow whose fields are a D-47 minimal edit
+  // of a real row (the same edits test/ingest-seed.test.ts T-ING-8 and test/parity.test.ts
+  // T-PAR-3b plant), rather than read from the live /api/quarantine answer.
+  it('one group per new D-78 reason: the exact sentence and fix text, never the fallback copy', () => {
+    const row = (file: QuarantinedRow['file'], line_no: number, reason: QuarantinedRow['reason'], fields: Record<string, string>): QuarantinedRow => ({ file, line_no, reason, fields })
+
+    const unknownStatus = reviewGroups([
+      row('subscribers', 4, 'unknown_status', {
+        email: 'megan.walker638@hotmail.com',
+        signup_date: '2026-09-07',
+        status: 'activ',
+        acquisition_source: 'Instagram',
+      }),
+    ])
+    expect(unknownStatus).toHaveLength(1)
+    expect(unknownStatus[0].sentence).toBe("1 subscriber couldn't be added — their status isn't active or unsubscribed.")
+    expect(unknownStatus[0].fix).toBe('Change the status to active or unsubscribed in subscribers.csv, then re-import the file.')
+
+    const misplacedEmail = reviewGroups([
+      row('web_events', 5405, 'misplaced_email', {
+        visitor_id: 'v_c9e136fd6d',
+        page: '/about',
+        timestamp: '2026-09-02 16:52:04',
+        utm_source: '',
+        email: 'julia.evans230@gmail.com',
+      }),
+    ])
+    expect(misplacedEmail).toHaveLength(1)
+    expect(misplacedEmail[0].sentence).toBe("1 website visit couldn't be added — their email is on a page other than /subscribe.")
+    expect(misplacedEmail[0].fix).toBe('Move the email to a /subscribe row, or remove it, in web_events.csv, then re-import the file.')
+
+    const conflictingEmail = reviewGroups([
+      row('web_events', 5442, 'conflicting_email', {
+        visitor_id: 'v_c9e136fd6d',
+        page: '/subscribe',
+        timestamp: '2026-09-03 00:51:44',
+        utm_source: '',
+        email: 'julia.evans230@gmail.com',
+      }),
+    ])
+    expect(conflictingEmail).toHaveLength(1)
+    expect(conflictingEmail[0].sentence).toBe(
+      "1 website visit couldn't be added — this visitor already signed up with a different email.",
+    )
+    expect(conflictingEmail[0].fix).toBe('Decide which email is right for this visitor in web_events.csv, then re-import the file.')
+
+    const duplicateUserId = reviewGroups([
+      row('app_users', 3, 'duplicate_user_id', {
+        user_id: 'u_2b6447a3',
+        email: 'daniel.hill389@gmail.com',
+        created_at: '2026-09-20',
+      }),
+    ])
+    expect(duplicateUserId).toHaveLength(1)
+    expect(duplicateUserId[0].sentence).toBe("1 app account couldn't be added — this user ID is already used by an earlier row.")
+    expect(duplicateUserId[0].fix).toBe('Give this row its own user ID in app_users.csv, then re-import the file.')
+
+    // Every reason's sentence/fix differs from every other's (an M8-style fallback never fires
+    // silently for a reason that does have its own line).
+    const sentences = [unknownStatus, misplacedEmail, conflictingEmail, duplicateUserId].map((g) => g[0].sentence)
+    expect(new Set(sentences).size).toBe(sentences.length)
   })
 })
