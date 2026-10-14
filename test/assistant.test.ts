@@ -51,6 +51,10 @@ interface AuditRow {
   tool_name: string | null
   status: string
   model: string | null
+  tokens_in: number | null
+  tokens_out: number | null
+  cache_read_tokens: number | null
+  cache_write_tokens: number | null
   request_json: string | null
   response_json: string | null
   row_count: number | null
@@ -299,6 +303,40 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
       expect(row.request_json).toContain('[email]')
     }
     expect(rows.find((r) => r.kind === 'tool_call')?.row_count).toBe(1)
+  })
+
+  it('09 D-73: cache usage meters are stored; a cold call stores 0s, tokens_in keeps counting every prompt token', async () => {
+    const cookie = await loginCookie()
+    const cached = (content: Anthropic.ContentBlock[], stop_reason: Anthropic.StopReason, cache: { read: number; write: number }) => {
+      const base = message(content, stop_reason)
+      return { ...base, usage: { ...base.usage, cache_read_input_tokens: cache.read, cache_creation_input_tokens: cache.write } }
+    }
+    const { transport } = scripted([
+      () => cached([toolUse('toolu_cache', 'aggregate', WENT_COLD_AUGUST)], 'tool_use', { read: 0, write: 0 }), // cold: nothing cached yet
+      () =>
+        cached(
+          [
+            text(
+              finalText('46 Instagram signups went cold in August.', {
+                type: 'answer',
+                text: '46 active Instagram signups went cold in Aug 1–31, 2026: that is when they reached 30 days without opening an email.',
+                window: { from: '2026-08-01', to: '2026-08-31' },
+                filters_applied: { status: ['active'], source: ['instagram'] },
+                definitions_used: ['went_cold_in', 'last_month'],
+              }),
+            ),
+          ],
+          'end_turn',
+          { read: 4200, write: 0 }, // the second call reads the prefix R1 cached on the first
+        ),
+    ])
+    const res = await ask(appWith(transport), cookie, 'how many Instagram signups went cold last month?')
+    expect(res.status).toBe(200)
+    const body = await res.json<{ audit_id: string }>()
+    const models = (await auditRows('trace_id', body.audit_id)).filter((r) => r.kind === 'model_request')
+    expect(models).toHaveLength(2)
+    expect(models[0]).toMatchObject({ tokens_in: 1000, tokens_out: 100, cache_read_tokens: 0, cache_write_tokens: 0 })
+    expect(models[1]).toMatchObject({ tokens_in: 1000 + 4200, tokens_out: 100, cache_read_tokens: 4200, cache_write_tokens: 0 })
   })
 
   it('the iteration cap: 5 tool rounds run, the sixth request is refused, partial: true, one trace', async () => {
