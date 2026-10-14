@@ -1,6 +1,7 @@
 // Response shapes the UI reads, as 04 §Endpoints defines them (the worker routes are the producers).
 
 import type { DefinitionKey } from '../shared/derive'
+import type { SegmentFilters } from '../shared/segment-filters'
 import type { InsightWindow, ResolvedWindow } from '../shared/insight-window'
 import type { ChartKind, ChartOverride } from '../shared/pick-chart'
 import type { CheckKind, CsvSourceId, SourceId } from '../shared/sources'
@@ -220,14 +221,8 @@ export interface RecentEvents {
   events: RecentEvent[]
 }
 
-/** The filters object of POST /api/segments/preview and export.csv. */
-export interface SegmentFilters {
-  status: SubscriberStatus[]
-  source?: string[]
-  days_since_open_gte?: number
-  include_never_opened: boolean
-  has_app: boolean | null
-}
+/** The filters object of POST /api/segments/preview and export.csv: one home, shared/segment-filters.ts (09 D-69). */
+export type { SegmentFilters } from '../shared/segment-filters'
 
 export interface SegmentRow {
   email: string
@@ -245,6 +240,13 @@ export interface SegmentPreview {
   hidden_unsubscribed: number
   rows: SegmentRow[]
   sql_shape: string
+  /** The filters as the server read them, canonical (sorted, deduped, defaults applied): the Previous searches key. */
+  filters: SegmentFilters
+}
+
+/** GET /api/segments/options (19-segments-spec §5): the pages the Page filter offers, most visited first. */
+export interface SegmentOptions {
+  pages: string[]
 }
 
 /** A cell of an assistant table (worker/assistant/tools/builtin-handlers.ts Cell). */

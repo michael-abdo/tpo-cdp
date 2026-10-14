@@ -2,9 +2,11 @@
 // (source, sync, rows read, kept, merged, rejected, the source statuses, the two source checks of
 // 09 D-65, webhook, the quarantine reasons, Overview's headline numbers and the app's event names), each with one or two sentences a
 // non-technical Growth teammate can follow, in the brief's words (06 §UI principles 4, §Vocabulary). Derived metrics keep their text in
-// DEFINITIONS (shared/derive.ts, 02 §Derived); explain() reads either, so an InfoTip has one lookup.
+// DEFINITIONS (shared/derive.ts, 02 §Derived) under the plain headings of DEFINITION_LABEL (src/labels.ts, their
+// one home per 09 D-68); explain() reads either, so an InfoTip has one lookup and never shows a raw name.
 // test/sources.test.ts (T-SRC-2) checks every term the Overview names exists here or there.
 
+import { DEFINITION_LABEL } from '../src/labels'
 import { DEFINITIONS, type DefinitionKey } from './derive'
 
 export interface GlossaryEntry {
@@ -115,6 +117,11 @@ export const GLOSSARY = {
     term: 'App events',
     text: 'App events received through the webhook since launch. The same event sent twice counts once.',
   },
+  // /segments (19-segments-spec §2, 09 D-69).
+  previous_searches: {
+    term: 'Previous searches',
+    text: 'The last 5 segments you previewed in this browser, newest first; only the filters are kept, never the subscribers. To share one with the Growth team, ask the AI assistant for it and pin it to Insights, or export the CSV.',
+  },
   // The app's event names (worker/webhooks/schema.ts APP_EVENTS), shown as the brief writes them, each
   // with a plain gloss in an InfoTip (06 §Vocabulary "live events", 09 D-66).
   app_open: {
@@ -147,8 +154,8 @@ export function isGlossaryKey(key: string): key is GlossaryKey {
 export function explain(key: string): { term: string; text: string } {
   if (isGlossaryKey(key)) return { term: GLOSSARY[key].term, text: GLOSSARY[key].text }
   if (Object.hasOwn(DEFINITIONS, key)) {
-    const d = DEFINITIONS[key as DefinitionKey]
-    return { term: d.name, text: d.doc }
+    const k = key as DefinitionKey
+    return { term: DEFINITION_LABEL[k], text: DEFINITIONS[k].doc }
   }
   throw new Error(`glossary: "${key}" is neither a glossary term nor a DEFINITIONS entry`)
 }

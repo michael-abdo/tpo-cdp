@@ -228,4 +228,26 @@ export function decodeAt(text: string): string {
   return text.replace(/%40/gi, '@')
 }
 
+/**
+ * A redaction for a 400 `details` line or a `console.warn`/`console.error` log (09 D-70 item 1):
+ * decodes a percent-encoded "@" first (so "name%40host.tld" redacts exactly as "name@host.tld"
+ * would), then runs `redactEmails`, then masks any `RAW_ID_REGEX` match (`u_`/`d_`/`v_` + hex) as
+ * `[id]`. It is regex-based and therefore incomplete on its own: it decodes only one level of
+ * percent-encoding (misses `%2540`, a double-encoded "@"), `RAW_ID_REGEX`'s `\b` never fires
+ * between two word characters (misses a raw id glued to a letter, e.g. "xu_ceed5f12"), and it
+ * never runs `redactKnownLocalParts` (no bound `KnownEmails` at this call site), so a bare known
+ * local part with no "@" passes through untouched.
+ *
+ * `worker/routes/segments.ts` (readBody's unknown field, filtersFrom's rethrown problems) runs
+ * every detail through this function, but as a backstop only (fixer round 4): the real defense
+ * there is that an unknown filter key or body field is never interpolated into the message text
+ * at all ("unknown filter" / "unknown field", with no key), so none of this function's blind
+ * spots can leak through that route. A future caller that does interpolate client text should not
+ * rely on this function alone for a value it cannot afford to leak.
+ */
+export function redactDetail(text: string): string {
+  const { text: withoutEmails } = redactEmails(decodeAt(text))
+  return withoutEmails.replace(new RegExp(RAW_ID_REGEX.source, 'gi'), '[id]')
+}
+
 const ALNUM = /[a-z0-9]/i

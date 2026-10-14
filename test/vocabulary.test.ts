@@ -35,8 +35,8 @@ function offences(files: Record<string, readonly string[]>): string[] {
 const attributeValues = (code: string, tag: string, attribute: string) =>
   [...code.matchAll(new RegExp(`<${tag}\\s+${attribute}="([^"]+)"`, 'g'))].map((m) => m[1])
 
-describe("T-VOC-1 the brief's words everywhere (09 D-66, 06 §Vocabulary)", () => {
-  it('scans every file it names: all of src/ but the Segments page, the glossary, the registry, the definitions and the server sentences', () => {
+describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () => {
+  it('scans every file it names: all of src/ (the Segments page too), the glossary, the registry, the definitions and the server sentences', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
     for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
     // Pinned on their own (not only via VOCABULARY_SCAN, which this would check against itself):
@@ -50,14 +50,9 @@ describe("T-VOC-1 the brief's words everywhere (09 D-66, 06 §Vocabulary)", () =
       'worker/assistant/system-prompt.ts',
     ])
       expect(scanned).toContain(file)
-    for (const page of [
-      'src/App.tsx',
-      'src/pages/OverviewPage.tsx',
-      'src/pages/LookupPage.tsx',
-      'src/labels.ts',
-    ])
+    for (const page of ['src/App.tsx', 'src/pages/OverviewPage.tsx', 'src/pages/LookupPage.tsx', 'src/pages/SegmentsPage.tsx', 'src/labels.ts', 'src/segment-form.ts', 'src/previous-searches.ts'])
       expect(scanned).toContain(page)
-    expect(scanned).not.toContain('src/pages/SegmentsPage.tsx')
+    expect(VOCABULARY_SCAN.skip).toEqual([])
     expect(scanned.filter((p) => p.startsWith('src/')).length).toBeGreaterThan(15)
   })
 

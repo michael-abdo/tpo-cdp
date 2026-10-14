@@ -3,10 +3,11 @@
  *
  * Each `DEFINITIONS` entry carries the function, a plain-English doc string, the formula as
  * written in 02 and, where a segment filter compares a stored column in SQL, the comparison
- * fragment over that column with a `:today` placeholder. Values are computed here at write
- * time and stored; SQL never re-implements a formula. Three consumers render from this object
- * and nothing else: the assistant system prompt (05), the UI footers (06) and the README
- * "Definitions" table (copied from the doc strings by hand for the MVP, 11 §Scripts).
+ * fragment over that column with bound placeholders (`:today`, or a window's `:from` and `:to`).
+ * Values are computed here at write time and stored; SQL never re-implements a formula. Three
+ * consumers render from this object and nothing else: the assistant system prompt (05), the UI
+ * footers (06) and the README "Definitions" table (copied from the doc strings by hand for the
+ * MVP, 11 §Scripts).
  *
  * Pure functions over plain inputs: ISO dates (`YYYY-MM-DD`, or a stored UTC timestamp whose
  * date part is used) and numbers. The only clock is `TODAY` (02 §Time); `Date.now()` is never
@@ -121,9 +122,27 @@ export function noOpenInDays(lastOpenDate: string | null, n: number, includeNeve
   return days >= n
 }
 
-/** `signup_date` within `TODAY − 30 .. TODAY` (09 D-36). */
+/**
+ * The dates `went_cold_in(month)` covers: the month's first day to its last day or TODAY,
+ * whichever comes first (`cold_since` within that calendar month and `<= TODAY`; 19 §3 row 1).
+ * Throws on a month that is not `YYYY-MM` or starts after TODAY: segment validation answers 400
+ * before calling this (worker/segments/compile.ts), so reaching it is a bug.
+ */
+export function wentColdWindow(month: string): DateWindow {
+  const match = /^(\d{4})-(\d{2})$/.exec(month)
+  if (!match) throw new Error(`derive: month must be YYYY-MM, got ${JSON.stringify(month)}`)
+  const from = toIsoDate(dayMs(`${month}-01`))
+  if (dayMs(from) > dayMs(TODAY)) throw new Error(`derive: month ${month} starts after TODAY`)
+  const monthEnd = toIsoDate(Date.UTC(Number(match[1]), Number(match[2]), 0))
+  return { from, to: dayMs(monthEnd) < dayMs(TODAY) ? monthEnd : TODAY }
+}
+
+/** The days that make a subscriber "new" (09 D-10): the one home of the 30, shown on /segments beside "Signed up in the last". */
+export const NEW_SUBSCRIBER_DAYS = 30
+
+/** `signup_date` within `TODAY − NEW_SUBSCRIBER_DAYS .. TODAY` (09 D-36). */
 export function isNewSubscriber(signupDate: string): boolean {
-  return inWindow(signupDate, lastNDays(30))
+  return inWindow(signupDate, lastNDays(NEW_SUBSCRIBER_DAYS))
 }
 
 /**
@@ -148,11 +167,13 @@ export interface EngagementInput {
  * · site 25 × min(1, site_visits_last_30d/5). Never opened contributes 0 recency (09 D-14, D-35).
  */
 export function engagementScore(input: EngagementInput): number {
+  // The same formula counted in sixths of a point (recency 10·(30 − d), app 15·a, site 30·s), so the
+  // half-up rounding is exact: in floats 50 × (1 − 24/30) is 9.999…, which turned a 12.5 into 12.
   const days = daysSinceOpen(input.last_open_date)
-  const recency = days === null ? 0 : 50 * Math.max(0, 1 - days / 30)
-  const app = 25 * Math.min(1, Math.max(0, input.app_events_last_30d) / 10)
-  const site = 25 * Math.min(1, Math.max(0, input.site_visits_last_30d) / 5)
-  return Math.round(recency + app + site)
+  const recency = days === null ? 0 : 10 * Math.max(0, 30 - days)
+  const app = 15 * Math.min(10, Math.max(0, input.app_events_last_30d))
+  const site = 30 * Math.min(5, Math.max(0, input.site_visits_last_30d))
+  return Math.floor((recency + app + site + 3) / 6)
 }
 
 /** An app account exists for the subscriber's email. */
@@ -172,7 +193,12 @@ export interface Definition {
   doc: string
   /** The formula exactly as 02 §Derived states it. */
   formula: string
-  /** SQL comparison fragment over the stored column, with `:today` bound to TODAY (09 D-46). */
+  /**
+   * SQL comparison fragment over the stored column (09 D-46): `:today` binds TODAY; `:from` and
+   * `:to` bind a window computed here (`went_cold_in`: wentColdWindow(month); `new_subscriber`:
+   * lastNDays(N), the segment filter "signed up in the last N days" with N = 30 for the
+   * definition itself).
+   */
   sql?: string
   fn: (...args: never[]) => unknown
 }
@@ -203,6 +229,7 @@ export const DEFINITIONS = {
     name: 'went_cold_in(month)',
     doc: 'True when the cold date falls inside the given calendar month and is not in the future.',
     formula: 'cold_since within that calendar month and <= TODAY',
+    sql: 'cold_since BETWEEN :from AND :to',
     fn: wentColdIn,
   },
   no_open_in_days: {
@@ -213,8 +240,9 @@ export const DEFINITIONS = {
   },
   new_subscriber: {
     name: 'new_subscriber',
-    doc: 'Signed up within the last 30 days including today.',
-    formula: 'signup_date within TODAY − 30 .. TODAY',
+    doc: `Signed up within the last ${NEW_SUBSCRIBER_DAYS} days including today.`,
+    formula: `signup_date within TODAY − ${NEW_SUBSCRIBER_DAYS} .. TODAY`,
+    sql: 'signup_date BETWEEN :from AND :to',
     fn: isNewSubscriber,
   },
   going_cold_risk: {

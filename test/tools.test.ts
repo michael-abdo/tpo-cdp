@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { NEW_SUBSCRIBER_WINDOW, TOOL_SEEDS, type ToolSeed, toolSeedInsert } from '../scripts/tool-seeds'
+import { NEW_SUBSCRIBER_WINDOW, type StoredToolRow, staleToolRows, TOOL_SEEDS, type ToolSeed, toolSeedInsert, toolSeedUpdate } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
 import { EMAIL_REGEX, PII_COLUMNS } from '../shared/pii'
@@ -190,6 +190,86 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
     }
     // Removing the broken row restores the seeded set with no deploy.
     expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(TOOL_SEEDS.map((s) => s.name))
+  })
+
+  it('a `pattern` must be a string that compiles with the u flag, or the row is refused at load (09 D-69)', async () => {
+    // The segment row's patterns (shared/segment-filters.ts) pass; Gate 2 compiles each with `u`.
+    expect(schemaProblems({ type: 'string', pattern: '^/[a-z0-9/-]{0,120}$' }, 'p')).toEqual([])
+    expect(schemaProblems({ type: 'string', pattern: '(' }, 'p')).toEqual(['p.pattern is not a valid regular expression'])
+    expect(schemaProblems({ type: 'string', pattern: 5 }, 'p')).toEqual(['p.pattern must be a string'])
+    // `\-` outside a class compiles without the u flag but not with it, so the check uses the u flag.
+    expect(() => new RegExp('\\-')).not.toThrow()
+    expect(schemaProblems({ type: 'string', pattern: '\\-' }, 'p')).toEqual(['p.pattern is not a valid regular expression'])
+    const segment = TOOL_SEEDS[0]
+    expect(segment.name).toBe('segment')
+    const properties = segment.inputSchema.properties as Record<string, Record<string, unknown>>
+    const broken: Array<[ToolSeed, string]> = [
+      [
+        { ...segment, name: 'segment_bad_pattern', inputSchema: { ...segment.inputSchema, properties: { ...properties, site_visit_page: { ...properties.site_visit_page, pattern: '(' } } } },
+        'input_schema.properties.site_visit_page.pattern is not a valid regular expression',
+      ],
+      [
+        { ...segment, name: 'segment_number_pattern', inputSchema: { ...segment.inputSchema, properties: { ...properties, went_cold: { ...properties.went_cold, pattern: 5 } } } },
+        'input_schema.properties.went_cold.pattern must be a string',
+      ],
+    ]
+    for (const [seed, problem] of broken) {
+      await withRows([seed], async () => {
+        const error = await configError(() => loadTools(env.DB))
+        expect(error.status).toBe(500)
+        expect(error.code).toBe('tool_config_error')
+        expect(error.row).toBe(seed.name)
+        expect(error.message).toContain(problem)
+      })
+    }
+  })
+
+  it('tools:seed reports a stale seeded row, which the insert keeps and only --update replaces (09 D-69)', async () => {
+    const stored = async () =>
+      (await env.DB.prepare('SELECT name, description, input_schema, handler_type, execution_config FROM assistant_tools').all<StoredToolRow>()).results
+    expect(staleToolRows(await stored())).toEqual([])
+    const segment = TOOL_SEEDS[0]
+    expect(segment.name).toBe('segment')
+    // The segment row as a D1 seeded before D-69 holds it (scripts/tool-seeds.ts at 16d4d78): no new
+    // keys, free-text source.
+    const preD69 = {
+      type: 'object',
+      properties: {
+        status: { type: 'array', items: { type: 'string', enum: ['active', 'unsubscribed'] }, minItems: 1, description: 'Default ["active"]. Add "unsubscribed" only when the teammate asks for them.' },
+        source: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'Signup sources, e.g. ["instagram"]. Absent = any source.' },
+        days_since_open_gte: { type: 'integer', minimum: 1, description: 'No email open in at least this many days (the "no open in N days" definition).' },
+        include_never_opened: { type: 'boolean', description: 'With days_since_open_gte, also include everyone who never opened. Default false.' },
+        has_app: { type: ['boolean', 'null'], description: 'true = has an app account, false = has none, null or absent = either.' },
+      },
+    }
+    const restore = toolSeedUpdate(segment)
+    try {
+      await env.DB.prepare('UPDATE assistant_tools SET input_schema = ? WHERE name = ?').bind(JSON.stringify(preD69), 'segment').run()
+      expect(staleToolRows(await stored())).toEqual([{ name: 'segment', fields: ['input_schema'] }])
+      // Re-running the insert keeps the stale row: ON CONFLICT DO NOTHING never overwrites.
+      const { sql, params } = toolSeedInsert(segment)
+      await env.DB.prepare(sql).bind(...params).run()
+      expect(staleToolRows(await stored())).toEqual([{ name: 'segment', fields: ['input_schema'] }])
+      // A changed description and another handler are named too.
+      await env.DB.prepare('UPDATE assistant_tools SET description = ?, execution_config = ? WHERE name = ?')
+        .bind('Count a segment.', JSON.stringify({ handler_name: 'aggregate' }), 'segment')
+        .run()
+      expect(staleToolRows(await stored())).toEqual([{ name: 'segment', fields: ['description', 'input_schema', 'execution_config'] }])
+      // --update's statement puts the seed back; enabled and sort_order are left as they were.
+      await env.DB.prepare('UPDATE assistant_tools SET enabled = 0, sort_order = 99 WHERE name = ?').bind('segment').run()
+      await env.DB.prepare(restore.sql).bind(...restore.params).run()
+      expect(staleToolRows(await stored())).toEqual([])
+      const kept = await env.DB.prepare('SELECT enabled, sort_order FROM assistant_tools WHERE name = ?').bind('segment').first()
+      expect(kept).toEqual({ enabled: 0, sort_order: 99 })
+      // The same schema with its keys in another order is not stale.
+      const reordered = Object.fromEntries(Object.entries(segment.inputSchema).reverse())
+      await env.DB.prepare('UPDATE assistant_tools SET input_schema = ? WHERE name = ?').bind(JSON.stringify(reordered), 'segment').run()
+      expect(staleToolRows(await stored())).toEqual([])
+    } finally {
+      await env.DB.prepare(restore.sql).bind(...restore.params).run()
+      await env.DB.prepare('UPDATE assistant_tools SET enabled = 1, sort_order = ? WHERE name = ?').bind(segment.sortOrder, 'segment').run()
+    }
+    expect((await loadTools(env.DB)).definitions[0]).toEqual({ name: 'segment', description: segment.description, input_schema: segment.inputSchema })
   })
 
   it('a query row is checked like a model query and more: PII, write words, the wall clock, raw "?", its config and mapping', async () => {
