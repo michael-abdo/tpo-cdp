@@ -25,8 +25,7 @@ export type ScanFixture = keyof typeof SCAN_FIXTURES
 
 /**
  * Where user-facing words live, for the vocabulary guard (08 T-VOC-1, 09 D-66): every .ts/.tsx file
- * under `src/` except the Segments page (owned by the segments work, which already uses the D-66
- * words), the glossary, the source registry, the metric definitions (shared/derive.ts DEFINITIONS:
+ * under `src/` (the Segments page included since the D-69 merge), the glossary, the source registry, the metric definitions (shared/derive.ts DEFINITIONS:
  * the system prompt renders its Definitions section from them at runtime, and the UI footers and
  * Look up show them) and the server-written sentences (dedupe suggestions, assistant fallback
  * sentences, the system prompt, the Insights board's and pin dialog's sentences, and the built-in
@@ -34,7 +33,7 @@ export type ScanFixture = keyof typeof SCAN_FIXTURES
  */
 export const VOCABULARY_SCAN = {
   dirs: ['src'],
-  skip: ['src/pages/SegmentsPage.tsx'],
+  skip: [] as string[],
   files: [
     'shared/glossary.ts',
     'shared/sources.ts',
@@ -68,7 +67,6 @@ export const ONE_PLACE_SCAN = {
     'src/labels.ts',
     'src/events-poll.ts',
     'src/filters-applied.ts',
-    'src/segments-days-field.ts',
     'shared/glossary.ts',
     'shared/insight-messages.ts',
     'worker/dedupe/score.ts',
@@ -82,7 +80,7 @@ export const ONE_PLACE_SCAN = {
  * their own source holds each entry's text once no matter how many pages read it, so merging them
  * in would over-count a page that reads one entry exactly once; `screenFacts`'s `resolve` already
  * credits that page with it, precisely once per property access (09 D-72, m3b/m6d vs m11).
- * `src/events-poll.ts`/`filters-applied.ts`/`segments-days-field.ts` are the opposite case (09
+ * `src/events-poll.ts`/`filters-applied.ts` are the opposite case (09
  * D-72, m9): a page reads their sentence constants (`DAYS_INVALID_NEXT`, `FILTERS_HIDDEN_MESSAGE`,
  * …) through a return value, never a `MODULE.CONST` property access `resolve` could credit, so
  * without merging them in, a page could retype one of their sentences with nothing to catch it.
@@ -99,7 +97,6 @@ const MERGEABLE_SCREEN_FILES = new Set([
   'src/block-reason.ts',
   'src/events-poll.ts',
   'src/filters-applied.ts',
-  'src/segments-days-field.ts',
 ])
 
 export interface ScreenTexts {

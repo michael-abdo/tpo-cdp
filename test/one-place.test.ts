@@ -22,7 +22,6 @@
 
 import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
-import { DAYS_INVALID_NEXT } from '../src/segments-days-field'
 import { ONE_PLACE_FIXTURES, ONE_PLACE_SCAN, type ScreenFacts } from './helpers/screen-text'
 
 /** A sentence is a run of at least this many words. */
@@ -114,11 +113,8 @@ describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
     for (const piece of ['ask', 'board', 'charts', 'pin-dialog']) expect(scanned).toContain(`src/insights/${piece}.tsx`)
     // Fixed, not derived from ONE_PLACE_SCAN.files itself (09 D-72, m9): every src/*.ts module that
     // holds a whole sentence a page shows, so dropping one from the scan fails here, not silently.
-    for (const file of ['src/labels.ts', 'src/events-poll.ts', 'src/filters-applied.ts', 'src/segments-days-field.ts'])
+    for (const file of ['src/labels.ts', 'src/events-poll.ts', 'src/filters-applied.ts'])
       expect(ONE_PLACE_SCAN.files, file).toContain(file)
-    // Not just scanned on its own: merged into the page that imports it (09 D-72, m9), so a
-    // sentence src/segments-days-field.ts holds is also /segments' sentence if /segments repeats it.
-    expect(env.SCREEN_TEXTS.onePlace['src/pages/SegmentsPage.tsx'].texts).toContain(DAYS_INVALID_NEXT)
     // Coverage pin: this is the flattened `texts` of every one of the 27 files above (every page,
     // the Insights pieces, the shell, the components and the sentence modules), not any one file's
     // own count — currently 3,806. 500 is a floor well under that, not a target: it exists so that

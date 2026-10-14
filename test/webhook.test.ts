@@ -137,7 +137,7 @@ async function expectedScore(email: string | null, appEvents: number): Promise<n
     const lastOpen = await env.DB.prepare('SELECT last_open_date FROM subscribers WHERE email_norm = ?')
       .bind(email)
       .first<string | null>('last_open_date')
-    if (lastOpen !== null) recency = 50 * Math.max(0, 1 - Math.max(0, days(lastOpen, TODAY)) / 30)
+    if (lastOpen !== null) recency = 50 * Math.max(0, 30 - Math.max(0, days(lastOpen, TODAY)))
     const { results } = await env.DB.prepare(
       `SELECT we.event_ts FROM web_events we JOIN web_visitors wv ON wv.visitor_id = we.visitor_id
         WHERE wv.email_norm = ?`,
@@ -146,7 +146,9 @@ async function expectedScore(email: string | null, appEvents: number): Promise<n
       .all<{ event_ts: string }>()
     site = results.filter((r) => days(r.event_ts, TODAY) >= 0 && days(r.event_ts, TODAY) <= 30).length
   }
-  return Math.round(recency + 25 * Math.min(1, appEvents / 10) + 25 * Math.min(1, site / 5))
+  // In thirtieths of a point (recency 50·(30 − d), app 75·a, site 150·s), half up, so no float error.
+  const thirtieths = recency + 75 * Math.min(appEvents, 10) + 150 * Math.min(site, 5)
+  return Math.floor((2 * thirtieths + 30) / 60)
 }
 
 function storedScore(pkey: string): Promise<number | null> {
@@ -591,6 +593,27 @@ describe('T-WH-11 signature headers', () => {
     const res = await sendWebhook('not-an-email')
     expect(res.status).toBe(400)
     expect(await res.json()).toMatchObject({ error: 'invalid_event', details: [{ field: 'body' }] })
+  })
+
+  it("rejects a wrong signature even under the exact header set the events/test panel sends (content-type, timestamp, signature, cf-connecting-ip; 09 D-73): a verify bypass keyed to this route's own header shape would otherwise go undetected", async () => {
+    const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
+    const timestamp = String(nowSeconds())
+    const wrongSignature = await signature('not-the-real-secret', timestamp, new TextEncoder().encode(body))
+    expect(wrongSignature).not.toBe(await signature(webhookSecret(), timestamp, new TextEncoder().encode(body)))
+    const rows = await count('app_events')
+    const res = await SELF.fetch('http://cdp.test/webhooks/app', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-webhook-timestamp': timestamp,
+        'x-webhook-signature': wrongSignature,
+        'cf-connecting-ip': '198.51.100.9',
+      },
+      body,
+    })
+    expect(res.status).toBe(401)
+    expect((await res.json<{ error: string }>()).error).toBe('bad_signature')
+    expect(await count('app_events')).toBe(rows)
   })
 
   it('accepts a header time inside the window and answers an identical replay with 200 duplicate', async () => {

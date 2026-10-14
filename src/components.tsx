@@ -14,6 +14,7 @@ import {
   ChartColumn,
   ChartNoAxesCombined,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleCheck,
@@ -43,6 +44,7 @@ import {
   TriangleAlert,
   UserSearch,
   Users,
+  Wrench,
   X,
 } from 'lucide-react'
 import {
@@ -74,6 +76,7 @@ export const ICONS = {
   events: Activity,
   insights: ChartNoAxesCombined,
   audit: ScrollText,
+  techy: Wrench,
   // asking (the Ask bar on /insights, "Explain this", the audit log's empty state)
   assistant: MessageCircleQuestion,
   // primary actions
@@ -83,6 +86,7 @@ export const ICONS = {
   next: ArrowRight,
   logout: LogOut,
   menu: Menu,
+  navCaret: ChevronDown,
   themeLight: Sun,
   themeDark: Moon,
   today: CalendarDays,
@@ -469,7 +473,9 @@ export function InfoTip({ term }: { term: TipKey }) {
         <Icon icon={ICONS.info} className="size-3.5" />
         <span className="sr-only"> What “{words}” means </span>
       </button>
+      {/* No portal without a real body: server rendering and the tests' stub document have none. */}
       {typeof document !== 'undefined' &&
+        document.body != null &&
         createPortal(
           <span
             ref={pop}
@@ -498,10 +504,12 @@ export function InfoTip({ term }: { term: TipKey }) {
  * An app event name as the brief writes it (app_open, read_story, link_click, login), with its plain
  * gloss in an InfoTip from the glossary (06 §Vocabulary, 09 D-66); a name with no gloss shows as sent.
  */
-export function EventName({ event }: { event: string }) {
+export function EventName({ event, nameId }: { event: string; nameId?: string }) {
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="font-mono">{event}</span>
+      <span id={nameId} className="font-mono">
+        {event}
+      </span>
       {isGlossaryKey(event) && <InfoTip term={event} />}
     </span>
   )

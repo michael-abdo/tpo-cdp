@@ -113,12 +113,18 @@ function stubKey(stubKeys: ReadonlyMap<string, string>, userId: string): string 
 }
 
 /**
- * The `limit` most recently received app events, newest first by received_at (insertion order
- * breaks ties within one second), each resolved to its user and profile. An unknown user's stub
- * key is derived with PII_KEY_SECRET (02 §Linking 4) and must exist; a resolved user without an
- * app_users row or a profile fails loud, since ingest always writes both.
+ * The resolution join shared by recentEvents and feedEventById (one home, D-72, D-73): `where`
+ * is a SQL fragment over `e`/`d`/`u`/`p` and `params` its bound values, in order, before `limit`.
+ * An unknown user's stub key is derived with PII_KEY_SECRET (02 §Linking 4) and must exist; a
+ * resolved user without an app_users row or a profile fails loud, since ingest always writes both.
  */
-export async function recentEvents(db: D1Database, piiKeySecret: string, limit: number): Promise<FeedEvent[]> {
+async function feedRows(
+  db: D1Database,
+  piiKeySecret: string,
+  where: string,
+  params: readonly unknown[],
+  limit: number,
+): Promise<FeedEvent[]> {
   const { results } = await db
     .prepare(
       `SELECT e.event_id, e.event, e.device_id, e.event_ts, e.received_at,
@@ -130,10 +136,11 @@ export async function recentEvents(db: D1Database, piiKeySecret: string, limit: 
          LEFT JOIN device_identity d ON e.user_id IS NULL AND d.device_id = e.device_id
          LEFT JOIN app_users u ON u.user_id = COALESCE(e.user_id, d.user_id)
          LEFT JOIN profiles p ON p.email_norm = u.email_norm
+        WHERE ${where}
         ORDER BY e.received_at DESC, e.rowid DESC
-        LIMIT ?1`,
+        LIMIT ?`,
     )
-    .bind(limit)
+    .bind(...params, limit)
     .all<FeedRow>()
 
   const stubKeys = new Map<string, string>()
@@ -169,4 +176,22 @@ export async function recentEvents(db: D1Database, piiKeySecret: string, limit: 
     pkey: row.user_id === null ? null : row.email_norm !== null ? row.email_pkey : stubKey(stubKeys, row.user_id),
     email: row.email_norm,
   }))
+}
+
+/**
+ * The `limit` most recently received app events, newest first by received_at (insertion order
+ * breaks ties within one second), each resolved to its user and profile (04 §GET /api/events/recent).
+ */
+export async function recentEvents(db: D1Database, piiKeySecret: string, limit: number): Promise<FeedEvent[]> {
+  return feedRows(db, piiKeySecret, '1 = 1', [], limit)
+}
+
+/**
+ * One app event, resolved exactly as recentEvents shapes it; null when no event has this id.
+ * The "Send a test event" panel reads its own send this way (09 D-73 `POST /api/events/test`),
+ * so the row it shows is never a second, looser copy of the feed's resolution rule.
+ */
+export async function feedEventById(db: D1Database, piiKeySecret: string, eventId: string): Promise<FeedEvent | null> {
+  const [row] = await feedRows(db, piiKeySecret, 'e.event_id = ?', [eventId], 1)
+  return row ?? null
 }

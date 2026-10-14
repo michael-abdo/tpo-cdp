@@ -34,6 +34,8 @@ import { COLD_DAYS, DEFINITIONS, isCold } from '../../shared/derive'
 import { QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
 import { ApiError, errorMessage, getJson } from '../api'
 import { AppWindow, Globe, Mail } from 'lucide-react'
+import { optionId, useListNav } from '../list-nav'
+import { ListboxOption } from '../listbox'
 import {
   Announcer,
   Button,
@@ -525,7 +527,7 @@ function useSuggestions(path: string | null): SuggestState | null {
   return settled.state
 }
 
-/** The listbox of matches (06 keyboard contract: ↑/↓ moves, Enter picks, Esc closes). */
+/** The listbox of matches (06 keyboard contract: ↑/↓ moves, Enter picks, Esc closes; ../listbox). */
 function SuggestionList({
   matches,
   truncated,
@@ -547,26 +549,20 @@ function SuggestionList({
       {matches.map((m, i) => {
         const isActive = i === active
         return (
-          <li
+          <ListboxOption
             key={m.pkey}
-            id={`${LISTBOX_ID}-${i}`}
-            role="option"
-            aria-selected={isActive}
-            // mousedown, not click: the input keeps focus, so the list is not closed first.
-            onMouseDown={(e) => {
-              e.preventDefault()
-              onPick(m)
-            }}
-            // The active row gets a bar and a fill, not a faint tint alone (principle 7).
-            className={`flex cursor-pointer flex-wrap gap-x-3 border-l-4 px-3 py-2 hover:bg-gray-50 ${
-              isActive ? 'border-blue-600 bg-blue-50' : 'border-transparent'
-            }`}
+            id={optionId(LISTBOX_ID, i)}
+            active={isActive}
+            onPick={() => onPick(m)}
+            // The active row's bar-and-fill treatment (principle 7) lives in the shared
+            // ListboxOption now, not here (D-72).
+            className="flex cursor-pointer flex-wrap gap-x-3 px-3 py-2 hover:bg-gray-50"
           >
             <span className="break-all font-medium text-gray-900">{m.email ?? m.user_id}</span>
             {/* The kind only when it is not the usual one (principle 5). */}
             {m.kind !== 'subscriber' && <span className="text-gray-700">{KIND_LABEL[m.kind]}</span>}
             {m.status !== null && <span className="text-gray-700">{capitalized(m.status)}</span>}
-          </li>
+          </ListboxOption>
         )
       })}
       {truncated && (
@@ -618,7 +614,8 @@ export default function LookupPage() {
   const q = params.get('q')
   const [input, setInput] = useState(q ?? '')
   const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(-1)
+  const nav = useListNav()
+  const { active } = nav
   /** The no-match block: focus moving into it (Tab to a "Did you mean" link) keeps the list open. */
   const nearbyRef = useRef<HTMLDivElement>(null)
   const fragment = useDebounced(input, SUGGEST_DEBOUNCE_MS)
@@ -653,7 +650,7 @@ export default function LookupPage() {
   function go(key: string) {
     setInput(key)
     setOpen(false)
-    setActive(-1)
+    nav.setActive(-1)
     setParams({ q: key })
   }
 
@@ -665,7 +662,7 @@ export default function LookupPage() {
   function pickNearby(email: string) {
     setInput(email)
     setOpen(false)
-    setActive(-1)
+    nav.setActive(-1)
   }
 
   function onBlur(e: FocusEvent<HTMLInputElement>) {
@@ -676,30 +673,21 @@ export default function LookupPage() {
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    setActive(-1)
+    nav.setActive(-1)
     // Find again on the same unmatched q re-opens its fallback list; otherwise the list closes.
     setOpen(input === q && state?.status === 'not_found')
     setParams(input === '' ? {} : { q: input })
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !open) {
       if (!searchable(input)) return
       e.preventDefault()
-      if (!open) {
-        setOpen(true)
-        return
-      }
-      const step = e.key === 'ArrowDown' ? 1 : -1
-      setActive((i) => Math.max(-1, Math.min(matches.length - 1, i + step)))
-    } else if (e.key === 'Enter' && open && active >= 0 && active < matches.length) {
-      e.preventDefault()
-      pick(matches[active])
-    } else if (e.key === 'Escape' && open) {
-      e.preventDefault()
-      setOpen(false)
-      setActive(-1)
+      setOpen(true)
+      return
     }
+    if (!open) return
+    nav.onKeyDown(e, { itemCount: matches.length, onPick: (i) => pick(matches[i]), onClose: () => setOpen(false) })
   }
 
   // The fallback after a 404 is the list itself; with the list closed (Esc) the 404 message stays.
@@ -753,13 +741,13 @@ export default function LookupPage() {
             aria-controls={listboxShown ? LISTBOX_ID : undefined}
             aria-autocomplete="list"
             aria-describedby={result === null ? HINT_ID : undefined}
-            aria-activedescendant={listboxShown && active >= 0 ? `${LISTBOX_ID}-${active}` : undefined}
+            aria-activedescendant={listboxShown && active >= 0 ? optionId(LISTBOX_ID, active) : undefined}
             autoComplete="off"
             value={input}
             onChange={(e) => {
               setInput(e.target.value)
               setOpen(true)
-              setActive(-1)
+              nav.setActive(-1)
             }}
             onKeyDown={onKeyDown}
             onBlur={onBlur}

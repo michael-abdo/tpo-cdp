@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { TODAY } from '../shared/config'
+import { demoTimestamp } from '../shared/demo-timestamp'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const LAST_FILE = join(ROOT, '.wrangler', 'send-webhook-last.json')
@@ -53,11 +53,6 @@ function webhookSecret(): string {
 /** `<prefix>` + 6 random hex characters, the length of the brief's sample ids (evt_9f3a1c, d_4b21e8). */
 function freshId(prefix: string): string {
   return prefix + randomBytes(3).toString('hex')
-}
-
-/** TODAY at the wall clock's UTC time of day, as `YYYY-MM-DDTHH:MM:SSZ`. */
-function demoTimestamp(): string {
-  return `${TODAY}T${new Date().toISOString().slice(11, 19)}Z`
 }
 
 interface LastEvent {

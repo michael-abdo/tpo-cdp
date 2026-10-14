@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest'
 import { TODAY } from '../shared/config'
-import { addDays, COLD_DAYS, coldSince, DEFINITIONS, goingColdRisk, isCold } from '../shared/derive'
+import { addDays, COLD_DAYS, coldSince, DEFINITIONS, goingColdRisk, isCold, isNewSubscriber, NEW_SUBSCRIBER_DAYS } from '../shared/derive'
 
 // One home per definition (09 D-68, D-46; 18-settings-spec §1 rows 2, 4, 13 and §7 Tier 0;
 // 02 §Derived "One runtime source"). Static scans over the product source, read at transform time
@@ -134,6 +134,37 @@ describe('the cold window has one home (09 D-68)', () => {
     const lookup = code['../src/pages/LookupPage.tsx'] ?? ''
     expect(lookup).toContain('no opens for ${COLD_DAYS} days')
     expect(lookup).toMatch(/import \{[^}]*\bCOLD_DAYS\b[^}]*\} from '..\/..\/shared\/derive'/)
+  })
+})
+
+describe('the new-subscriber window has one home (09 D-10, D-68)', () => {
+  it('isNewSubscriber reads NEW_SUBSCRIBER_DAYS, never a literal 30 (its body, read as text)', () => {
+    const derive = code['../shared/derive.ts'] ?? ''
+    const body = functionBody(derive, 'isNewSubscriber')
+    expect(body).toContain('lastNDays(NEW_SUBSCRIBER_DAYS)')
+    expect(body).not.toMatch(/\b30\b/)
+  })
+
+  it('NEW_SUBSCRIBER_DAYS is 30 (02 §Derived; no number changes) and isNewSubscriber matches it exactly', () => {
+    expect(NEW_SUBSCRIBER_DAYS).toBe(30)
+    const edge = addDays(TODAY, -NEW_SUBSCRIBER_DAYS)
+    const past = addDays(TODAY, -NEW_SUBSCRIBER_DAYS - 1)
+    expect(isNewSubscriber(edge)).toBe(true)
+    expect(isNewSubscriber(past)).toBe(false)
+  })
+
+  it('the DEFINITIONS new_subscriber sentence carries NEW_SUBSCRIBER_DAYS, not a hand-written 30', () => {
+    // A runtime comparison cannot tell NEW_SUBSCRIBER_DAYS from a literal 30 while it is 30 (same
+    // limit as the COLD_DAYS check above), so the doc/formula source lines are read as text.
+    const derive = code['../shared/derive.ts'] ?? ''
+    const start = derive.indexOf('new_subscriber: {')
+    if (start < 0) throw new Error('one-home: new_subscriber entry not found')
+    const block = derive.slice(start, derive.indexOf('},', start) + 2)
+    expect(block).toContain('`Signed up within the last ${NEW_SUBSCRIBER_DAYS} days including today.`')
+    expect(block).toContain('`signup_date within TODAY − ${NEW_SUBSCRIBER_DAYS} .. TODAY`')
+    expect(block).not.toMatch(/\b30\b/)
+    expect(DEFINITIONS.new_subscriber.doc).toBe('Signed up within the last 30 days including today.')
+    expect(DEFINITIONS.new_subscriber.formula).toBe('signup_date within TODAY − 30 .. TODAY')
   })
 })
 
