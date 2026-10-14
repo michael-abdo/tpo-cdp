@@ -67,6 +67,34 @@ export type PinGrammarResult = ({ ok: true } & PinnableShape) | { ok: false; pro
 const isWord = (t: SqlToken | undefined, word?: string): boolean => t !== undefined && t.kind === 'word' && (word === undefined || t.text.toUpperCase() === word)
 const isPunct = (t: SqlToken | undefined, text: string): boolean => t !== undefined && t.kind === 'punct' && t.text === text
 
+/** Token indexes of every top-level ORDER BY item that is exactly `<column>` or `<column> ASC|DESC`. */
+function bareSortKeyPositions(tokens: SqlToken[], column: string): number[] {
+  const orderAt = tokens.findIndex((t, i) => t.depth === 0 && isWord(t, 'ORDER') && isWord(tokens[i + 1], 'BY'))
+  if (orderAt === -1) return []
+  let end = tokens.length
+  for (let i = orderAt + 2; i < tokens.length; i += 1) {
+    if (tokens[i].depth === 0 && isWord(tokens[i], 'LIMIT')) {
+      end = i
+      break
+    }
+  }
+  const out: number[] = []
+  let item: number[] = []
+  const flush = () => {
+    const [first, second] = item.map((i) => tokens[i])
+    const isKey = isWord(first) && first.text.toLowerCase() === column
+    const direction = item.length === 1 || (item.length === 2 && (isWord(second, 'ASC') || isWord(second, 'DESC')))
+    if (isKey && direction) out.push(item[0])
+    item = []
+  }
+  for (let i = orderAt + 2; i < end; i += 1) {
+    if (tokens[i].depth === 0 && isPunct(tokens[i], ',')) flush()
+    else item.push(i)
+  }
+  flush()
+  return out
+}
+
 /** Words that end a clause at its own depth (board.ts SELECT_LIST_END, duplicated: this file must stay pure of board.ts). */
 const CLAUSE_END = new Set(['FROM', 'WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'UNION', 'EXCEPT', 'INTERSECT'])
 
@@ -274,6 +302,15 @@ export function classifyPinnableSql(sql: string): PinGrammarResult {
   // the one bare identifier of a list). Anything else — WHERE, ORDER BY, an alias, a second
   // mention — is refused, whatever it looks like (fail safe, 09 D-64a's own lesson).
   const cleared = new Set(expressions.flatMap((e) => e.identifierAt))
+  // A person list may also sort by its own key as a tie-breaker (`ORDER BY engagement_score DESC,
+  // pkey`, the order D-56 gives "most engaged"): the list already shows that whole key, so a bare
+  // sort key reveals nothing new. Only a sort item that is exactly `pkey`, optionally ASC or DESC,
+  // is cleared; any expression over it (substr, ||, COLLATE, a CASE) stays refused below (09 D-64b,
+  // amended 2026-10-14).
+  const listKeys = expressions.filter((e) => e.kind === 'bare_identifier')
+  if (listKeys.length === 1 && listKeys[0].name === 'pkey') {
+    for (const i of bareSortKeyPositions(tokens, 'pkey')) cleared.add(i)
+  }
   for (let i = 0; i < tokens.length; i += 1) {
     const t = tokens[i]
     if (t.kind === 'word' && IDENTIFIER_COLUMNS.has(t.text.toLowerCase()) && !cleared.has(i)) {

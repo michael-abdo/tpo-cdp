@@ -103,6 +103,27 @@ describe('classifyPinnableSql: "lists" (a person list)', () => {
   })
 })
 
+describe('classifyPinnableSql: a person list may sort by its own key as a tie-breaker (09 D-64b, amended 2026-10-14)', () => {
+  it('the live "most engaged" list, ORDER BY engagement_score DESC, pkey, pins as a list', () => {
+    const sql = "SELECT pkey, engagement_score, last_open_date, has_app FROM v_profiles WHERE status = 'active' ORDER BY engagement_score DESC, pkey LIMIT 25"
+    expect(classifyPinnableSql(sql)).toMatchObject({ ok: true, shape: 'list', identifierColumn: 'pkey' })
+    expect(classifyPinnableSql('SELECT pkey, engagement_score FROM v_profiles ORDER BY pkey DESC LIMIT 10')).toMatchObject({ ok: true, shape: 'list' })
+    expect(classifyPinnableSql('SELECT pkey FROM v_profiles ORDER BY pkey ASC')).toMatchObject({ ok: true, shape: 'list' })
+  })
+
+  it('anything more than the bare key in ORDER BY is still refused', () => {
+    for (const order of ['substr(pkey, 1, 4)', "pkey || 'x'", 'pkey COLLATE NOCASE', 'pkey DESC NULLS LAST', 'pkey -1', 'pkey NOCASE' /* tokens, not SQL validity: only ASC/DESC may follow */, 'length(pkey)', 'engagement_score, substr(pkey, 5, 3) DESC']) {
+      const r = classifyPinnableSql(`SELECT pkey, engagement_score FROM v_profiles ORDER BY ${order} LIMIT 10`)
+      expect(r.ok, order).toBe(false)
+    }
+  })
+
+  it('only a person list gets the tie-breaker: a totals query sorted by pkey is still refused', () => {
+    expect(classifyPinnableSql('SELECT source, count(*) AS n FROM v_profiles GROUP BY source ORDER BY pkey').ok).toBe(false)
+    expect(classifyPinnableSql('SELECT count(*) AS n FROM v_profiles ORDER BY pkey').ok).toBe(false)
+  })
+})
+
 describe('classifyPinnableSql: every D-64b bypass class is refused', () => {
   it('aliasing: the identifier column of a person list cannot be renamed', () => {
     expect(classifyPinnableSql('SELECT pkey AS reader_id, source FROM v_profiles')).toMatchObject({ ok: false })
@@ -149,6 +170,8 @@ describe('classifyPinnableSql: every D-64b bypass class is refused', () => {
 
   it('an identifier column reached through WHERE, ORDER BY or a second mention anywhere else is refused', () => {
     expect(classifyPinnableSql("SELECT count(*) AS n FROM v_profiles WHERE pkey = 'pk_0000000000000000'")).toMatchObject({ ok: false })
-    expect(classifyPinnableSql('SELECT pkey, source FROM v_profiles ORDER BY pkey')).toMatchObject({ ok: false })
+    // A bare `ORDER BY pkey` on a person list is the one allowed tie-breaker (09 D-64b, amended
+    // 2026-10-14, tested above); any expression over the key in ORDER BY is still a second mention.
+    expect(classifyPinnableSql('SELECT pkey, source FROM v_profiles ORDER BY substr(pkey, 1, 4)')).toMatchObject({ ok: false })
   })
 })
