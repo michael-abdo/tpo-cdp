@@ -64,15 +64,24 @@ describe('/segments level-1 hints vs the level-2 "How these filters work" disclo
     expect(hints).toContain('DEFINITIONS.cold.plain')
   })
 
-  it('the disclosure shows every filter doc once, beside a plain heading, for the D-30 reconciliation', () => {
+  it('the disclosure shows only days_since_open\'s plain words; no_open_in_days and cold show only their raw formulas (the D-30 reconciliation lives at level 1, once)', () => {
     const definitionsArray = segmentsPageSource.slice(
-      segmentsPageSource.indexOf('const FOOTER_DEFINITIONS'),
+      segmentsPageSource.indexOf('const FOOTER_PLAIN'),
       segmentsPageSource.indexOf('/** The CSV'),
     )
+    // Every one of the three still shows up somewhere in this block (FOOTER_PLAIN or
+    // FOOTER_DEFINITIONS), but only days_since_open is in the plain, dt/dd-rendering array.
     for (const key of ['days_since_open', 'no_open_in_days', 'cold'] as const) expect(definitionsArray).toContain(`DEFINITIONS.${key}`)
+    const plainArray = segmentsPageSource.slice(
+      segmentsPageSource.indexOf('const FOOTER_PLAIN'),
+      segmentsPageSource.indexOf('const FOOTER_DEFINITIONS'),
+    )
+    expect(plainArray).toContain('DEFINITIONS.days_since_open')
+    for (const key of ['no_open_in_days', 'cold'] as const) expect(plainArray).not.toContain(`DEFINITIONS.${key}`)
     const footer = segmentsPageSource.slice(segmentsPageSource.lastIndexOf('<Disclosure label="How these filters work"'))
-    expect(footer).toContain('FOOTER_DEFINITIONS.map(({ label, def })')
+    expect(footer).toContain('FOOTER_PLAIN.map(({ label, def })')
     expect(footer).toContain('{def.doc}')
+    expect(footer).toContain('FOOTER_DEFINITIONS.map((def)')
     expect(footer).toContain('{def.formula}')
   })
 

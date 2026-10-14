@@ -2,12 +2,13 @@
 // form in plain words, Preview (POST /api/segments/preview), the count as a sentence, Export CSV
 // (POST /api/segments/export.csv, run on the filters the shown result came from, so the file always
 // matches the count on screen) and a short result table. Level 2 / Technical details (06 §UI
-// principles 2–5): per-row Details, "How these filters work" with the definitions from DEFINITIONS
-// (02 §Derived "one runtime source"), raw names and the placeholders-only SQL shape. A level-1 hint
-// beside a filter says only what that filter's own label doesn't (09 D-72, D-55); the full
-// definition, and the never-opened toggle's contrast with "Cold" for the brief's count
-// reconciliation (09 D-30), live in the disclosure, once. Status defaults to active; the
-// response's hidden_unsubscribed is shown in words when it is above 0.
+// principles 2–5): per-row Details, "How these filters work" with days_since_open's plain words from
+// DEFINITIONS (02 §Derived "one runtime source"), then every filter's raw name and formula and the
+// placeholders-only SQL shape. A level-1 hint beside a filter says only what that filter's own label
+// doesn't (09 D-72, D-55); the never-opened toggle's contrast with "Cold" for the brief's count
+// reconciliation lives there too (09 D-30), beside the days field, once — not repeated in the
+// disclosure's plain list. Status defaults to active; the response's hidden_unsubscribed is shown in
+// words when it is above 0.
 // The form sends what the inputs hold (02 §Normalization): labels below are display maps only.
 // A segment answer or tile on /insights arrives as router state {filters} ("Open segment", 06
 // §/insights): the form takes those filters and previews them once, so the count is the builder's.
@@ -57,15 +58,15 @@ const DEFAULT_FORM: Form = { status: 'active', sources: [], days: '', includeNev
 /** The brief's R3 example (02 §Counts): Instagram, active, no open in 30 days including never-opened. */
 const BRIEF_PRESET: Form = { status: 'active', sources: ['instagram'], days: '30', includeNeverOpened: true, hasApp: 'any' }
 
-/** The footer definitions, each with a plain heading from DEFINITION_LABEL (the one source /insights
- * already reads for the same definitions, so the heading is never retyped here); the raw name and
- * formula show only in Technical details. `cold` is listed too, so a reviewer can reconcile it
- * against this filter's count (09 D-30). */
-const FOOTER_DEFINITIONS = [
-  { label: DEFINITION_LABEL.days_since_open, def: DEFINITIONS.days_since_open },
-  { label: DEFINITION_LABEL.no_open_in_days, def: DEFINITIONS.no_open_in_days },
-  { label: DEFINITION_LABEL.cold, def: DEFINITIONS.cold },
-]
+/** The footer's plain list (level 2 "How these filters work"): only days_since_open. No_open_in_days
+ * and cold are explained once already, as the level-1 hint beside the days field, which reconciles
+ * this filter's count against "Cold" for the brief's count reconciliation; saying their plain words
+ * again here would say the same fact twice across levels (09 D-72, D-55, D-30, 06 principle 2/4). */
+const FOOTER_PLAIN = [{ label: DEFINITION_LABEL.days_since_open, def: DEFINITIONS.days_since_open }]
+
+/** Every definition behind this form, raw name + formula only (Technical details, never plain
+ * words): a reader who wants the SQL-shape formula for no_open_in_days or cold still finds it here. */
+const FOOTER_DEFINITIONS = [DEFINITIONS.days_since_open, DEFINITIONS.no_open_in_days, DEFINITIONS.cold]
 
 /** The CSV's columns as the export writes them (04 §Segments). */
 const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
@@ -380,7 +381,7 @@ export default function SegmentsPage() {
 
       <Disclosure label="How these filters work" className="border-t border-gray-200 pt-4">
         <dl className="space-y-2 text-sm">
-          {FOOTER_DEFINITIONS.map(({ label, def }) => (
+          {FOOTER_PLAIN.map(({ label, def }) => (
             <div key={def.name}>
               <dt className="font-medium text-gray-900">{label}</dt>
               <dd className="text-gray-700">{def.doc}</dd>
@@ -389,7 +390,7 @@ export default function SegmentsPage() {
         </dl>
         <TechnicalDetails>
           <p className="font-medium">Definitions (shared/derive.ts)</p>
-          {FOOTER_DEFINITIONS.map(({ def }) => (
+          {FOOTER_DEFINITIONS.map((def) => (
             <p key={def.name}>
               <span className="font-mono">{def.name}</span>: <span className="font-mono">{def.formula}</span>
             </p>
