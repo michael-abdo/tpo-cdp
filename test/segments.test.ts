@@ -4,6 +4,7 @@ import { TOOL_SEEDS } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { isNewSubscriber, noOpenInDays } from '../shared/derive'
 import { normalizeEmail } from '../shared/normalize'
+import { JOY } from './helpers/shared-ids'
 import { toApiError } from '../src/api-error'
 import { BRIEF_EXAMPLE, readSearches, type SearchStore, searchKey, STORAGE_KEY } from '../src/previous-searches'
 import { DEFAULT_FORM, fieldMessages, type Form, toFilters } from '../src/segment-form'
@@ -219,6 +220,17 @@ describe('segment request errors', () => {
       expect(body.error).toBe('invalid_filters')
       expect(body.details).toEqual(['unknown filter: pages_viewed'])
     }
+  })
+
+  it('an email-shaped unknown top-level body key is redacted in the response and never reaches console.warn raw', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const res = await post('preview', { filters: PRESET, [JOY]: true })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; details: string[] }>()
+    expect(body.details).toEqual(['unknown field: [email]'])
+    expect(body.details.some((d) => d.includes('@'))).toBe(false)
+    for (const call of warn.mock.calls) expect(JSON.stringify(call)).not.toContain(JOY)
+    warn.mockRestore()
   })
 
   it('a non-canonical status value is 400 invalid_filters', async () => {

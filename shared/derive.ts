@@ -137,10 +137,10 @@ export function wentColdWindow(month: string): DateWindow {
   return { from, to: dayMs(monthEnd) < dayMs(TODAY) ? monthEnd : TODAY }
 }
 
-/** `signup_date` within `TODAY − 30 .. TODAY` (09 D-36). */
 /** The days that make a subscriber "new" (09 D-10): the one home of the 30, shown on /segments beside "Signed up in the last". */
 export const NEW_SUBSCRIBER_DAYS = 30
 
+/** `signup_date` within `TODAY − NEW_SUBSCRIBER_DAYS .. TODAY` (09 D-36). */
 export function isNewSubscriber(signupDate: string): boolean {
   return inWindow(signupDate, lastNDays(NEW_SUBSCRIBER_DAYS))
 }
@@ -238,8 +238,8 @@ export const DEFINITIONS = {
   },
   new_subscriber: {
     name: 'new_subscriber',
-    doc: 'Signed up within the last 30 days including today.',
-    formula: 'signup_date within TODAY − 30 .. TODAY',
+    doc: `Signed up within the last ${NEW_SUBSCRIBER_DAYS} days including today.`,
+    formula: `signup_date within TODAY − ${NEW_SUBSCRIBER_DAYS} .. TODAY`,
     sql: 'signup_date BETWEEN :from AND :to',
     fn: isNewSubscriber,
   },

@@ -5,9 +5,15 @@
  * worker/segments/compile.ts (validation and SQL), scripts/tool-seeds.ts (the tool's
  * input_schema) and src/ (the form and the Previous searches label).
  *
- * Every string key is limited by an enum or a pattern, so no value can hold an email address or a
- * raw app, device or visitor id (shared/pii.ts EMAIL_REGEX, RAW_ID_REGEX; 19 §3 "Model PII risk").
- * The page pattern bans `@` and `_`; the went-cold pattern is a word or a month.
+ * Every string key except `source` is limited by an enum or a pattern, so no value can hold an
+ * email address or a raw app, device or visitor id (shared/pii.ts EMAIL_REGEX, RAW_ID_REGEX; 19 §3
+ * "Model PII risk"). The page pattern bans `@` and `_`; the went-cold pattern is a word or a month.
+ * `source` is folded through the same canonicalSource used at ingest (02 §Normalization) but not
+ * enum-restricted at this layer, so bound params, not an enum, are what keep it SQL-safe
+ * (worker/segments/compile.ts); the model-facing `segment` tool and the Insights board reach it
+ * only through Gate 2's enum/guardPayload, and the page's own checkboxes list only
+ * `shared/normalize.ts` CANONICAL_SOURCES, so no caller the page exposes can pass a free string
+ * through to Previous searches.
  *
  * Pure data: no validation code lives here (worker/segments/compile.ts parseFilters is the one
  * validator), and the browser never normalizes a value (02 §Normalization).

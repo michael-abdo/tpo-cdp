@@ -11,6 +11,7 @@ import { Hono } from 'hono'
 import { SITE_PAGE_PATTERN } from '../../shared/segment-filters'
 import { ApiError } from '../auth/middleware'
 import type { AppEnv } from '../env'
+import { redactEmails } from '../assistant/gates/pii-guard'
 import {
   type CompiledSegment,
   compileSegment,
@@ -52,7 +53,7 @@ async function readBody(req: Request, route: string, allowed: readonly string[])
   }
   const unknown = Object.keys(body).filter((k) => !allowed.includes(k))
   if (unknown.length > 0) {
-    throw invalidBody(route, shape, unknown.map((k) => `unknown field: ${k}`))
+    throw invalidBody(route, shape, unknown.map((k) => `unknown field: ${redactEmails(k).text}`))
   }
   return body as Record<string, unknown>
 }

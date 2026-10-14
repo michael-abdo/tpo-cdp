@@ -200,12 +200,12 @@ async function preview(filters: unknown): Promise<PreviewBody> {
   return res.json<PreviewBody>()
 }
 
-// 08 T-WH-10 reads "a segment count changes after an event". 09 D-69 amends D-53: the app activity
-// filters (app_active_within_days, app_event) read v_app_events, which only webhooks fill, so an
-// event now moves a segment count; the engagement filters read the stored engagement_score, which
-// an event also moves (09 D-46). This test pins both on the same worker with no re-import: the
-// score in the rows, and the app activity counts (test/segments.test.ts T-SEG-9 and T-SEG-11 pin
-// the same for engagement ranges, windows, stitching and events after TODAY).
+// 08 T-WH-10 (09 D-53, amended by D-69): the app activity filters (app_active_within_days,
+// app_event) read v_app_events, which only webhooks fill, so an event now moves a segment count;
+// the engagement filters read the stored engagement_score, which an event also moves (09 D-46).
+// This test pins both on the same worker with no re-import: the score in the rows, and the app
+// activity counts (test/segments.test.ts T-SEG-9 and T-SEG-11 pin the same for engagement ranges,
+// windows, stitching and events after TODAY).
 describe('T-WH-10 a segment reflects a webhook event with no re-import, same worker instance', () => {
   it("changes julia.evans230's engagement_score and the app activity counts after a direct and a stitched event", async () => {
     const julia = 'julia.evans230@gmail.com'
