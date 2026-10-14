@@ -16,6 +16,7 @@ import { Check, Smartphone, UserCheck, Users, UsersRound, X } from 'lucide-react
 import { type ReactNode, useState } from 'react'
 import { Link } from 'react-router'
 import { TODAY } from '../../shared/config'
+import { LOADS_BY_LABEL } from '../../shared/sources'
 import { countOf, GLOSSARY, type GlossaryKey } from '../../shared/glossary'
 import { errorMessage, postJson } from '../api'
 import {
@@ -257,7 +258,7 @@ function SourceHistory({ source }: { source: AnySource }) {
       )}
       <TechnicalDetails>
         <p>
-          id: {source.id} · loads_by: {source.loads_by}
+          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id} · loads_by: {source.loads_by}
         </p>
         {source.runs.map((run) => (
           <p key={run.id}>
@@ -299,7 +300,7 @@ function WebhookHistory({ source }: { source: WebhookSource }) {
       </p>
       <TechnicalDetails>
         <p>
-          id: {source.id} · loads_by: {source.loads_by} · endpoint: POST /webhooks/app
+          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id} · loads_by: {source.loads_by} · endpoint: POST /webhooks/app
           {source.last_received !== null && <> · last received_at {utc(source.last_received)}</>}
         </p>
       </TechnicalDetails>

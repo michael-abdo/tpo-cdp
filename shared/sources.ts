@@ -54,6 +54,12 @@ export const SOURCES = [
   },
 ] as const satisfies readonly SourceEntry[]
 
+/** Plain words for how a source loads, shown as "Loads by: …" in Technical details (06 §/ Overview). */
+export const LOADS_BY_LABEL: Readonly<Record<SourceEntry['loads_by'], string>> = {
+  seed: 'seed script',
+  webhook: 'webhook',
+}
+
 export type Source = (typeof SOURCES)[number]
 export type SourceId = Source['id']
 /** The sources the seed loads from a file: the values of import_runs.file and quarantine.file. */

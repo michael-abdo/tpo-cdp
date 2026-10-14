@@ -6,7 +6,7 @@ import overviewSource from '../src/pages/OverviewPage.tsx?raw'
 import { TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
 import { explain, GLOSSARY, isGlossaryKey } from '../shared/glossary'
-import { SOURCES } from '../shared/sources'
+import { LOADS_BY_LABEL, SOURCES } from '../shared/sources'
 import type { Sources } from '../src/types'
 import { parseCsv } from '../worker/ingest/csv'
 import { QUARANTINE_REASONS } from '../worker/ingest/quarantine'
@@ -372,5 +372,9 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     // The per-file prose 09 D-63 removed.
     for (const gone of ['Loaded ', 'into one list', 'How the data was combined', 'rows in'])
       expect(overviewCode).not.toContain(gone)
+    // 06 §/ Overview: Technical details read "Loads by: seed script" / "webhook", from one label home.
+    expect(LOADS_BY_LABEL).toEqual({ seed: 'seed script', webhook: 'webhook' })
+    expect(texts.filter((t) => t.trim().startsWith('Loads by:')).length).toBe(2)
+    expect(overviewCode.match(/Loads by: \{LOADS_BY_LABEL\[source\.loads_by\]\}/g)?.length).toBe(2)
   })
 })
