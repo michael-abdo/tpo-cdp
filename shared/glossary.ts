@@ -75,7 +75,7 @@ export const GLOSSARY = {
   possible_duplicates: {
     term: 'possible duplicate',
     many: 'possible duplicates',
-    // That nothing is deduped on its own is said beside the Same person / Different people buttons (09 D-72).
+    // That nothing is deduped on its own is said once, in the footer line under the list (09 D-72).
     text: 'Two subscribers with different emails whose names match, for a person to judge.',
   },
   // Quarantine reasons (02 §Quarantine): the codes are the keys, so a reason from the API finds its words.
