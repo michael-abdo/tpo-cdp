@@ -6,14 +6,22 @@
 // "Needs review" (09 D-61) is level 1 when a set-aside row can be fixed: one sentence, each row as
 // written (GET /api/quarantine) and the fix; CSV line numbers and reason codes sit in Technical
 // details. Read-only: no edit or delete here (09 D-13).
+// "Possible duplicates" (09 D-62) is level 2, collapsed: "Possible duplicates — N to review", each
+// scored pair side by side with its score bar, reason chips, one-line suggestion and two buttons
+// that record a decision (GET/POST /api/duplicates). Nothing merges; the m/u weights sit in
+// Technical details. Scores, reasons and suggestions are the API's; nothing is scored here.
 
-import { Smartphone, UserCheck, Users } from 'lucide-react'
+import { Check, Smartphone, UserCheck, Users, UsersRound, X } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router'
+import { errorMessage, postJson } from '../api'
 import {
+  Announcer,
   Button,
   Disclosure,
   EmptyState,
   ErrorLine,
+  Field,
   ICONS,
   Icon,
   Loading,
@@ -22,12 +30,15 @@ import {
   Section,
   StatGrid,
   StatTile,
+  Tag,
   TechnicalDetails,
 } from '../components'
-import { utc } from '../format'
+import { humanDate, humanDateTime, utc } from '../format'
+import { sourceLabel } from '../labels'
 import { asWritten, csvName, needsReview, reviewGroups } from '../needs-review'
-import type { Overview, QuarantineList } from '../types'
+import type { DuplicateDecision, DuplicateReview, Duplicates, Overview, QuarantineList } from '../types'
 import { useGet } from '../useGet'
+import { AUTO_MIN_SCORE, REVIEW_MIN_SCORE } from '../../worker/dedupe/score'
 
 const TITLE = 'Overview'
 const PURPOSE = 'The newsletter list, website visits and app users, combined into one profile per reader.'
@@ -123,6 +134,230 @@ function NeedsReview() {
         </ul>
       </TechnicalDetails>
     </Section>
+  )
+}
+
+type DuplicatePair = Duplicates['review'][number]
+
+const VERDICT_WORDS: Record<DuplicateDecision['verdict'], string> = {
+  same_person: 'the same person',
+  different_people: 'different people',
+}
+
+/** The 0–100 score as a bar plus its number in words; the bar is decoration (principle 7). */
+function ScoreBar({ score }: { score: number }) {
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <div aria-hidden="true" className="h-2 w-32 overflow-hidden rounded-full bg-surface-2 ring-1 ring-line">
+        <div className="h-full rounded-full bg-accent" style={{ width: `${score}%` }} />
+      </div>
+      <span className="text-ink-muted">
+        Score <span className="font-medium tabular-nums text-ink">{score}</span> of 100
+      </span>
+    </div>
+  )
+}
+
+function DuplicateCard({
+  pair,
+  decision,
+  saving,
+  error,
+  onDecide,
+}: {
+  pair: DuplicatePair
+  decision: DuplicateDecision | null
+  saving: boolean
+  error: string | null
+  onDecide: (verdict: DuplicateDecision['verdict']) => void
+}) {
+  return (
+    <li className="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-soft">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {[pair.a, pair.b].map((reader) => (
+          <dl key={reader.email} className="space-y-1 rounded-lg bg-surface-2 p-3">
+            <Field label="Email">{reader.email}</Field>
+            <Field label="Signed up">{humanDate(reader.signup_date)}</Field>
+            <Field label="Source">{sourceLabel(reader.source)}</Field>
+          </dl>
+        ))}
+      </div>
+      <ScoreBar score={pair.score} />
+      <ul aria-label="Why this score" className="flex flex-wrap gap-1.5">
+        {pair.reasons.map((reason) => (
+          <li key={reason.field}>
+            <Tag tone={reason.agrees ? 'accent' : 'neutral'} icon={reason.agrees ? Check : X}>
+              <span className="sr-only">{reason.agrees ? 'Matches: ' : 'Differs: '}</span>
+              {reason.label}
+            </Tag>
+          </li>
+        ))}
+      </ul>
+      <p className="text-sm font-medium text-ink">{pair.suggestion}</p>
+      <div role="group" aria-label="Your decision" className="flex flex-wrap items-center gap-2">
+        <Button
+          icon={Check}
+          aria-pressed={decision?.verdict === 'same_person'}
+          variant={decision?.verdict === 'same_person' ? 'primary' : 'secondary'}
+          disabled={saving}
+          onClick={() => onDecide('same_person')}
+        >
+          Same person
+        </Button>
+        <Button
+          icon={X}
+          aria-pressed={decision?.verdict === 'different_people'}
+          variant={decision?.verdict === 'different_people' ? 'primary' : 'secondary'}
+          disabled={saving}
+          onClick={() => onDecide('different_people')}
+        >
+          Different people
+        </Button>
+        {saving && <Loading label="Saving…" />}
+      </div>
+      {decision !== null && (
+        <p className="flex items-start gap-2 text-sm text-ink-muted">
+          <Icon icon={ICONS.success} className="mt-0.5 size-4 text-success" />
+          <span>
+            Marked as {VERDICT_WORDS[decision.verdict]} on {humanDateTime(decision.decided_at)}. You can
+            change it.
+          </span>
+        </p>
+      )}
+      {error !== null && <ErrorLine message={error} next="Try again." />}
+    </li>
+  )
+}
+
+/** Weights and the chance check, raw (level 3, principle 2). */
+function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: DuplicatePair[] }) {
+  return (
+    <TechnicalDetails>
+      <p>
+        candidates: {data.candidates} subscriber pairs sharing a name stem (email local part without trailing
+        digits). score = round(100 × 2^W / (1 + 2^W)), W = sum of the field weights; agree weight log2(m/u),
+        disagree weight log2((1−m)/(1−u)); u measured from the candidates, m assumed (09 D-62).
+      </p>
+      {data.weights === null ? (
+        <p>No candidate pairs, so no weights.</p>
+      ) : (
+        <table className="w-auto text-left">
+          <caption className="sr-only">Field weights, raw values</caption>
+          <thead>
+            <tr className="text-gray-600">
+              {['field', 'm', 'u', 'agreeing', 'agree', 'disagree'].map((h) => (
+                <th key={h} scope="col" className="py-1 pr-3 font-medium">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(data.weights).map(([field, w]) => (
+              <tr key={field}>
+                <td className="py-0.5 pr-3">{field}</td>
+                <td className="py-0.5 pr-3 text-right">{w.m}</td>
+                <td className="py-0.5 pr-3 text-right">{w.u.toFixed(4)}</td>
+                <td className="py-0.5 pr-3 text-right">{w.agreeing}</td>
+                <td className="py-0.5 pr-3 text-right">{w.agree.toFixed(2)}</td>
+                <td className="py-0.5 pr-3 text-right">{w.disagree.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p>
+        chance check: {data.chance.all_soft_agree} pairs agree on domain, signup_gap and source;{' '}
+        {data.chance.expected_by_chance.toFixed(1)} expected if the fields were independent (candidates × the
+        three agreement shares).
+      </p>
+      {pairs.length > 0 && (
+        <ul>
+          {pairs.map((p) => (
+            <li key={p.pair_id}>
+              {p.pair_id} · band {p.band} ·{' '}
+              {p.reasons.map((r) => `${r.field} ${r.weight.toFixed(2)}`).join(', ')}
+            </li>
+          ))}
+        </ul>
+      )}
+    </TechnicalDetails>
+  )
+}
+
+/** Scored possible duplicates for a person to judge (09 D-62); a decision is recorded, never merged. */
+function PossibleDuplicates() {
+  const state = useGet<Duplicates>('/api/duplicates')
+  const [decided, setDecided] = useState<Readonly<Record<string, DuplicateDecision>>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+  const [failed, setFailed] = useState<{ pairId: string; message: string } | null>(null)
+  const [announcement, setAnnouncement] = useState('')
+
+  if (state === null || state.status === 'loading')
+    return <Loading label="Checking for possible duplicates…" />
+  if (state.status === 'error')
+    return <ErrorLine message={state.message} next="Refresh the page to try again." />
+  const data = state.data
+  const newlyDecided = data.review.filter(
+    (p) => p.decision === null && decided[p.pair_id] !== undefined,
+  ).length
+  const toReview = data.to_review - newlyDecided
+
+  async function decide(pairId: string, verdict: DuplicateDecision['verdict']) {
+    setSaving(pairId)
+    setFailed(null)
+    try {
+      const stored = await postJson<DuplicateReview>(`/api/duplicates/${encodeURIComponent(pairId)}/review`, {
+        verdict,
+      })
+      setDecided((prev) => ({
+        ...prev,
+        [pairId]: { verdict: stored.verdict, decided_at: stored.decided_at },
+      }))
+      setAnnouncement(`Recorded: ${VERDICT_WORDS[stored.verdict]}.`)
+    } catch (err) {
+      setFailed({ pairId, message: errorMessage(err) })
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <Disclosure
+      label={
+        <span className="inline-flex items-center gap-1.5">
+          <Icon icon={UsersRound} />
+          Possible duplicates — {n(toReview)} to review
+        </span>
+      }
+    >
+      {data.review.length === 0 ? (
+        <EmptyState>
+          No likely duplicates — {n(data.candidates)} name matches checked, none share more than chance
+        </EmptyState>
+      ) : (
+        <ul className="space-y-3">
+          {data.review.map((pair) => (
+            <DuplicateCard
+              key={pair.pair_id}
+              pair={pair}
+              decision={decided[pair.pair_id] ?? pair.decision}
+              saving={saving === pair.pair_id}
+              error={failed?.pairId === pair.pair_id ? failed.message : null}
+              onDecide={(verdict) => void decide(pair.pair_id, verdict)}
+            />
+          ))}
+        </ul>
+      )}
+      <p className="text-sm text-ink-muted">
+        Score {AUTO_MIN_SCORE} or more: very likely the same person. {REVIEW_MIN_SCORE}–{AUTO_MIN_SCORE - 1}:
+        worth a look. Under {REVIEW_MIN_SCORE}: not shown ({n(data.hidden_below_review)}{' '}
+        {data.hidden_below_review === 1 ? 'pair' : 'pairs'}). Nothing is merged automatically — your answer is
+        only recorded.
+      </p>
+      <DuplicateTechnicalDetails data={data} pairs={data.review} />
+      <Announcer message={announcement} />
+    </Disclosure>
   )
 }
 
@@ -284,6 +519,8 @@ export default function OverviewPage() {
       </Disclosure>
 
       {reasons.some(([code]) => needsReview(code)) && <NeedsReview />}
+
+      <PossibleDuplicates />
 
       <p className="text-sm">
         <Link

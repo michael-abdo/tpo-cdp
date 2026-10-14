@@ -5,6 +5,7 @@ import { ApiError, requireJson, requireSession } from './auth/middleware'
 import { type AppEnv, assertBindings, MissingBindingsError } from './env'
 import { assistantRoutes } from './routes/assistant'
 import { auditRoutes } from './routes/audit'
+import { duplicateRoutes } from './routes/duplicates'
 import { eventRoutes } from './routes/events'
 import { insightRoutes } from './routes/insights'
 import { lookupRoutes } from './routes/lookup'
@@ -46,6 +47,9 @@ app.route('/api', loginRoutes)
 app.route('/api', overviewRoutes)
 // GET /api/quarantine?reason=: the rows the import set aside, as written (04, 09 D-61); raw emails, so session only.
 app.route('/api', quarantineRoutes)
+// GET /api/duplicates and POST /api/duplicates/:pair_id/review: the scored possible-duplicates review (04, 09 D-62);
+// raw emails, so session only; it records a verdict and never merges (D-13).
+app.route('/api', duplicateRoutes)
 app.route('/api', lookupRoutes)
 app.route('/api', segmentRoutes)
 app.route('/api', eventRoutes)

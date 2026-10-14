@@ -1,6 +1,7 @@
 // Response shapes the UI reads, as 04 §Endpoints defines them (the worker routes are the producers).
 
 import type { DefinitionKey } from '../shared/derive'
+import type { FieldWeight, Reason, ScoredField } from '../worker/dedupe/score'
 import type { QuarantineReason, SubscriberStatus } from '../worker/ingest/quarantine'
 
 /** GET /api/overview */
@@ -23,6 +24,54 @@ export interface QuarantineList {
     /** Column name → the field's text exactly as written in the file. */
     fields: Record<string, string>
   }[]
+}
+
+/** A reviewer's decision on a possible-duplicate pair (01 §duplicate_reviews). */
+export interface DuplicateDecision {
+  verdict: 'same_person' | 'different_people'
+  /** UTC, `YYYY-MM-DDTHH:MM:SSZ`. */
+  decided_at: string
+}
+
+/**
+ * GET /api/duplicates (09 D-62). Restated here rather than imported from worker/routes/duplicates.ts,
+ * which types D1Database (absent from the browser project); the reason and weight shapes come from
+ * the pure worker/dedupe/score.ts.
+ */
+export interface Duplicates {
+  /** Candidate pairs checked (subscribers sharing a name stem). */
+  candidates: number
+  /** Shown pairs (score 50+) with no decision yet, over all of them. */
+  to_review: number
+  /** Score 50+, highest first, at most 50. */
+  review: {
+    pair_id: string
+    a: DuplicateReader
+    b: DuplicateReader
+    score: number
+    band: 'review' | 'auto'
+    reasons: Reason[]
+    suggestion: string
+    decision: DuplicateDecision | null
+  }[]
+  hidden_below_review: number
+  /** m, u and the two log2 weights per scored field; null when there are no candidates. */
+  weights: Record<ScoredField, FieldWeight> | null
+  /** Pairs agreeing on domain, signup within 7 days and source, observed vs expected by chance. */
+  chance: { all_soft_agree: number; expected_by_chance: number }
+}
+
+export interface DuplicateReader {
+  email: string
+  signup_date: string
+  source: string | null
+  status: SubscriberStatus
+}
+
+/** POST /api/duplicates/:pair_id/review → the stored decision. */
+export interface DuplicateReview extends DuplicateDecision {
+  pair_id: string
+  score: number
 }
 
 /** GET /api/lookup/search?q= (09 D-52) */
