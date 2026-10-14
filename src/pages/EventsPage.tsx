@@ -12,8 +12,10 @@
 // account (no email on file)" for a webhook-created user with no email (06 sketches
 // "unknown user u_…"; principle 2 moves the u_ id to Technical details), plus a "Linked after login"
 // tag (06's "stitched") when an anonymous event is attached through its device's login
-// (attached_via login_stitch). Level 2 (row Details): when it happened in the app and the link, in
-// words; Technical details: device id, second-precise UTC times, raw names, ids and pk_ keys. Events are sent from the terminal with `npm run webhook:send` (11 §Verify).
+// (attached_via login_stitch), explained once above the table; Level 2 (row Details): when it
+// happened in the app; Technical details: device id, second-precise UTC times, raw ids and pk_
+// keys (the event name is in the row already, 09 D-72). Events are sent from the terminal with
+// `npm run webhook:send` (11 §Verify).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
@@ -89,12 +91,8 @@ function EventDetails({ e }: { e: RecentEvent }) {
     <div className="space-y-2">
       <dl className="space-y-1">
         <Field label="Happened in app">{humanDateTime(e.event_ts)}</Field>
-        {stitched(e) && <Field label="Linked by login">Yes, after this device logged in</Field>}
       </dl>
       <TechnicalDetails>
-        <p>
-          event: <span className="font-mono">{e.event}</span>
-        </p>
         <p>
           device_id: <span className="font-mono break-all">{e.device_id}</span>
         </p>
@@ -145,6 +143,8 @@ function columns(now: number): Column<RecentEvent>[] {
 }
 
 const POLL_SECONDS = POLL_MS / 1000
+/** The next step under a failed fetch; how often the page tries is said once, under "How this list updates" (09 D-72). */
+const KEEPS_TRYING = 'The page keeps trying on its own.'
 
 /** The page's lists: the last good one (kept through a failed fetch) and the latest error. */
 interface Shown {
@@ -260,19 +260,12 @@ export default function EventsPage() {
           {shown.error !== null && (
             <ErrorLine
               message={shown.error}
-              next={
-                events === null
-                  ? `The page tries again every ${POLL_SECONDS} seconds.`
-                  : `The list below is from the last update; the page tries again every ${POLL_SECONDS} seconds.`
-              }
+              next={events === null ? KEEPS_TRYING : `The list below is from the last update. ${KEEPS_TRYING}`}
             />
           )}
           {events === null ? null : events.length === 0 ? (
             <EmptyState icon={ICONS.events}>
-              <p>
-                No events yet — send one with <code className="font-mono">npm run webhook:send</code>
-              </p>
-              <p className="mt-1 text-gray-600">The app sends events here as they happen. New ones appear here within {POLL_SECONDS} seconds.</p>
+              No events yet — send one with <code className="font-mono">npm run webhook:send</code>
             </EmptyState>
           ) : (
             <div className="space-y-3">
