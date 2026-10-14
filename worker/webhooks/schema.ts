@@ -22,10 +22,21 @@ export const STORY_PATTERN = /^[a-z0-9-]{1,120}$/
 
 /**
  * `properties.link` (09 D-70 #2): an http(s) URL with no "@" anywhere (no userinfo, no address in
- * a path or query) and no whitespace. v_app_events exposes it to the model.
+ * a path or query). v_app_events exposes it to the model, and the outbound PII scan looks for a
+ * literal "@", so the "@" test also sees through the spellings that scan would miss: printable
+ * ASCII only (no whitespace, control, bidi or fullwidth characters, so no "＠"), and no "@" after
+ * one round of percent-decoding ("%40", "%EF%BC%A0" = "＠"). A "%" left after that round (double
+ * encoding, "%2540") or a malformed escape is refused, not decoded again.
  */
 export function isAllowedLink(value: string): boolean {
-  if (!/^https?:\/\//i.test(value) || value.includes('@') || /\s/.test(value)) return false
+  if (!/^https?:\/\//i.test(value) || !/^[\x21-\x7e]+$/.test(value) || value.includes('@')) return false
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(value)
+  } catch {
+    return false // URIError: a "%" that starts no valid escape; the caller's 400 names properties.link
+  }
+  if (decoded.includes('%') || decoded.normalize('NFKC').includes('@')) return false
   return URL.canParse(value)
 }
 

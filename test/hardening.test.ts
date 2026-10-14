@@ -3,10 +3,14 @@ import { env, SELF } from 'cloudflare:test'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { HOSTED_URL } from '../shared/config'
 import { LOCAL_PART_MIN_CHARS } from '../shared/pii'
+import { clientKeyHash } from '../shared/pseudonym'
 import { startTrace } from '../worker/assistant/audit/ai-audit'
+import { ASSISTANT_CALLS_PER_HOUR } from '../worker/assistant/route'
+import { SESSION_COOKIE, verifySession } from '../worker/auth/session'
 import { enforceGate1 } from '../worker/assistant/gates/gate1-input-sanitizer'
 import type { SegmentRow } from '../worker/segments/compile'
 import { segmentCsv } from '../worker/segments/export'
+import { MAX_FUTURE_MS, parseWebhookEvent } from '../worker/webhooks/schema'
 import wranglerConfig from '../wrangler.jsonc?raw'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
@@ -19,19 +23,25 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 // - T-HARD-1: joy.hall830 and julia.evans230 are the local parts of the demo subjects
 //   joy.hall830@protonmail.com (subscribers.csv:902) and julia.evans230@gmail.com
 //   (subscribers.csv:373); the loop reads every local part from the seeded profiles. The
-//   near-misses are removals from a real local part (joy.hall83, oy.hall830; 09 D-47) and a real
-//   local part joined to the label of its own domain (joy.hall830.protonmail), which is one token
-//   that is not a local part.
+//   near-misses are one-character edits of a real local part (removals joy.hall83, oy.hall830;
+//   additions joy.hall8301, xjoy.hall830; 09 D-47) and a real local part joined to the label of
+//   its own domain (joy.hall830.protonmail), which is one token that is not a local part. The
+//   edge-punctuation cases put the local-part characters - + _ % next to joy.hall830.
 // - Webhook bodies (T-HARD-2) are brief-shaped with real ids (09 D-11): event ids from
 //   eventIdPool() (`evt_` + a real visitor_id's hex), user u_ceed5f12 (app_users.csv:303,
 //   joy.hall830) on device `d_` + her id's hex, the brief's event time. Accepted values: the
 //   brief's story slug and LINK, the hosted app's URL (shared/config.ts HOSTED_URL) with a real
 //   page path. Refused values are real data put in the wrong place (a page path, an address, the
 //   address behind https://) or minimal edits of the accepted ones (09 D-47): upper-cased, cut to
-//   nothing, repeated past 120 characters, wrapped in an array, the scheme removed.
+//   nothing, null, repeated past 120 characters, wrapped in an array, the scheme removed or swapped for
+//   ftp/javascript/data, a space in the path, and julia.evans230's address put in the link in the
+//   spellings the outbound scan does not read as an address: percent-encoded once and twice, a
+//   fullwidth at sign typed and percent-encoded, and LINK with a NUL, a right-to-left override or
+//   a bare % after it. The accepted percent-escape is LINK with one of its own hyphens as %2D.
 // - T-HARD-3: users u_f1cad5ce (app_users.csv:15, eli.clark874@icloud.com) and u_38e852b0
 //   (app_users.csv:11, sarah.edwards657@gmail.com) on eli's device `d_f1cad5ce`; event times are
-//   taken from the wall clock (the bound is relative to it, 09 D-70 #3), as T-WH-7 does.
+//   taken from the wall clock (the bound is relative to it, 09 D-70 #3), as T-WH-7 does; the
+//   exact boundary is checked on the parser with the brief's event time as the server clock.
 // - T-HARD-5: segment rows are real rows of the seeded export. The `@` cell is the real
 //   subscribers.csv:1788 address `@gmail.com` (quarantined by the seed, so it is put back into a
 //   real row's email by hand); `=`, `+` and `-` are the other D-70 #5 formula characters put in
@@ -46,7 +56,9 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 //   test/helpers/auth.ts); the question is T-GATE-1's prompt-injection probe, which Gate 1 refuses
 //   with 400 after the limits are checked, so no call reaches a model; the export is the brief's
 //   preset segment (177, 02 §Counts). The limit of 10 a minute is wrangler.jsonc's, read here
-//   from the config the test pool runs with.
+//   from the config the test pool runs with. The hourly per-client count writes earlier calls as
+//   the audit writer stores them (as assistant.test.ts does for the per-session count), keyed
+//   with the client key the route derives from the same address and the .dev.vars PII_KEY_SECRET.
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -102,13 +114,28 @@ describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own (09
     const known = await column<string>('SELECT email_norm FROM profiles WHERE email_norm IS NOT NULL', 'email_norm')
     const locals = new Set(known.map((e) => e.slice(0, e.indexOf('@'))))
     const trace = await startTrace(env.DB)
-    for (const token of ['joy.hall83', 'oy.hall830', 'joy.hall830.protonmail']) {
+    for (const token of ['joy.hall83', 'oy.hall830', 'joy.hall8301', 'xjoy.hall830', 'joy.hall830.protonmail']) {
       expect(locals.has(token)).toBe(false)
       const question = await enforceGate1(trace, `how engaged is ${token}?`)
       expect(question.text).toBe(`how engaged is ${token}?`)
       expect(question.emailsRedacted).toBe(0)
     }
     expect(LOCAL_PART_MIN_CHARS).toBe(6) // 09 D-70 #1
+  })
+
+  it('local-part punctuation at a token edge is trimmed like a sentence dot', async () => {
+    const trace = await startTrace(env.DB)
+    for (const [typed, expected] of [
+      ['joy.hall830-', '[email]-'],
+      ['-joy.hall830', '-[email]'],
+      ['joy.hall830+', '[email]+'],
+      ['_joy.hall830_', '_[email]_'],
+      ['joy.hall830%', '[email]%'],
+    ]) {
+      const question = await enforceGate1(trace, `how engaged is ${typed}?`)
+      expect(question.text).toBe(`how engaged is ${expected}?`)
+      expect(question.emailsRedacted).toBe(1)
+    }
   })
 })
 
@@ -147,6 +174,13 @@ describe('T-HARD-2: webhook story and link must be slugs; other strings never re
     expect(rows.results).toHaveLength(1)
   })
 
+  it('stores a link with a percent-escape that decodes to no "@"', async () => {
+    const escaped = LINK.replace('supreme-court', 'supreme%2Dcourt')
+    const body = joyEvent({ properties: { story: SLUG, link: escaped } })
+    expect((await post(body)).status).toBe(202)
+    expect(await env.DB.prepare('SELECT link FROM v_app_events WHERE link = ?').bind(escaped).first<string>('link')).toBe(escaped)
+  })
+
   const refusals: [field: 'story' | 'link', value: unknown][] = [
     ['story', '/news/church-attendance-study'],
     ['story', 'joy.hall830@protonmail.com'],
@@ -154,10 +188,24 @@ describe('T-HARD-2: webhook story and link must be slugs; other strings never re
     ['story', ''],
     ['story', Array(5).fill(SLUG).join('-').slice(0, 121)],
     ['story', [SLUG]],
+    ['story', null],
     ['link', '/news/supreme-court-ruling-explained'],
     ['link', LINK.replace(/^https:\/\//, '')],
     ['link', 'https://julia.evans230@gmail.com'],
     ['link', SLUG],
+    ['link', LINK.replace(/^https:\/\//, 'ftp://')],
+    ['link', LINK.replace(/^https:\/\//, 'javascript://')],
+    ['link', `data:text/html,${SLUG}`],
+    ['link', LINK.replace('supreme-court', 'supreme court')],
+    ['link', 'https://julia.evans230%40gmail.com'],
+    ['link', `${HOSTED_URL}/u/julia.evans230%40gmail.com`],
+    ['link', `${HOSTED_URL}/u/julia.evans230%2540gmail.com`],
+    ['link', `${HOSTED_URL}/u/julia.evans230%EF%BC%A0gmail.com`],
+    ['link', `${LINK}%`],
+    ['link', null],
+    ['link', `${HOSTED_URL}/u/julia.evans230＠gmail.com`],
+    ['link', `${LINK}\u0000`],
+    ['link', `${LINK}\u202e`],
   ]
 
   it.each(refusals)('refuses properties.%s = %j with 400 invalid_event naming the field, never the value', async (field, value) => {
@@ -223,6 +271,18 @@ describe('T-HARD-3: an event time more than 24 h after the server clock is refus
     expect(text).not.toContain(String(future.timestamp).slice(0, 19))
     expect(await storedCount(future.event_id)).toBe(0)
     expect(await deviceOwner(DEVICE)).toEqual(owner)
+  })
+
+  it('the bound is "more than": exactly 24 h ahead parses, one second more is refused', () => {
+    const serverNow = Date.parse(BRIEF_TS)
+    const at = (ms: number) => new Date(serverNow + ms).toISOString()
+    const event = (timestamp: string) => ({ event_id: nextEventId(), event: 'login', user_id: ELI.user_id, device_id: DEVICE, timestamp })
+    expect(MAX_FUTURE_MS).toBe(24 * HOUR_MS)
+    expect(parseWebhookEvent(event(at(MAX_FUTURE_MS)), serverNow).ok).toBe(true)
+    expect(parseWebhookEvent(event(at(MAX_FUTURE_MS + 1000)), serverNow)).toEqual({
+      ok: false,
+      details: [{ field: 'timestamp', issue: 'timestamp must be at most 24 hours after the server clock' }],
+    })
   })
 
   it('an event 23 h ahead, after TODAY, is stored and counts toward the score (09 D-01)', async () => {
@@ -355,6 +415,20 @@ async function askFrom(ip: string, cookie: string): Promise<Response> {
   })
 }
 
+async function subOf(cookie: string): Promise<string> {
+  const session = await verifySession(env.SESSION_SECRET, cookie.slice(`${SESSION_COOKIE}=`.length))
+  if (session === null) throw new Error('the login helper returned a cookie that does not verify')
+  return session.sub
+}
+
+/** `n` earlier assistant calls of one session from one client, as the audit writer stores them (one Gate 1 row each). */
+async function earlierCalls(sub: string, clientKey: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i += 1) {
+    const trace = await startTrace(env.DB, sub, clientKey)
+    await trace.write({ kind: 'blocked', status: 'blocked', error: 'gate1: earlier call' })
+  }
+}
+
 describe('T-HARD-6: per-client limits a new session does not reset (09 D-70 #6)', () => {
   it('the assistant: past the per-IP limit, signing in again from the same address is still 429', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -377,6 +451,40 @@ describe('T-HARD-6: per-client limits a new session does not reset (09 D-70 #6)'
 
     // Another address is not limited by this one, with either session.
     expect((await askFrom(documentationIp(), relogin)).status).toBe(400)
+  })
+
+  it('the hourly limit: 100 calls from one address across two sessions, then 429 for either; another address is not limited', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(ASSISTANT_CALLS_PER_HOUR).toBe(100) // 09 D-40
+    const ip = documentationIp()
+    const key = await clientKeyHash(env.PII_KEY_SECRET, ip)
+    const [first, relogin] = [await loginCookie(ip), await loginCookie(ip)]
+    const [firstSub, reloginSub] = [await subOf(first), await subOf(relogin)]
+    expect(firstSub).not.toBe(reloginSub)
+
+    // The route stores the keyed hash on the call's rows, never the address.
+    expect((await askFrom(ip, first)).status).toBe(400) // Gate 1, after the limits
+    const stored = await column<string | null>('SELECT client_key FROM ai_audit WHERE session_sub = ?', 'client_key', firstSub)
+    expect(stored).toEqual([key])
+    expect(key).toMatch(/^ck_[0-9a-f]{16}$/)
+
+    // 60 calls in the first session (with the one above) and 40 in the second: 100 from this address.
+    await earlierCalls(firstSub, key, 59)
+    await earlierCalls(reloginSub, key, 40)
+    const limited = await askFrom(ip, relogin)
+    expect(limited.status).toBe(429)
+    expect(await limited.json()).toMatchObject({ error: 'rate_limited' })
+    expect((await askFrom(ip, first)).status).toBe(429)
+    const errors = await column<string>(
+      `SELECT error FROM ai_audit WHERE client_key = ? AND error LIKE 'rate_limited%' ORDER BY created_at, rowid`,
+      'error',
+      key,
+    )
+    expect(errors).toEqual(Array(2).fill('rate_limited: 100 calls in the last hour'))
+
+    // Each session alone is under 100, so from another address both still reach Gate 1.
+    expect((await askFrom(documentationIp(), relogin)).status).toBe(400)
+    expect((await askFrom(documentationIp(), first)).status).toBe(400)
   })
 
   it('export.csv: past the per-IP limit, a new session from the same address is still 429', async () => {

@@ -179,16 +179,18 @@ export function redactEmails(text: string): { text: string; count: number } {
 /**
  * Gate 1's local-part redaction (09 D-70 #1): a known email's local part typed without its
  * domain ("is joy.hall830 engaged?") becomes `[email]` too. Only whole tokens count: a maximal
- * run of local-part characters (shared/pii.ts LOCAL_PART_TOKEN), less any leading or trailing
- * dots (sentence punctuation), must equal a known local part of at least LOCAL_PART_MIN_CHARS
- * characters, so "joy.hall8301" or "joy.hall83" stay as typed. Run after `redactEmails`, whose
+ * run of local-part characters (shared/pii.ts LOCAL_PART_TOKEN), as typed or less any leading
+ * or trailing `. _ % + -` (sentence punctuation, "joy.hall830-"), must equal a known local part
+ * of at least LOCAL_PART_MIN_CHARS characters, so "joy.hall8301" or "joy.hall83" stay as typed. Run after `redactEmails`, whose
  * `[email]` holds no token that long.
  */
 export function redactKnownLocalParts(text: string, known: KnownEmails): { text: string; count: number } {
   let count = 0
   const redacted = text.replace(new RegExp(LOCAL_PART_TOKEN.source, 'gi'), (token) => {
-    const start = token.length - token.replace(/^\.+/, '').length
-    const core = token.slice(start).replace(/\.+$/, '')
+    // The token as typed, or failing that, the token less its edge punctuation ("joy.hall830-").
+    const whole = known.isLocalPart(token)
+    const start = whole ? 0 : token.length - token.replace(/^[._%+-]+/, '').length
+    const core = whole ? token : token.slice(start).replace(/[._%+-]+$/, '')
     if (core.length < LOCAL_PART_MIN_CHARS || !known.isLocalPart(core)) return token
     count += 1
     return token.slice(0, start) + '[email]' + token.slice(start + core.length)
