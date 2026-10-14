@@ -7,7 +7,8 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, errorMessage, request } from '../api'
 import { LockKeyhole } from 'lucide-react'
-import { Announcer, Button, ErrorLine, Icon } from '../components'
+import { Announcer, Button, ComingSoonTag, ErrorLine, GatedNote, ICONS, Icon } from '../components'
+import { useGated } from '../use-gated'
 
 const ERROR_ID = 'login-error'
 const NOTICE_ID = 'login-limit'
@@ -17,6 +18,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sso = useGated('work_sign_in')
 
   useEffect(() => {
     document.title = 'Sign in · TPO Mini CDP'
@@ -81,6 +83,26 @@ export default function LoginPage() {
           {busy ? 'Signing in…' : 'Sign in'}
         </Button>
         <Announcer message={busy ? 'Signing in…' : ''} />
+
+        {/* Gated (09 D-80, 22-pages/login.md §2.1): below the real path, never above it. */}
+        <div aria-hidden="true" className="flex items-center gap-2 text-xs text-ink-muted">
+          <span className="h-px flex-1 bg-line" />
+          or
+          <span className="h-px flex-1 bg-line" />
+        </div>
+        <div className="space-y-1">
+          <button
+            type="button"
+            {...sso.bind}
+            onClick={sso.activate}
+            className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-muted"
+          >
+            <Icon icon={ICONS.workSignIn} />
+            Sign in with your work account
+          </button>
+          <ComingSoonTag />
+          <GatedNote id={sso.noteId} activated={sso.activated} text={sso.feature.note} />
+        </div>
       </form>
     </main>
   )

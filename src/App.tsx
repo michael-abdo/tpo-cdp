@@ -13,7 +13,8 @@ import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigat
 import { TODAY } from '../shared/config'
 import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
-import { ErrorLine, Icon, ICONS } from './components'
+import { ComingSoonTag, ErrorLine, GatedNote, Icon, ICONS } from './components'
+import { useGated } from './use-gated'
 import {
   closesOnPointer,
   escapeAction,
@@ -164,6 +165,36 @@ function ThemeToggle() {
   )
 }
 
+/**
+ * The one extra true fact the top bar's "Your account" note adds after the canonical
+ * `work_sign_in` note (09 D-80, 22-pages/login.md §2.2): written once, here, never copied into
+ * shared/features.ts (which holds one note for both /login's button and this one).
+ */
+const TOPBAR_SSO_EXTRA = ' Today everyone shares the team password.'
+
+/**
+ * The gated "Your account" entry (09 D-80, 22-pages/login.md §2.2): a quiet button, the shape the
+ * built account menu will have, naming no person (there is none). No `aria-expanded`/
+ * `aria-controls` while gated — a screen reader must not promise a menu that cannot open. Two
+ * copies are mounted (desktop row 1 and the phone menu), each with its own note id.
+ */
+export function AccountButton() {
+  const gated = useGated('work_sign_in')
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <span className="inline-flex items-center gap-1.5">
+        <button type="button" {...gated.bind} onClick={gated.activate} className={quietButton}>
+          <Icon icon={ICONS.account} />
+          Your account
+          <Icon icon={ICONS.navCaret} className="size-3.5" />
+        </button>
+        <ComingSoonTag />
+      </span>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={`${gated.feature.note}${TOPBAR_SSO_EXTRA}`} />
+    </div>
+  )
+}
+
 function TopBar() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
@@ -222,6 +253,11 @@ function TopBar() {
           <Icon icon={ICONS.today} className="hidden size-3.5 sm:block" />
           Today: {humanDate(TODAY)}
         </span>
+        {/* Gated (09 D-80, 22-pages/login.md §2.2): row 1 from 640 px up (both the ≥1024 and the
+            640–1023 placements the spec draws separately collapse to one spot here, simplified). */}
+        <span className="hidden sm:inline-flex">
+          <AccountButton />
+        </span>
         <span className="hidden lg:inline-flex">
           <ThemeToggle />
         </span>
@@ -261,6 +297,9 @@ function TopBar() {
           <nav aria-label="Main" className="flex flex-col gap-1">
             {renderLinks('phone')}
           </nav>
+          <div className="mt-2 border-t border-line pt-2">
+            <AccountButton />
+          </div>
           <div className="mt-2 flex gap-1 border-t border-line pt-2">
             <ThemeToggle />
             {logoutButton}
