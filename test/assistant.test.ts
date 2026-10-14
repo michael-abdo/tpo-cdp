@@ -1377,4 +1377,21 @@ describe('T-PII-4 at the tool executor\'s error result (tool-executor.ts)', () =
     const rows = await auditRows('trace_id', trace.traceId)
     expect(rows.map((r) => `${r.kind}/${r.status}/${r.tool_name}/${r.error}`)).toEqual(['blocked/blocked/segment/blocked_pii: known_email in tool_result'])
   })
+
+  // Same Gate 2 denial path as above, but the invented key is only the local part, with no "@"
+  // anywhere in the denial text (mutation check: tool-executor.ts:77's guardPayload call — a
+  // mutant that scans only text holding "@" would let the JOY case above catch it, then pass
+  // this one through as `known_email`'s weaker cousin was never meant to stand in for).
+  it('a known local part with no "@" echoed in an invalid-input problem → blocked_pii known_local_part, a blocked row, no tool_call row', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const trace = await startTrace(env.DB)
+    const failure = await executeToolCall({ db: env.DB, trace, tools: await loadTools(env.DB) }, { id: 'toolu_local', name: 'segment', input: { [JOY_LOCAL]: true } }).then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(failure).toMatchObject({ status: 500, code: 'blocked_pii', details: [{ check: 'known_local_part', site: 'tool_result' }] })
+    const rows = await auditRows('trace_id', trace.traceId)
+    expect(rows.map((r) => `${r.kind}/${r.status}/${r.tool_name}/${r.error}`)).toEqual(['blocked/blocked/segment/blocked_pii: known_local_part in tool_result'])
+  })
 })
