@@ -37,7 +37,8 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 //   ftp/javascript/data, a space in the path, and julia.evans230's address put in the link in the
 //   spellings the outbound scan does not read as an address: percent-encoded once and twice, a
 //   fullwidth at sign typed and percent-encoded, and LINK with a NUL, a right-to-left override or
-//   a bare % after it. The accepted percent-escape is LINK with one of its own hyphens as %2D.
+//   a bare % after it. LINK with port 99999 keeps the scheme, ASCII and no "@" but parses as no
+//   URL. The accepted percent-escape is LINK with one of its own hyphens as %2D.
 // - T-HARD-3: users u_f1cad5ce (app_users.csv:15, eli.clark874@icloud.com) and u_38e852b0
 //   (app_users.csv:11, sarah.edwards657@gmail.com) on eli's device `d_f1cad5ce`; event times are
 //   taken from the wall clock (the bound is relative to it, 09 D-70 #3), as T-WH-7 does; the
@@ -49,7 +50,8 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 //   comma and the row's real source to show the RFC 4180 quoting is kept.
 // - T-HARD-7: users u_38e852b0 (app_users.csv:11, sarah.edwards657@gmail.com) and u_f2411d1c
 //   (app_users.csv:9, john.turner61@gmail.com) on sarah's device `d_38e852b0`, at the brief's
-//   event time and that time plus 5 and 10 minutes. The failed recompute is a D1 trigger that
+//   event time and that time plus 5, 10, 15 and 20 minutes (the anonymous-duplicate case runs
+//   after the takeover case, so sarah takes her device back at +15). The failed recompute is a D1 trigger that
 //   aborts score updates, the way a D1 outage would fail them (as gate1.test.ts takes ai_audit
 //   offline); it is dropped before the retry.
 // - T-HARD-6: client addresses come from 2001:db8::/32, the IPv6 documentation range (RFC 3849;
@@ -206,6 +208,7 @@ describe('T-HARD-2: webhook story and link must be slugs; other strings never re
     ['link', `${HOSTED_URL}/u/julia.evans230＠gmail.com`],
     ['link', `${LINK}\u0000`],
     ['link', `${LINK}\u202e`],
+    ['link', LINK.replace(HOSTED_URL, `${HOSTED_URL}:99999`)],
   ]
 
   it.each(refusals)('refuses properties.%s = %j with 400 invalid_event naming the field, never the value', async (field, value) => {
@@ -394,6 +397,29 @@ describe('T-HARD-7: a duplicate delivery re-runs the score recompute, so a faile
     const [sarahHealed, johnHealed] = [await scoreOf(SARAH.email), await scoreOf(JOHN.email)]
     expect((await post(takeover)).status).toBe(200)
     expect([await scoreOf(SARAH.email), await scoreOf(JOHN.email)]).toEqual([sarahHealed, johnHealed])
+  })
+
+  it('an anonymous app_open whose recompute failed (500) is fixed for its device owner by the 200 duplicate retry', async () => {
+    // Sarah logs in on her device; an app_open with no user_id on it is then hers.
+    const login = { event_id: nextEventId(), event: 'login', user_id: SARAH.user_id, device_id: DEVICE, timestamp: at(15) }
+    expect((await post(login)).status).toBe(202)
+    expect(await deviceOwner(DEVICE)).toEqual({ user_id: SARAH.user_id, last_seen_ts: at(15) })
+    const sarahBefore = await scoreOf(SARAH.email)
+
+    const open = { event_id: nextEventId(), event: 'app_open', user_id: null, device_id: DEVICE, timestamp: at(20) }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const failed = await withScoresFailing(() => post(open))
+    expect(failed.status).toBe(500)
+    expect(await storedCount(open.event_id)).toBe(1)
+    expect(await scoreOf(SARAH.email)).toBe(sarahBefore) // stale: the app_open is missing
+
+    // The retry carries no user_id, so only the resolved owner tells the recompute whom to heal.
+    const retry = await post(open)
+    expect(retry.status).toBe(200)
+    expect(JSON.parse(retry.text)).toEqual({ accepted: true, duplicate: true })
+    // Sarah gains one app event (2.5 points before rounding).
+    expect((await scoreOf(SARAH.email)) - sarahBefore).toBeGreaterThanOrEqual(2)
+    expect((await scoreOf(SARAH.email)) - sarahBefore).toBeLessThanOrEqual(3)
   })
 })
 
