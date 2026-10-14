@@ -6,6 +6,8 @@ import subscribersCsv from '../data/subscribers.csv?raw'
 import webCsv from '../data/web_events.csv?raw'
 import { TODAY as APP_TODAY } from '../shared/config'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
+import { parseCsv } from '../worker/ingest/csv'
+import { buildSeed } from '../worker/ingest/link'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
@@ -15,6 +17,7 @@ import {
   canonicalSource,
   damerauLevenshtein,
   type ExpectedPairInput,
+  type ExpectedQuarantine,
   engagementScore,
   normalizeEmail,
   type OracleResult,
@@ -467,6 +470,122 @@ describe('T-PAR-3 quarantine + import_runs', () => {
     const { missing, extra } = diffAndAssert('import_runs', 'file', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
+  })
+})
+
+// -------------------------------------------------------------------------------------------
+// T-PAR-3b (09 D-78): one planted case per new quarantine reason, each a D-47 minimal edit of a
+// real CSV line, recomputed by the oracle's OWN quarantine rules (test/parity/oracle.ts; no
+// import from worker/ingest) and independently by buildSeed (the app's real pipeline) on the
+// SAME edited text, then diffed field by field. This never touches the shared seeded store
+// (beforeAll's real CSVs): each case parses its own edited copy of the raw text and compares the
+// two in memory, so T-PAR-2..10's 0-mismatch store diff above is never at risk.
+// -------------------------------------------------------------------------------------------
+describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed', () => {
+  /** Replaces one 1-based CSV line's fields (header = line 1) in raw text, by column edit. */
+  function plant(csvText: string, lineNo: number, edit: (fields: string[]) => string[]): string {
+    const lines = csvText.split('\n')
+    const idx = lineNo - 1
+    if (idx < 0 || idx >= lines.length) throw new Error(`T-PAR-3b: line ${lineNo} out of range`)
+    lines[idx] = edit(lines[idx].split(',')).join(',')
+    return lines.join('\n')
+  }
+
+  type Planted = Pick<ExpectedQuarantine, 'line_no' | 'reason' | 'raw_row'>
+
+  /** Builds both the oracle's and the app's quarantine rows for `file` from the same edited
+   * CSV texts, so a planted case is recomputed twice, never by one engine feeding the other. */
+  async function plantedQuarantine(
+    file: 'subscribers' | 'web_events' | 'app_users',
+    texts: { subscribers: string; webEvents: string; appUsers: string },
+  ): Promise<{ oracleRows: Planted[]; appRows: Planted[] }> {
+    const secretValue = piiKeySecret()
+    const expected = await buildExpected(texts, secretValue)
+    const seed = await buildSeed(
+      {
+        subscribers: parseCsv(texts.subscribers),
+        web_events: parseCsv(texts.webEvents),
+        app_users: parseCsv(texts.appUsers),
+      },
+      secretValue,
+    )
+    const byLine = (a: Planted, b: Planted) => a.line_no - b.line_no
+    return {
+      oracleRows: expected.quarantine
+        .filter((q) => q.file === file)
+        .map(({ line_no, reason, raw_row }) => ({ line_no, reason, raw_row }))
+        .sort(byLine),
+      appRows: seed.runs
+        .find((r) => r.file === file)!
+        .quarantined.map(({ line_no, reason, raw_row }) => ({ line_no, reason, raw_row }))
+        .sort(byLine),
+    }
+  }
+
+  it('unknown_status: subscribers.csv:4 status truncated to "activ" — oracle and app agree, 0 mismatches', async () => {
+    const { oracleRows, appRows } = await plantedQuarantine('subscribers', {
+      subscribers: plant(subscribersCsv, 4, (f) => [f[0], f[1], 'activ', f[3], f[4]]),
+      webEvents: webCsv,
+      appUsers: appCsv,
+    })
+    expect(oracleRows).toEqual(appRows)
+    expect(oracleRows.filter((r) => r.reason === 'unknown_status')).toEqual([
+      { line_no: 4, reason: 'unknown_status', raw_row: 'megan.walker638@hotmail.com,2026-09-07,activ,Instagram,2026-09-22' },
+    ])
+  })
+
+  it('duplicate_user_id: app_users.csv:3 given line 2\'s real user_id — oracle and app agree, 0 mismatches', async () => {
+    const { oracleRows, appRows } = await plantedQuarantine('app_users', {
+      subscribers: subscribersCsv,
+      webEvents: webCsv,
+      appUsers: plant(appCsv, 3, (f) => ['u_2b6447a3', f[1], f[2]]),
+    })
+    expect(oracleRows).toEqual(appRows)
+    expect(oracleRows).toEqual([
+      { line_no: 3, reason: 'duplicate_user_id', raw_row: 'u_2b6447a3,daniel.hill389@gmail.com,2026-09-20' },
+    ])
+  })
+
+  it('misplaced_email: web_events.csv:5405 (/about, blank email) given a real email — oracle and app agree, 0 mismatches', async () => {
+    const { oracleRows, appRows } = await plantedQuarantine('web_events', {
+      subscribers: subscribersCsv,
+      webEvents: plant(webCsv, 5405, (f) => [f[0], f[1], f[2], f[3], 'julia.evans230@gmail.com']),
+      appUsers: appCsv,
+    })
+    expect(oracleRows).toEqual(appRows)
+    expect(oracleRows).toEqual([
+      {
+        line_no: 5405,
+        reason: 'misplaced_email',
+        raw_row: 'v_c9e136fd6d,/about,2026-09-02 16:52:04,,julia.evans230@gmail.com',
+      },
+    ])
+  })
+
+  it('conflicting_email: web_events.csv:5442 (a later /subscribe row for joy\'s visitor, blank email) given a different real email — oracle and app agree, 0 mismatches', async () => {
+    const { oracleRows, appRows } = await plantedQuarantine('web_events', {
+      subscribers: subscribersCsv,
+      webEvents: plant(webCsv, 5442, (f) => [f[0], f[1], f[2], f[3], 'julia.evans230@gmail.com']),
+      appUsers: appCsv,
+    })
+    expect(oracleRows).toEqual(appRows)
+    expect(oracleRows).toEqual([
+      {
+        line_no: 5442,
+        reason: 'conflicting_email',
+        raw_row: 'v_c9e136fd6d,/subscribe,2026-09-03 00:51:44,,julia.evans230@gmail.com',
+      },
+    ])
+  })
+
+  it('a case-only /Subscribe row still links (0 quarantined) — oracle and app agree', async () => {
+    const { oracleRows, appRows } = await plantedQuarantine('web_events', {
+      subscribers: subscribersCsv,
+      webEvents: plant(webCsv, 5421, (f) => [f[0], '/Subscribe', f[2], f[3], f[4]]),
+      appUsers: appCsv,
+    })
+    expect(oracleRows).toEqual(appRows)
+    expect(oracleRows).toEqual([])
   })
 })
 
@@ -1316,6 +1435,71 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       .bind(expectedStubPkey)
       .all<{ event: string }>()
     expect(stubViewRows).toEqual([{ event: 'app_open' }])
+  })
+
+  it('v_app_events: a second stub in the store, and the WHOLE view independently rebuilt and diffed (M5b guard: a stub join must match by user_id, never fan out to every stub)', async () => {
+    // A second, distinct unknown user_id: app_users.csv:7's real u_c0d06d19 with its last
+    // character removed (09 D-47), unused anywhere earlier in this file.
+    const secondUnknown = 'u_c0d06d1'
+    const secondDevice = 'd_c0d06d1'
+    const res = await sendWebhook(
+      JSON.stringify({
+        event_id: nextEventId(),
+        event: 'login',
+        user_id: secondUnknown,
+        device_id: secondDevice,
+        timestamp: `${TODAY}T10:06:00Z`,
+      }),
+    )
+    expect(res.status, await res.clone().text()).toBe(202)
+    const secondStubPkey = await pkeyForUserId(secret, secondUnknown)
+
+    // Independently resolve EVERY stored app_events row to a pkey — the oracle's own
+    // resolveAppEvents (device owner + ambiguity, no window) plus the oracle's own
+    // pkeyForEmailNorm/pkeyForUserId, reading app_users only to learn each resolved user_id's
+    // email_norm (or lack of one), never importing worker/identity/resolve.ts or the view SQL.
+    const { results: storedEvents } = await env.DB.prepare(
+      'SELECT event_id, user_id, device_id, event_ts, event FROM app_events',
+    ).all<StoredAppEvent & { event: string }>()
+    const { deviceOwner, ambiguousDevices } = resolveAppEvents(storedEvents)
+    const { results: appUserRows } = await env.DB.prepare('SELECT user_id, email_norm FROM app_users').all<{
+      user_id: string
+      email_norm: string | null
+    }>()
+    const emailByUserId = new Map(appUserRows.map((r) => [r.user_id, r.email_norm]))
+    const pkeyByUserId = new Map<string, string>()
+    async function pkeyFor(userId: string): Promise<string> {
+      const cached = pkeyByUserId.get(userId)
+      if (cached !== undefined) return cached
+      const email = emailByUserId.get(userId) ?? null
+      const pkey = email === null ? await pkeyForUserId(secret, userId) : await pkeyForEmailNorm(secret, email)
+      pkeyByUserId.set(userId, pkey)
+      return pkey
+    }
+    const expectedRows: { pkey: string; event: string; event_ts: string }[] = []
+    for (const e of storedEvents) {
+      const owner = e.user_id ?? deviceOwner.get(e.device_id) ?? null
+      if (owner === null) continue
+      if (ambiguousDevices.includes(e.device_id) && e.user_id === null) continue
+      expectedRows.push({ pkey: await pkeyFor(owner), event: e.event, event_ts: e.event_ts })
+    }
+
+    // A fan-out join (every stub matching the LEFT JOIN, not just its own) inflates the row
+    // count beyond app_events' own, which this total catches even before any field is compared.
+    expect(storedEvents).toHaveLength(storedEvents.length) // sanity: the SELECT above read them all
+    const { results: viewRows } = await env.DB.prepare(
+      'SELECT pkey, event, event_ts FROM v_app_events WHERE pkey IS NOT NULL ORDER BY pkey, event_ts, event',
+    ).all<{ pkey: string; event: string; event_ts: string }>()
+    const sortKey = (r: { pkey: string; event_ts: string; event: string }) => `${r.pkey}|${r.event_ts}|${r.event}`
+    expect(viewRows.map(sortKey).sort()).toEqual(expectedRows.map(sortKey).sort())
+    expect(viewRows).toHaveLength(expectedRows.length)
+
+    const totalViewRows = await env.DB.prepare('SELECT count(*) AS n FROM v_app_events').first<{ n: number }>()
+    expect(totalViewRows?.n).toBe(storedEvents.length) // one view row per app_events row, never fanned out
+
+    // Both stubs resolve to their OWN pkey, not each other's.
+    const stubRows = viewRows.filter((r) => r.pkey === secondStubPkey)
+    expect(stubRows).toEqual([{ pkey: secondStubPkey, event: 'login', event_ts: `${TODAY}T10:06:00Z` }])
   })
 
   it('hardest case #16, the stitch: an anonymous app_open then a login on one device, then an anonymous read_story, all resolve to the logged-in user', async () => {
