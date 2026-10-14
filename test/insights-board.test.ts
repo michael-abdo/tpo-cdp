@@ -118,7 +118,12 @@ async function askAnswer(
   app.onError(onError)
   const res = await app.request(
     '/api/assistant',
-    { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ question }) },
+    // A fresh documentation address per call keeps these asks off one ASSISTANT_LIMITER key (09 D-70 #6).
+    {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
+      body: JSON.stringify({ question }),
+    },
     env,
   )
   expect(res.status).toBe(200)
@@ -497,7 +502,9 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     expect(after.window).toMatchObject({ from: '2026-08-29', to: '2026-09-28' })
     // The tile's period wins: its dates come first and "only"; "last month" is left as the pinned question's words.
     expect(after.explain).toBe(`Explain “${title}” for Aug 29 – Sep 28, 2026 only (last 30 days). It was pinned from: ${question}`)
-    expect(sanitizeQuestion(after.explain).ok).toBe(true) // Ask accepts it (Gate 1)
+    // Ask accepts it (Gate 1) with the real known-email set, and no word of it is redacted as a local part (09 D-70 #1).
+    const gate1 = sanitizeQuestion(after.explain, await loadKnownEmails(env.DB))
+    expect(gate1.ok && gate1.question.text).toBe(after.explain)
     expect((await api(`/${tile.id}`, { method: 'PATCH', body: { window: { fixed: ['2026-08-01', '2026-08-15'] } } })).status).toBe(200)
     const fixed = (await board()).tiles.find((t) => t.id === tile.id)!
     expect(fixed.explain).toBe(`Explain “${title}” for Aug 1–15, 2026 only. It was pinned from: ${question}`)

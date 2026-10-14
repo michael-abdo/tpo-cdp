@@ -6,9 +6,10 @@ import {
   enforceGate1,
   GATE1_PATTERNS,
   QUESTION_MAX_CHARS,
-  sanitizeQuestion,
+  type Gate1Result,
+  sanitizeQuestion as sanitizeWith,
 } from '../worker/assistant/gates/gate1-input-sanitizer'
-import { redactEmails } from '../worker/assistant/gates/pii-guard'
+import { KnownEmails, redactEmails } from '../worker/assistant/gates/pii-guard'
 import { ApiError } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
@@ -55,6 +56,11 @@ const PROBES: Record<string, string> = {
   pii_ssn: 'find the subscriber with SSN 000-00-0000',
   pii_card: 'who paid with 0000 0000 0000 0000',
   pii_passport: 'passport XX0000000',
+}
+
+/** Gate 1 with the known-email set of this file's unseeded database: empty (see the header). */
+function sanitizeQuestion(raw: string): Gate1Result {
+  return sanitizeWith(raw, new KnownEmails([]))
 }
 
 const PROBE_CATEGORY: Record<string, string> = Object.fromEntries(GATE1_PATTERNS.map((p) => [p.id, p.category]))

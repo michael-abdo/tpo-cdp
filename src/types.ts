@@ -3,6 +3,7 @@
 import type { DefinitionKey } from '../shared/derive'
 import type { InsightWindow, ResolvedWindow } from '../shared/insight-window'
 import type { ChartKind, ChartOverride } from '../shared/pick-chart'
+import type { CheckKind, CsvSourceId, SourceId } from '../shared/sources'
 import type { FieldWeight, Reason, ScoredField } from '../worker/dedupe/score'
 import type { QuarantineReason, SubscriberStatus } from '../worker/ingest/quarantine'
 
@@ -16,10 +17,70 @@ export interface Overview {
   quarantine_reasons: Record<string, number>
 }
 
-/** GET /api/quarantine?reason= (09 D-61): rows the import set aside, oldest file order. */
+/**
+ * GET /api/sources (09 D-63), in registry order. Restated here rather than imported from
+ * worker/routes/sources.ts, which types D1Database (absent from the browser project).
+ */
+export interface Sources {
+  sources: (CsvSource | WebhookSource)[]
+}
+
+interface SourceCommon {
+  id: SourceId
+  /** The registry's plain name (shared/sources.ts). */
+  name: string
+  /** The registry's record unit, plural. */
+  unit: string
+  /** The registry's record unit, singular. */
+  unit_one: string
+  /** The checks the registry declares for this source, with their counts (09 D-65); [] when none. */
+  checks: SourceCheck[]
+  records: number
+}
+
+/** One source check (09 D-65): rows a person can fix, or possible duplicates without a decision. */
+export interface SourceCheck {
+  kind: CheckKind
+  count: number
+}
+
+export interface CsvSource extends SourceCommon {
+  kind: 'csv'
+  loads_by: 'seed'
+  /** needs_review when any check counts more than 0. */
+  status: 'ok' | 'needs_review' | 'not_loaded'
+  /** UTC `YYYY-MM-DDTHH:MM:SSZ`; null before the first seed. */
+  last_sync: string | null
+  /** Newest first. */
+  runs: SourceRun[]
+}
+
+export interface WebhookSource extends SourceCommon {
+  kind: 'webhook'
+  loads_by: 'webhook'
+  status: 'live'
+  checks: []
+  /** Events whose event time falls on TODAY. */
+  today: number
+  last_received: string | null
+  runs: []
+}
+
+export interface SourceRun {
+  id: number
+  ran_at: string
+  rows_in: number
+  rows_out: number
+  merged: number
+  rejected: number
+  /** Rejected rows a person can fix (every reason but blank_row). */
+  needs_review: number
+}
+
+/** GET /api/quarantine?reason=&file= (09 D-61, D-63): rows the import set aside, oldest file order. */
 export interface QuarantineList {
   rows: {
-    file: 'subscribers' | 'web_events' | 'app_users'
+    file: CsvSourceId
     /** 1-based line in the CSV file (the header is line 1). */
     line_no: number
     reason: QuarantineReason
@@ -43,9 +104,9 @@ export interface DuplicateDecision {
 export interface Duplicates {
   /** Candidate pairs checked (subscribers sharing a name stem). */
   candidates: number
-  /** Shown pairs (score 50+) with no decision yet, over all of them. */
+  /** Shown pairs (score bands.review_min or more) with no decision yet, over all of them. */
   to_review: number
-  /** Score 50+, highest first, at most 50. */
+  /** Score bands.review_min or more, highest first, at most 50. */
   review: {
     pair_id: string
     a: DuplicateReader
@@ -57,6 +118,8 @@ export interface Duplicates {
     decision: DuplicateDecision | null
   }[]
   hidden_below_review: number
+  /** The D-62 band edges from worker/dedupe/score.ts: auto_min and up = auto, review_min..auto_min − 1 = review. */
+  bands: { auto_min: number; review_min: number }
   /** m, u and the two log2 weights per scored field; null when there are no candidates. */
   weights: Record<ScoredField, FieldWeight> | null
   /** Pairs agreeing on domain, signup within 7 days and source, observed vs expected by chance. */
@@ -116,19 +179,27 @@ export interface Lookup {
     last_open_date: string | null
     merged_count: number
   } | null
-  web: {
-    visitor_id: string
-    first_page: string
-    first_utm_source: string | null
-    events: { page: string; event_ts: string; utm_source: string | null; pre_signup: boolean }[]
-  } | null
-  app: {
-    user_id: string
-    created_at: string
-    from_csv: boolean
-    devices: string[]
-    events: { event: string; event_ts: string; properties: unknown; attached_via: 'direct' | 'login_stitch' }[]
-  } | null
+  /** The earliest visitor's fields, plus every visitor of the profile (09 D-70 item 4), earliest first. */
+  web: (LookupVisitor & { visitors: LookupVisitor[] }) | null
+  /** The earliest app account's fields, plus every account of the profile (09 D-70 item 4), earliest first. */
+  app: (LookupAppAccount & { accounts: LookupAppAccount[] }) | null
+}
+
+/** One website visitor (browser) of a looked-up profile. */
+export interface LookupVisitor {
+  visitor_id: string
+  first_page: string
+  first_utm_source: string | null
+  events: { page: string; event_ts: string; utm_source: string | null; pre_signup: boolean }[]
+}
+
+/** One app account of a looked-up profile. */
+export interface LookupAppAccount {
+  user_id: string
+  created_at: string
+  from_csv: boolean
+  devices: string[]
+  events: { event: string; event_ts: string; properties: unknown; attached_via: 'direct' | 'login_stitch' }[]
 }
 
 /** One row of GET /api/events/recent, resolved at read time (01 §Identity resolution). */

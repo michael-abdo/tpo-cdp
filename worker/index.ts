@@ -12,6 +12,7 @@ import { lookupRoutes } from './routes/lookup'
 import { overviewRoutes } from './routes/overview'
 import { quarantineRoutes } from './routes/quarantine'
 import { segmentRoutes } from './routes/segments'
+import { sourceRoutes } from './routes/sources'
 import { webhookRoutes } from './routes/webhook'
 
 /**
@@ -45,7 +46,9 @@ app.use('*', async (c, next) => {
 app.use('/api/*', requireJson, requireSession)
 app.route('/api', loginRoutes)
 app.route('/api', overviewRoutes)
-// GET /api/quarantine?reason=: the rows the import set aside, as written (04, 09 D-61); raw emails, so session only.
+// GET /api/sources: each registry source's last sync, status, records and run history (04, 09 D-63).
+app.route('/api', sourceRoutes)
+// GET /api/quarantine?reason=&file=: the rows the import set aside, as written (04, 09 D-61, D-63); raw emails, so session only.
 app.route('/api', quarantineRoutes)
 // GET /api/duplicates and POST /api/duplicates/:pair_id/review: the scored possible-duplicates review (04, 09 D-62);
 // raw emails, so session only; it records a verdict and never merges (D-13).

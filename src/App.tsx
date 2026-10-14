@@ -21,7 +21,7 @@ import LookupPage from './pages/LookupPage'
 import OverviewPage from './pages/OverviewPage'
 import SegmentsPage from './pages/SegmentsPage'
 
-/** Nav labels are the brief's words for each screen (06 §Vocabulary, 09 D-66; principles 1, 4); "Insights" is D-64's. */
+/** Nav labels are the brief's words for each screen (06 §Vocabulary, 09 D-66, D-67; principles 1, 4); "Insights" is D-64's. */
 const NAV: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/', label: 'Overview', icon: ICONS.overview },
   { to: '/lookup', label: 'Look up', icon: ICONS.lookup },

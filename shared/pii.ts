@@ -25,6 +25,18 @@ export type PiiColumn = (typeof PII_COLUMNS)[number]
 export const EMAIL_REGEX = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 
 /**
+ * One run of EMAIL_REGEX's local-part characters: the token Gate 1 compares with the known
+ * local parts (09 D-70 #1). No `g` flag, as above.
+ */
+export const LOCAL_PART_TOKEN = /[a-z0-9._%+-]+/i
+
+/**
+ * The shortest known local part Gate 1 redacts on its own (09 D-70 #1). Every local part in
+ * data/*.csv is longer (name, dot, surname, digits); a shorter one could be an ordinary word.
+ */
+export const LOCAL_PART_MIN_CHARS = 6
+
+/**
  * A raw app user, device or web visitor id (`u_`, `d_`, `v_` followed by hex; data/*.csv has
  * `u_2b6447a3` and `v_c9e136fd6d`, the brief's sample webhook has device `d_4b21e8`, the
  * shortest seen). At least 6 hex chars and word-bounded, so

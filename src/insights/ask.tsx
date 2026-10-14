@@ -12,7 +12,7 @@
 // (src/filters-applied.ts). Every answer links to its trace on /audit ("what the AI saw", 05
 // §Proof surfaces). The request takes 5–20 s (04), shown as a short text state. Errors show the 04
 // envelope's message. Single-shot: there is no conversation history (09 D-34). A question handed
-// over by "Explain this" or ?q= is filled in, never sent: the reader presses Ask (09 D-39).
+// over by "Explain this" or ?q= is filled in, never sent: the teammate presses Ask (09 D-39).
 
 import { type FormEvent, type RefObject, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
@@ -301,7 +301,7 @@ type AskState =
 
 /**
  * The Ask bar. The page holds the question, so "Explain this" on a tile can fill it; `filled` is the
- * question it handed over, which earns the "filled in above" line until the reader changes it.
+ * question it handed over, which earns the "filled in above" line until the teammate changes it.
  */
 export function AskSection({
   question,

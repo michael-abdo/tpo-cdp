@@ -1,56 +1,51 @@
-// Overview's "Needs review" card (06 §Overview, 09 D-61): which set-aside rows a person can fix, the
+// Overview's "Rows to fix" tab (06 §Overview, 09 D-61, D-65): which set-aside rows a person can fix, the
 // one plain sentence that says why, the fields to show as written, and what to do. Pure, so
 // test/quarantine.test.ts runs it on the real GET /api/quarantine answer; src/pages/OverviewPage.tsx
-// is the only other reader.
+// is the only other caller.
 
+import { sourceById } from '../shared/sources'
 import type { QuarantineList } from './types'
 
 export type QuarantinedRow = QuarantineList['rows'][number]
 type SetAsideFile = QuarantinedRow['file']
 
 /**
- * A blank row has nothing to correct, so it stays a count inside "How the data was combined";
+ * A blank row has nothing to correct, so it stays a count in its run's "View rejected rows";
  * every other reason (02 §Quarantine) names something a person can fix in the source file.
  */
 export function needsReview(reason: string): boolean {
   return reason !== 'blank_row'
 }
 
-/** Per file: the CSV's name, the noun for its rows [one, many], the fields shown, and its date format (02 §Quarantine). */
-const FILES: Record<
-  SetAsideFile,
-  { csv: string; unit: [string, string]; columns: { name: string; label: string }[]; dateFormat: string }
-> = {
+/**
+ * Per file: the fields shown, labelled with the brief's field names (06 §Vocabulary), and its date format (02 §Quarantine). The file's name and the noun for
+ * its rows come from the source registry (shared/sources.ts), their only home.
+ */
+export const FILES: Record<SetAsideFile, { columns: { name: string; label: string }[]; dateFormat: string }> = {
   subscribers: {
-    csv: 'subscribers.csv',
-    unit: ['subscriber', 'subscribers'],
     columns: [
       { name: 'email', label: 'Email' },
-      { name: 'signup_date', label: 'Signed up' },
+      { name: 'signup_date', label: 'Signup date' },
       { name: 'status', label: 'Status' },
-      { name: 'acquisition_source', label: 'Source' },
+      { name: 'acquisition_source', label: 'Acquisition source' },
     ],
     dateFormat: 'YYYY-MM-DD',
   },
   web_events: {
-    csv: 'web_events.csv',
-    unit: ['page view', 'page views'],
     columns: [
-      { name: 'visitor_id', label: 'Visitor' },
+      { name: 'visitor_id', label: 'Visitor ID' },
       { name: 'page', label: 'Page' },
-      { name: 'timestamp', label: 'Time' },
-      { name: 'utm_source', label: 'Campaign source' },
+      { name: 'timestamp', label: 'Timestamp' },
+      { name: 'utm_source', label: 'UTM source' },
       { name: 'email', label: 'Email' },
     ],
     dateFormat: 'YYYY-MM-DD HH:MM:SS',
   },
   app_users: {
-    csv: 'app_users.csv',
-    unit: ['app user', 'app users'],
     columns: [
-      { name: 'user_id', label: 'App user' },
+      { name: 'user_id', label: 'User ID' },
       { name: 'email', label: 'Email' },
-      { name: 'created_at', label: 'Created' },
+      { name: 'created_at', label: 'Created date' },
     ],
     dateFormat: 'YYYY-MM-DD',
   },
@@ -64,10 +59,11 @@ const WHY: Record<Exclude<QuarantinedRow['reason'], 'blank_row'>, string> = {
 }
 
 function fixText(file: SetAsideFile, reason: keyof typeof WHY): string {
-  const { csv, dateFormat } = FILES[file]
-  if (reason === 'invalid_email') return `Correct the email in ${csv}, then re-run the seed.`
-  if (reason === 'missing_field') return `Fill in the empty field in ${csv}, then re-run the seed.`
-  return `Write the date as ${dateFormat} in ${csv}, then re-run the seed.`
+  const csv = csvName(file)
+  const { dateFormat } = FILES[file]
+  if (reason === 'invalid_email') return `Correct the email in ${csv}, then re-import the file.`
+  if (reason === 'missing_field') return `Fill in the empty field in ${csv}, then re-import the file.`
+  return `Write the date as ${dateFormat} in ${csv}, then re-import the file.`
 }
 
 export interface ReviewGroup {
@@ -92,7 +88,7 @@ export function reviewGroups(rows: readonly QuarantinedRow[]): ReviewGroup[] {
     groups.set(key, group)
   }
   return [...groups].map(([key, g]) => {
-    const [one, many] = FILES[g.file].unit
+    const [one, many] = sourceById(g.file).unit
     const count = g.rows.length
     return {
       key,
@@ -111,5 +107,7 @@ export function asWritten(value: string | undefined): string {
 
 /** The file's name as people see it in a folder, for Technical details. */
 export function csvName(file: SetAsideFile): string {
-  return FILES[file].csv
+  const { file: csv } = sourceById(file)
+  if (csv === null) throw new Error(`needs-review: source ${file} has no file`)
+  return csv
 }

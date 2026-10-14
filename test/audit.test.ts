@@ -21,7 +21,7 @@ import type { AssistantResponse } from '../src/types'
 import { sqlSign as sharedSqlSign } from '../shared/sql-sign'
 import { sqlSign } from '../worker/assistant/respond'
 import { GateDenied } from '../worker/assistant/gates/gate3-readonly-sql'
-import { loginCookie } from './helpers/auth'
+import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
 // Unit H3: GET /api/audit?limit= and GET /api/audit/:trace_id (04 §GET /api/audit; 05 §Proof
@@ -192,7 +192,8 @@ async function ask(transport: MessagesTransport, cookie: string, question: strin
     '/api/assistant',
     {
       method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
+      // A fresh documentation address per call keeps these tests off one ASSISTANT_LIMITER key.
+      headers: { cookie, 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
       body: JSON.stringify({ question }),
     },
     env,

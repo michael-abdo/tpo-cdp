@@ -28,7 +28,7 @@ import { NOT_PINNABLE_MESSAGE } from '../../shared/insight-messages'
 //     rows (104 pairs: more than BAR_TOP_CATEGORIES, so the "Other" bar is drawn);
 //   - the two demo subjects' newsletter fields, without their emails (table);
 //   - the brief's R3 preset, 177 subscribers (segment).
-// The built-in tile is the seeded "Subscribers at risk of going cold" row (migrations/0005_insights.sql);
+// The built-in tile is the seeded "Subscribers at risk of going cold" row (migrations/0006_insights.sql);
 // its result is given no rows, since the board's numbers for it are not stated in 02 §Counts.
 
 const BRIEF_Q1 = 'how many Instagram signups went cold last month?'

@@ -135,10 +135,15 @@ function appWith(transport: MessagesTransport, keys: string[] = []) {
   return app
 }
 
+/** A fresh documentation address per call keeps these tests off one ASSISTANT_LIMITER key (T-HARD-6 tests that limit). */
 async function ask(app: Hono<AppEnv>, cookie: string, question: string, envOverride: Partial<Env> = {}) {
   return app.request(
     '/api/assistant',
-    { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ question }) },
+    {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
+      body: JSON.stringify({ question }),
+    },
     { ...env, ...envOverride },
   )
 }

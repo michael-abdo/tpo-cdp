@@ -1,6 +1,8 @@
-// The app webhook body (04 §Webhook body and validation; R4.2–R4.4, 09 D-22, D-38).
+// The app webhook body (04 §Webhook body and validation; R4.2–R4.4, 09 D-22, D-38, D-70 #2, #3).
 // Exactly the brief's shape, one event per request; unknown fields are ignored (zod strips them).
-// Issue texts are written here and never echo a submitted value or a property key (04 §Error envelope).
+// Issue texts are written here and never echo a submitted value or a sender-chosen property key
+// (04 §Error envelope); `story` and `link` are our keys (v_app_events reads them), so an issue
+// about one names it as `properties.story` / `properties.link`.
 
 import { z } from 'zod'
 
@@ -11,6 +13,39 @@ export type AppEventName = (typeof APP_EVENTS)[number]
 
 export const ID_MAX_CHARS = 64
 export const PROPERTY_VALUE_MAX_CHARS = 200
+
+/**
+ * `properties.story` (09 D-70 #2): a lowercase slug, as the brief's `supreme-court-ruling-explained`.
+ * v_app_events exposes it to the model, so free text (a name, an instruction) is refused here.
+ */
+export const STORY_PATTERN = /^[a-z0-9-]{1,120}$/
+
+/**
+ * `properties.link` (09 D-70 #2): an http(s) URL with no "@" anywhere (no userinfo, no address in
+ * a path or query). v_app_events exposes it to the model, and the outbound PII scan looks for a
+ * literal "@", so the "@" test also sees through the spellings that scan would miss: printable
+ * ASCII only (no whitespace, control, bidi or fullwidth characters, so no "＠"), and no "@" after
+ * one round of percent-decoding ("%40", "%EF%BC%A0" = "＠"). A "%" left after that round (double
+ * encoding, "%2540") or a malformed escape is refused, not decoded again.
+ */
+export function isAllowedLink(value: string): boolean {
+  if (!/^https?:\/\//i.test(value) || !/^[\x21-\x7e]+$/.test(value) || value.includes('@')) return false
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(value)
+  } catch {
+    return false // URIError: a "%" that starts no valid escape; the caller's 400 names properties.link
+  }
+  if (decoded.includes('%') || decoded.normalize('NFKC').includes('@')) return false
+  return URL.canParse(value)
+}
+
+/**
+ * How far the event time may run ahead of the server clock (09 D-70 #3). A later time would win
+ * every device_identity comparison and pin the device to its user for good. Events after TODAY
+ * within this bound are stored and count as 0 days old (09 D-01).
+ */
+export const MAX_FUTURE_MS = 24 * 60 * 60 * 1000
 
 const EVENT_TIMESTAMP =
   /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?)?$/
@@ -80,7 +115,8 @@ const id = (field: string) =>
     .min(1, { error: `${field} must not be empty` })
     .max(ID_MAX_CHARS, { error: `${field} must be at most ${ID_MAX_CHARS} characters` })
 
-const eventSchema = z.object({
+/** The schema for a request received at `nowMs` (wall clock; 09 D-70 #3). */
+const eventSchema = (nowMs: number) => z.object({
   event_id: id('event_id'),
   event: z.enum(APP_EVENTS, { error: `event must be one of ${APP_EVENTS.join(', ')}` }),
   // R4.4: a string, null, or absent. Empty is rejected: no app user has an empty id.
@@ -99,6 +135,10 @@ const eventSchema = z.object({
         })
         return z.NEVER
       }
+      if (Date.parse(normalized) - nowMs > MAX_FUTURE_MS) {
+        ctx.addIssue({ code: 'custom', message: 'timestamp must be at most 24 hours after the server clock' })
+        return z.NEVER
+      }
       return normalized
     }),
   // 04: "properties object or absent; any string value > 200 chars → 400" (09 D-22). Any JSON
@@ -108,6 +148,13 @@ const eventSchema = z.object({
     .superRefine((value, ctx) => {
       const problem = propertiesProblem(value)
       if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
+      // 09 D-70 #2: the two keys v_app_events exposes must be slugs; other keys are stored only.
+      if ('story' in value && !(typeof value.story === 'string' && STORY_PATTERN.test(value.story))) {
+        ctx.addIssue({ code: 'custom', path: ['story'], message: 'properties.story must be a slug: a-z, 0-9 and "-", 1 to 120 characters' })
+      }
+      if ('link' in value && !(typeof value.link === 'string' && isAllowedLink(value.link))) {
+        ctx.addIssue({ code: 'custom', path: ['link'], message: 'properties.link must be an http(s) URL with no "@"' })
+      }
     })
     .optional(),
 })
@@ -132,17 +179,30 @@ export interface SchemaIssue {
 
 export type ParseResult = { ok: true; event: WebhookEvent } | { ok: false; details: SchemaIssue[] }
 
-/** Validates an already JSON-parsed body. An array is "one event per request" (04). */
-export function parseWebhookEvent(body: unknown): ParseResult {
+/** The names a `properties` issue may carry: our own keys only, never a sender's (see the header). */
+const NAMED_PROPERTIES = ['story', 'link']
+
+/**
+ * Validates an already JSON-parsed body received at `nowMs` (wall clock, the bound of 09 D-70 #3).
+ * An array is "one event per request" (04).
+ */
+export function parseWebhookEvent(body: unknown, nowMs: number): ParseResult {
   if (Array.isArray(body)) return { ok: false, details: [{ field: 'body', issue: 'one event per request' }] }
   if (typeof body !== 'object' || body === null) {
     return { ok: false, details: [{ field: 'body', issue: 'body must be one JSON object' }] }
   }
-  const parsed = eventSchema.safeParse(body)
+  const parsed = eventSchema(nowMs).safeParse(body)
   if (!parsed.success) {
-    // Only the top-level field name: a properties key is sender-chosen text and is never echoed.
+    // Only the top-level field name, or properties.story / properties.link: any other properties
+    // key is sender-chosen text and is never echoed.
     const details = parsed.error.issues.map((issue): SchemaIssue => {
-      const field = issue.path.length === 0 ? 'body' : String(issue.path[0])
+      const [top, key] = issue.path
+      const field =
+        top === undefined
+          ? 'body'
+          : top === 'properties' && typeof key === 'string' && NAMED_PROPERTIES.includes(key) && issue.path.length === 2
+            ? `properties.${key}`
+            : String(top)
       return field === 'event'
         ? { field, issue: issue.message, allowed: APP_EVENTS }
         : { field, issue: issue.message }

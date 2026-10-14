@@ -5,7 +5,8 @@
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
-import type { AppEnv } from '../env'
+import { type AppEnv, requireSecret } from '../env'
+import { clientKeyHash } from '../../shared/pseudonym'
 import { anthropicTransport, type MessagesTransport } from '../assistant/loop'
 import { answerQuestion } from '../assistant/route'
 
@@ -39,8 +40,18 @@ export function assistantRoutes(transportFor: (apiKey: string) => MessagesTransp
   const routes = new Hono<AppEnv>()
   routes.post('/assistant', async (c) => {
     const question = await readQuestion(c.req.raw)
+    // Cloudflare sets CF-Connecting-IP at the edge; local dev has no edge, so every local client shares one key.
+    const clientIp = c.req.header('cf-connecting-ip') ?? 'local'
     const response = await answerQuestion(
-      { db: c.env.DB, apiKey: c.env.ANTHROPIC_API_KEY, transportFor, sessionSub: c.get('session').sub },
+      {
+        db: c.env.DB,
+        apiKey: c.env.ANTHROPIC_API_KEY,
+        transportFor,
+        sessionSub: c.get('session').sub,
+        clientLimiter: c.env.ASSISTANT_LIMITER,
+        clientIp,
+        clientKey: await clientKeyHash(requireSecret(c.env, 'PII_KEY_SECRET'), clientIp),
+      },
       question,
     )
     return c.json(response)

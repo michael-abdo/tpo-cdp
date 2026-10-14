@@ -6,9 +6,10 @@
 // events the first load shows, then only how many new ones arrived; a poll with nothing new says
 // nothing, a Refresh with nothing new says so. A failed fetch keeps the last list on screen under
 // the error, and the next poll tries again. Level 1 per event (06 §UI
-// principles 2, 4, 5): when it arrived (received_at, shown only here), what happened in words and
-// who it belongs to: the email, "anonymous device" when no identified event has named the device
-// yet, or "Unknown app user (no email on file)" for a webhook-created user with no email (06 sketches
+// principles 2, 4, 5): when it arrived (received_at, shown only here), the event name as the brief
+// writes it with a plain gloss in an InfoTip (06 §Vocabulary), and the profile it belongs to: the
+// email, "anonymous device" when no identified event has named the device yet, or "Unknown app
+// account (no email on file)" for a webhook-created user with no email (06 sketches
 // "unknown user u_…"; principle 2 moves the u_ id to Technical details), plus a "Linked after login"
 // tag (06's "stitched") when an anonymous event is attached through its device's login
 // (attached_via login_stitch). Level 2 (row Details): when it happened in the app and the link, in
@@ -23,6 +24,7 @@ import {
   type Column,
   Disclosure,
   EmptyState,
+  EventName,
   ErrorLine,
   Field,
   ICONS,
@@ -35,14 +37,6 @@ import {
 import { humanDateTime, utc } from '../format'
 import { eventsAnnouncement, type FetchKind, POLL_MS } from '../events-poll'
 import type { RecentEvent, RecentEvents } from '../types'
-
-/** Plain words for the app's event names (worker/webhooks/schema.ts APP_EVENTS); others show as sent. */
-const EVENT_LABEL: Record<string, string> = {
-  app_open: 'Opened the app',
-  read_story: 'Read a story',
-  link_click: 'Clicked a link',
-  login: 'Logged in',
-}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const STORED_UTC = /^\d{4}-(\d{2})-(\d{2})T(\d{2}:\d{2})/
@@ -69,7 +63,7 @@ function ago(ts: string, now: number): string | null {
 
 const stitched = (e: RecentEvent) => e.attached_via === 'login_stitch'
 
-function Reader({ e }: { e: RecentEvent }) {
+function Profile({ e }: { e: RecentEvent }) {
   if (e.user_id === null) {
     return (
       <span>
@@ -83,7 +77,7 @@ function Reader({ e }: { e: RecentEvent }) {
         to={`/lookup?q=${encodeURIComponent(e.email ?? e.user_id)}`}
         className="inline-flex min-h-6 items-center break-all text-blue-700 underline underline-offset-2 hover:text-blue-900"
       >
-        {e.email ?? 'Unknown app user (no email on file)'}
+        {e.email ?? 'Unknown app account (no email on file)'}
       </Link>
       {stitched(e) && <Tag tone="accent">Linked after login</Tag>}
     </span>
@@ -145,8 +139,8 @@ function columns(now: number): Column<RecentEvent>[] {
         )
       },
     },
-    { header: 'What happened', cell: (e) => EVENT_LABEL[e.event] ?? e.event },
-    { header: 'Reader', cell: (e) => <Reader e={e} /> },
+    { header: 'Event', cell: (e) => <EventName event={e.event} /> },
+    { header: 'Profile', cell: (e) => <Profile e={e} /> },
   ]
 }
 
@@ -278,7 +272,7 @@ export default function EventsPage() {
               <p>
                 No events yet — send one with <code className="font-mono">npm run webhook:send</code>
               </p>
-              <p className="mt-1 text-gray-600">The app sends events here as readers use it. New ones appear here within {POLL_SECONDS} seconds.</p>
+              <p className="mt-1 text-gray-600">The app sends events here as they happen. New ones appear here within {POLL_SECONDS} seconds.</p>
             </EmptyState>
           ) : (
             <div className="space-y-3">

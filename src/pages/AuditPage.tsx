@@ -381,7 +381,7 @@ function TraceList() {
       <PageHeader
         title="AI audit log"
         icon={ICONS.audit}
-        purpose={`Every question sent to the assistant, newest first (the last ${LIST_LIMIT}). Open one to see exactly what the AI was sent and what it sent back.`}
+        purpose={`Every question sent to the AI assistant, newest first (the last ${LIST_LIMIT}). Open one to see exactly what the AI was sent and what it sent back.`}
         action={
           <Button
             variant="primary"
@@ -413,7 +413,7 @@ function TraceList() {
           action={
             <Link to="/insights" className={`${linkClass} gap-1.5`}>
               <Icon icon={ICONS.assistant} />
-              Ask a question
+              Ask the AI assistant
             </Link>
           }
         >

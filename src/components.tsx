@@ -20,7 +20,9 @@ import {
   Download,
   Ellipsis,
   Eye,
+  History,
   Inbox,
+  Info,
   LayoutDashboard,
   ListFilter,
   LoaderCircle,
@@ -31,17 +33,32 @@ import {
   Moon,
   Pencil,
   Pin,
+  Radio,
   RefreshCw,
   ScrollText,
   Search,
   ShieldBan,
   Sun,
   Trash2,
+  TriangleAlert,
   UserSearch,
   Users,
   X,
 } from 'lucide-react'
-import { type ButtonHTMLAttributes, Fragment, type ReactNode, type Ref, useState } from 'react'
+import {
+  type ButtonHTMLAttributes,
+  Fragment,
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import { createPortal } from 'react-dom'
+import { explain, isGlossaryKey, type TipKey } from '../shared/glossary'
 
 export type { LucideIcon }
 
@@ -70,6 +87,8 @@ export const ICONS = {
   themeDark: Moon,
   today: CalendarDays,
   refresh: RefreshCw,
+  info: Info,
+  history: History,
   // insights board (09 D-64)
   pin: Pin,
   tileOptions: Ellipsis,
@@ -86,6 +105,8 @@ export const ICONS = {
   success: CircleCheck,
   blocked: ShieldBan,
   error: CircleAlert,
+  warning: TriangleAlert,
+  live: Radio,
   empty: Inbox,
   loading: LoaderCircle,
 } satisfies Record<string, LucideIcon>
@@ -191,15 +212,24 @@ export function Disclosure({
   label,
   children,
   defaultOpen = false,
+  open,
+  onOpenChange,
   className = '',
 }: {
   label: ReactNode
   children: ReactNode
   defaultOpen?: boolean
+  /** Controlled: whether it is open; pair with onOpenChange (the native toggle reports each change). */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   className?: string
 }) {
   return (
-    <details className={className || undefined} open={defaultOpen}>
+    <details
+      className={className || undefined}
+      open={open ?? defaultOpen}
+      onToggle={onOpenChange && ((e) => onOpenChange(e.currentTarget.open))}
+    >
       <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded-md py-0.5 text-sm font-medium text-accent hover:text-accent-strong hover:underline hover:underline-offset-4">
         <Chevron />
         {label}
@@ -357,6 +387,126 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   )
 }
 
+/** Gap between the popover and the viewport edge, px (06 §UI principles 9: never wider than the screen). */
+const TIP_EDGE = 16
+/** The popover's widest size, px. */
+const TIP_WIDTH = 288
+
+/**
+ * A toggletip (06 §Overview InfoTip, D-55 #3): an ⓘ button beside a term; click, tap, Enter or
+ * Space opens a small popover with the term's text from the glossary or DEFINITIONS
+ * (shared/glossary.ts explain()); Esc (focus returns to the button), a click outside, scrolling or
+ * resizing closes it. Never hover-only. The popover is a polite live region that is always in the
+ * DOM and filled only while open, so aria-controls always names an element and screen readers hear
+ * the text when it opens. It is portalled to <body> and `position: fixed`: inside the page, the
+ * page-enter animation's transform would make `fixed` relative to the page block instead of the
+ * viewport, and a table's overflow would clip it; from <body> it does neither and never widens the
+ * page. The button is `select-none`, so copying the text around it never picks up its
+ * screen-reader words (no "Mergedwhat Merged means85"). Where there is no `document` (a server
+ * render, as test/ui renders pages) the popover is left out, as React's server renderer cannot
+ * render portals; the app renders only in the browser (createRoot), where it is always there.
+ */
+export function InfoTip({ term }: { term: TipKey }) {
+  const { term: words, text } = explain(term)
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const wrap = useRef<HTMLSpanElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
+  const pop = useRef<HTMLSpanElement>(null)
+
+  // Place the popover under the button (above it when there is no room), inside the viewport.
+  useLayoutEffect(() => {
+    const b = button.current
+    const p = pop.current
+    if (!open || b === null || p === null) return
+    const r = b.getBoundingClientRect()
+    const width = Math.min(TIP_WIDTH, window.innerWidth - 2 * TIP_EDGE)
+    const left = Math.min(
+      Math.max(TIP_EDGE, r.left + r.width / 2 - width / 2),
+      window.innerWidth - TIP_EDGE - width,
+    )
+    p.style.width = `${width}px`
+    p.style.left = `${left}px`
+    const below = r.bottom + 6
+    const above = r.top - 6 - p.offsetHeight
+    p.style.top = `${below + p.offsetHeight > window.innerHeight - TIP_EDGE && above >= TIP_EDGE ? above : below}px`
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target
+      if (!(t instanceof Node) || !(wrap.current?.contains(t) || pop.current?.contains(t))) close()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      close()
+      button.current?.focus()
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  return (
+    <span ref={wrap} className="inline-flex align-middle">
+      <button
+        ref={button}
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-ink-subtle select-none hover:bg-surface-2 hover:text-accent aria-expanded:text-accent"
+      >
+        <Icon icon={ICONS.info} className="size-3.5" />
+        <span className="sr-only"> What “{words}” means </span>
+      </button>
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <span
+            ref={pop}
+            id={id}
+            role="status"
+            className={
+              open
+                ? 'fixed z-30 block rounded-lg border border-line-strong bg-surface p-3 text-left text-sm font-normal tracking-normal text-ink normal-case shadow-soft'
+                : 'sr-only'
+            }
+          >
+            {open && (
+              <>
+                <span className="block font-medium">{words}</span>{' '}
+                <span className="mt-1 block text-ink-muted">{text}</span>
+              </>
+            )}
+          </span>,
+          document.body,
+        )}
+    </span>
+  )
+}
+
+/**
+ * An app event name as the brief writes it (app_open, read_story, link_click, login), with its plain
+ * gloss in an InfoTip from the glossary (06 §Vocabulary, 09 D-66); a name with no gloss shows as sent.
+ */
+export function EventName({ event }: { event: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="font-mono">{event}</span>
+      {isGlossaryKey(event) && <InfoTip term={event} />}
+    </span>
+  )
+}
+
 /** Headline numbers as one <dl>; children are StatTile. Two columns on phones, four from 768 px. */
 export function StatGrid({ label, children }: { label?: string; children: ReactNode }) {
   return (
@@ -372,17 +522,21 @@ export function StatTile({
   value,
   note,
   icon,
+  tip,
 }: {
   label: string
   value: number
   note?: ReactNode
   icon?: LucideIcon
+  /** An InfoTip after the label. */
+  tip?: ReactNode
 }) {
   return (
     <div className="flex flex-col rounded-xl border border-line bg-surface p-4 shadow-soft sm:p-5">
       <dt className="order-2 mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
         {icon && <Icon icon={icon} className="size-4 text-accent" />}
         {label}
+        {tip}
       </dt>
       <dd className="order-1 font-display text-3xl font-medium tabular-nums text-ink">
         {value.toLocaleString('en-US')}
@@ -392,16 +546,39 @@ export function StatTile({
   )
 }
 
-/** A small badge that carries its meaning in words, never colour alone (principle 7). */
+/**
+ * A headline number with its plain label and an InfoTip that explains it (06 §Overview 1). `term`
+ * names the glossary or DEFINITIONS entry; the label stays visible text.
+ */
+export function Metric({
+  value,
+  label,
+  term,
+  icon,
+}: {
+  value: number
+  label: string
+  term: TipKey
+  icon?: LucideIcon
+}) {
+  return <StatTile label={label} value={value} icon={icon} tip={<InfoTip term={term} />} />
+}
+
+/**
+ * A small badge that carries its meaning in words, never colour alone (principle 7). With
+ * `onClick` it is a button (a status chip that opens what it counts), 24 px tall (principle 7).
+ */
 export function Tag({
   children,
   tone = 'neutral',
   icon,
+  onClick,
 }: {
   children: ReactNode
   /** Colour only reinforces the words; never the only signal. */
   tone?: 'neutral' | 'accent' | 'success' | 'danger'
   icon?: LucideIcon
+  onClick?: () => void
 }) {
   const look = {
     neutral: 'border-line-strong bg-surface-2 text-gray-800',
@@ -409,13 +586,22 @@ export function Tag({
     success: 'border-transparent bg-success-soft text-success',
     danger: 'border-danger-line bg-danger-soft text-danger',
   }[tone]
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${look}`}
-    >
+  const shape = `inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${look}`
+  const content = (
+    <>
       {icon && <Icon icon={icon} className="size-3.5" />}
       {children}
-    </span>
+    </>
+  )
+  if (onClick === undefined) return <span className={shape}>{content}</span>
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${shape} min-h-6 cursor-pointer text-left hover:underline hover:underline-offset-2`}
+    >
+      {content}
+    </button>
   )
 }
 
@@ -429,9 +615,30 @@ export interface Column<T> {
   hideLabel?: boolean
 }
 
+/** Below Tailwind's `sm` (640 px), where ResponsiveTable shows stacked cards. */
+const NARROW_QUERY = '(max-width: 639.98px)'
+
+function subscribeNarrow(onChange: () => void): () => void {
+  const query = window.matchMedia(NARROW_QUERY)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+
+/** True on a phone-width viewport; false when rendered outside a browser. */
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  )
+}
+
 /**
  * A table from 640 px up; stacked label:value cards below (principle 9), so the page never scrolls
  * sideways. `details` adds a per-row toggle ("Details" by default) for level-2 fields (principle 2).
+ * Both layouts share one set of open rows, and an open row's details mount only in the layout on
+ * screen, so a panel that fetches or holds state exists once. Pass `open` and `onOpenChange` to
+ * control which rows are open from outside (a control elsewhere on the row that opens it).
  */
 export function ResponsiveTable<T>({
   caption,
@@ -440,6 +647,8 @@ export function ResponsiveTable<T>({
   rowKey,
   details,
   detailsLabel = 'Details',
+  open: openRows,
+  onOpenChange,
 }: {
   caption: string
   columns: Column<T>[]
@@ -447,15 +656,24 @@ export function ResponsiveTable<T>({
   rowKey: (row: T) => string
   details?: (row: T) => ReactNode
   detailsLabel?: string
+  /** Controlled: the keys of the open rows; pair with onOpenChange. */
+  open?: ReadonlySet<string>
+  onOpenChange?: (key: string, open: boolean) => void
 }) {
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
-  function toggle(key: string) {
-    setOpen((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
+  const [ownOpen, setOwnOpen] = useState<ReadonlySet<string>>(new Set())
+  const open = openRows ?? ownOpen
+  const narrow = useNarrow()
+  function setRow(key: string, isOpen: boolean) {
+    if (open.has(key) === isOpen) return
+    if (onOpenChange) onOpenChange(key, isOpen)
+    if (openRows === undefined) {
+      setOwnOpen((prev) => {
+        const next = new Set(prev)
+        if (isOpen) next.add(key)
+        else next.delete(key)
+        return next
+      })
+    }
   }
   const span = columns.length + (details ? 1 : 0)
   return (
@@ -503,7 +721,7 @@ export function ResponsiveTable<T>({
                           type="button"
                           aria-expanded={isOpen}
                           aria-controls={panelId}
-                          onClick={() => toggle(key)}
+                          onClick={() => setRow(key, !isOpen)}
                           className="inline-flex min-h-6 items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium text-accent hover:text-accent-strong hover:underline hover:underline-offset-4"
                         >
                           <Chevron open={isOpen} />
@@ -512,7 +730,7 @@ export function ResponsiveTable<T>({
                       </td>
                     )}
                   </tr>
-                  {details && isOpen && (
+                  {details && isOpen && !narrow && (
                     <tr id={panelId} className="border-b border-line bg-surface-2">
                       <td colSpan={span} className="px-4 py-3">
                         {details(row)}
@@ -544,8 +762,13 @@ export function ResponsiveTable<T>({
               )}
             </dl>
             {details && (
-              <Disclosure label={detailsLabel} className="mt-2">
-                {details(row)}
+              <Disclosure
+                label={detailsLabel}
+                className="mt-2"
+                open={open.has(rowKey(row))}
+                onOpenChange={(isOpen) => setRow(rowKey(row), isOpen)}
+              >
+                {open.has(rowKey(row)) && narrow && details(row)}
               </Disclosure>
             )}
           </li>

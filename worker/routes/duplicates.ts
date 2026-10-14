@@ -10,6 +10,7 @@ import { ApiError } from '../auth/middleware'
 import type { AppEnv } from '../env'
 import type { SubscriberStatus } from '../ingest/quarantine'
 import {
+  AUTO_MIN_SCORE,
   type DedupeReader,
   type DedupeResult,
   REVIEW_MIN_SCORE,
@@ -98,18 +99,46 @@ function pairOut(pair: ScoredPair, decision: Decision | null): DuplicatePairOut 
   }
 }
 
+interface Shown {
+  result: DedupeResult
+  /** The pairs a person sees: the review and auto bands (score ≥ REVIEW_MIN_SCORE), best first. */
+  shown: ScoredPair[]
+  decided: Map<string, Decision>
+  /** Shown pairs with no decision yet, over all of them, not just the first 50 (09 D-62, D-65). */
+  toReview: number
+}
+
+/**
+ * The one home of which pairs are shown and how many still need a decision. GET /api/duplicates and
+ * the possible_duplicates check of GET /api/sources both read it, so the band filter exists once.
+ */
+async function loadShown(db: D1Database): Promise<Shown> {
+  const [result, decided] = await Promise.all([scoreAll(db), decisions(db)])
+  const shown = result.pairs.filter((p) => p.score >= REVIEW_MIN_SCORE)
+  return { result, shown, decided, toReview: shown.filter((p) => !decided.has(p.pair_id)).length }
+}
+
+/**
+ * The possible_duplicates check of GET /api/sources (09 D-65): GET /api/duplicates' `to_review`,
+ * from the same loadShown() (no second scorer, no second band filter).
+ */
+export async function duplicatesToReview(db: D1Database): Promise<number> {
+  return (await loadShown(db)).toReview
+}
+
 /** Mounted at /api by worker/index.ts, behind requireSession. */
 export const duplicateRoutes = new Hono<AppEnv>()
 
 duplicateRoutes.get('/duplicates', async (c) => {
-  const [result, decided] = await Promise.all([scoreAll(c.env.DB), decisions(c.env.DB)])
-  const shown = result.pairs.filter((p) => p.score >= REVIEW_MIN_SCORE)
+  const { result, shown, decided, toReview } = await loadShown(c.env.DB)
   return c.json({
     candidates: result.candidates,
-    // 06's "N to review": shown pairs (review or auto band) with no decision yet, over all of them, not just the first 50.
-    to_review: shown.filter((p) => !decided.has(p.pair_id)).length,
+    to_review: toReview,
     review: shown.slice(0, DUPLICATES_MAX_ROWS).map((p) => pairOut(p, decided.get(p.pair_id) ?? null)),
     hidden_below_review: result.pairs.length - shown.length,
+    // The band edges the Overview footer explains (09 D-62, D-68): sent with the pairs so the page
+    // never bundles its own copy of the numbers that decided which pairs it shows.
+    bands: { auto_min: AUTO_MIN_SCORE, review_min: REVIEW_MIN_SCORE },
     weights: result.weights,
     chance: result.chance,
   })
@@ -153,9 +182,8 @@ duplicateRoutes.post('/duplicates/:pair_id/review', async (c) => {
       'No possible-duplicate pair has that id. Refresh the page to see the current list.',
     )
   }
-  // Wall clock: when the reviewer pressed the button (01 §duplicate_reviews: decided_at, UTC), a
-  // record of an action like received_at. No date rule reads it, so it is not business logic and
-  // TODAY does not apply; 02 §Time's wall-clock allow-list does not yet name it.
+  // Wall clock: when the reviewer pressed the button (01 §duplicate_reviews: decided_at, UTC). It is
+  // on 02 §Time's wall-clock allow-list (`duplicate_reviews.decided_at`, 09 D-62); no date rule reads it.
   const decidedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   await c.env.DB.prepare(
     `INSERT INTO duplicate_reviews (pair_id, pkey_a, pkey_b, verdict, score, decided_at)

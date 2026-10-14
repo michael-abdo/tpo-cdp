@@ -79,9 +79,17 @@ export function daysSinceOpen(lastOpenDate: string | null): number | null {
   return Math.max(0, daysBetween(lastOpenDate, TODAY))
 }
 
-/** `(last_open_date ?? signup_date) + 30 days`. */
+/**
+ * The cold window in days (02 §Derived, 09 D-10, D-68): the one home of the number behind
+ * `cold_since`, `cold`, `went_cold_in`, the outer window of `going_cold_risk` and every sentence
+ * that explains them. Nothing else in the repo writes this number for the cold rule (08 one-home
+ * scan in test/one-home.test.ts).
+ */
+export const COLD_DAYS = 30
+
+/** `(last_open_date ?? signup_date) + COLD_DAYS days`. */
 export function coldSince(lastOpenDate: string | null, signupDate: string): string {
-  return addDays(lastOpenDate ?? signupDate, 30)
+  return addDays(lastOpenDate ?? signupDate, COLD_DAYS)
 }
 
 /** `cold_since <= TODAY` (09 D-10). */
@@ -113,14 +121,14 @@ export function isNewSubscriber(signupDate: string): boolean {
 }
 
 /**
- * Opened in the last 30 days but not in the last 14, or `cold_since` within the next 7 days
- * (09 D-31, parked with its panel).
+ * Opened in the last COLD_DAYS days but not in the last 14, or `cold_since` within the next 7 days
+ * (09 D-31, D-68: the outer window is the cold window).
  */
 export function goingColdRisk(lastOpenDate: string | null, coldSinceDate: string): boolean {
-  const openedInLast30 = lastOpenDate !== null && inWindow(lastOpenDate, lastNDays(30))
+  const openedInColdWindow = lastOpenDate !== null && inWindow(lastOpenDate, lastNDays(COLD_DAYS))
   const openedInLast14 = lastOpenDate !== null && inWindow(lastOpenDate, lastNDays(14))
   const coldWithin7 = inWindow(coldSinceDate, { from: addDays(TODAY, 1), to: addDays(TODAY, 7) })
-  return (openedInLast30 && !openedInLast14) || coldWithin7
+  return (openedInColdWindow && !openedInLast14) || coldWithin7
 }
 
 export interface EngagementInput {
@@ -174,13 +182,13 @@ export const DEFINITIONS = {
   },
   cold_since: {
     name: 'cold_since',
-    doc: 'The day a subscriber becomes cold: 30 days after their last open, or 30 days after signup if they never opened.',
-    formula: '(last_open_date ?? signup_date) + 30 days',
+    doc: `The day a subscriber becomes cold: ${COLD_DAYS} days after their last open, or ${COLD_DAYS} days after signup if they never opened.`,
+    formula: `(last_open_date ?? signup_date) + ${COLD_DAYS} days`,
     fn: coldSince,
   },
   cold: {
     name: 'cold',
-    doc: 'True when the cold date has arrived: no open in 30 or more days, or never opened and signed up 30 or more days ago.',
+    doc: `True when the cold date has arrived: no open in ${COLD_DAYS} or more days, or never opened and signed up ${COLD_DAYS} or more days ago.`,
     formula: 'cold_since <= TODAY',
     sql: 'cold_since <= :today',
     fn: isCold,
@@ -205,8 +213,8 @@ export const DEFINITIONS = {
   },
   going_cold_risk: {
     name: 'going_cold_risk',
-    doc: 'Opened an email in the last 30 days but not in the last 14, or will become cold within the next 7 days.',
-    formula: 'opened in the last 30 days but not in the last 14, or cold_since within the next 7 days',
+    doc: `Opened an email in the last ${COLD_DAYS} days but not in the last 14, or will become cold within the next 7 days.`,
+    formula: `opened in the last ${COLD_DAYS} days but not in the last 14, or cold_since within the next 7 days`,
     fn: goingColdRisk,
   },
   engagement_score: {

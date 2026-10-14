@@ -51,7 +51,7 @@ beforeAll(async () => {
   cookie = await loginCookie()
   const { results } = await env.DB.prepare(
     `SELECT p.pkey AS pkey, s.email_norm AS email, s.signup_date, s.source, s.status
-     FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm`,
+     FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm AND p.kind = 'subscriber'`,
   ).all<DedupeReader>()
   readers = results
 })
@@ -112,6 +112,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       'to_review',
       'review',
       'hidden_below_review',
+      'bands',
       'weights',
       'chance',
     ])
@@ -120,11 +121,14 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
     expect(threeWay).toHaveLength(16)
     expect(body.review.map(emailsOf).sort()).toEqual(threeWay.map(([a, b]) => emailsOf({ a, b })).sort())
     expect(body.to_review).toBe(16)
-    expect(body.hidden_below_review).toBe(1704 - 16)
+    expect(body.hidden_below_review).toBe(1688)
+    // The footer's band edges come from here, the scorer's own constants (09 D-62, D-68).
+    expect(body.bands).toEqual({ auto_min: AUTO_MIN_SCORE, review_min: REVIEW_MIN_SCORE })
+    expect(body.bands).toEqual({ auto_min: 90, review_min: 50 })
     for (const pair of body.review) {
       expect(pair.band).toBe('review')
-      expect(pair.score).toBeGreaterThanOrEqual(REVIEW_MIN_SCORE)
-      expect(pair.score).toBeLessThan(AUTO_MIN_SCORE)
+      // 02 Fuzzy duplicates: the 16 three-way pairs each score 76 (review band 50–89, D-62).
+      expect(pair.score).toBe(76)
       expect(pair.decision).toBeNull()
       expect(Object.keys(pair)).toEqual([
         'pair_id',
@@ -140,7 +144,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       expect(pair.reasons.map((r) => r.field)).toEqual([...SCORED_FIELDS])
       expect(pair.reasons.map((r) => r.agrees)).toEqual([true, true, true, false])
       expect(pair.suggestion).toBe(
-        'Could be the same person — the name, email domain, signup week and source match',
+        'Could be the same person — the name, email domain, signup week and acquisition source match',
       )
       expect(pair.pair_id).toBe(await pairId(...(await pkeysOf(pair))))
     }
@@ -154,7 +158,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
     const joy = result.pairs.filter((p) => JOY_HALL.includes(p.a.email) && JOY_HALL.includes(p.b.email))
     expect(joy).toHaveLength(3)
     for (const pair of joy) {
-      expect(pair.score).toBeLessThan(REVIEW_MIN_SCORE)
+      expect(pair.score).toBeLessThan(50)
       expect(pair.band).toBe('hidden')
     }
     // joy.hall830 + joy.hall524 share domain and source but signed up more than 7 days apart.
@@ -162,14 +166,14 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       (p) => p.a.email.endsWith('@protonmail.com') && p.b.email.endsWith('@protonmail.com'),
     )
     expect(close?.reasons.filter((r) => r.agrees).map((r) => r.field)).toEqual(['domain', 'source'])
-    expect(close?.suggestion).toBe('Probably different people — only the name, email domain and source match')
+    expect(close?.suggestion).toBe('Probably different people — only the name, email domain and acquisition source match')
     const body = await duplicates()
     expect(body.review.some((p) => JOY_HALL.includes(p.a.email) || JOY_HALL.includes(p.b.email))).toBe(false)
   })
 
   it('no pair reaches the auto band on the seed', async () => {
     const result = await scoreDuplicates(readers, [])
-    expect(Math.max(...result.pairs.map((p) => p.score))).toBeLessThan(AUTO_MIN_SCORE)
+    expect(Math.max(...result.pairs.map((p) => p.score))).toBeLessThan(90)
     expect(result.pairs.filter((p) => p.band === 'auto')).toEqual([])
   })
 })
@@ -208,6 +212,11 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
       expect(weights[field].disagree, field).toBeCloseTo(Math.log2((1 - m) / (1 - u)), 12)
     }
     expect(weights.shared_device.agreeing).toBe(0)
+    // The m values the README documents (D-62), pinned as literals so they cannot drift unseen.
+    expect(M_PROBABILITIES).toEqual({ domain: 0.8, signup_gap: 0.5, source: 0.8, shared_device: 0.9 })
+    // 02 §Counts: the device disagree weight, and the 16 three-way pairs would score 97 without it.
+    expect(weights.shared_device.disagree).toBeCloseTo(-3.32, 2)
+    expect(scoreFromWeight(weights.domain.agree + weights.signup_gap.agree + weights.source.agree)).toBe(97)
   })
 
   it("a pair's score is the logistic of its summed weights, and each reason carries its own weight", async () => {
@@ -241,11 +250,29 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
     const none = { domain: false, signup_gap: false, source: false, shared_device: false }
     expect(suggestionFor('hidden', none)).toBe('Probably different people — only the name matches')
     expect(suggestionFor('hidden', { ...none, source: true })).toBe(
-      'Probably different people — only the name and source match',
+      'Probably different people — only the name and acquisition source match',
     )
     expect(suggestionFor('auto', { ...none, shared_device: true })).toBe(
       'Very likely the same person — the name and app device match',
     )
+  })
+
+  it('the band edges are D-62\'s: auto ≥ 90, review 50–89, hidden < 50', () => {
+    expect(AUTO_MIN_SCORE).toBe(90)
+    expect(REVIEW_MIN_SCORE).toBe(50)
+    expect(bandOf(100)).toBe('auto')
+    expect(bandOf(90)).toBe('auto')
+    expect(bandOf(89)).toBe('review')
+    expect(bandOf(50)).toBe('review')
+    expect(bandOf(49)).toBe('hidden')
+    expect(bandOf(0)).toBe('hidden')
+  })
+
+  it('a pair id does not depend on the order of its two pkeys (04)', async () => {
+    const [x, y] = await pkeysOf({ a: { email: JOY_HALL[0] }, b: { email: JOY_HALL[1] } })
+    expect(x).not.toBe(y)
+    expect(await pairId(x, y)).toBe(await pairId(y, x))
+    expect(await pairId(x, y)).toMatch(/^dp_[0-9a-f]{16}$/)
   })
 })
 
@@ -376,7 +403,7 @@ describe('T-DUP-2: a shared device from a real signed login stitch is a hard lin
     const top = body.review[0]
     expect(emailsOf(top)).toBe([MARK_A.email, MARK_B.email].sort().join(' + '))
     expect(top.band).toBe('auto')
-    expect(top.score).toBeGreaterThanOrEqual(AUTO_MIN_SCORE)
+    expect(top.score).toBeGreaterThanOrEqual(90)
     expect(top.reasons.map((r) => [r.field, r.agrees])).toEqual([
       ['domain', false],
       ['signup_gap', false],

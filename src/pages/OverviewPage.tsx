@@ -1,138 +1,586 @@
-// / Overview (06 §Overview): four stat tiles and the import report, all from GET /api/overview
-// (04). Every number is the API's; nothing is computed here.
-// Disclosure (06 §UI principles 2): level 1 = the four headline numbers and one sentence;
-// level 2 = "How the data was combined" (rows in → kept · merged · set aside, reasons in words);
-// level 3 = Technical details (raw file names, reason codes, run times in UTC).
-// "Needs review" (09 D-61) is level 1 when a set-aside row can be fixed: one sentence, each row as
-// written (GET /api/quarantine) and the fix; CSV line numbers and reason codes sit in Technical
-// details. Read-only: no edit or delete here (09 D-13).
-// "Possible duplicates" (09 D-62) is level 2, collapsed: "Possible duplicates — N to review", each
-// scored pair side by side with its score bar, reason chips, one-line suggestion and two buttons
-// that record a decision (GET/POST /api/duplicates). Nothing merges; the m/u weights sit in
-// Technical details. Scores, reasons and suggestions are the API's; nothing is scored here.
+// / Overview (06 §Overview, 09 D-63, D-65): where the data comes from, how each load went, and
+// what needs a person. Every number is the API's; nothing is computed here but sums for the header line.
+// Level 1, top to bottom: four headline Metrics (GET /api/overview), each with an InfoTip; the
+// Sources table (GET /api/sources) with its one-line header. Each source's Status cell is chips
+// from its checks (09 D-65), problems first ("2 rows to fix", "16 possible duplicates"), else OK,
+// Live or Not loaded yet, each with an InfoTip; a chip is a button that opens the row on its tab.
+// Level 2: an open row is a tab set (WAI-ARIA tabs) — History (CSV: its runs, read · kept · merged
+// · rejected, and "View rejected rows" → GET /api/quarantine?file=; webhook: events received),
+// then one tab per check the source declares: Rows to fix (09 D-61, the rows as written and the
+// fix) and Possible duplicates (09 D-62, each scored pair side by side with its score bar, reason
+// chips, suggestion and two buttons that record a decision via GET/POST /api/duplicates; a decision
+// re-reads GET /api/sources so the chip count follows). Nothing merges. Level 3: Technical details
+// (raw ids, reason codes, CSV lines, UTC to the second, the m/u weights).
+// Source names, kinds, units and checks come only from the API, which reads shared/sources.ts; term
+// words and explanations only from shared/glossary.ts (or DEFINITIONS). No per-file sentence lives
+// here (08 T-SRC-2 scans this file). Read-only: no edit or delete here (09 D-13).
 
-import { Check, Smartphone, UserCheck, Users, UsersRound, X } from 'lucide-react'
-import { useState } from 'react'
+import { Check, Copy, Smartphone, UserCheck, Users, X } from 'lucide-react'
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
-import { errorMessage, postJson } from '../api'
+import { TODAY } from '../../shared/config'
+import { CHECK_KINDS, type CheckKind, LOADS_BY_LABEL } from '../../shared/sources'
+import { countOf, GLOSSARY, type GlossaryKey } from '../../shared/glossary'
+import { errorMessage, getJson, postJson } from '../api'
 import {
   Announcer,
   Button,
-  Disclosure,
   EmptyState,
   ErrorLine,
   Field,
   ICONS,
   Icon,
+  InfoTip,
   Loading,
+  Metric,
   PageHeader,
   ResponsiveTable,
   Section,
   StatGrid,
-  StatTile,
   Tag,
   TechnicalDetails,
+  type LucideIcon,
 } from '../components'
-import { humanDate, humanDateTime, utc } from '../format'
+import { capitalized, humanDate, humanDateTime, utc } from '../format'
 import { sourceLabel } from '../labels'
-import { asWritten, csvName, needsReview, reviewGroups } from '../needs-review'
-import type { DuplicateDecision, DuplicateReview, Duplicates, Overview, QuarantineList } from '../types'
+import { asWritten, csvName, needsReview, type QuarantinedRow, reviewGroups } from '../needs-review'
+import type {
+  CsvSource,
+  DuplicateDecision,
+  DuplicateReview,
+  Duplicates,
+  Overview,
+  QuarantineList,
+  SourceRun,
+  Sources,
+  WebhookSource,
+} from '../types'
 import { useGet } from '../useGet'
-import { AUTO_MIN_SCORE, REVIEW_MIN_SCORE } from '../../worker/dedupe/score'
 
 const TITLE = 'Overview'
-const PURPOSE = 'The newsletter list, website visits and app users, combined into one profile per reader.'
-
-/** Plain names for the three source files (principle 4); an unknown file shows its own name. */
-const FILES: Record<string, { name: string; unit: string }> = {
-  subscribers: { name: 'Newsletter list', unit: 'subscribers' },
-  web_events: { name: 'Website visits', unit: 'page views' },
-  app_users: { name: 'App users', unit: 'app users' },
-}
-
-/** Plain words for the quarantine reasons (worker/ingest/quarantine.ts): [one, many]. */
-const REASONS: Record<string, [string, string]> = {
-  blank_row: ['blank row', 'blank rows'],
-  invalid_email: ['invalid email', 'invalid emails'],
-  missing_field: ['row missing a required field', 'rows missing a required field'],
-  bad_date: ['row with an unreadable date', 'rows with an unreadable date'],
-}
+const PURPOSE = 'Where the data comes from, how each load went, and what needs a person.'
 
 function n(value: number): string {
   return value.toLocaleString('en-US')
 }
 
-function reasonText(code: string, count: number): string {
-  const words = REASONS[code] ?? [code.replaceAll('_', ' '), code.replaceAll('_', ' ')]
-  return `${n(count)} ${count === 1 ? words[0] : words[1]}`
+/** "1 row" / "2 rows". */
+const rowCount = (count: number) => `${n(count)} ${count === 1 ? 'row' : 'rows'}`
+
+/** The four headline numbers (06 §Overview 1): the glossary names and explains each. */
+const HEADLINE: { term: GlossaryKey; icon: LucideIcon; value: (o: Overview) => number }[] = [
+  { term: 'subscribers_signed_up', icon: Users, value: (o) => o.subscribers },
+  { term: 'subscribers_active', icon: UserCheck, value: (o) => o.active },
+  { term: 'app_accounts', icon: Smartphone, value: (o) => o.app_users },
+  { term: 'events_received', icon: ICONS.events, value: (o) => o.events_received },
+]
+
+type AnySource = Sources['sources'][number]
+
+/** Each check kind some source declares, with its count summed over the sources (the header line, 06 §Overview 2). */
+function checkTotals(sources: readonly AnySource[]): { kind: CheckKind; count: number }[] {
+  return CHECK_KINDS.flatMap((kind) => {
+    const found = sources.flatMap((s) => s.checks.filter((c) => c.kind === kind))
+    return found.length === 0 ? [] : [{ kind, count: found.reduce((t, c) => t + c.count, 0) }]
+  })
 }
 
-function ImportLine({ run }: { run: Overview['import_runs'][number] }) {
-  const file = FILES[run.file] ?? { name: run.file, unit: 'records' }
+/** An open row's tabs: History, then one per check the source declares (09 D-65). */
+type TabKey = 'history' | CheckKind
+
+function tabsOf(source: AnySource): TabKey[] {
+  return ['history', ...source.checks.map((c) => c.kind)]
+}
+
+/** "History" / "Rows to fix" / "Possible duplicates": a check's tab says its glossary words. */
+function tabLabel(tab: TabKey): string {
+  return tab === 'history' ? 'History' : capitalized(GLOSSARY[tab].many)
+}
+
+/** How each check's chip looks when it counts something (problems first, 06 §Overview 2). */
+const CHECK_CHIP: Record<CheckKind, { icon: LucideIcon; tone: 'danger' | 'neutral' }> = {
+  rows_to_fix: { icon: ICONS.warning, tone: 'danger' },
+  possible_duplicates: { icon: Copy, tone: 'neutral' },
+}
+
+/** Newest last_sync over the CSV sources; null when nothing was loaded. */
+function lastSync(sources: readonly AnySource[]): string | null {
+  return sources.reduce<string | null>(
+    (latest, s) => (s.kind === 'csv' && s.last_sync !== null && (latest === null || s.last_sync > latest) ? s.last_sync : latest),
+    null,
+  )
+}
+
+/**
+ * A short run of facts separated by visible dots. The dots are aria-hidden (screen readers hear the
+ * list items) but real text, so copied text reads "4 sources · last sync …" with no hidden words.
+ */
+function FactLine({ items, label }: { items: ReactNode[]; label: string }) {
   return (
-    <li>
-      <span className="font-medium">{file.name}:</span> {n(run.rows_in)} rows in{' '}
-      <span aria-hidden="true">→</span>
-      <span className="sr-only">became</span> {n(run.rows_out)} {file.unit}
-      {run.merged > 0 && (
-        <>
-          <span aria-hidden="true"> · </span>
-          <span className="sr-only">, </span>
-          {n(run.merged)} duplicates merged
-        </>
-      )}
-      {run.quarantined > 0 && (
-        <>
-          <span aria-hidden="true"> · </span>
-          <span className="sr-only">, </span>
-          {n(run.quarantined)} set aside
-        </>
-      )}
+    <ul aria-label={label} className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-ink-muted">
+      {items.map((item, i) => (
+        <li key={i} className="inline-flex items-center gap-1">
+          {i > 0 && <span aria-hidden="true">· </span>}
+          {item}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** One status chip and its InfoTip; the chip is a button that opens the row on `tab`. */
+function Chip({
+  term,
+  tone,
+  icon,
+  onOpen,
+  children,
+}: {
+  term: GlossaryKey
+  tone: 'neutral' | 'accent' | 'success' | 'danger'
+  icon: LucideIcon
+  onOpen: () => void
+  children: ReactNode
+}) {
+  return (
+    <li className="inline-flex items-center gap-0.5">
+      <Tag tone={tone} icon={icon} onClick={onOpen}>
+        {children}
+      </Tag>
+      <InfoTip term={term} />
     </li>
   )
 }
 
-/** The set-aside rows a person can fix, each as written in its file, and what to do about them. */
-function NeedsReview() {
-  const state = useGet<QuarantineList>('/api/quarantine')
-  if (state === null || state.status === 'loading') return <Loading label="Loading the rows to review…" />
-  if (state.status === 'error')
-    return <ErrorLine message={state.message} next="Refresh the page to try again." />
-  const groups = reviewGroups(state.data.rows)
-  if (groups.length === 0) return null
+/** The Status cell (09 D-65): a chip per check that counts something, problems first; else OK / Live / Not loaded yet. */
+function StatusChips({ source, onOpen }: { source: AnySource; onOpen: (tab: TabKey) => void }) {
+  const problems = source.checks.filter((c) => c.count > 0)
   return (
-    <Section title="Needs review" icon={ICONS.error}>
-      {groups.map((group) => (
-        <div key={group.key} className="space-y-2">
-          <p className="text-sm font-medium text-ink">{group.sentence}</p>
-          <ResponsiveTable
-            caption={group.sentence}
-            columns={group.columns.map((col) => ({
-              header: col.label,
-              cell: (row: QuarantineList['rows'][number]) => (
-                <span className="break-all whitespace-pre-wrap">{asWritten(row.fields[col.name])}</span>
-              ),
-            }))}
-            rows={group.rows}
-            rowKey={(row) => `${row.file}-${row.line_no}`}
-          />
-          <p className="flex items-start gap-2 text-sm text-ink-muted">
-            <Icon icon={ICONS.next} className="mt-0.5 size-4" />
-            <span>{group.fix}</span>
+    <ul aria-label={`Status of ${source.name}`} className="flex flex-wrap items-center gap-1">
+      {source.kind === 'webhook' ? (
+        <Chip term="live" tone="accent" icon={ICONS.live} onOpen={() => onOpen('history')}>
+          {GLOSSARY.live.term}
+        </Chip>
+      ) : source.status === 'not_loaded' ? (
+        <Chip term="not_loaded" tone="neutral" icon={ICONS.empty} onOpen={() => onOpen('history')}>
+          {GLOSSARY.not_loaded.term}
+        </Chip>
+      ) : problems.length === 0 ? (
+        <Chip term="ok" tone="success" icon={ICONS.success} onOpen={() => onOpen('history')}>
+          {GLOSSARY.ok.term}
+        </Chip>
+      ) : (
+        problems.map((c) => (
+          <Chip key={c.kind} term={c.kind} {...CHECK_CHIP[c.kind]} onOpen={() => onOpen(c.kind)}>
+            {countOf(c.kind, c.count)}
+          </Chip>
+        ))
+      )}
+    </ul>
+  )
+}
+
+/** One label and number with its InfoTip, inside a run's <dl>. */
+function RunFact({ term, value }: { term: GlossaryKey; value: number }) {
+  return (
+    <div>
+      <dt className="flex items-center gap-0.5 text-xs text-ink-muted">
+        {GLOSSARY[term].term}
+        <InfoTip term={term} />
+      </dt>
+      <dd className="font-medium tabular-nums text-ink">{n(value)}</dd>
+    </div>
+  )
+}
+
+/** The fixable rows of a list, grouped by file and reason, each as written, with the fix (06, 09 D-61). */
+function FixableGroups({ list }: { list: readonly QuarantinedRow[] }) {
+  return reviewGroups(list).map((group) => (
+    <div key={group.key} className="space-y-2">
+      <p className="text-sm font-medium text-ink">{group.sentence}</p>
+      <ResponsiveTable
+        caption={group.sentence}
+        columns={group.columns.map((col) => ({
+          header: col.label,
+          cell: (row: QuarantinedRow) => (
+            <span className="break-all whitespace-pre-wrap">{asWritten(row.fields[col.name])}</span>
+          ),
+        }))}
+        rows={group.rows}
+        rowKey={(row) => `${row.file}-${row.line_no}`}
+      />
+      <p className="flex items-start gap-2 text-sm text-ink-muted">
+        <Icon icon={ICONS.next} className="mt-0.5 size-4" />
+        <span>{group.fix}</span>
+      </p>
+    </div>
+  ))
+}
+
+/** CSV line and reason code per row (level 3, principle 2). */
+function RowLines({ list }: { list: readonly QuarantinedRow[] }) {
+  return (
+    <TechnicalDetails>
+      <ul>
+        {list.map((row) => (
+          <li key={`${row.file}-${row.line_no}`}>
+            {csvName(row.file)} line {row.line_no} · {row.reason}
+          </li>
+        ))}
+      </ul>
+    </TechnicalDetails>
+  )
+}
+
+/** A run's rejected rows (06 §Overview): the count per reason in glossary words, fixable rows as written. */
+function RejectedRows({ sourceId, id }: { sourceId: string; id: string }) {
+  const state = useGet<QuarantineList>(`/api/quarantine?file=${encodeURIComponent(sourceId)}`)
+  if (state === null || state.status === 'loading') return <Loading label="Loading the rejected rows…" />
+  if (state.status === 'error') return <ErrorLine message={state.message} next="Try again." />
+  const list = state.data.rows
+  const perReason = new Map<QuarantinedRow['reason'], number>()
+  for (const row of list) perReason.set(row.reason, (perReason.get(row.reason) ?? 0) + 1)
+  const blank = perReason.get('blank_row') ?? 0
+  return (
+    <div id={id} className="space-y-3 rounded-lg border border-line bg-surface p-3">
+      <p className="text-sm text-ink">
+        {rowCount(list.length)}: {[...perReason].map(([reason, count]) => countOf(reason, count)).join(', ')}.
+      </p>
+      {blank > 0 && (
+        <p className="flex items-start gap-2 text-sm text-ink-muted">
+          <Icon icon={ICONS.empty} className="mt-0.5 size-4" />
+          <span>
+            {countOf('blank_row', blank)}: {GLOSSARY.blank_row.text}
+          </span>
+        </p>
+      )}
+      <FixableGroups list={list} />
+      <RowLines list={list} />
+    </div>
+  )
+}
+
+function RunCard({ source, run }: { source: CsvSource; run: SourceRun }) {
+  const [open, setOpen] = useState(false)
+  const panelId = `rejected-${source.id}-${run.id}`
+  return (
+    <li className="space-y-2 rounded-lg border border-line bg-surface-2 p-3">
+      <p className="text-sm font-medium text-ink">{humanDateTime(run.ran_at)}</p>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <RunFact term="rows_read" value={run.rows_in} />
+        <RunFact term="kept" value={run.rows_out} />
+        <RunFact term="merged" value={run.merged} />
+        <RunFact term="rejected" value={run.rejected} />
+      </dl>
+      {run.rejected > 0 && (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((o) => !o)}
+          className="inline-flex min-h-6 items-center gap-1 rounded-md py-0.5 text-sm font-medium text-accent hover:text-accent-strong hover:underline hover:underline-offset-4"
+        >
+          <Icon icon={ICONS.preview} />
+          {open ? 'Hide rejected rows' : 'View rejected rows'}
+        </button>
+      )}
+      {open ? <RejectedRows sourceId={source.id} id={panelId} /> : <span id={panelId} hidden />}
+    </li>
+  )
+}
+
+/** Level 2 for one source: a CSV's run history, or the webhook's events received (06 §Overview 2). */
+function SourceHistory({ source }: { source: AnySource }) {
+  if (source.kind === 'webhook') return <WebhookHistory source={source} />
+  return (
+    <div className="space-y-2">
+      {source.runs.length === 0 ? (
+        <p className="text-sm text-ink-muted">No sync has run yet.</p>
+      ) : (
+        <ul aria-label={`${source.name}: syncs, newest first`} className="space-y-2">
+          {source.runs.map((run) => (
+            <RunCard key={run.id} source={source} run={run} />
+          ))}
+        </ul>
+      )}
+      <TechnicalDetails>
+        <p>
+          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id} · loads_by: {source.loads_by}
+        </p>
+        {source.runs.map((run) => (
+          <p key={run.id}>
+            import_runs.id {run.id} · ran_at {utc(run.ran_at)} · needs_review {run.needs_review}
           </p>
+        ))}
+      </TechnicalDetails>
+    </div>
+  )
+}
+
+function WebhookHistory({ source }: { source: WebhookSource }) {
+  return (
+    <div className="space-y-2">
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div>
+          <dt className="text-xs text-ink-muted">Received</dt>
+          <dd className="font-medium tabular-nums text-ink">{n(source.records)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-ink-muted">Dated today ({humanDate(TODAY)})</dt>
+          <dd className="font-medium tabular-nums text-ink">{n(source.today)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-ink-muted">Last received</dt>
+          <dd className="font-medium text-ink">
+            {source.last_received === null ? 'None yet' : humanDateTime(source.last_received)}
+          </dd>
+        </div>
+      </dl>
+      <p className="text-sm">
+        <Link
+          to="/events"
+          className="inline-flex items-center gap-1.5 font-medium text-accent-strong underline underline-offset-4 hover:text-ink"
+        >
+          <Icon icon={ICONS.events} />
+          See the latest {source.unit}
+        </Link>
+      </p>
+      <TechnicalDetails>
+        <p>
+          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id} · loads_by: {source.loads_by} · endpoint: POST /webhooks/app
+          {source.last_received !== null && <> · last received_at {utc(source.last_received)}</>}
+        </p>
+      </TechnicalDetails>
+    </div>
+  )
+}
+
+/** The rows a person can fix in one source's file, each as written, and what to do (09 D-61). */
+function RowsToFix({ source }: { source: AnySource }) {
+  const state = useGet<QuarantineList>(`/api/quarantine?file=${encodeURIComponent(source.id)}`)
+  if (state === null || state.status === 'loading') return <Loading label="Loading the rows to fix…" />
+  if (state.status === 'error') return <ErrorLine message={state.message} next="Try again." />
+  const fixable = state.data.rows.filter((row) => needsReview(row.reason))
+  if (fixable.length === 0) return <EmptyState icon={ICONS.success}>Nothing to fix.</EmptyState>
+  return (
+    <div className="space-y-3">
+      <FixableGroups list={fixable} />
+      <RowLines list={fixable} />
+    </div>
+  )
+}
+
+/**
+ * An open row (level 2): the tabs History · Rows to fix · Possible duplicates, only those the
+ * source has, as the WAI-ARIA tabs pattern (arrow keys, Home and End move and select; one tab in
+ * the Tab order). Only the selected panel's content is mounted. `takeFocus` moves focus to the
+ * selected tab once, after a status chip opened the row.
+ */
+function SourceTabs({
+  source,
+  tab,
+  onSelect,
+  takeFocus,
+  onFocusTaken,
+  onReviewed,
+}: {
+  source: AnySource
+  tab: TabKey
+  onSelect: (tab: TabKey) => void
+  takeFocus: boolean
+  onFocusTaken: () => void
+  onReviewed: () => void
+}) {
+  const base = useId()
+  const tabs = tabsOf(source)
+  const selected = tabs.includes(tab) ? tab : 'history'
+  const refs = useRef(new Map<TabKey, HTMLButtonElement>())
+
+  useEffect(() => {
+    if (!takeFocus) return
+    refs.current.get(selected)?.focus()
+    onFocusTaken()
+  }, [takeFocus, selected, onFocusTaken])
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const i = tabs.indexOf(selected)
+    const next =
+      e.key === 'ArrowRight'
+        ? tabs[(i + 1) % tabs.length]
+        : e.key === 'ArrowLeft'
+          ? tabs[(i - 1 + tabs.length) % tabs.length]
+          : e.key === 'Home'
+            ? tabs[0]
+            : e.key === 'End'
+              ? tabs[tabs.length - 1]
+              : undefined
+    if (next === undefined) return
+    e.preventDefault()
+    onSelect(next)
+    refs.current.get(next)?.focus()
+  }
+
+  return (
+    <div className="space-y-3">
+      <div
+        role="tablist"
+        aria-label={`${source.name}: details`}
+        onKeyDown={onKeyDown}
+        className="flex flex-wrap border-b border-line sm:gap-1"
+      >
+        {tabs.map((t) => {
+          const isSelected = t === selected
+          return (
+            <button
+              key={t}
+              ref={(el) => {
+                if (el === null) refs.current.delete(t)
+                else refs.current.set(t, el)
+              }}
+              type="button"
+              role="tab"
+              id={`${base}-tab-${t}`}
+              aria-selected={isSelected}
+              aria-controls={`${base}-panel-${t}`}
+              tabIndex={isSelected ? 0 : -1}
+              onClick={() => onSelect(t)}
+              className={`-mb-px inline-flex min-h-9 items-center border-b-2 px-2 py-1.5 text-sm whitespace-nowrap sm:px-3 font-medium transition-colors duration-150 motion-reduce:transition-none ${
+                isSelected
+                  ? 'border-accent text-accent-strong'
+                  : 'border-transparent text-ink-muted hover:border-line-strong hover:text-ink'
+              }`}
+            >
+              {tabLabel(t)}
+            </button>
+          )
+        })}
+      </div>
+      {tabs.map((t) => (
+        <div
+          key={t}
+          role="tabpanel"
+          id={`${base}-panel-${t}`}
+          aria-labelledby={`${base}-tab-${t}`}
+          tabIndex={0}
+          hidden={t !== selected}
+          className="rounded-md"
+        >
+          {t !== selected ? null : t === 'history' ? (
+            <SourceHistory source={source} />
+          ) : t === 'rows_to_fix' ? (
+            <RowsToFix source={source} />
+          ) : (
+            <PossibleDuplicates onReviewed={onReviewed} />
+          )}
         </div>
       ))}
-      <TechnicalDetails>
-        <ul>
-          {groups.flatMap((group) =>
-            group.rows.map((row) => (
-              <li key={`${row.file}-${row.line_no}`}>
-                {csvName(row.file)} line {row.line_no} · {row.reason}
-              </li>
-            )),
-          )}
-        </ul>
-      </TechnicalDetails>
+    </div>
+  )
+}
+
+/** The Sources table (06 §Overview 2), rendered only from GET /api/sources. */
+function SourcesTable({
+  sources,
+  onReviewed,
+  refreshError,
+}: {
+  sources: AnySource[]
+  onReviewed: () => void
+  refreshError: string | null
+}) {
+  // Open rows and the tab each shows; a chip opens its row on its own tab (09 D-65).
+  const [openTabs, setOpenTabs] = useState<ReadonlyMap<string, TabKey>>(new Map())
+  const [focusRow, setFocusRow] = useState<string | null>(null)
+  const openKeys = useMemo(() => new Set(openTabs.keys()), [openTabs])
+  const latest = lastSync(sources)
+
+  function show(id: string, tab: TabKey | null) {
+    setOpenTabs((prev) => {
+      const next = new Map(prev)
+      if (tab === null) next.delete(id)
+      else next.set(id, tab)
+      return next
+    })
+  }
+  function openOn(id: string, tab: TabKey) {
+    show(id, tab)
+    setFocusRow(id)
+  }
+  const focusTaken = () => setFocusRow(null)
+
+  return (
+    <Section
+      title="Sources"
+      icon={ICONS.history}
+      summary={
+        <FactLine
+          label="Sources summary"
+          items={[
+            <>
+              {n(sources.length)} {sources.length === 1 ? 'source' : 'sources'}
+              <InfoTip term="source" />
+            </>,
+            <>
+              {latest === null ? 'no sync yet' : `last sync ${humanDate(latest)}`}
+              <InfoTip term="sync" />
+            </>,
+            ...checkTotals(sources).map((t) => countOf(t.kind, t.count)),
+          ]}
+        />
+      }
+    >
+      <ResponsiveTable
+        caption="Sources"
+        columns={[
+          { header: 'Source', cell: (s: AnySource) => <span className="font-medium text-ink">{s.name}</span> },
+          {
+            header: 'Type',
+            cell: (s: AnySource) => (
+              <span className="inline-flex items-center gap-0.5">
+                {GLOSSARY[s.kind].term}
+                <InfoTip term={s.kind} />
+              </span>
+            ),
+          },
+          {
+            header: 'Last sync',
+            cell: (s: AnySource) => {
+              const at = s.kind === 'csv' ? s.last_sync : s.last_received
+              return at === null ? 'None yet' : humanDate(at)
+            },
+          },
+          {
+            header: 'Status',
+            cell: (s: AnySource) => <StatusChips source={s} onOpen={(tab) => openOn(s.id, tab)} />,
+          },
+          {
+            header: 'Records',
+            numeric: true,
+            cell: (s: AnySource) => (
+              <>
+                {n(s.records)} {s.records === 1 ? s.unit_one : s.unit}
+              </>
+            ),
+          },
+        ]}
+        rows={sources}
+        rowKey={(s) => s.id}
+        open={openKeys}
+        onOpenChange={(id, isOpen) => show(id, isOpen ? 'history' : null)}
+        details={(s) => (
+          <SourceTabs
+            source={s}
+            tab={openTabs.get(s.id) ?? 'history'}
+            onSelect={(tab) => show(s.id, tab)}
+            takeFocus={focusRow === s.id}
+            onFocusTaken={focusTaken}
+            onReviewed={onReviewed}
+          />
+        )}
+      />
+      {refreshError !== null && (
+        <ErrorLine message={refreshError} next="The counts above may be out of date; refresh the page." />
+      )}
     </Section>
   )
 }
@@ -174,11 +622,11 @@ function DuplicateCard({
   return (
     <li className="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-soft">
       <div className="grid gap-3 sm:grid-cols-2">
-        {[pair.a, pair.b].map((reader) => (
-          <dl key={reader.email} className="space-y-1 rounded-lg bg-surface-2 p-3">
-            <Field label="Email">{reader.email}</Field>
-            <Field label="Signed up">{humanDate(reader.signup_date)}</Field>
-            <Field label="Source">{sourceLabel(reader.source)}</Field>
+        {[pair.a, pair.b].map((person) => (
+          <dl key={person.email} className="space-y-1 rounded-lg bg-surface-2 p-3">
+            <Field label="Email">{person.email}</Field>
+            <Field label="Signup date">{humanDate(person.signup_date)}</Field>
+            <Field label="Acquisition source">{sourceLabel(person.source)}</Field>
           </dl>
         ))}
       </div>
@@ -234,7 +682,7 @@ function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: D
   return (
     <TechnicalDetails>
       <p>
-        candidates: {data.candidates} subscriber pairs sharing a name stem (email local part without trailing
+        candidates: {data.candidates} pairs of profiles sharing a name stem (email local part without trailing
         digits). score = round(100 × 2^W / (1 + 2^W)), W = sum of the field weights; agree weight log2(m/u),
         disagree weight log2((1−m)/(1−u)); u measured from the candidates, m assumed (09 D-62).
       </p>
@@ -285,8 +733,11 @@ function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: D
   )
 }
 
-/** Scored possible duplicates for a person to judge (09 D-62); a decision is recorded, never merged. */
-function PossibleDuplicates() {
+/**
+ * Scored possible duplicates for a person to judge (09 D-62); a decision is recorded, never merged.
+ * After each one, `onReviewed` re-reads the sources so the chip's count follows (09 D-65).
+ */
+function PossibleDuplicates({ onReviewed }: { onReviewed: () => void }) {
   const state = useGet<Duplicates>('/api/duplicates')
   const [decided, setDecided] = useState<Readonly<Record<string, DuplicateDecision>>>({})
   const [saving, setSaving] = useState<string | null>(null)
@@ -298,10 +749,6 @@ function PossibleDuplicates() {
   if (state.status === 'error')
     return <ErrorLine message={state.message} next="Refresh the page to try again." />
   const data = state.data
-  const newlyDecided = data.review.filter(
-    (p) => p.decision === null && decided[p.pair_id] !== undefined,
-  ).length
-  const toReview = data.to_review - newlyDecided
 
   async function decide(pairId: string, verdict: DuplicateDecision['verdict']) {
     setSaving(pairId)
@@ -315,6 +762,7 @@ function PossibleDuplicates() {
         [pairId]: { verdict: stored.verdict, decided_at: stored.decided_at },
       }))
       setAnnouncement(`Recorded: ${VERDICT_WORDS[stored.verdict]}.`)
+      onReviewed()
     } catch (err) {
       setFailed({ pairId, message: errorMessage(err) })
     } finally {
@@ -323,14 +771,7 @@ function PossibleDuplicates() {
   }
 
   return (
-    <Disclosure
-      label={
-        <span className="inline-flex items-center gap-1.5">
-          <Icon icon={UsersRound} />
-          Possible duplicates — {n(toReview)} to review
-        </span>
-      }
-    >
+    <div className="space-y-3">
       {data.review.length === 0 ? (
         <EmptyState>
           No likely duplicates — {n(data.candidates)} name matches checked, none share more than chance
@@ -350,19 +791,41 @@ function PossibleDuplicates() {
         </ul>
       )}
       <p className="text-sm text-ink-muted">
-        Score {AUTO_MIN_SCORE} or more: very likely the same person. {REVIEW_MIN_SCORE}–{AUTO_MIN_SCORE - 1}:
-        worth a look. Under {REVIEW_MIN_SCORE}: not shown ({n(data.hidden_below_review)}{' '}
-        {data.hidden_below_review === 1 ? 'pair' : 'pairs'}). Nothing is merged automatically — your answer is
+        Score {data.bands.auto_min} or more: very likely the same person. {data.bands.review_min}–
+        {data.bands.auto_min - 1}: worth a look. Under {data.bands.review_min}: not shown ({n(data.hidden_below_review)}{' '}
+        {data.hidden_below_review === 1 ? 'pair' : 'pairs'}). Nothing is deduped automatically — your answer is
         only recorded.
       </p>
       <DuplicateTechnicalDetails data={data} pairs={data.review} />
       <Announcer message={announcement} />
-    </Disclosure>
+    </div>
   )
 }
 
-const plainCount = (count: number, one: string, many: string) =>
-  `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`
+/**
+ * The Sources table from GET /api/sources. A duplicate decision re-reads it in place (the table
+ * stays mounted, so open rows and tabs stay open) and the chip and header counts follow.
+ */
+function SourcesSection() {
+  const state = useGet<Sources>('/api/sources')
+  const [fresh, setFresh] = useState<Sources | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  if (state === null || state.status === 'loading') return <Loading label="Loading the sources…" />
+  if (state.status === 'error')
+    return <ErrorLine message={state.message} next="Refresh the page to try again." />
+
+  function refresh() {
+    getJson<Sources>('/api/sources').then(
+      (data) => {
+        setFresh(data)
+        setRefreshError(null)
+      },
+      (err: unknown) => setRefreshError(errorMessage(err)),
+    )
+  }
+
+  return <SourcesTable sources={(fresh ?? state.data).sources} onReviewed={refresh} refreshError={refreshError} />
+}
 
 export default function OverviewPage() {
   const state = useGet<Overview>('/api/overview')
@@ -398,7 +861,7 @@ export default function OverviewPage() {
           }
         >
           <p className="font-medium text-gray-900">No data loaded yet.</p>
-          <p>Ask whoever set up this tool to load the three files, then refresh this page.</p>
+          <p>Ask whoever set up this tool to load the data files, then refresh this page.</p>
         </EmptyState>
         <TechnicalDetails>
           <p>
@@ -411,116 +874,16 @@ export default function OverviewPage() {
     )
   }
 
-  const reasons = Object.entries(o.quarantine_reasons)
-
   return (
     <>
       {header}
       <StatGrid label="Headline numbers">
-        <StatTile label="Readers who signed up" icon={Users} value={o.subscribers} />
-        <StatTile label="Readers still subscribed" icon={UserCheck} value={o.active} />
-        <StatTile label="App users" icon={Smartphone} value={o.app_users} />
-        <StatTile
-          label="Events received since launch"
-          icon={ICONS.events}
-          value={o.events_received}
-          note={
-            o.events_received === 0 ? (
-              <Link
-                to="/events"
-                className="text-accent-strong underline underline-offset-2 hover:text-blue-900"
-              >
-                None yet — see App events
-              </Link>
-            ) : undefined
-          }
-        />
+        {HEADLINE.map((h) => (
+          <Metric key={h.term} value={h.value(o)} label={GLOSSARY[h.term].term} term={h.term} icon={h.icon} />
+        ))}
       </StatGrid>
 
-      <p className="flex items-start gap-2 text-sm text-ink-muted">
-        <Icon icon={ICONS.success} className="mt-0.5 size-4 text-success" />
-        <span>
-          Loaded {plainCount(o.import_runs.length, 'file', 'files')} into one list:{' '}
-          {plainCount(
-            o.import_runs.reduce((t, r) => t + r.merged, 0),
-            'duplicate',
-            'duplicates',
-          )}{' '}
-          merged,{' '}
-          {plainCount(
-            o.import_runs.reduce((t, r) => t + r.quarantined, 0),
-            'row',
-            'rows',
-          )}{' '}
-          set aside.
-        </span>
-      </p>
-      <Disclosure label="How the data was combined">
-        <ul className="space-y-1 text-sm text-gray-800">
-          {o.import_runs.map((run) => (
-            <ImportLine key={`${run.file}-${run.ran_at}`} run={run} />
-          ))}
-        </ul>
-        <p className="text-sm text-gray-700">
-          {reasons.length === 0
-            ? 'No rows were set aside — every row loaded.'
-            : `Set aside: ${reasons.map(([code, count]) => reasonText(code, count)).join(', ')}. These rows are kept for review, not counted.`}
-        </p>
-        <TechnicalDetails>
-          <table className="w-auto text-left">
-            <caption className="sr-only">Import runs, raw values</caption>
-            <thead>
-              <tr className="text-gray-600">
-                <th scope="col" className="py-1 pr-3 font-medium">
-                  file
-                </th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">
-                  rows_in
-                </th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">
-                  rows_out
-                </th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">
-                  merged
-                </th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">
-                  quarantined
-                </th>
-                <th scope="col" className="hidden py-1 font-medium sm:table-cell">
-                  ran_at
-                </th>
-              </tr>
-            </thead>
-            <tbody className="font-mono">
-              {o.import_runs.map((run) => (
-                <tr key={`${run.file}-${run.ran_at}`}>
-                  <td className="py-0.5 pr-3">{run.file}</td>
-                  <td className="py-0.5 pr-3 text-right">{run.rows_in}</td>
-                  <td className="py-0.5 pr-3 text-right">{run.rows_out}</td>
-                  <td className="py-0.5 pr-3 text-right">{run.merged}</td>
-                  <td className="py-0.5 pr-3 text-right">{run.quarantined}</td>
-                  <td className="hidden py-0.5 sm:table-cell">{utc(run.ran_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="sm:hidden">
-            Ran at: {o.import_runs.map((run) => `${run.file} ${utc(run.ran_at)}`).join('; ')}
-          </p>
-          {reasons.length > 0 && (
-            <p>
-              quarantine_reasons:{' '}
-              <span className="font-mono">
-                {reasons.map(([code, count]) => `${code} ${count}`).join(', ')}
-              </span>
-            </p>
-          )}
-        </TechnicalDetails>
-      </Disclosure>
-
-      {reasons.some(([code]) => needsReview(code)) && <NeedsReview />}
-
-      <PossibleDuplicates />
+      <SourcesSection />
 
       <p className="text-sm">
         <Link
@@ -528,7 +891,7 @@ export default function OverviewPage() {
           className="inline-flex items-center gap-1.5 font-medium text-accent-strong underline underline-offset-4 hover:text-ink"
         >
           <Icon icon={ICONS.lookup} />
-          Next: find a reader <span aria-hidden="true">→</span>
+          Next: look up anyone <span aria-hidden="true">→</span>
         </Link>
       </p>
     </>

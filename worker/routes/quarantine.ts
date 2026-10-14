@@ -1,5 +1,6 @@
-// GET /api/quarantine?reason= (04 §/api/quarantine, 09 D-61; R1.1): the rows the import set aside,
-// each with its fields as written in the file, for Overview's "Needs review" card (06 §Overview).
+// GET /api/quarantine?reason=&file= (04 §/api/quarantine, 09 D-61, D-63; R1.1): the rows the import
+// set aside, each with its fields as written in the file, for Overview's "Needs review" section and
+// each run's "View rejected rows" (06 §Overview). `file` is a source id from shared/sources.ts.
 // Returns raw emails, so it sits behind the session guard and is never an assistant tool (05).
 // Read-only: there is no route that edits or deletes a quarantined row (09 D-13).
 
@@ -10,9 +11,10 @@ import { APP_COLUMNS } from '../ingest/app'
 import { parseCsv } from '../ingest/csv'
 import { QUARANTINE_REASONS, type QuarantineReason, SUBSCRIBER_COLUMNS } from '../ingest/quarantine'
 import { WEB_COLUMNS } from '../ingest/web'
+import { type CsvSourceId, isSourceId, SOURCES, type SourceId } from '../../shared/sources'
 
-/** The `file` values of the quarantine table (migrations/0001_core.sql CHECK). */
-export type QuarantineFile = 'subscribers' | 'web_events' | 'app_users'
+/** The `file` values of the quarantine table (migrations/0001_core.sql CHECK): the registry's CSV sources. */
+export type QuarantineFile = CsvSourceId
 
 /**
  * Each file's CSV header, in the file's own column order. test/quarantine.test.ts pins each one
@@ -56,16 +58,41 @@ function reasonFilter(raw: string | undefined): QuarantineReason | null {
   )
 }
 
+/**
+ * Any source id in the registry (04: "a source id"). The webhook source is valid and has no rows:
+ * a refused webhook is answered and logged (04 §Webhook responses), never stored as a row.
+ */
+function fileFilter(raw: string | undefined): SourceId | null {
+  if (raw === undefined) return null
+  if (isSourceId(raw)) return raw
+  console.warn(JSON.stringify({ at: 'quarantine', outcome: 'invalid_file' }))
+  throw new ApiError(
+    400,
+    'invalid_file',
+    `file must be one of ${SOURCES.map((s) => s.id).join(', ')}, or left out.`,
+  )
+}
+
 /** Mounted at /api by worker/index.ts, behind requireSession. */
 export const quarantineRoutes = new Hono<AppEnv>()
 
 quarantineRoutes.get('/quarantine', async (c) => {
   const reason = reasonFilter(c.req.query('reason'))
+  const file = fileFilter(c.req.query('file'))
+  const where: string[] = []
+  const params: string[] = []
+  if (reason !== null) {
+    params.push(reason)
+    where.push(`reason = ?${params.length}`)
+  }
+  if (file !== null) {
+    params.push(file)
+    where.push(`file = ?${params.length}`)
+  }
   // Oldest file order: import_runs ids follow the seed's file order, then the line in that file.
   const sql = `SELECT file, line_no, reason, raw_row FROM quarantine
-    ${reason === null ? '' : 'WHERE reason = ?1'} ORDER BY run_id, line_no`
-  const stmt = c.env.DB.prepare(sql)
-  const { results } = await (reason === null ? stmt : stmt.bind(reason)).all<{
+    ${where.length === 0 ? '' : `WHERE ${where.join(' AND ')}`} ORDER BY run_id, line_no`
+  const { results } = await c.env.DB.prepare(sql).bind(...params).all<{
     file: QuarantineFile
     line_no: number
     reason: QuarantineReason

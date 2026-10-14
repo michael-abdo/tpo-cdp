@@ -70,12 +70,15 @@ export class AuditTrace {
   readonly knownEmails: KnownEmails
   /** The session's random `sub` (04 §Auth), stored on every row for the per-session limit (09 D-40); null outside a session. */
   readonly sessionSub: string | null
+  /** The client's keyed network hash (shared/pseudonym.ts clientKeyHash), stored on every row for the per-client hourly count (09 D-70 #6); null outside a request. */
+  readonly clientKey: string | null
   private readonly db: D1Database
 
-  constructor(db: D1Database, knownEmails: KnownEmails, sessionSub: string | null = null) {
+  constructor(db: D1Database, knownEmails: KnownEmails, sessionSub: string | null = null, clientKey: string | null = null) {
     this.db = db
     this.knownEmails = knownEmails
     this.sessionSub = sessionSub
+    this.clientKey = clientKey
     this.traceId = crypto.randomUUID()
   }
 
@@ -108,8 +111,8 @@ export class AuditTrace {
       const result = await this.db
         .prepare(
           `INSERT INTO ai_audit (id, trace_id, kind, tool_name, status, latency_ms, model, tokens_in, tokens_out,
-                                 request_json, response_json, sql, row_count, error, created_at, session_sub)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                 request_json, response_json, sql, row_count, error, created_at, session_sub, client_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id,
@@ -128,6 +131,7 @@ export class AuditTrace {
           fields.error,
           createdAt,
           this.sessionSub,
+          this.clientKey,
         )
         .run()
       if (result.meta.changes !== 1) throw new Error(`expected 1 row written, D1 reported ${result.meta.changes}`)
@@ -141,6 +145,6 @@ export class AuditTrace {
 }
 
 /** Opens the trace for one assistant request: loads the request's known-email set (05 §Scanner). */
-export async function startTrace(db: D1Database, sessionSub: string | null = null): Promise<AuditTrace> {
-  return new AuditTrace(db, await loadKnownEmails(db), sessionSub)
+export async function startTrace(db: D1Database, sessionSub: string | null = null, clientKey: string | null = null): Promise<AuditTrace> {
+  return new AuditTrace(db, await loadKnownEmails(db), sessionSub, clientKey)
 }
