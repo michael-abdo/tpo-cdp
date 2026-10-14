@@ -53,8 +53,9 @@ function useAccountSuggestions(fragment: string, active: boolean): Suggestions {
             .filter((m) => m.user_id !== null)
             .map((m) => ({ user_id: m.user_id as string, email: m.email }))
           // 06 §/lookup's "+ more — keep typing" (truncated) is the suggestion list's own line,
-          // not this panel's to reword (D-72): shown only when a filtered-out non-account row
-          // was not what made the server's own list hit its cap.
+          // not this panel's to reword (D-72): passed through from GET /api/lookup/search
+          // unchanged, exactly whenever the server's own list hit its cap — this panel filters
+          // out non-account rows for display, but never reinterprets `truncated` itself.
           setSettled({ fragment, state: { status: 'ok', matches, truncated: data.truncated } })
         },
         (err: unknown) => {
