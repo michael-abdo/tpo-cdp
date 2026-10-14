@@ -1,8 +1,14 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest'
-import { CANONICAL_SOURCES, canonicalSource, normalizeEmail } from '../shared/normalize'
+import appCsv from '../data/app_users.csv?raw'
+import subscribersCsv from '../data/subscribers.csv?raw'
+import webCsv from '../data/web_events.csv?raw'
+import * as normalize from '../shared/normalize'
+import { CANONICAL_SOURCES, canonicalSource, normalizeEmail, normalizeQueryFragment } from '../shared/normalize'
+import normalizeSource from '../shared/normalize.ts?raw'
+import { parseCsv } from '../worker/ingest/csv'
 
-// 02 §Normalization, 09 D-26, tests 08 T-NORM-1..3 (A2).
+// 02 §Normalization, 09 D-26, tests 08 T-NORM-1..3 (A2); 09 D-70 item 8, test 08 T-HARD-8.
 
 describe('T-NORM-1 normalizeEmail', () => {
   it('trims and lowercases', () => {
@@ -87,12 +93,25 @@ describe('T-NORM-3 single implementation', () => {
     expect(Object.keys(migrations)).toContain('../migrations/0002_views.sql')
   })
 
+  // Every file outside shared/normalize.ts that lowercases anything, and what it lowercases (09
+  // D-70 item 8). None is an email; a new caller fails until it is read and listed here, so an
+  // email folded under another name (`q`, `raw`, `addr`) cannot slip past a word match.
+  const LOWERCASES_NO_EMAIL: Record<string, string> = {
+    '../worker/assistant/gates/gate2-tool-authorizer.ts': 'SQL tokens and view/column names of model SQL',
+    '../worker/auth/middleware.ts': 'the Content-Type media type',
+    '../worker/webhooks/verify.ts': 'the hex digits of the webhook signature',
+    '../src/pages/AuditPage.tsx': 'the audit search text and the text it highlights',
+  }
+  const LOWERCASE_CALL = /\.(?:toLowerCase|toLocaleLowerCase)\s*\(/
+
   it('no file outside shared/normalize.ts lowercases an email', () => {
     const offenders: string[] = []
     for (const [path, text] of Object.entries(sources)) {
       if (path.endsWith('/shared/normalize.ts')) continue
       text.split('\n').forEach((line, i) => {
-        if (line.includes('.toLowerCase(') && line.toLowerCase().includes('email')) {
+        if (!LOWERCASE_CALL.test(line)) return
+        // Outside the listed files any lowercasing fails; inside them, a line naming an email does.
+        if (!(path in LOWERCASES_NO_EMAIL) || /e-?mail|addr|fragment/i.test(line)) {
           offenders.push(`${path}:${i + 1}: ${line.trim()}`)
         }
       })
@@ -100,10 +119,78 @@ describe('T-NORM-3 single implementation', () => {
     expect(offenders).toEqual([])
   })
 
+  it('every file listed as lowercasing no email still lowercases (the list holds no stale entry)', () => {
+    for (const path of Object.keys(LOWERCASES_NO_EMAIL)) {
+      expect(sources[path], path).toBeDefined()
+      expect(LOWERCASE_CALL.test(sources[path]), path).toBe(true)
+    }
+  })
+
+  /** Source text with its comments removed, so a comment may name LOWER( and code may not. */
+  function withoutComments(text: string): string {
+    return text.replace(/^\s*\/\*[\s\S]*?\*\//gm, '').replace(/(^|\s)\/\/.*$/gm, '$1')
+  }
+
+  it('no SQL string in worker/, scripts/ or shared/ folds case with LOWER(', () => {
+    const offenders: string[] = []
+    for (const [path, text] of Object.entries(sources)) {
+      if (path.startsWith('../src/')) continue
+      withoutComments(text)
+        .split('\n')
+        .forEach((line) => {
+          if (/\bLOWER\s*\(/i.test(line)) offenders.push(`${path}: ${line.trim()}`)
+        })
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('the LOWER( scan reads code and SQL strings, not comments', () => {
+    const sql = "const q = db.prepare('SELECT pkey FROM profiles WHERE LOWER(email_norm) = ?')"
+    expect(/\bLOWER\s*\(/i.test(withoutComments(sql))).toBe(true)
+    expect(/\bLOWER\s*\(/i.test(withoutComments('const SQL = `\n  WHERE lower( email_norm) = ?`'))).toBe(true)
+    expect(/\bLOWER\s*\(/i.test(withoutComments('// SQL never folds with LOWER(\n/**\n * nor LOWER( here\n */'))).toBe(false)
+    expect(withoutComments("fetch('http://cdp.test/api') // a note")).toBe("fetch('http://cdp.test/api') ")
+  })
+
   it('no migration normalizes in SQL with LOWER(', () => {
     const offenders = Object.entries(migrations)
       .filter(([, sql]) => /\bLOWER\s*\(/i.test(sql))
       .map(([path]) => path)
     expect(offenders).toEqual([])
+  })
+})
+
+describe('T-HARD-8 one email fold (09 D-70 item 8)', () => {
+  it('normalizeEmail and normalizeQueryFragment both call the one private fold; nothing else in the file folds an email', () => {
+    expect(normalizeSource).toMatch(/\nfunction foldEmail\(raw: string\): string \{\n  return raw\.trim\(\)\.toLowerCase\(\)\n\}/)
+    expect(Object.keys(normalize)).not.toContain('foldEmail')
+    const body = (name: string) => {
+      const start = normalizeSource.indexOf(`export function ${name}(`)
+      return normalizeSource.slice(start, normalizeSource.indexOf('\n}\n', start))
+    }
+    expect(body('normalizeEmail')).toContain('foldEmail(raw)')
+    expect(body('normalizeQueryFragment')).toContain('foldEmail(raw)')
+    for (const name of ['normalizeEmail', 'normalizeQueryFragment']) expect(body(name)).not.toMatch(/toLowerCase|trim\(/)
+  })
+
+  it('every real email spelling folds the same as an address and as a query fragment', () => {
+    const spellings: string[] = []
+    for (const [csv, column] of [
+      [subscribersCsv, 'email'],
+      [appCsv, 'email'],
+      [webCsv, 'email'],
+    ] as const) {
+      const parsed = parseCsv(csv)
+      const col = parsed.header.indexOf(column)
+      for (const row of parsed.rows) if (row[col].trim() !== '') spellings.push(row[col])
+    }
+    // 2,995 − 8 blank subscriber rows, 930 app accounts, the 1,400 visitors' /subscribe emails and more.
+    expect(spellings.length).toBeGreaterThan(5000)
+    // Raw spellings with case or whitespace are among them, so the fold is exercised, not just identity.
+    expect(spellings.some((e) => e !== e.trim().toLowerCase())).toBe(true)
+    for (const raw of spellings) {
+      const email = normalizeEmail(raw)
+      if (email !== null) expect(normalizeQueryFragment(raw), raw).toBe(email)
+    }
   })
 })

@@ -177,19 +177,27 @@ export interface Lookup {
     last_open_date: string | null
     merged_count: number
   } | null
-  web: {
-    visitor_id: string
-    first_page: string
-    first_utm_source: string | null
-    events: { page: string; event_ts: string; utm_source: string | null; pre_signup: boolean }[]
-  } | null
-  app: {
-    user_id: string
-    created_at: string
-    from_csv: boolean
-    devices: string[]
-    events: { event: string; event_ts: string; properties: unknown; attached_via: 'direct' | 'login_stitch' }[]
-  } | null
+  /** The earliest visitor's fields, plus every visitor of the profile (09 D-70 item 4), earliest first. */
+  web: (LookupVisitor & { visitors: LookupVisitor[] }) | null
+  /** The earliest app account's fields, plus every account of the profile (09 D-70 item 4), earliest first. */
+  app: (LookupAppAccount & { accounts: LookupAppAccount[] }) | null
+}
+
+/** One website visitor (browser) of a looked-up profile. */
+export interface LookupVisitor {
+  visitor_id: string
+  first_page: string
+  first_utm_source: string | null
+  events: { page: string; event_ts: string; utm_source: string | null; pre_signup: boolean }[]
+}
+
+/** One app account of a looked-up profile. */
+export interface LookupAppAccount {
+  user_id: string
+  created_at: string
+  from_csv: boolean
+  devices: string[]
+  events: { event: string; event_ts: string; properties: unknown; attached_via: 'direct' | 'login_stitch' }[]
 }
 
 /** One row of GET /api/events/recent, resolved at read time (01 §Identity resolution). */

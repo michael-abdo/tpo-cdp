@@ -10,11 +10,17 @@
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 /**
- * `trim()` then `toLowerCase()`, nothing else: no plus-stripping, no Gmail dot removal (D-26).
- * Returns `null` when the folded value does not look like an address.
+ * The one email fold (09 D-70 item 8): `trim()` then `toLowerCase()`, nothing else: no
+ * plus-stripping, no Gmail dot removal (D-26). Private, so an address and a fragment of one can
+ * only be folded through the two exports below, and both fold exactly as `email_norm` was stored.
  */
+function foldEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+/** The folded address, or `null` when it does not look like an address. */
 export function normalizeEmail(raw: string): string | null {
-  const email = raw.trim().toLowerCase()
+  const email = foldEmail(raw)
   return EMAIL_PATTERN.test(email) ? email : null
 }
 
@@ -42,12 +48,12 @@ export function canonicalSource(raw: string): string | null {
 }
 
 /**
- * A partial-lookup query fragment (09 D-52, 04 §/api/lookup/search): `trim()` then
- * `toLowerCase()` only, the same folding `email_norm` was stored with, so a fragment of a
- * stored address still matches it. No validation: a fragment is not an address.
+ * A partial-lookup query fragment (09 D-52, 04 §/api/lookup/search): the same fold as
+ * `normalizeEmail` (D-70 item 8), so a fragment of a stored address still matches it. No
+ * validation: a fragment is not an address.
  */
 export function normalizeQueryFragment(raw: string): string {
-  return raw.trim().toLowerCase()
+  return foldEmail(raw)
 }
 
 /** Shortest normalized fragment the search answers; shorter is 400 `query_too_short` (04). */

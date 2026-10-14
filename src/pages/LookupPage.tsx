@@ -12,6 +12,9 @@
 // Disclosure (06 §UI principles 2): level 1 = who, status, signup, last open and one summary per
 // column; "Details" per column = visit / event lists; "Technical details" = ids, keys, merge
 // counts, second-precise UTC times, raw field values and formulas.
+// Several app accounts or website visitors on one profile (09 D-70 item 4, 04 `app.accounts`,
+// `web.visitors`): level 1 counts across all of them and says how many; Details and Technical
+// details list each one under its own heading, earliest first.
 
 import {
   type FocusEvent,
@@ -44,7 +47,7 @@ import {
   TechnicalDetails,
 } from '../components'
 import { capitalized, humanDate, humanDateTime, utc } from '../format'
-import type { Lookup, LookupSearch } from '../types'
+import type { Lookup, LookupAppAccount, LookupSearch, LookupVisitor } from '../types'
 
 /** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
 const SUGGEST_DEBOUNCE_MS = 250
@@ -141,7 +144,7 @@ function Header({ data }: { data: Lookup }) {
             </Field>
             {app !== null && (
               <Field label="User ID">
-                <span className="font-mono">{app.user_id}</span>
+                <span className="font-mono">{app.accounts.map((a) => a.user_id).join(', ')}</span>
               </Field>
             )}
             <Field label="Score formula">
@@ -191,9 +194,63 @@ function Newsletter({ data, coldSince }: { data: Lookup['newsletter']; coldSince
   )
 }
 
+/** The heading of one of several accounts or visitors in Details: "Browser 2 of 3 · 4 visits". */
+function PartHeading({ children }: { children: ReactNode }) {
+  return <p className="text-sm font-medium text-gray-900">{children}</p>
+}
+
+/** One visitor's visits; `utmInSummary` = its first visit's source is already in the summary (principle 5). */
+function VisitList({ visitor, utmInSummary }: { visitor: LookupVisitor; utmInSummary: boolean }) {
+  return (
+    <ol className="space-y-1 text-sm">
+      {visitor.events.map((e, i) => (
+        <li key={`${e.event_ts}-${i}`} className={`rounded px-2 py-1 ${e.pre_signup ? 'bg-gray-50' : ''}`}>
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="break-all font-mono text-gray-900">{e.page}</span>
+            {e.pre_signup && <Tag>Before signing up</Tag>}
+          </span>
+          <span className="block text-gray-700">
+            {humanDateTime(e.event_ts)}
+            {e.utm_source !== null &&
+              !(utmInSummary && i === 0 && e.utm_source === visitor.first_utm_source) &&
+              ` · from ${capitalized(e.utm_source)}`}
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+/** One visitor's ids and raw rows (Technical details). */
+function VisitorTechnical({ visitor }: { visitor: LookupVisitor }) {
+  return (
+    <>
+      <dl className="space-y-1">
+        <Field label="Visitor ID">
+          <span className="font-mono">{visitor.visitor_id}</span>
+        </Field>
+        <Field label="First UTM source">{visitor.first_utm_source ?? 'none'}</Field>
+      </dl>
+      {visitor.events.length > 0 && (
+        <ol className="space-y-0.5 font-mono">
+          {visitor.events.map((e, i) => (
+            <li key={`${e.event_ts}-${i}`} className="break-all">
+              {utc(e.event_ts)} {e.page}
+              {e.utm_source !== null && ` utm_source=${e.utm_source}`}
+              {e.pre_signup && ' pre_signup'}
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  )
+}
+
 function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: boolean }) {
   if (data === null) return <Column title="Site visits" icon={Globe} summary={<p>No website history</p>} />
-  const visits = data.events
+  const all = data.visitors
+  const several = all.length > 1
+  const visits = all.flatMap((v) => v.events)
   const before = visits.filter((e) => e.pre_signup).length
   const last = latest(visits.map((e) => e.event_ts))
   const summary =
@@ -203,6 +260,7 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
       <>
         <p>
           {plural(visits.length, 'visit', 'visits')}
+          {several && ` from ${all.length} browsers`}
           {hasNewsletter && `, ${before} before signing up`}
           {last !== null && ` · last on ${humanDate(last)}`}
         </p>
@@ -218,46 +276,23 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
       <Disclosure
         label={visits.length === 0 ? 'Details' : `Show ${plural(visits.length, 'visit', 'visits')}`}
       >
-        {visits.length > 0 && (
-          <ol className="space-y-1 text-sm">
-            {visits.map((e, i) => (
-              <li
-                key={`${e.event_ts}-${i}`}
-                className={`rounded px-2 py-1 ${e.pre_signup ? 'bg-gray-50' : ''}`}
-              >
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="break-all font-mono text-gray-900">{e.page}</span>
-                  {e.pre_signup && <Tag>Before signing up</Tag>}
-                </span>
-                <span className="block text-gray-700">
-                  {humanDateTime(e.event_ts)}
-                  {/* The first visit's source is already in the summary (principle 5). */}
-                  {e.utm_source !== null &&
-                    !(i === 0 && e.utm_source === data.first_utm_source) &&
-                    ` · from ${capitalized(e.utm_source)}`}
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
+        {several
+          ? all.map((v, i) => (
+              <div key={v.visitor_id} className="space-y-1">
+                <PartHeading>
+                  Browser {i + 1} of {all.length} · {plural(v.events.length, 'visit', 'visits')}
+                </PartHeading>
+                <VisitList visitor={v} utmInSummary={i === 0} />
+              </div>
+            ))
+          : visits.length > 0 && <VisitList visitor={data} utmInSummary />}
         <TechnicalDetails>
-          <dl className="space-y-1">
-            <Field label="Visitor ID">
-              <span className="font-mono">{data.visitor_id}</span>
-            </Field>
-            <Field label="First UTM source">{data.first_utm_source ?? 'none'}</Field>
-          </dl>
-          {visits.length > 0 && (
-            <ol className="space-y-0.5 font-mono">
-              {visits.map((e, i) => (
-                <li key={`${e.event_ts}-${i}`} className="break-all">
-                  {utc(e.event_ts)} {e.page}
-                  {e.utm_source !== null && ` utm_source=${e.utm_source}`}
-                  {e.pre_signup && ' pre_signup'}
-                </li>
-              ))}
-            </ol>
-          )}
+          {all.map((v, i) => (
+            <div key={v.visitor_id} className="space-y-1">
+              {several && <p>Browser {i + 1} of {all.length}</p>}
+              <VisitorTechnical visitor={v} />
+            </div>
+          ))}
         </TechnicalDetails>
       </Disclosure>
     </Column>
@@ -266,7 +301,7 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
 
 /** When the app account came relative to the newsletter signup, in words (02 §Linking 6). */
 function joinedWhen(
-  app: NonNullable<Lookup['app']>,
+  app: LookupAppAccount,
   newsletter: Lookup['newsletter'],
   afterSignup: boolean,
 ): string {
@@ -275,6 +310,68 @@ function joinedWhen(
   return app.created_at.slice(0, 10) === newsletter.signup_date
     ? ', the day they signed up'
     : ', before signing up'
+}
+
+/** One app account's events, how it was added and its devices (Details). */
+function AccountDetails({ account }: { account: LookupAppAccount }) {
+  const events = account.events
+  return (
+    <>
+      {events.length > 0 && (
+        <ol className="space-y-1 text-sm">
+          {events.map((e, i) => (
+            <li key={`${e.event_ts}-${i}`} className="rounded px-2 py-1">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-gray-900">
+                  <EventName event={e.event} />
+                </span>
+                {e.attached_via === 'login_stitch' && <Tag>Linked by login</Tag>}
+              </span>
+              <span className="block text-gray-700">{humanDateTime(e.event_ts)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <dl className="space-y-1">
+        <Field label="Added">
+          {account.from_csv ? 'Imported from the app accounts file' : 'Created from an app event'}
+        </Field>
+        <Field label="Devices">
+          {account.devices.length === 0 ? 'none seen yet' : plural(account.devices.length, 'device', 'devices')}
+        </Field>
+      </dl>
+    </>
+  )
+}
+
+/** One app account's ids and raw rows (Technical details). */
+function AccountTechnical({ account }: { account: LookupAppAccount }) {
+  return (
+    <>
+      <dl className="space-y-1">
+        <Field label="User ID">
+          <span className="font-mono">{account.user_id}</span>
+        </Field>
+        <Field label="Created date">{account.created_at}</Field>
+        <Field label="Origin">{account.from_csv ? 'app_users.csv' : 'created from webhook'}</Field>
+        {account.devices.length > 0 && (
+          <Field label="Device IDs">
+            <span className="font-mono">{account.devices.join(', ')}</span>
+          </Field>
+        )}
+      </dl>
+      {account.events.length > 0 && (
+        <ol className="space-y-0.5 font-mono">
+          {account.events.map((e, i) => (
+            <li key={`${e.event_ts}-${i}`} className="break-all">
+              {utc(e.event_ts)} {e.event} attached_via={e.attached_via}
+              {e.properties !== null && ` ${JSON.stringify(e.properties)}`}
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  )
 }
 
 function AppActivity({
@@ -289,14 +386,20 @@ function AppActivity({
   isStub: boolean
 }) {
   if (data === null) return <Column title="App activity" icon={AppWindow} summary={<p>No app account</p>} />
-  const events = data.events
+  const all = data.accounts
+  const several = all.length > 1
+  const events = all.flatMap((a) => a.events)
   const last = latest(events.map((e) => e.event_ts))
+  // `data` is the earliest account (04), the one has_app and app_after_signup read.
+  const joined = `${humanDate(data.created_at)}${joinedWhen(data, newsletter, afterSignup)}`
   const summary = (
     <>
       <p>
         {isStub
           ? `First seen in the app ${humanDate(data.created_at)}`
-          : `Joined the app ${humanDate(data.created_at)}${joinedWhen(data, newsletter, afterSignup)}`}
+          : several
+            ? `${plural(all.length, 'app account', 'app accounts')}, the first joined ${joined}`
+            : `Joined the app ${joined}`}
       </p>
       <p>
         {last === null
@@ -310,55 +413,48 @@ function AppActivity({
       <Disclosure
         label={events.length === 0 ? 'Details' : `Show ${plural(events.length, 'app event', 'app events')}`}
       >
-        {events.length > 0 && (
-          <ol className="space-y-1 text-sm">
-            {events.map((e, i) => (
-              <li key={`${e.event_ts}-${i}`} className="rounded px-2 py-1">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="text-gray-900">
-                    <EventName event={e.event} />
-                  </span>
-                  {e.attached_via === 'login_stitch' && <Tag>Linked by login</Tag>}
-                </span>
-                <span className="block text-gray-700">{humanDateTime(e.event_ts)}</span>
-              </li>
-            ))}
-          </ol>
+        {several ? (
+          all.map((a, i) => (
+            <div key={a.user_id} className="space-y-1">
+              <PartHeading>
+                App account {i + 1} of {all.length} · joined {humanDate(a.created_at)} ·{' '}
+                {plural(a.events.length, 'app event', 'app events')}
+              </PartHeading>
+              <AccountDetails account={a} />
+            </div>
+          ))
+        ) : (
+          <AccountDetails account={data} />
         )}
-        <dl className="space-y-1">
-          <Field label="Added">
-            {data.from_csv ? 'Imported from the app accounts file' : 'Created from an app event'}
-          </Field>
-          <Field label="Devices">
-            {data.devices.length === 0 ? 'none seen yet' : plural(data.devices.length, 'device', 'devices')}
-          </Field>
-        </dl>
         <TechnicalDetails>
-          <dl className="space-y-1">
-            <Field label="User ID">
-              <span className="font-mono">{data.user_id}</span>
-            </Field>
-            <Field label="Created date">{data.created_at}</Field>
-            <Field label="Origin">{data.from_csv ? 'app_users.csv' : 'created from webhook'}</Field>
-            {data.devices.length > 0 && (
-              <Field label="Device IDs">
-                <span className="font-mono">{data.devices.join(', ')}</span>
-              </Field>
-            )}
-          </dl>
-          {events.length > 0 && (
-            <ol className="space-y-0.5 font-mono">
-              {events.map((e, i) => (
-                <li key={`${e.event_ts}-${i}`} className="break-all">
-                  {utc(e.event_ts)} {e.event} attached_via={e.attached_via}
-                  {e.properties !== null && ` ${JSON.stringify(e.properties)}`}
-                </li>
-              ))}
-            </ol>
-          )}
+          {all.map((a, i) => (
+            <div key={a.user_id} className="space-y-1">
+              {several && <p>App account {i + 1} of {all.length}</p>}
+              <AccountTechnical account={a} />
+            </div>
+          ))}
         </TechnicalDetails>
       </Disclosure>
     </Column>
+  )
+}
+
+/** One looked-up profile: the header, then the three columns (exported for test/ui/lookup-profile.test.ts). */
+export function Profile({ data }: { data: Lookup }) {
+  return (
+    <div className="space-y-4">
+      <Header data={data} />
+      <div className="grid gap-4 md:grid-cols-3">
+        <Newsletter data={data.newsletter} coldSince={data.profile.cold_since} />
+        <Website data={data.web} hasNewsletter={data.newsletter !== null} />
+        <AppActivity
+          data={data.app}
+          newsletter={data.newsletter}
+          afterSignup={data.profile.app_after_signup}
+          isStub={data.profile.kind === 'unknown_user_stub'}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -741,21 +837,7 @@ export default function LookupPage() {
       </div>
 
       {/* While suggestions are open the old profile steps aside, so the current profile is never in doubt. */}
-      {result !== null && !listboxShown && (
-        <div className="space-y-4">
-          <Header data={result} />
-          <div className="grid gap-4 md:grid-cols-3">
-            <Newsletter data={result.newsletter} coldSince={result.profile.cold_since} />
-            <Website data={result.web} hasNewsletter={result.newsletter !== null} />
-            <AppActivity
-              data={result.app}
-              newsletter={result.newsletter}
-              afterSignup={result.profile.app_after_signup}
-              isStub={result.profile.kind === 'unknown_user_stub'}
-            />
-          </div>
-        </div>
-      )}
+      {result !== null && !listboxShown && <Profile data={result} />}
     </div>
   )
 }
