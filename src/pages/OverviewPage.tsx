@@ -495,7 +495,7 @@ function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: D
   return (
     <TechnicalDetails>
       <p>
-        candidates: {data.candidates} subscriber pairs sharing a name stem (email local part without trailing
+        candidates: {data.candidates} reader pairs sharing a name stem (email local part without trailing
         digits). score = round(100 × 2^W / (1 + 2^W)), W = sum of the field weights; agree weight log2(m/u),
         disagree weight log2((1−m)/(1−u)); u measured from the candidates, m assumed (09 D-62).
       </p>

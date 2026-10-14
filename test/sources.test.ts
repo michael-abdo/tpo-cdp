@@ -1,22 +1,26 @@
 /// <reference types="vite/client" />
 import { env, SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
+import subscribersCsv from '../data/subscribers.csv?raw'
 import overviewSource from '../src/pages/OverviewPage.tsx?raw'
 import { TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
 import { explain, GLOSSARY, isGlossaryKey } from '../shared/glossary'
 import { SOURCES } from '../shared/sources'
 import type { Sources } from '../src/types'
+import { parseCsv } from '../worker/ingest/csv'
 import { QUARANTINE_REASONS } from '../worker/ingest/quarantine'
+import { ingestSubscribers } from '../worker/ingest/subscribers'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
+import { SCAN_FIXTURES, type ScanFixture } from './helpers/screen-text'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
 // GET /api/sources (04 §GET /api/sources, 09 D-63; 08 T-SRC-1) and the Overview's glossary and
 // registry discipline (08 T-SRC-2). The test D1 holds the real seed of data/*.csv
 // (test/helpers/seed.ts); every expected number is 02 §Counts'. Webhook inputs (09 D-11): the user
-// is app_users.csv line 2 (u_2b6447a3, julia.evans230, the PDF's sample), the device `d_` + the hex
-// of that id, event ids from eventIdPool(); event times are the brief's 2026-09-28T14:22:05Z (on
+// is app_users.csv line 2 (u_2b6447a3, julia.evans230, the PDF's sample), the brief's sample device
+// d_4b21e8, event ids from eventIdPool(); event times are the brief's 2026-09-28T14:22:05Z (on
 // TODAY) and web_events.csv line 3's 2026-06-30 20:45:52 (not on TODAY).
 
 const BRIEF_TS = '2026-09-28T14:22:05Z'
@@ -26,7 +30,6 @@ let cookie: string
 let ranAt: string
 
 beforeAll(async () => {
-  ;({ ranAt } = await seedDatabase())
   cookie = await loginCookie()
 })
 
@@ -46,7 +49,7 @@ async function postEvent(timestamp: string): Promise<void> {
     event_id: nextEventId(),
     event: 'read_story',
     user_id: 'u_2b6447a3',
-    device_id: 'd_2b6447a3',
+    device_id: 'd_4b21e8',
     timestamp,
   }
   expect((await sendWebhook(JSON.stringify(body))).status).toBe(202)
@@ -62,7 +65,25 @@ const csvRun = (rows_in: number, rows_out: number, merged: number, rejected: num
   needs_review,
 })
 
+// Runs first: the test D1 has the migrations (test/setup.ts) and no seed yet.
+describe('GET /api/sources before the first seed', () => {
+  it('each CSV source is not_loaded with 0 records, no last sync and no runs; the webhook is live with 0', async () => {
+    const list = await sources()
+    expect(list.map((s) => [s.id, s.status, s.records, s.runs])).toEqual([
+      ['subscribers', 'not_loaded', 0, []],
+      ['web_events', 'not_loaded', 0, []],
+      ['app_users', 'not_loaded', 0, []],
+      ['app_events', 'live', 0, []],
+    ])
+    for (const s of list) expect(s.kind === 'csv' ? s.last_sync : s.last_received).toBeNull()
+  })
+})
+
 describe('GET /api/sources (T-SRC-1)', () => {
+  beforeAll(async () => {
+    ;({ ranAt } = await seedDatabase())
+  })
+
   it('4 sources in registry order with the 02 §Counts runs; names, kinds and units from shared/sources.ts', async () => {
     const list = await sources()
     expect(list.map((s) => s.id)).toEqual(['subscribers', 'web_events', 'app_users', 'app_events'])
@@ -109,6 +130,10 @@ describe('GET /api/sources (T-SRC-1)', () => {
       last_received: null,
       runs: [],
     })
+    // 04's key order for the webhook entry (toEqual above ignores order).
+    expect(Object.keys(before ?? {})).toEqual([
+      'id', 'name', 'kind', 'unit', 'loads_by', 'status', 'records', 'today', 'last_received', 'runs',
+    ])
 
     await postEvent(BRIEF_TS)
     await postEvent(OLDER_TS)
@@ -178,34 +203,53 @@ describe('GET /api/sources (T-SRC-1)', () => {
   })
 
   it('status, records and last sync come from the newest run; runs are newest first', async () => {
-    // A second load of the real subscribers file with its 10 set-aside lines removed (09 D-47: a
-    // removal): 2995 - 10 = 2985 rows read, the same 2900 kept and 85 merged (02 §Counts), nothing
-    // set aside. ran_at is the wall-clock time a run happened (02 §Time allow-list, 09 D-48), so a
-    // later run is one minute after the seed's.
-    const seedRun = await env.DB.prepare(
-      "SELECT id, rows_out, merged FROM import_runs WHERE file = 'subscribers'",
-    ).first<{ id: number; rows_out: number; merged: number }>()
+    // A second, later load of real subscribers rows (09 D-47: a removal): the first 1,500 data rows
+    // of data/subscribers.csv minus the lines the seed set aside, run through the production ingest
+    // (worker/ingest/subscribers.ts), so its read/kept/merged numbers are the code's, not typed in.
+    // Its kept count differs from the seed run's 2,900, so `records` shows which run it came from.
+    // ran_at is the wall-clock time a run happened (02 §Time allow-list, 09 D-48): a minute later.
+    const full = parseCsv(subscribersCsv)
+    const setAside = new Set(ingestSubscribers(full).quarantined.map((q) => q.line_no))
+    expect(setAside.size).toBe(10)
+    const keep = full.rows.map((_, i) => i).filter((i) => i < 1500 && !setAside.has(full.lineNos[i] ?? -1))
+    const subset = ingestSubscribers({
+      header: full.header,
+      rows: keep.map((i) => full.rows[i] ?? []),
+      lineNos: keep.map((i) => full.lineNos[i] ?? -1),
+    })
+    expect(subset.quarantined).toEqual([])
+    const rowsIn = keep.length
+    const rowsOut = subset.subscribers.size
+    const merged = rowsIn - rowsOut
+    expect(rowsOut).not.toBe(2900)
+
+    const seedRun = await env.DB.prepare("SELECT id FROM import_runs WHERE file = 'subscribers'").first<{ id: number }>()
     const top = await env.DB.prepare('SELECT max(id) AS id FROM import_runs').first<{ id: number }>()
     if (seedRun === null || top === null) throw new Error('seed holds no subscribers run')
     const newId = top.id + 1
     const laterRanAt = new Date(Date.parse(ranAt) + 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
     expect(laterRanAt > ranAt).toBe(true)
     await env.DB.prepare(
-      "INSERT INTO import_runs (id, file, rows_in, rows_out, merged, quarantined, ran_at) VALUES (?1, 'subscribers', 2985, ?2, ?3, 0, ?4)",
+      "INSERT INTO import_runs (id, file, rows_in, rows_out, merged, quarantined, ran_at) VALUES (?1, 'subscribers', ?2, ?3, ?4, 0, ?5)",
     )
-      .bind(newId, seedRun.rows_out, seedRun.merged, laterRanAt)
+      .bind(newId, rowsIn, rowsOut, merged, laterRanAt)
       .run()
     try {
       const [subscribers] = await sources()
-      expect(subscribers).toMatchObject({ status: 'ok', records: 2900, last_sync: laterRanAt })
+      expect(subscribers).toMatchObject({ status: 'ok', records: rowsOut, last_sync: laterRanAt })
       expect(subscribers?.runs).toEqual([
-        { id: newId, ran_at: laterRanAt, rows_in: 2985, rows_out: 2900, merged: 85, rejected: 0, needs_review: 0 },
+        { id: newId, ran_at: laterRanAt, rows_in: rowsIn, rows_out: rowsOut, merged, rejected: 0, needs_review: 0 },
         { ...csvRun(2995, 2900, 85, 10, 2), id: seedRun.id },
       ])
     } finally {
       await env.DB.prepare('DELETE FROM import_runs WHERE id = ?').bind(newId).run()
     }
-    expect((await sources())[0]).toMatchObject({ status: 'needs_review', last_sync: ranAt, runs: [csvRun(2995, 2900, 85, 10, 2)] })
+    expect((await sources())[0]).toMatchObject({
+      status: 'needs_review',
+      records: 2900,
+      last_sync: ranAt,
+      runs: [csvRun(2995, 2900, 85, 10, 2)],
+    })
   })
 
   it('fails loud with a 500 when import_runs and quarantine disagree on the rows set aside', async () => {
@@ -233,13 +277,27 @@ describe('GET /api/sources (T-SRC-1)', () => {
 /** The Overview's code with comments removed, so the scan reads only what can reach the screen. */
 const overviewCode = overviewSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-/** Every string literal and JSX text run in the Overview's code. */
-const overviewTexts = [
-  ...[...overviewCode.matchAll(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g)].map((m) => m[0].slice(1, -1)),
-  ...[...overviewCode.matchAll(/>([^<>{}]+)</g)].map((m) => m[1].trim()),
-]
-  // Import specifiers and route paths ('../types', '/events') name modules and URLs, not sources.
-  .filter((t) => t !== '' && !/^[./]/.test(t))
+/**
+ * What a page's text says that only the registry may say (08 T-SRC-2, 09 D-63): a source's name,
+ * unit (one or many), file name or bare id, or a count of files. `texts` are a file's JSX text runs,
+ * string literals and template chunks from the TypeScript AST (test/helpers/screen-text.ts), so text
+ * beside an interpolation ("{n} files", "{x} subscribers") is scanned like any other. A run that
+ * starts with "file(s)" follows an interpolated or computed count. Paths ('/events',
+ * '/api/quarantine?file=') name routes, not sources.
+ */
+function sourceTextOffences(texts: readonly string[]): string[] {
+  const offences: string[] = []
+  for (const text of texts.filter((t) => !t.startsWith('/'))) {
+    for (const s of SOURCES) {
+      for (const word of [s.name, s.unit[0], s.unit[1], ...(s.file === null ? [] : [s.file])])
+        if (new RegExp(`\\b${word.replace('.', '\\.')}\\b`, 'i').test(text)) offences.push(`"${word}" in "${text}"`)
+      if (text.trim() === s.id) offences.push(`source id ${s.id} as a literal`)
+    }
+    if (/\b(?:\d+|one|two|three|four) files?\b/i.test(text) || /^\s*files?\b/i.test(text))
+      offences.push(`file count in "${text}"`)
+  }
+  return offences
+}
 
 describe('Overview terms and source text (T-SRC-2)', () => {
   it('every InfoTip / Metric term the Overview names exists in the glossary or DEFINITIONS (no orphan InfoTip)', () => {
@@ -282,18 +340,34 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     }
   })
 
-  it('the Overview spells no source name, id, file or unit: they come from the registry through the API', () => {
-    expect(overviewTexts.length).toBeGreaterThan(50)
-    for (const s of SOURCES) {
-      const forbidden = [s.name, s.unit[0], s.unit[1], ...(s.file === null ? [] : [s.file])]
-      for (const text of overviewTexts) {
-        for (const word of forbidden)
-          expect(new RegExp(`\\b${word.replace('.', '\\.')}\\b`, 'i').test(text), `"${word}" in "${text}"`).toBe(false)
-        expect(text, `source id ${s.id} as a literal`).not.toBe(s.id)
-      }
+  it('the scan reads text beside an interpolation: each per-file fixture is flagged, a comment is not', () => {
+    const { fixtures } = env.SCREEN_TEXTS
+    expect(Object.keys(fixtures)).toEqual(Object.keys(SCAN_FIXTURES))
+    // The AST splits "Read {n} files from …" into the runs either side of the interpolation.
+    expect(fixtures.interpolated_file_count).toEqual(['Read ', ' files from the Newsletter list'])
+    for (const key of Object.keys(SCAN_FIXTURES) as ScanFixture[]) {
+      const offences = sourceTextOffences(fixtures[key])
+      if (key === 'comment_only') expect(offences, key).toEqual([])
+      else expect(offences.length, `${key}: ${SCAN_FIXTURES[key]}`).toBeGreaterThan(0)
     }
-    // A count of files is per-file prose too ("Loaded 3 files", "Read 3 files").
-    for (const text of overviewTexts) expect(text, `file count in "${text}"`).not.toMatch(/\b\d+ files?\b/i)
+    expect(sourceTextOffences(fixtures.interpolated_file_count)).toEqual([
+      '"Newsletter list" in " files from the Newsletter list"',
+      'file count in " files from the Newsletter list"',
+    ])
+    // " subscribers" is both the unit and, once trimmed, the bare source id.
+    expect(sourceTextOffences(fixtures.interpolated_unit)).toEqual([
+      '"subscribers" in " subscribers"',
+      'source id subscribers as a literal',
+    ])
+  })
+
+  it('the Overview spells no source name, id, file or unit: they come from the registry through the API', () => {
+    const texts = env.SCREEN_TEXTS.overview
+    expect(texts.length).toBeGreaterThan(50)
+    // Runs beside an interpolation are in the scan (StatusTag's "{n} to review").
+    expect(texts).toContain(' to review')
+    expect(texts).toContain('View rejected rows')
+    expect(sourceTextOffences(texts)).toEqual([])
     expect(overviewCode).not.toMatch(/\b(?:\d+|three) files?\b/i)
     // The per-file prose 09 D-63 removed.
     for (const gone of ['Loaded ', 'into one list', 'How the data was combined', 'rows in'])
