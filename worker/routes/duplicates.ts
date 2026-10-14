@@ -153,9 +153,8 @@ duplicateRoutes.post('/duplicates/:pair_id/review', async (c) => {
       'No possible-duplicate pair has that id. Refresh the page to see the current list.',
     )
   }
-  // Wall clock: when the reviewer pressed the button (01 §duplicate_reviews: decided_at, UTC), a
-  // record of an action like received_at. No date rule reads it, so it is not business logic and
-  // TODAY does not apply; 02 §Time's wall-clock allow-list does not yet name it.
+  // Wall clock: when the reviewer pressed the button (01 §duplicate_reviews: decided_at, UTC). It is
+  // on 02 §Time's wall-clock allow-list (`duplicate_reviews.decided_at`, 09 D-62); no date rule reads it.
   const decidedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   await c.env.DB.prepare(
     `INSERT INTO duplicate_reviews (pair_id, pkey_a, pkey_b, verdict, score, decided_at)

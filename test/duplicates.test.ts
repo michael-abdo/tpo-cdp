@@ -120,11 +120,11 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
     expect(threeWay).toHaveLength(16)
     expect(body.review.map(emailsOf).sort()).toEqual(threeWay.map(([a, b]) => emailsOf({ a, b })).sort())
     expect(body.to_review).toBe(16)
-    expect(body.hidden_below_review).toBe(1704 - 16)
+    expect(body.hidden_below_review).toBe(1688)
     for (const pair of body.review) {
       expect(pair.band).toBe('review')
-      expect(pair.score).toBeGreaterThanOrEqual(REVIEW_MIN_SCORE)
-      expect(pair.score).toBeLessThan(AUTO_MIN_SCORE)
+      // 02 Fuzzy duplicates: the 16 three-way pairs each score 76 (review band 50–89, D-62).
+      expect(pair.score).toBe(76)
       expect(pair.decision).toBeNull()
       expect(Object.keys(pair)).toEqual([
         'pair_id',
@@ -154,7 +154,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
     const joy = result.pairs.filter((p) => JOY_HALL.includes(p.a.email) && JOY_HALL.includes(p.b.email))
     expect(joy).toHaveLength(3)
     for (const pair of joy) {
-      expect(pair.score).toBeLessThan(REVIEW_MIN_SCORE)
+      expect(pair.score).toBeLessThan(50)
       expect(pair.band).toBe('hidden')
     }
     // joy.hall830 + joy.hall524 share domain and source but signed up more than 7 days apart.
@@ -169,7 +169,7 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
 
   it('no pair reaches the auto band on the seed', async () => {
     const result = await scoreDuplicates(readers, [])
-    expect(Math.max(...result.pairs.map((p) => p.score))).toBeLessThan(AUTO_MIN_SCORE)
+    expect(Math.max(...result.pairs.map((p) => p.score))).toBeLessThan(90)
     expect(result.pairs.filter((p) => p.band === 'auto')).toEqual([])
   })
 })
@@ -246,6 +246,24 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
     expect(suggestionFor('auto', { ...none, shared_device: true })).toBe(
       'Very likely the same person — the name and app device match',
     )
+  })
+
+  it('the band edges are D-62\'s: auto ≥ 90, review 50–89, hidden < 50', () => {
+    expect(AUTO_MIN_SCORE).toBe(90)
+    expect(REVIEW_MIN_SCORE).toBe(50)
+    expect(bandOf(100)).toBe('auto')
+    expect(bandOf(90)).toBe('auto')
+    expect(bandOf(89)).toBe('review')
+    expect(bandOf(50)).toBe('review')
+    expect(bandOf(49)).toBe('hidden')
+    expect(bandOf(0)).toBe('hidden')
+  })
+
+  it('a pair id does not depend on the order of its two pkeys (04)', async () => {
+    const [x, y] = await pkeysOf({ a: { email: JOY_HALL[0] }, b: { email: JOY_HALL[1] } })
+    expect(x).not.toBe(y)
+    expect(await pairId(x, y)).toBe(await pairId(y, x))
+    expect(await pairId(x, y)).toMatch(/^dp_[0-9a-f]{16}$/)
   })
 })
 
@@ -376,7 +394,7 @@ describe('T-DUP-2: a shared device from a real signed login stitch is a hard lin
     const top = body.review[0]
     expect(emailsOf(top)).toBe([MARK_A.email, MARK_B.email].sort().join(' + '))
     expect(top.band).toBe('auto')
-    expect(top.score).toBeGreaterThanOrEqual(AUTO_MIN_SCORE)
+    expect(top.score).toBeGreaterThanOrEqual(90)
     expect(top.reasons.map((r) => [r.field, r.agrees])).toEqual([
       ['domain', false],
       ['signup_gap', false],
