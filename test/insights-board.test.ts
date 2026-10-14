@@ -1004,6 +1004,42 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     expect((await api(`/${tile.id}`, { method: 'DELETE' })).status).toBe(204)
   })
 
+  it('a title holding a known local part ("joy.hall830") is refused on POST and PATCH: Gate 1 rule D-70 #1 holds on this path', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const LOCAL = JOY.slice(0, JOY.indexOf('@'))
+    expect(LOCAL).toBe('joy.hall830')
+    const question = `how many Instagram signups like ${LOCAL} went cold last month?`
+    const auditId = await askRecorded(question, [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
+    // The model got the question with the local part redacted, so a pin that names the tile after it is clean.
+    const clean = await pin({ audit_id: auditId })
+    expect(clean.title).not.toContain(LOCAL)
+    expect((await stored(clean.id))!.prompt).not.toContain(LOCAL)
+
+    const before = await tileCount()
+    // A title the person typed, or the raw question the dialog still shows, can hold the local part.
+    for (const title of [question, `Readers like ${LOCAL}`, `${LOCAL}`, `joy.hall830+news`]) {
+      const res = await api('', { method: 'POST', body: { audit_id: auditId, title } })
+      expect(res.status, title).toBe(400)
+      const text = await res.text()
+      expect(text).not.toContain(LOCAL)
+      expect((JSON.parse(text) as { error: string; details: Array<{ field: string }> }).error).toBe('blocked_pii')
+      expect(await tileCount(), title).toBe(before)
+    }
+    for (const id of [clean.id, 'builtin-funnel']) {
+      const titleBefore = (await stored(id))!.title
+      const res = await api(`/${id}`, { method: 'PATCH', body: { title: `Readers like ${LOCAL}` } })
+      expect(res.status, id).toBe(400)
+      const text = await res.text()
+      expect(text).not.toContain(LOCAL)
+      expect((JSON.parse(text) as { error: string; details: Array<{ field: string }> }).details[0].field).toBe('title')
+      expect((await stored(id))!.title).toBe(titleBefore)
+    }
+    // A different word that merely starts with the local part is not the local part (whole tokens only).
+    const other = await api(`/${clean.id}`, { method: 'PATCH', body: { title: 'joy.hall8301 style readers' } })
+    expect(other.status).toBe(200)
+    expect((await api(`/${clean.id}`, { method: 'DELETE' })).status).toBe(204)
+  })
+
   it('a pin whose rows name individual subscribers is refused: the board holds counts only', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const before = await tileCount()
