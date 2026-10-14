@@ -7,26 +7,33 @@
 //
 //   - pin (POST /api/insights {audit_id, title?}): the server, never the browser, decides what is
 //     stored. It reads the trace's last successful `tool_call` row from ai_audit (its
-//     request_json is the checked tool input, 03 row 11), re-validates it through Gate 2 (and
-//     Gate 2's view check + Gate 3 for query_sql) against today's tool rows, and stores it.
-//     The body never carries a tool, params or SQL.
-//   - windows: a tool input's window_from/window_to (aggregate) or its one
-//     `BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'` (query_sql) is stored as a window
-//     (shared/insight-window.ts): rolling when it equals a preset on TODAY, else fixed. A
-//     query_sql window is stored as `:window_from`/`:window_to` in the SQL text (01 §insights).
-//     At run time the window is resolved against TODAY (02 §Time) and written back into the tool
-//     input: window_from/window_to as values, or, for query_sql, the two placeholders as date
-//     literals. That substitution happens before the executor, so the SQL that runs is the
-//     ordinary query_sql input and passes Gate 2 and Gate 3 in full; the dates come only from
-//     resolveWindow (two checked calendar dates), never from a client.
+//     request_json is the checked tool input, 03 row 11), refuses it unless its tool is pinnable,
+//     re-validates it through Gate 2 against today's enabled assistant_tools rows (loadTools,
+//     never the board's own insight_panel), and stores it. The body never carries a tool, params
+//     or SQL.
+//   - pinnable (09 D-64a): only fixed-SQL lookups, i.e. the `segment` and `aggregate` builtins and
+//     enabled `query`-type rows. `query_sql` (SQL the model wrote) and `insight_panel` (board
+//     only) are 400 `not_pinnable` with one plain sentence; the answer card learns this from
+//     pinPeriod (`pin_refusal`) and offers no Pin. This removes the free-form-SQL leak class
+//     instead of chasing it with an output denylist.
+//   - windows: an aggregate input's window_from/window_to is stored as a window
+//     (shared/insight-window.ts): rolling when it equals a preset on TODAY, else fixed. At run time
+//     the window is resolved against TODAY (02 §Time) and written back as window_from/window_to,
+//     two checked calendar dates from resolveWindow, never from a client; the executor then runs
+//     the input through Gate 2 in full. A query row's dates live in its own SQL (`own_dates`).
 //   - insight_panel: the four former /growth panels (worker/insights/*.ts) as one board-only
 //     tool, so built-in tiles run through the same executor. It is NOT an assistant_tools row
 //     and is never offered to the model: it exists only in the tool set this file builds for the
-//     board (09 D-64 "tool insight_panel"), next to the loaded rows.
-//   - segment tiles return the count and the filters only, never rows (06: "Open list" opens the
-//     builder). Any other tile whose rows name a subject (a pkey or visitor_hash column, a pk_
-//     key in a cell, or a cell holding 8+ hex characters of a real key: KnownKeys) is refused at
-//     pin: the board holds aggregates only (04).
+//     board runs (09 D-64 "tool insight_panel"), next to the loaded rows.
+//   - segment tiles return the count and the filters only, never rows (06: "Open segment" opens
+//     the builder). Any other tile whose rows name a subject (a pkey or visitor_hash column, a pk_
+//     key in a cell, or a cell holding 8+ hex characters of a real key: KnownKeys) is refused: the
+//     board holds aggregates only (04). This still matters after D-64a: a query row is data the
+//     Growth team adds (09 D-41), and its fixed SQL may select pkey from a v_* view.
+//   - failures: a call the gates or the handler refuse is the tile's `error` in plain words; a query
+//     the database refuses, or any other server error, is "could not run right now" (a retry may
+//     help). The raw problems go to console.error and the tile's `error_details` (Technical details),
+//     never the level-1 `error` (09 D-64a; 06 §UI principles 2, 4).
 //   - PII: the title, prompt and params are scanned before insert; on every run the whole stored
 //     row (title, prompt, params) and the tool input built from it (with its SQL) are scanned
 //     before the executor sees them, the executor scans every tool result, and the whole tile is
@@ -46,15 +53,13 @@ import { TODAY } from '../../shared/config'
 import { humanRange, PRESET_LABEL } from '../../shared/date-words'
 import { detectWindow, type InsightWindow, isCalendarDate, type ResolvedWindow, resolveWindow, windowProblems } from '../../shared/insight-window'
 import { type AuditTrace, AuditWriteError, startTrace } from '../assistant/audit/ai-audit'
-import { authorizeToolCall, validateSqlAgainstViews } from '../assistant/gates/gate2-tool-authorizer'
-import { GateDenied, lexSql, readOnlySelect, SqlLexError } from '../assistant/gates/gate3-readonly-sql'
+import { authorizeToolCall } from '../assistant/gates/gate2-tool-authorizer'
+import { lexSql, SqlLexError } from '../assistant/gates/gate3-readonly-sql'
 import { findPII, guardPayload, loadKnownEmails, PiiBlockedError } from '../assistant/gates/pii-guard'
-import { viewSchemas } from '../assistant/schema-context'
 import type { BuiltinHandler, ResultRow, ToolOutput } from '../assistant/tools/builtin-handlers'
 import { executeToolCall } from '../assistant/tools/tool-executor'
-import { type LoadedTool, type LoadedTools, loadTools, rewritePlaceholders } from '../assistant/tools/tool-loader'
+import { type LoadedTool, type LoadedTools, loadTools } from '../assistant/tools/tool-loader'
 import { ApiError } from '../auth/middleware'
-import { sqlLiteral } from '../ingest/sql'
 import { dataQuality } from './data-quality'
 import { funnel } from './funnel'
 import { goingCold } from './going-cold'
@@ -75,8 +80,19 @@ export const TITLE_MAX_CHARS = 120
 /** sort_order stays within ±SORT_ORDER_MAX, so a pin's max + 10 is always a safe integer. */
 export const SORT_ORDER_MAX = 1_000_000_000
 
-const WINDOW_FROM = ':window_from'
-const WINDOW_TO = ':window_to'
+/**
+ * The plain sentence of 400 `not_pinnable` (09 D-64a, verbatim), also returned with an answer as
+ * `pin_refusal` so the answer card offers no Pin for it.
+ */
+export const NOT_PINNABLE_MESSAGE = "Answers written as free-form queries can't be pinned. Ask the Growth team to add this as a saved question type."
+/** A tile whose lookup failed on the server side (a query the database refused, any other error): a retry may help (09 D-64a). */
+export const TILE_RUN_FAILED_MESSAGE = 'This tile could not run right now. Press Refresh to try again.'
+/** A pin whose first run or store failed on the server side (09 D-64a). */
+export const PIN_FAILED_MESSAGE = 'The answer could not be pinned because of a server error. Try Pin to board again.'
+/** The builtin handlers whose lookups can be pinned; every `query` row can be too (09 D-64a). */
+const PINNABLE_BUILTINS: ReadonlySet<string> = new Set(['segment', 'aggregate'])
+/** Tool names never pinned, even when their row is not loaded to say what it runs (09 D-64a). */
+const NEVER_PINNED: ReadonlySet<string> = new Set(['query_sql', INSIGHT_PANEL_TOOL])
 /** Columns of the v_* views that name one subject (01 §PII-free views, 05 §Pseudonymous key). */
 const SUBJECT_COLUMNS = new Set(['pkey', 'visitor_hash'])
 /** A pseudonymous key's shape anywhere in a cell (`pk_` + 16 hex, shared/pseudonym.ts), known or not. */
@@ -210,26 +226,45 @@ interface BoardTools {
   loadError: ApiError | null
 }
 
+function toolSet(tools: readonly LoadedTool[], loadError: ApiError | null): BoardTools {
+  return { tools: { tools, definitions: tools.map((t) => t.definition), byName: new Map(tools.map((t) => [t.name, t])) }, loadError }
+}
+
 /**
- * The enabled assistant_tools rows (validated by the loader, 03 row 3) plus insight_panel. A
- * loader refusal (no_tools, tool_config_error) does not take the built-in tiles down with it:
- * it becomes the error of every tile that names an assistant tool.
+ * The enabled assistant_tools rows (validated by the loader, 03 row 3): what a pin is checked
+ * against (09 D-64a). A loader refusal (no_tools, tool_config_error) is kept as `loadError`, not
+ * thrown, so it becomes a pin's re-validation problem or the error of every tile that names an
+ * assistant tool, and does not take the built-in tiles down with it.
  */
-async function boardTools(db: D1Database): Promise<BoardTools> {
-  let loaded: readonly LoadedTool[] = []
-  let loadError: ApiError | null = null
+async function assistantTools(db: D1Database): Promise<BoardTools> {
   try {
-    loaded = (await loadTools(db)).tools
+    const loaded = (await loadTools(db)).tools
+    if (loaded.some((t) => t.name === INSIGHT_PANEL_TOOL)) {
+      throw new Error(`insights-board: an assistant_tools row is named ${INSIGHT_PANEL_TOOL}, which is the board's own tool`)
+    }
+    return toolSet(loaded, null)
   } catch (err) {
     if (!(err instanceof ApiError)) throw err
     console.error(JSON.stringify({ at: 'insights-board', error: err.code, message: err.message }))
-    loadError = err
+    return toolSet([], err)
   }
-  if (loaded.some((t) => t.name === INSIGHT_PANEL_TOOL)) {
-    throw new Error(`insights-board: an assistant_tools row is named ${INSIGHT_PANEL_TOOL}, which is the board's own tool`)
-  }
-  const tools = [...loaded, INSIGHT_PANEL]
-  return { tools: { tools, definitions: tools.map((t) => t.definition), byName: new Map(tools.map((t) => [t.name, t])) }, loadError }
+}
+
+/** What a board run may call: the enabled assistant_tools rows plus insight_panel, run-only. */
+async function boardTools(db: D1Database): Promise<BoardTools> {
+  const assistant = await assistantTools(db)
+  return toolSet([...assistant.tools.tools, INSIGHT_PANEL], assistant.loadError)
+}
+
+/**
+ * Whether an answer's tool can be pinned (09 D-64a): `pinnable`, `not_pinnable`, or `unknown`
+ * when its row is not loaded (turned off or gone), which re-validation then reports.
+ */
+function pinnability(tools: BoardTools, tool: string): 'pinnable' | 'not_pinnable' | 'unknown' {
+  if (NEVER_PINNED.has(tool)) return 'not_pinnable'
+  const loaded = tools.tools.byName.get(tool)
+  if (loaded === undefined) return 'unknown'
+  return loaded.handlerType === 'query' || PINNABLE_BUILTINS.has(loaded.handlerName) ? 'pinnable' : 'not_pinnable'
 }
 
 // ── params and windows ───────────────────────────────────────────────────────────────────
@@ -261,11 +296,8 @@ function dateLiteral(text: string | undefined): string | null {
   return isCalendarDate(date) ? date : null
 }
 
-/**
- * The one `BETWEEN 'date' AND 'date'` of a query_sql text, as offsets of its two literals.
- * Null when there is none or more than one: such a query keeps its dates as written (no window).
- */
-function sqlWindow(sql: string): { from: string; to: string; spans: [[number, number], [number, number]] } | null {
+/** The one `BETWEEN 'date' AND 'date'` of an SQL text; null when there is none or more than one. */
+function sqlWindow(sql: string): { from: string; to: string } | null {
   let tokens
   try {
     tokens = lexSql(sql)
@@ -279,36 +311,17 @@ function sqlWindow(sql: string): { from: string; to: string; spans: [[number, nu
     if (between.kind !== 'word' || between.text.toUpperCase() !== 'BETWEEN' || and.kind !== 'word' || and.text.toUpperCase() !== 'AND') continue
     const from = a.kind === 'string' ? dateLiteral(a.text) : null
     const to = b.kind === 'string' ? dateLiteral(b.text) : null
-    if (from !== null && to !== null) found.push({ from, to, spans: [[a.start, a.end], [b.start, b.end]] as [[number, number], [number, number]] })
+    if (from !== null && to !== null) found.push({ from, to })
   }
   return found.length === 1 && found[0].from <= found[0].to ? found[0] : null
 }
 
 /** The checked tool input → stored params (01 §insights), detecting its window on TODAY. Pure. */
-export function storedParams(tool: string, input: Params, today: string): Params {
+export function storedParams(input: Params, today: string): Params {
   if (Object.hasOwn(input, 'window')) throw new ApiError(400, 'invalid_pin', 'This answer cannot be pinned: its tool input already has a "window" field.')
-  if (tool === 'query_sql' && typeof input.sql === 'string') {
-    const found = sqlWindow(input.sql)
-    if (found === null) return { ...input }
-    const [[aStart, aEnd], [bStart, bEnd]] = found.spans
-    const sql = input.sql.slice(0, aStart) + WINDOW_FROM + input.sql.slice(aEnd, bStart) + WINDOW_TO + input.sql.slice(bEnd)
-    return { ...input, sql, window: detectWindow(found.from, found.to, today) }
-  }
   const { window_from: from, window_to: to, ...rest } = input
   if (isCalendarDate(from) && isCalendarDate(to) && from <= to) return { ...rest, window: detectWindow(from, to, today) }
   return { ...input }
-}
-
-/** The SQL with its two window placeholders replaced by the resolved dates as literals. */
-function fillSqlWindow(sql: string, window: ResolvedWindow): string {
-  const { sql: marked, placeholders } = rewritePlaceholders(sql)
-  if (placeholders.length !== 2 || placeholders[0] !== WINDOW_FROM || placeholders[1] !== WINDOW_TO) {
-    throw new Error(`insights-board: a windowed query_sql tile must hold ${WINDOW_FROM} then ${WINDOW_TO} once each`)
-  }
-  // The lexer finds the two `?` markers outside strings; a `?` inside a string is not one.
-  const markers = lexSql(marked).filter((t) => t.kind === 'param')
-  const [a, b] = markers
-  return marked.slice(0, a.start) + sqlLiteral(window.from) + marked.slice(a.end, b.start) + sqlLiteral(window.to) + marked.slice(b.end)
 }
 
 /**
@@ -323,36 +336,32 @@ export function ownDates(sql: string | null): { from: string; to: string } | nul
   return found === null ? null : { from: found.from, to: found.to }
 }
 
-/** Stored params → the tool input for a run on `today`, and the window it covers. */
-export function callInput(tool: string, params: Params, today: string): { input: Params; window: ResolvedWindow | null } {
+/**
+ * Stored params → the tool input for a run on `today`, and the window it covers. A stored window
+ * always becomes window_from/window_to: a tool that takes neither (any tile but an aggregate, after
+ * drift) is then refused by Gate 2, never run with its dates dropped.
+ */
+export function callInput(params: Params, today: string): { input: Params; window: ResolvedWindow | null } {
   if (!Object.hasOwn(params, 'window')) return { input: params, window: null }
   const { window: stored, ...rest } = params
   const problems = windowProblems(stored)
   if (problems.length > 0) throw new Error(`insights-board: stored window is invalid: ${problems.join('; ')}`)
   const window = resolveWindow(stored as InsightWindow, today)
-  if (tool === 'query_sql') return { input: { ...rest, sql: fillSqlWindow(String(rest.sql), window) }, window }
   return { input: { ...rest, window_from: window.from, window_to: window.to }, window }
 }
 
 /**
- * Re-validation (09 D-64): Gate 2 against today's tool rows, and for query_sql Gate 2's view
- * check and Gate 3's read-only checks. Problems, empty when the call would be allowed.
+ * Re-validation (09 D-64, D-64a): Gate 2 against today's enabled assistant_tools rows only
+ * (assistantTools; never insight_panel). Problems, empty when the call would be allowed. A pinnable
+ * tool runs no SQL of the call's own: a query row's template passed Gate 2 and Gate 3 when the
+ * loader validated it (tool-loader.ts), and the first run passes both again in the executor.
  */
-async function revalidate(db: D1Database, board: BoardTools, tool: string, input: Params): Promise<string[]> {
-  const authorization = authorizeToolCall(board.tools, { name: tool, input })
+function revalidate(tools: BoardTools, tool: string, input: Params): string[] {
+  const authorization = authorizeToolCall(tools.tools, { name: tool, input })
   if (!authorization.allowed && authorization.reason === 'unknown_tool') {
-    return [board.loadError?.message ?? `${tool} is not an enabled assistant tool`]
+    return [tools.loadError?.message ?? `${tool} is not an enabled assistant tool`]
   }
   if (!authorization.allowed) return authorization.problems.map((p) => `input_schema: ${p}`)
-  if (tool === 'query_sql') {
-    try {
-      validateSqlAgainstViews(String(input.sql), await viewSchemas(db))
-      readOnlySelect(String(input.sql))
-    } catch (err) {
-      if (err instanceof GateDenied) return err.problems.map((p) => `${err.gate}: ${p}`)
-      throw err
-    }
-  }
   return []
 }
 
@@ -374,7 +383,13 @@ export interface Tile {
   result: { columns: string[]; rows: ResultRow[]; summary: Record<string, unknown> } | null
   segment: { count: number; filters: unknown } | null
   status: 'ok' | 'error'
+  /** Why the tile did not run, in plain words (level 1); null when ok. */
   error: string | null
+  /**
+   * Technical details of a failed run: the gates' or the database's problems, already through the
+   * executor's PII scan (09 D-64a: raw text only here). Null when ok, blocked or unexplained.
+   */
+  error_details: string | null
   ran_at: string
   explain: string
   /** Technical details (06 tile menu): the stored params and the SQL that ran. */
@@ -390,13 +405,13 @@ interface RunContext {
 }
 
 /** The problems a failed executor call sent back (format-results.ts formatToolError: one "- " line each). */
-function executorProblems(content: unknown): string {
+function executorProblems(content: unknown): string[] {
   const text = typeof content === 'string' ? content : ''
   const lines = text.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2))
-  return lines.length > 0 ? lines.join('; ') : 'the tool did not run'
+  return lines.length > 0 ? lines : ['the tool did not run']
 }
 
-/** A result names a reader: a key column, a pk_ key in a cell, or a piece of a real key in a cell (04). */
+/** A result names a subscriber: a key column, a pk_ key in a cell, or a piece of a real key in a cell (04). */
 function namesASubject(output: ToolOutput, keys: KnownKeys): boolean {
   return (
     output.columns.some((c) => SUBJECT_COLUMNS.has(c)) ||
@@ -420,13 +435,18 @@ export function explainQuestion(title: string, prompt: string, window: ResolvedW
 /** What a tile blocked by the personal-data check shows in place of every stored text (04). */
 export const BLOCKED_TILE_TITLE = 'Blocked tile'
 
-/** A tile that cannot run for a reason the viewer can act on; `message` is shown on the tile. */
+/**
+ * A tile that cannot run for a known reason; `message` is shown on the tile (level 1), `details`
+ * (the gates' or the database's problems) only in its Technical details.
+ */
 class TileError extends Error {
-  readonly code: 'outdated' | 'tools_unavailable' | 'refused' | 'not_aggregate'
-  constructor(code: TileError['code'], message: string) {
+  readonly code: 'outdated' | 'tools_unavailable' | 'refused' | 'query_failed' | 'not_aggregate'
+  readonly details: readonly string[]
+  constructor(code: TileError['code'], message: string, details: readonly string[] = []) {
     super(message)
     this.name = 'TileError'
     this.code = code
+    this.details = details
   }
 }
 
@@ -434,6 +454,8 @@ interface RunOutcome {
   tile: Tile
   /** Why the tile is `error`: a TileError code, blocked_pii or tile_failed; null when ok. */
   code: TileError['code'] | 'blocked_pii' | 'tile_failed' | null
+  /** The problems behind a TileError (TileError.details); empty otherwise. */
+  details: readonly string[]
 }
 
 /** Runs one tile through the executor (no model call); its failure is its own `error`. */
@@ -453,6 +475,7 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     segment: null,
     status: 'error',
     error: null,
+    error_details: null,
     // Wall clock: when this run happened (02 §Time allow-list, tile `ran_at`; 09 D-64).
     ran_at: new Date().toISOString(),
     explain: row.prompt ?? row.title,
@@ -470,7 +493,7 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     const params: unknown = JSON.parse(row.params)
     if (!isObject(params)) throw new Error(`insights-board: params of tile ${row.id} is not a JSON object`)
     tile.params = params
-    const { input, window } = callInput(row.tool, params, TODAY)
+    const { input, window } = callInput(params, TODAY)
     tile.window = window
     if (row.prompt !== null) tile.explain = explainQuestion(row.title, row.prompt, window)
     // The input built from the params (with its SQL and dates) is scanned before the executor
@@ -480,13 +503,18 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     const executed = await executeToolCall({ db: ctx.db, trace: ctx.trace, tools: ctx.board.tools }, { id: `tile-${row.id}`, name: row.tool, input })
     const output = executed.output
     if (output === null) {
-      // Gate 2 denied the call (an unknown tool or input), or the tool refused its input; the executor audited it.
-      throw new TileError(
-        'refused',
-        ctx.board.tools.byName.has(row.tool)
-          ? `This tile could not run: ${executorProblems(executed.result.content)}.`
-          : 'The data tool behind this tile is turned off or no longer exists, so the tile cannot run.',
-      )
+      // The executor audited the refusal (03 row 11); its problems are already PII-scanned.
+      if (!ctx.board.tools.byName.has(row.tool)) {
+        throw new TileError('refused', 'The data tool behind this tile is turned off or no longer exists, so the tile cannot run.')
+      }
+      const problems = executorProblems(executed.result.content)
+      if (executed.refusal === 'query_failed') {
+        // The database refused the query: a server-side failure, worth a retry (09 D-64a).
+        console.error(JSON.stringify({ at: 'insights-board', trace_id: ctx.trace.traceId, tile: row.id, error: 'query_failed', problems }))
+        throw new TileError('query_failed', TILE_RUN_FAILED_MESSAGE, problems)
+      }
+      // Gate 2 or Gate 3 denied the call, or the tool refused its input: the stored call is wrong.
+      throw new TileError('refused', 'This tile’s saved lookup no longer passes today’s checks, so it cannot run. Technical details say why.', problems)
     }
     tile.sql = output.sql ?? null
     if (window === null) tile.own_dates = ownDates(tile.sql)
@@ -495,7 +523,9 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
       tile.result = { columns: [], rows: [], summary }
       tile.segment = { count: output.segment.count, filters: output.segment.filters }
     } else {
-      if (namesASubject(output, ctx.keys)) throw new TileError('not_aggregate', 'This tile lists individual readers; the board shows counts only. Pin a count or a segment instead.')
+      if (namesASubject(output, ctx.keys)) {
+        throw new TileError('not_aggregate', 'This tile lists individual subscribers; the board shows counts only. Pin a count or a segment instead.')
+      }
       tile.result = { columns: output.columns, rows: output.rows, summary: output.summary }
       if (row.tool === INSIGHT_PANEL_TOOL && typeof output.summary.explain === 'string') tile.explain = output.summary.explain
     }
@@ -506,7 +536,7 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     await guardPayload(ctx.trace, leaving, 'tool_result', row.tool)
     tile.chart = pickChart({ columns: tile.result.columns, rows: tile.result.rows, segment: tile.segment }, row.chart)
     tile.status = 'ok'
-    return { tile, code: null }
+    return { tile, code: null, details: [] }
   } catch (err) {
     if (err instanceof AuditWriteError) throw err
     const message =
@@ -514,7 +544,7 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
         ? err.message
         : err instanceof PiiBlockedError
           ? 'This tile was blocked because it failed the personal-data check. The block has been logged.'
-          : 'This tile could not run because of a server error. The error has been logged.'
+          : TILE_RUN_FAILED_MESSAGE
     if (err instanceof PiiBlockedError) {
       console.error(JSON.stringify({ at: 'insights-board', trace_id: ctx.trace.traceId, tile: row.id, error: 'blocked_pii', check: err.check }))
     } else if (!(err instanceof TileError)) {
@@ -524,12 +554,14 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
       console.warn(JSON.stringify({ at: 'insights-board', trace_id: ctx.trace.traceId, tile: row.id, outcome: 'tile_error' }))
     }
     const code = err instanceof TileError ? err.code : err instanceof PiiBlockedError ? 'blocked_pii' : 'tile_failed'
+    const details = err instanceof TileError ? err.details : []
     // A blocked tile carries none of its stored text: a fixed title, no question, params or SQL.
     const scrubbed =
       err instanceof PiiBlockedError
         ? { title: BLOCKED_TILE_TITLE, explain: BLOCKED_TILE_TITLE, prompt: null, params: {}, sql: null, window: null, own_dates: null }
         : {}
-    return { tile: { ...tile, ...scrubbed, status: 'error', error: message, result: null, segment: null }, code }
+    const error_details = details.length > 0 ? details.join('; ') : null
+    return { tile: { ...tile, ...scrubbed, status: 'error', error: message, error_details, result: null, segment: null }, code, details }
   }
 }
 
@@ -614,8 +646,23 @@ async function tracePrompt(db: D1Database, traceId: string): Promise<string | nu
     .first<string | null>('q')
 }
 
-/** POST /api/insights {audit_id, title?} → the new tile (04, 09 D-64). */
+/**
+ * POST /api/insights {audit_id, title?} → the new tile (04, 09 D-64). A server-side failure (a
+ * database error, a failed audit write) is logged and answered with one plain retry sentence,
+ * 500 internal_error (09 D-64a); nothing is stored.
+ */
 export async function pinFromTrace(db: D1Database, rawBody: unknown): Promise<Tile> {
+  try {
+    return await pin(db, rawBody)
+  } catch (err) {
+    if (err instanceof ApiError) throw err
+    const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+    console.error(JSON.stringify({ at: 'insights-board', outcome: 'pin_failed', reason }))
+    throw new ApiError(500, 'internal_error', PIN_FAILED_MESSAGE)
+  }
+}
+
+async function pin(db: D1Database, rawBody: unknown): Promise<Tile> {
   const body = bodyObject(rawBody, ['audit_id', 'title'])
   if (typeof body.audit_id !== 'string' || body.audit_id === '') throw invalidBody(['audit_id must be the audit id of an answer'])
   const traceId = body.audit_id
@@ -631,14 +678,19 @@ export async function pinFromTrace(db: D1Database, rawBody: unknown): Promise<Ti
     throw new ApiError(409, 'nothing_to_pin', 'This answer did not come from a data tool, so there is nothing to pin.')
   }
   const { tool_name: toolName, input } = call
+  // Only fixed-SQL lookups are pinned (09 D-64a), checked against the enabled assistant_tools rows only.
+  const tools = await assistantTools(db)
+  if (pinnability(tools, toolName) === 'not_pinnable') {
+    console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'not_pinnable', tool_name: toolName }))
+    throw new ApiError(400, 'not_pinnable', NOT_PINNABLE_MESSAGE)
+  }
 
   const prompt = await tracePrompt(db, traceId)
   const title = body.title !== undefined ? checkedTitle(body.title) : prompt !== null ? defaultTitle(prompt) : null
   if (title === null) throw invalidBody(['title is required: this trace has no question to name the tile after'])
 
-  const params = storedParams(toolName, input, TODAY)
-  const board = await boardTools(db)
-  const problems = await revalidate(db, board, toolName, callInput(toolName, params, TODAY).input)
+  const params = storedParams(input, TODAY)
+  const problems = revalidate(tools, toolName, callInput(params, TODAY).input)
   if (problems.length > 0) {
     console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'revalidation_failed', problems }))
     throw new ApiError(400, 'invalid_pin', 'This answer can no longer be pinned: its saved tool call does not pass today’s checks.', problems)
@@ -661,12 +713,16 @@ export async function pinFromTrace(db: D1Database, rawBody: unknown): Promise<Ti
     created_at: new Date().toISOString(),
   }
   const ctx = await openContext(db)
-  const { tile, code } = await runTile(ctx, row)
+  const { tile, code, details } = await runTile(ctx, row)
   // Fail safe: a tile whose first run fails is never stored (04).
   if (code === 'not_aggregate') throw new ApiError(400, 'not_aggregate', tile.error ?? 'The board shows counts only.')
   if (code === 'blocked_pii') throw new ApiError(400, 'blocked_pii', 'This answer cannot be pinned: its result failed the personal-data check.')
-  if (code === 'tile_failed') throw new ApiError(500, 'internal_error', 'The answer could not be pinned because of a server error. The error has been logged.')
-  if (code !== null) throw new ApiError(400, 'invalid_pin', tile.error ?? 'This answer cannot be pinned: its lookup does not run.')
+  // runTile logged the reason (09 D-64a: a database failure is a 500 with a plain retry sentence).
+  if (code === 'tile_failed' || code === 'query_failed') throw new ApiError(500, 'internal_error', PIN_FAILED_MESSAGE)
+  if (code !== null) {
+    console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'first_run_refused', code }))
+    throw new ApiError(400, 'invalid_pin', 'This answer can no longer be pinned: its saved lookup does not run today.', details.length > 0 ? [...details] : undefined)
+  }
   await db
     .prepare(
       `INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at)
@@ -679,7 +735,7 @@ export async function pinFromTrace(db: D1Database, rawBody: unknown): Promise<Ti
 
 /**
  * The trace of an Ask answer: its last successful tool call (tool, the checked input and, for a
- * query_sql or query-row call, the SQL that ran), or null.
+ * call that ran SQL, the SQL that ran), or null. Whether that call can be pinned is pinnability's.
  */
 async function pinnableCall(db: D1Database, traceId: string): Promise<{ tool_name: string; input: Params; sql: string | null } | null> {
   // Only an Ask answer is pinned: a trace with no model call (a board run, 03 row 11) has no answer to keep.
@@ -704,17 +760,21 @@ async function pinnableCall(db: D1Database, traceId: string): Promise<{ tool_nam
  * window it would store, resolved on TODAY, or null when its lookup takes none (a segment, a query
  * with its dates written in more than once) or there is nothing to pin; and `own_dates`, the dates
  * the lookup sets itself when it takes no window (ownDates of the SQL that ran), which the tile
- * then shows in its footer. The same reading POST /api/insights does, so the pin dialog offers
+ * then shows in its footer; `refusal`, the not_pinnable sentence when its tool can never be pinned
+ * (09 D-64a), with no window. The same reading POST /api/insights does, so the pin dialog offers
  * Rolling/Fixed only when the server will keep the choice, and names dates only when the tile will.
  */
 export async function pinPeriod(
   db: D1Database,
   traceId: string,
-): Promise<{ window: ResolvedWindow | null; own_dates: { from: string; to: string } | null }> {
+): Promise<{ window: ResolvedWindow | null; own_dates: { from: string; to: string } | null; refusal: string | null }> {
   const call = await pinnableCall(db, traceId)
-  if (call === null || Object.hasOwn(call.input, 'window')) return { window: null, own_dates: null }
-  const window = callInput(call.tool_name, storedParams(call.tool_name, call.input, TODAY), TODAY).window
-  return { window, own_dates: window === null ? ownDates(call.sql) : null }
+  if (call === null) return { window: null, own_dates: null, refusal: null }
+  // The same refusal POST /api/insights gives (09 D-64a): the card then offers no Pin and says why.
+  if (pinnability(await assistantTools(db), call.tool_name) === 'not_pinnable') return { window: null, own_dates: null, refusal: NOT_PINNABLE_MESSAGE }
+  if (Object.hasOwn(call.input, 'window')) return { window: null, own_dates: null, refusal: null }
+  const window = callInput(storedParams(call.input, TODAY), TODAY).window
+  return { window, own_dates: window === null ? ownDates(call.sql) : null, refusal: null }
 }
 
 /** The question as a default title, cut to TITLE_MAX_CHARS with an ellipsis. */
@@ -759,8 +819,7 @@ export async function patchInsight(db: D1Database, id: string, rawBody: unknown)
       throw new ApiError(400, 'no_window', 'This tile has no date window to change.')
     }
     const updated = { ...params, window: body.window }
-    const board = await boardTools(db)
-    const gateProblems = await revalidate(db, board, row.tool, callInput(row.tool, updated, TODAY).input)
+    const gateProblems = revalidate(await assistantTools(db), row.tool, callInput(updated, TODAY).input)
     if (gateProblems.length > 0) {
       console.warn(JSON.stringify({ at: 'insights-board', tile: id, outcome: 'revalidation_failed', problems: gateProblems }))
       throw new ApiError(400, 'invalid_window', 'This window does not pass the checks for this tile.', gateProblems)
@@ -768,11 +827,11 @@ export async function patchInsight(db: D1Database, id: string, rawBody: unknown)
     next.params = JSON.stringify(updated)
   }
   const ctx = await openContext(db)
-  // A segment tile always shows its count and "Open list" (09 D-64), so a chart override on it is
+  // A segment tile always shows its count and "Open segment" (09 D-64), so a chart override on it is
   // refused rather than drawn without them. Whether it is one is read from its tool, not from this
   // run, which may fail (a tool turned off) and still store the override.
   if (next.chart !== null && body.chart !== undefined && isSegmentTool(ctx.board, row.tool)) {
-    throw invalidBody(['chart cannot be set on a list (segment) tile: it always shows its count and "Open list"'])
+    throw invalidBody(['chart cannot be set on a segment tile: it always shows its count and "Open segment"'])
   }
   // The tile is run as it would be stored, then stored. A run the personal-data check blocks is
   // never stored (fail safe, as a pin); any other failed run still stores the change, so a tile

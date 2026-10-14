@@ -61,6 +61,11 @@ export interface AssistantResponse extends AssistantResult {
    * window), or null; the tile shows the same dates in its footer (board.ts pinPeriod, ownDates).
    */
   pin_own_dates: { from: string; to: string } | null
+  /**
+   * Why "Pin to board" is refused for this answer, as one plain sentence (09 D-64a: free-form SQL
+   * and board-only lookups are never pinned), or null; the answer card then offers no Pin.
+   */
+  pin_refusal: string | null
 }
 
 /** Assistant calls this session made in the last hour: distinct traces, not counting rate-limited ones. */
@@ -136,11 +141,12 @@ export async function answerQuestion(deps: AssistantDeps, question: string): Pro
 
   const hydrated = rehydrate(result, await loadEmailsByPkey(deps.db, collectPkeys(result)))
   // Two calendar dates from the trace's own audit rows (09 D-64); nothing else is added.
-  const { window, own_dates } = await pinPeriod(deps.db, trace.traceId)
+  const { window, own_dates, refusal } = await pinPeriod(deps.db, trace.traceId)
   return {
     ...hydrated,
     audit_id: trace.traceId,
     pin_window: window === null ? null : { from: window.from, to: window.to },
     pin_own_dates: own_dates,
+    pin_refusal: refusal,
   }
 }
