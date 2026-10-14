@@ -103,7 +103,8 @@ describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
   it('the scan reads placeholders and the text and identifiers of buttons and links', () => {
     const { flag_example_identifier, flag_example_literal, pass_hint_placeholder } = env.SCREEN_TEXTS.onePlaceFixtures
     expect(flag_example_identifier.placeholders).toEqual([{ text: 'e.g. ', identifiers: ['EXAMPLE'] }])
-    expect(flag_example_identifier.actions).toEqual([{ text: 'Try an example: ', identifiers: ['EXAMPLE'] }])
+    // Children give 'EXAMPLE'; the onClick handler attribute also gives 'go' and 'EXAMPLE' (deduped).
+    expect(flag_example_identifier.actions).toEqual([{ text: 'Try an example: ', identifiers: ['EXAMPLE', 'go'] }])
     expect(flag_example_literal.placeholders).toEqual([{ text: 'e.g. joy.hall830@protonmail.com', identifiers: [] }])
     expect(flag_example_literal.actions).toEqual([{ text: 'Try joy.hall830@protonmail.com', identifiers: [] }])
     expect(pass_hint_placeholder.placeholders).toEqual([{ text: 'Search', identifiers: [] }])
@@ -135,5 +136,11 @@ describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
 
   it('no screen file writes the same sentence twice, and no screen shows a placeholder example again as a button or link', () => {
     expect(offences(env.SCREEN_TEXTS.onePlace)).toEqual([])
+  })
+
+  it('a screen is the page plus the shared components it imports, not one file in isolation (m11)', () => {
+    // A synthetic page repeats the exact sentence its imported ErrorLine already shows; scanning
+    // the page's own file alone would miss it (count 1), same as the bug this guards against.
+    expect(offences({ 'fixture/pages/Page.tsx': env.SCREEN_TEXTS.onePlaceScreenFixture })).not.toEqual([])
   })
 })
