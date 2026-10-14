@@ -1,0 +1,235 @@
+/// <reference types="vite/client" />
+import { env, SELF } from 'cloudflare:test'
+import { beforeAll, describe, expect, it } from 'vitest'
+import wranglerConfig from '../wrangler.jsonc?raw'
+import { documentationIp, loginCookie } from './helpers/auth'
+import { seedDatabase } from './helpers/seed'
+
+// POST /api/events/test (04 §POST /api/events/test, 06 §/events panel, 09 D-73): the "Send a
+// test event" panel's server route. T-WH-PANEL-1..9 (08). The test D1 holds the real seed of
+// data/*.csv (test/helpers/seed.ts); no network.
+// Inputs (09 D-11, D-47: real ids, minimal edits for the refusal paths):
+// - u_2b6447a3 is julia.evans230@gmail.com (app_users.csv:2, 02 §Counts demo subject): a real
+//   app account with no app_events rows yet in this file, so the "no device yet" branch is hit
+//   first and the "most recent device" branch is hit second, on the same account.
+// - u_09acb8a4 is an app-only user (02 §Counts); u_does_not_exist occurs nowhere in data/*.csv
+//   (09 D-47: a real-shaped id that is simply not one of the real ones).
+const KNOWN_USER = 'u_2b6447a3'
+const KNOWN_USER_EMAIL = 'julia.evans230@gmail.com'
+const UNKNOWN_USER_ID = 'u_does_not_exist'
+
+let cookie: string
+
+beforeAll(async () => {
+  await seedDatabase()
+  cookie = await loginCookie()
+})
+
+interface TestEventResponse {
+  status: 202 | 200
+  outcome: 'received' | 'duplicate'
+  event: {
+    event_id: string
+    event: string
+    device_id: string
+    event_ts: string
+    received_at: string
+    user_id: string | null
+    attached_via: 'direct' | 'login_stitch' | null
+    pkey: string | null
+    email: string | null
+  }
+}
+
+async function sendTest(body: Record<string, unknown>, sessionCookie = cookie, ip = documentationIp()): Promise<Response> {
+  return SELF.fetch('http://cdp.test/api/events/test', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: sessionCookie, 'cf-connecting-ip': ip },
+    body: JSON.stringify(body),
+  })
+}
+
+async function recent(): Promise<TestEventResponse['event'][]> {
+  const res = await SELF.fetch('http://cdp.test/api/events/recent', { headers: { cookie } })
+  expect(res.status).toBe(200)
+  return (await res.json<{ events: TestEventResponse['event'][] }>()).events
+}
+
+function bindingLimit(name: string): number {
+  const match = new RegExp(`"name": "${name}"[^}]*"limit": (\\d+), "period": 60`).exec(wranglerConfig)
+  if (match === null) throw new Error(`wrangler.jsonc has no 60 s ratelimits binding named ${name}`)
+  return Number(match[1])
+}
+
+describe('POST /api/events/test (09 D-73)', () => {
+  it('T-WH-PANEL-1: 401 without a session cookie', async () => {
+    const res = await sendTest({ user_id: KNOWN_USER, event: 'app_open' }, '')
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'unauthorized', message: 'Sign in to continue.' })
+  })
+
+  it('T-WH-PANEL-2: 400 for an unknown user_id', async () => {
+    const res = await sendTest({ user_id: UNKNOWN_USER_ID, event: 'app_open' })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; details: { field: string }[] }>()
+    expect(body.error).toBe('invalid_body')
+    expect(body.details).toEqual([{ field: 'user_id', issue: expect.stringContaining('known app account') }])
+    // No app_events row was written for a rejected send.
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM app_events WHERE user_id = ?').bind(UNKNOWN_USER_ID).first<number>('n')).toBe(0)
+  })
+
+  it('T-WH-PANEL-3: 400 for an event outside APP_EVENTS', async () => {
+    const res = await sendTest({ user_id: KNOWN_USER, event: 'purchase' })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; details: { field: string; issue: string }[] }>()
+    expect(body.error).toBe('invalid_body')
+    expect(body.details).toEqual([{ field: 'event', issue: expect.stringContaining('app_open, read_story, link_click, login') }])
+  })
+
+  it('T-WH-PANEL-4: 202 received; the row is then first in /api/events/recent with the chosen account and event', async () => {
+    const res = await sendTest({ user_id: KNOWN_USER, event: 'read_story' })
+    expect(res.status).toBe(202)
+    const body = await res.json<TestEventResponse>()
+    expect(body.status).toBe(202)
+    expect(body.outcome).toBe('received')
+    expect(body.event).toMatchObject({
+      event: 'read_story',
+      user_id: KNOWN_USER,
+      attached_via: 'direct',
+      email: KNOWN_USER_EMAIL,
+    })
+    expect(body.event.event_id).toMatch(/^evt_[0-9a-f]+$/)
+    expect(body.event.device_id).toMatch(/^d_[0-9a-f]+$/) // no prior device for this account in this file: a fresh one
+    const [first] = await recent()
+    expect(first).toEqual(body.event)
+  })
+
+  it("T-WH-PANEL-4b: a second send for the same account reuses that account's most recent device", async () => {
+    const first = await (await sendTest({ user_id: KNOWN_USER, event: 'app_open' })).json<TestEventResponse>()
+    const second = await (await sendTest({ user_id: KNOWN_USER, event: 'login' })).json<TestEventResponse>()
+    expect(second.event.device_id).toBe(first.event.device_id)
+  })
+
+  it('T-WH-PANEL-5: Send again (resend) answers 200 duplicate and leaves app_events unchanged', async () => {
+    const sent = await (await sendTest({ user_id: KNOWN_USER, event: 'link_click' })).json<TestEventResponse>()
+    const before = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+
+    const res = await sendTest({ resend: sent.event.event_id })
+    expect(res.status).toBe(200)
+    const body = await res.json<TestEventResponse>()
+    expect(body.status).toBe(200)
+    expect(body.outcome).toBe('duplicate')
+    expect(body.event).toEqual(sent.event) // the identical stored row, unchanged by the resend
+
+    const after = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+    expect(after).toBe(before)
+  })
+
+  it('T-WH-PANEL-5b: resend of an unknown event_id is 400, not a crash', async () => {
+    const res = await sendTest({ resend: 'evt_not_a_real_one' })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; details: { field: string }[] }>()
+    expect(body.error).toBe('invalid_body')
+    expect(body.details).toEqual([{ field: 'resend', issue: expect.stringContaining('already sent') }])
+  })
+
+  it('T-WH-PANEL-6: an unknown field, a non-string resend, and an array/non-object body are each 400', async () => {
+    expect((await sendTest({ user_id: KNOWN_USER, event: 'app_open', properties: {} })).status).toBe(400)
+    expect((await sendTest({ resend: 123 as unknown as string })).status).toBe(400)
+    expect((await sendTest({ resend: 'evt_x', user_id: KNOWN_USER })).status).toBe(400)
+    const res = await SELF.fetch('http://cdp.test/api/events/test', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: '[]',
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('T-WH-PANEL-7: the response body, and every log line this route writes, never carry WEBHOOK_SECRET or a "v1=" signature', async () => {
+    const logged: string[] = []
+    const origWarn = console.warn
+    const origInfo = console.info
+    console.warn = (...args: unknown[]) => logged.push(args.map(String).join(' '))
+    console.info = (...args: unknown[]) => logged.push(args.map(String).join(' '))
+    try {
+      const res = await sendTest({ user_id: KNOWN_USER, event: 'app_open' })
+      const text = await res.text()
+      expect(text).not.toContain(env.WEBHOOK_SECRET)
+      expect(text).not.toMatch(/v1=[0-9a-f]{64}/)
+      expect(text.toLowerCase()).not.toContain('signature')
+      for (const line of logged) {
+        expect(line).not.toContain(env.WEBHOOK_SECRET)
+        expect(line).not.toMatch(/v1=[0-9a-f]{64}/)
+      }
+    } finally {
+      console.warn = origWarn
+      console.info = origInfo
+    }
+  })
+
+  it('T-WH-PANEL-8: 429 past its own limit, and a new session from the same address is still 429 (09 D-70 #6 style)', async () => {
+    const limit = bindingLimit('TEST_EVENT_LIMITER')
+    const ip = documentationIp()
+    const first = await loginCookie(ip)
+    for (let i = 0; i < limit; i++) {
+      expect((await sendTest({ user_id: KNOWN_USER, event: 'app_open' }, first, ip)).status).toBe(202)
+    }
+    const relogin = await loginCookie(ip)
+    const limited = await sendTest({ user_id: KNOWN_USER, event: 'app_open' }, relogin, ip)
+    expect(limited.status).toBe(429)
+    expect(await limited.json()).toMatchObject({ error: 'rate_limited' })
+    // Another address is not limited by this one.
+    expect((await sendTest({ user_id: KNOWN_USER, event: 'app_open' }, first, documentationIp())).status).toBe(202)
+  })
+
+  it("T-WH-PANEL-9: picks the account's most recent device by event time, not by insertion order", async () => {
+    const user = 'u_3ab82c73' // faith.wilson277@gmail.com (app_users.csv): untouched by the tests above
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
+         VALUES ('evt_panel9a', 'app_open', ?, 'd_older', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`,
+      ).bind(user),
+      // Inserted second but with the earlier event_ts, so only reading event_ts (not rowid/insertion
+      // order) picks the right one.
+      env.DB.prepare(
+        `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
+         VALUES ('evt_panel9b', 'app_open', ?, 'd_newer', '2026-09-20T00:00:00Z', '2026-09-01T00:00:00Z')`,
+      ).bind(user),
+    ])
+    const res = await sendTest({ user_id: user, event: 'login' })
+    expect(res.status).toBe(202)
+    const body = await res.json<TestEventResponse>()
+    expect(body.event.device_id).toBe('d_newer')
+  })
+})
+
+// T-WH-PANEL-10: no second copy of verify or ingest (09 D-73's own rule). A mutant that skips
+// signing or verify, or swaps the real POST /webhooks/app call for a direct ingestEvent call,
+// is caught two ways: (1) here, statically — the route must call the real webhookRoutes.request
+// and the shared webhookMac, and must never call ingestEvent or verifyWebhook itself; (2)
+// dynamically — T-WH-PANEL-4/4b/5 above fail loud (500, not 202/200) the moment the inner
+// POST /webhooks/app call stops answering 202 or 200, which is exactly what a broken signature
+// or a skipped verify produces, since this route throws on any other status from that call.
+describe('T-WH-PANEL-10: the panel reuses verify and ingest, it never re-implements either', () => {
+  const code = import.meta.glob<string>('../worker/routes/events.ts', { query: '?raw', import: 'default', eager: true })
+
+  it('scans the real file, not an empty glob', () => {
+    expect(Object.keys(code)).toEqual(['../worker/routes/events.ts'])
+  })
+
+  it('imports webhookMac and webhookRoutes, calls webhookRoutes.request, and defines neither ingestEvent nor verifyWebhook itself', () => {
+    const text = code['../worker/routes/events.ts']
+    expect(text).toMatch(/import \{ webhookMac \} from '\.\.\/webhooks\/verify'/)
+    expect(text).toMatch(/import \{ webhookRoutes \} from '\.\/webhook'/)
+    expect(text).toContain('webhookRoutes.request(')
+    expect(text).not.toMatch(/\bingestEvent\(/)
+    expect(text).not.toMatch(/\bverifyWebhook\(/)
+    expect(text).not.toMatch(/crypto\.subtle\.sign\(/) // the HMAC math stays in webhookMac
+  })
+
+  it('fails loud on any status but 202/200 from the inner webhook call, so a broken signature cannot pass silently', () => {
+    const text = code['../worker/routes/events.ts']
+    expect(text).toMatch(/webhookRes\.status !== 202 && webhookRes\.status !== 200/)
+    expect(text).toMatch(/throw new Error/)
+  })
+})
