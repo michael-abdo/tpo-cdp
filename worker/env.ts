@@ -21,6 +21,7 @@ const LIMITER_NAMES = [
   'ASSISTANT_LIMITER',
   'EXPORT_LIMITER',
   'TEST_EVENT_LIMITER',
+  'APPROVAL_LIMITER',
 ] as const
 
 export type SecretName = (typeof SECRET_NAMES)[number]

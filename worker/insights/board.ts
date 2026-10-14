@@ -72,6 +72,7 @@ import type { BuiltinHandler, ResultRow, ToolOutput } from '../assistant/tools/b
 import { executeToolCall } from '../assistant/tools/tool-executor'
 import { type LoadedTool, type LoadedTools, loadTools } from '../assistant/tools/tool-loader'
 import { loadEmailsByPkey } from '../assistant/rehydrate'
+import { constantTimeStringEq } from '../auth/constant-time'
 import { ApiError } from '../auth/middleware'
 import { dataQuality } from './data-quality'
 import { funnel } from './funnel'
@@ -956,7 +957,9 @@ export async function approveInsightTool(db: D1Database, id: string, rawBody: un
     if (typeof body[field] !== 'string' || (body[field] as string).trim() === '') throw invalidBody([`${field} is required`])
   }
   const { password, name, note } = body as { password: string; name: string; note: string }
-  if (password !== correctPassword) {
+  // Constant-time, like SITE_PASSWORD at login (worker/auth/login.ts): a `!==` compare here would
+  // let a timing attack find TOOL_APPROVAL one byte at a time (09 D-64b finding).
+  if (!constantTimeStringEq(password, correctPassword)) {
     console.warn(JSON.stringify({ at: 'insights-board', outcome: 'wrong_approval_password', tool: id }))
     throw new ApiError(403, 'wrong_password', 'That password is not correct.')
   }

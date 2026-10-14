@@ -56,6 +56,17 @@ const WENT_COLD_AUGUST_SQL =
   "SELECT count(*) AS went_cold FROM v_profiles WHERE status = 'active' AND source = 'instagram' " +
   "AND cold_since BETWEEN '2026-08-01' AND '2026-08-31' AND cold_since <= '2026-09-28'"
 
+/**
+ * miniflare's rate limiter counts in windows aligned to the wall clock (epoch = floor(now / 60 s))
+ * and clears every bucket when the window rolls over (test/auth.test.ts, same helper): wait for
+ * the next window when less than needMs of the current one is left, so a burst never straddles a
+ * minute boundary and restarts the count where 429 is due.
+ */
+async function awaitLimiterWindow(needMs: number): Promise<void> {
+  const left = 60_000 - (Date.now() % 60_000)
+  if (left < needMs) await new Promise((resolve) => setTimeout(resolve, left + 250))
+}
+
 let turn = 0
 
 function message(content: Anthropic.ContentBlock[], stop_reason: Anthropic.StopReason): Anthropic.Message {
@@ -136,12 +147,13 @@ async function askAnswer(
 
 let cookie: string
 
-const api = (path: string, init: { method?: string; body?: unknown; cookie?: string | null } = {}) =>
+const api = (path: string, init: { method?: string; body?: unknown; cookie?: string | null; ip?: string } = {}) =>
   SELF.fetch(`http://cdp.test/api/insights${path}`, {
     method: init.method ?? 'GET',
     headers: {
       ...(init.cookie === null ? {} : { cookie: init.cookie ?? cookie }),
       ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(init.ip === undefined ? {} : { 'cf-connecting-ip': init.ip }),
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   })
@@ -1541,6 +1553,22 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     expect(await env.DB.prepare('SELECT enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<number>('enabled')).toBe(0)
     const pending = await listApprovals(env.DB)
     expect(pending.some((p) => p.id === pendingId)).toBe(true)
+  })
+
+  it('APPROVAL_LIMITER: the 11th approve attempt from one IP within a minute is 429, so TOOL_APPROVAL cannot be brute-forced', { timeout: 20_000 }, async () => {
+    await awaitLimiterWindow(8_000)
+    const ip = documentationIp()
+    const attempt = () => api('/approvals/does-not-exist/approve', { method: 'POST', ip, body: { password: 'not-it', name: 'x', note: 'y' } })
+    for (let i = 1; i <= 10; i++) {
+      const res = await attempt()
+      expect(res.status, `attempt ${i}`).not.toBe(429)
+    }
+    const eleventh = await attempt()
+    expect(eleventh.status).toBe(429)
+    expect((await eleventh.json<{ error: string }>()).error).toBe('rate_limited')
+    // The limit is per IP: a different client still gets through to the ordinary 403.
+    const otherIp = await api('/approvals/does-not-exist/approve', { method: 'POST', ip: documentationIp(), body: { password: 'not-it', name: 'x', note: 'y' } })
+    expect(otherIp.status).toBe(403)
   })
 
   it('a pinned "totals" tile masks by the SQL as it runs today, not the count/dimension columns it was pinned with (09 D-64b "on every board run")', async () => {

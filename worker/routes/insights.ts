@@ -46,7 +46,17 @@ insightRoutes.get('/insights/data-quality', async (c) => c.json(await dataQualit
 
 insightRoutes.get('/insights/approvals', async (c) => c.json(await listApprovals(c.env.DB)))
 
-insightRoutes.post('/insights/approvals/:id/approve', async (c) => c.json(await approveInsightTool(c.env.DB, c.req.param('id'), await jsonBody(c.req.raw), c.env.TOOL_APPROVAL), 201))
+insightRoutes.post('/insights/approvals/:id/approve', async (c) => {
+  // TOOL_APPROVAL is a second shared password (09 D-64b); APPROVAL_LIMITER keeps it from being
+  // brute-forced by any signed-in session, the same shape LOGIN_LIMITER gives SITE_PASSWORD.
+  const clientKey = c.req.header('cf-connecting-ip') ?? 'local'
+  const { success } = await c.env.APPROVAL_LIMITER.limit({ key: clientKey })
+  if (!success) {
+    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'rate_limited', id: c.req.param('id') }))
+    throw new ApiError(429, 'rate_limited', 'Too many approval attempts. Wait a minute and try again.')
+  }
+  return c.json(await approveInsightTool(c.env.DB, c.req.param('id'), await jsonBody(c.req.raw), c.env.TOOL_APPROVAL), 201)
+})
 
 insightRoutes.patch('/insights/:id', async (c) => c.json(await patchInsight(c.env.DB, c.req.param('id'), await jsonBody(c.req.raw))))
 
