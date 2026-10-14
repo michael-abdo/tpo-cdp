@@ -64,7 +64,9 @@ function filtersFrom(body: Record<string, unknown>, route: string): SegmentFilte
     return parseFilters(body.filters)
   } catch (err) {
     if (err instanceof ApiError) {
-      console.warn(JSON.stringify({ at: route, outcome: err.code, details: err.details }))
+      const redacted = (err.details ?? []).map((d) => redactEmails(String(d)).text)
+      console.warn(JSON.stringify({ at: route, outcome: err.code, details: redacted }))
+      throw new ApiError(err.status, err.code, err.message, redacted)
     }
     throw err
   }

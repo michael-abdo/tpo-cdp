@@ -233,6 +233,19 @@ describe('segment request errors', () => {
     warn.mockRestore()
   })
 
+  it('an email-shaped unknown filter key is redacted in the response and never reaches console.warn raw', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const path of ['preview', 'export.csv']) {
+      const res = await post(path, { filters: { [JOY]: 1 } })
+      expect(res.status).toBe(400)
+      const body = await res.json<{ error: string; details: string[] }>()
+      expect(body.details).toEqual(['unknown filter: [email]'])
+      expect(body.details.some((d) => d.includes('@'))).toBe(false)
+    }
+    for (const call of warn.mock.calls) expect(JSON.stringify(call)).not.toContain(JOY)
+    warn.mockRestore()
+  })
+
   it('a non-canonical status value is 400 invalid_filters', async () => {
     const res = await post('preview', { filters: { ...PRESET, status: ['unsubscribe'] } })
     expect(res.status).toBe(400)
