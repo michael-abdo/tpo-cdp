@@ -463,7 +463,7 @@ function SourceTabs({
 }
 
 /** The Sources table (06 §Overview 2), rendered only from GET /api/sources. */
-function SourcesTable({
+export function SourcesTable({
   sources,
   onReviewed,
   refreshError,
@@ -527,9 +527,15 @@ function SourcesTable({
           },
           {
             header: 'Last sync',
+            // A CSV's last sync is a date (one run a day at most); the webhook's is a date and
+            // time, since an event can arrive seconds ago and a reader needs that to see it just
+            // happened (R4.1, R4.10). humanDateTime rounds to the minute; the exact second is in
+            // Technical details' last received_at (09 D-72: this cell is still the one home of the
+            // fact, just shown at the precision each kind of sync needs).
             cell: (s: AnySource) => {
               const at = s.kind === 'csv' ? s.last_sync : s.last_received
-              return at === null ? 'None yet' : humanDate(at)
+              if (at === null) return 'None yet'
+              return s.kind === 'webhook' ? humanDateTime(at) : humanDate(at)
             },
           },
           {
