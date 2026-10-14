@@ -351,11 +351,16 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
  * The plan rows that make this SQL a cartesian/unindexed-nested-scan refusal (09 D-81 #1), or an
  * empty array when none do. Two shapes, both found live against the real seed (D1 EXPLAIN QUERY
  * PLAN, 2026-10-14) and both missed by an earlier version of this function that only ever looked
- * at `parent = 0` (the self-audit's finding: every v_* view here is NOT flattened to its base
- * tables at the outer query's own level — `v_profiles` alone plans as two MATERIALIZE/CO-ROUTINE
- * subtrees plus several SEARCHes, all legitimately at `parent = 0`, so "more than one SCAN at
- * parent = 0" was both too strict in spirit and, for a cartesian moved one level down, not strict
- * enough):
+ * at `parent = 0`. Each `v_*` view's own main join is flattened into the scope that uses it, so
+ * its base tables appear at that scope's own `parent = 0`, not nested under it: `v_profiles`
+ * alone puts `SCAN p` plus several SEARCHes (`s`, `abe`, `stub_au`, `fv`) directly at `parent = 0`,
+ * and only its two CTEs (`app_by_email`, `first_visit`) sit under their own MATERIALIZE id;
+ * `v_web_events` is fully flattened too — `SCAN we`, `SEARCH wv`, `SEARCH p`, all at `parent = 0`.
+ * So "more than one SCAN at parent = 0" was both too strict in spirit (a real join already shows
+ * one driving SCAN there, with every other relation reached by an indexed SEARCH) and, for a
+ * cartesian moved one level down (into a UNION branch or a FROM/IN/scalar subquery), not strict
+ * enough: that shape leaves exactly one SCAN at `parent = 0` and puts a second one under some
+ * other, non-zero parent, which the old rule never looked at):
  *   1. Two or more full scans of a real relation (`isRealScan`) sharing one immediate parent
  *      scope — a comma join or `JOIN … ON 1 = 1` of two views, wherever it sits: at the outer
  *      query's own level, inside a UNION branch, inside a `FROM (SELECT …)`, inside `IN (SELECT
