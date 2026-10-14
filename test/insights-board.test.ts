@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, toolSeedInsert } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { lastMonth, lastNDays } from '../shared/derive'
+import { SORT_ORDER_MAX } from '../worker/insights/board'
 import { detectWindow, resolveWindow } from '../shared/insight-window'
 import { findPII, loadKnownEmails } from '../worker/assistant/gates/pii-guard'
 import { MODEL } from '../worker/assistant/build-request'
@@ -85,6 +86,14 @@ function recorded(calls: Array<{ name: string; input: unknown }>): MessagesTrans
 
 /** Asks through the production assistant route with recorded turns; returns the trace id (audit_id). */
 async function askRecorded(question: string, calls: Array<{ name: string; input: unknown }>): Promise<string> {
+  return (await askAnswer(question, calls)).audit_id
+}
+
+/** The whole 200 body of POST /api/assistant for recorded turns. */
+async function askAnswer(
+  question: string,
+  calls: Array<{ name: string; input: unknown }>,
+): Promise<{ audit_id: string; pin_window: { from: string; to: string } | null }> {
   const app = new Hono<AppEnv>()
   app.use('/api/*', requireJson, requireSession)
   app.route('/api', assistantRoutes(() => recorded(calls)))
@@ -95,7 +104,7 @@ async function askRecorded(question: string, calls: Array<{ name: string; input:
     env,
   )
   expect(res.status).toBe(200)
-  return (await res.json<{ audit_id: string }>()).audit_id
+  return res.json()
 }
 
 let cookie: string
@@ -135,6 +144,28 @@ interface StoredRow {
 
 async function stored(id: string): Promise<StoredRow | null> {
   return env.DB.prepare('SELECT id, title, prompt, tool, params, chart, sort_order, built_in FROM insights WHERE id = ?').bind(id).first<StoredRow>()
+}
+
+const tileCount = () => env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')
+
+/** Replaces the checked input stored on a trace's successful tool_call row (an edited copy of a real trace, 09 D-47). */
+async function editTracedInput(auditId: string, input: unknown): Promise<void> {
+  const res = await env.DB.prepare("UPDATE ai_audit SET request_json = ? WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'")
+    .bind(JSON.stringify(input), auditId)
+    .run()
+  expect(res.meta.changes).toBe(1)
+}
+
+/** Stores a copy of a real pinned row under a new id with other params (stored-state drift, 09 D-47). */
+async function insertCopy(of: string, params: Record<string, unknown>, title: string): Promise<string> {
+  const id = crypto.randomUUID()
+  await env.DB.prepare(
+    `INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at)
+     SELECT ?, ?, prompt, tool, tool_version, ?, chart, sort_order + 1, built_in, created_at FROM insights WHERE id = ?`,
+  )
+    .bind(id, title, JSON.stringify(params), of)
+    .run()
+  return id
 }
 
 beforeAll(async () => {
@@ -222,6 +253,37 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
       await env.DB.prepare("UPDATE assistant_tools SET input_schema = ? WHERE name = 'aggregate'").bind(original).run()
     }
   })
+
+  it('a stored query_sql that reads a raw table or is not one SELECT fails Gate 2 / Gate 3 on re-validation: 400, nothing stored', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const explanation = 'Instagram active readers whose cold_since is in August'
+    for (const [sql, gate] of [
+      ['SELECT email_norm FROM subscribers LIMIT 1', 'gate2'],
+      // Over the views, so Gate 2's view check passes; a comment is not one plain SELECT (Gate 3).
+      ["SELECT count(*) AS went_cold FROM v_profiles WHERE source = 'instagram' /* every reader */", 'gate3'],
+    ] as const) {
+      const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'query_sql', input: { sql: WENT_COLD_AUGUST_SQL, explanation } }])
+      await editTracedInput(auditId, { sql, explanation })
+      const before = await tileCount()
+      const res = await api('', { method: 'POST', body: { audit_id: auditId } })
+      expect(res.status, sql).toBe(400)
+      const body = await res.json<{ error: string; details: string[] }>()
+      expect(body.error).toBe('invalid_pin')
+      expect(body.details.length).toBeGreaterThan(0)
+      expect(body.details.every((d) => d.startsWith(`${gate}: `)), JSON.stringify(body.details)).toBe(true)
+      expect(await tileCount()).toBe(before)
+    }
+  })
+
+  it('the answer reports the time period a pin keeps (pin_window): the aggregate’s window, none for a segment', async () => {
+    const aggregate = await askAnswer('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
+    expect(aggregate.pin_window).toEqual({ from: '2026-08-01', to: '2026-08-31' })
+    const segment = await askAnswer('which Instagram readers have not opened in 30 days?', [{ name: 'segment', input: PRESET }])
+    expect(segment.pin_window).toBeNull()
+    // The pin stores exactly that: a window for the aggregate, none for the segment.
+    expect((await pin({ audit_id: aggregate.audit_id })).window).toMatchObject({ from: '2026-08-01', to: '2026-08-31' })
+    expect((await pin({ audit_id: segment.audit_id })).window).toBeNull()
+  })
 })
 
 describe('T-INS-5: windows resolve against TODAY', () => {
@@ -229,8 +291,10 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     expect(TODAY).toBe('2026-09-28')
     expect(resolveWindow({ rolling: 'last_month' }, TODAY)).toEqual({ kind: 'rolling', preset: 'last_month', from: '2026-08-01', to: '2026-08-31' })
     expect(resolveWindow({ rolling: 'last_month' }, TODAY)).toMatchObject(lastMonth()) // 02 §Derived "last month"
-    // 02 §Derived "last N days" = TODAY − N .. TODAY; the same window as lastNDays(30) and new_subscriber.
-    expect(resolveWindow({ rolling: 'last_30_days' }, TODAY)).toEqual({ kind: 'rolling', preset: 'last_30_days', ...lastNDays(30) })
+    // 02 §Derived "last N days" = TODAY − N .. TODAY = 2026-08-29..2026-09-28 (08 T-INS-5); the
+    // same window as lastNDays(30) and new_subscriber. Literal dates, so a one-day drift fails here.
+    expect(resolveWindow({ rolling: 'last_30_days' }, TODAY)).toEqual({ kind: 'rolling', preset: 'last_30_days', from: '2026-08-29', to: '2026-09-28' })
+    expect(lastNDays(30)).toEqual({ from: '2026-08-29', to: '2026-09-28' })
     expect(resolveWindow({ rolling: 'this_month' }, TODAY)).toEqual({ kind: 'rolling', preset: 'this_month', from: '2026-09-01', to: '2026-09-28' })
     expect(resolveWindow({ fixed: ['2026-08-01', '2026-08-15'] }, TODAY)).toEqual({ kind: 'fixed', from: '2026-08-01', to: '2026-08-15' })
     expect(detectWindow('2026-08-01', '2026-08-31', TODAY)).toEqual({ rolling: 'last_month' })
@@ -252,8 +316,8 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     const res = await api(`/${tile.id}`, { method: 'PATCH', body: { window: { rolling: 'last_30_days' } } })
     expect(res.status).toBe(200)
     const moved = await res.json<Tile>()
-    expect(moved.window).toEqual({ kind: 'rolling', preset: 'last_30_days', ...lastNDays(30) })
-    const direct30 = await BUILTIN_HANDLERS.aggregate.run(env.DB, { ...WENT_COLD_AUGUST, window_from: lastNDays(30).from, window_to: lastNDays(30).to })
+    expect(moved.window).toEqual({ kind: 'rolling', preset: 'last_30_days', from: '2026-08-29', to: '2026-09-28' })
+    const direct30 = await BUILTIN_HANDLERS.aggregate.run(env.DB, { ...WENT_COLD_AUGUST, window_from: '2026-08-29', window_to: '2026-09-28' })
     expect(moved.result?.rows).toEqual(direct30.rows)
   })
 
@@ -277,6 +341,19 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     const direct = await BUILTIN_HANDLERS.aggregate.run(env.DB, { ...WENT_COLD_AUGUST, window_to: '2026-08-15' })
     expect(moved.result?.rows).toEqual(direct.rows)
     expect(moved.sql).toContain("BETWEEN '2026-08-01' AND '2026-08-15'")
+  })
+
+  it('"Explain this" on a pinned tile names the time period it shows now, not the one it was asked about', async () => {
+    const question = 'how many Instagram signups went cold last month?'
+    const tile = await pin({ audit_id: await askRecorded(question, [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    expect(tile.explain).toBe(`${question} (time period: Aug 1–31, 2026)`)
+    expect((await api(`/${tile.id}`, { method: 'PATCH', body: { window: { rolling: 'this_month' } } })).status).toBe(200)
+    const after = (await board()).tiles.find((t) => t.id === tile.id)!
+    expect(after.window).toMatchObject({ from: '2026-09-01', to: '2026-09-28' })
+    expect(after.explain).toBe(`${question} (time period: Sep 1–28, 2026)`)
+    // A built-in tile keeps its panel's own question (09 D-39).
+    const builtIn = (await board()).tiles.find((t) => t.id === 'builtin-going-cold')!
+    expect(builtIn.explain).not.toContain('time period:')
   })
 })
 
@@ -404,6 +481,59 @@ describe('T-INS-8: built-in tiles, PATCH, DELETE, session', () => {
     expect((await api(`/${tile.id}`, { method: 'DELETE' })).status).toBe(404)
   })
 
+  it('PATCH re-validates a new window against today’s tool rows: 400 invalid_window, params unchanged', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    const paramsBefore = (await stored(tile.id))!.params
+    const original = await env.DB.prepare("SELECT input_schema FROM assistant_tools WHERE name = 'aggregate'").first<string>('input_schema')
+    const schema = JSON.parse(original!) as { properties: Record<string, unknown> }
+    delete schema.properties.window_from
+    delete schema.properties.window_to
+    await env.DB.prepare("UPDATE assistant_tools SET input_schema = ? WHERE name = 'aggregate'").bind(JSON.stringify(schema)).run()
+    try {
+      const res = await api(`/${tile.id}`, { method: 'PATCH', body: { window: { rolling: 'last_30_days' } } })
+      expect(res.status).toBe(400)
+      const body = await res.json<{ error: string; details: string[] }>()
+      expect(body.error).toBe('invalid_window')
+      expect(body.details).toContain('input_schema: input has unknown property "window_from"')
+      expect((await stored(tile.id))!.params).toBe(paramsBefore)
+    } finally {
+      await env.DB.prepare("UPDATE assistant_tools SET input_schema = ? WHERE name = 'aggregate'").bind(original).run()
+    }
+  })
+
+  it('PATCH needs Content-Type: application/json (415), a bounded sort_order, and no chart on a list tile', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const plain = await SELF.fetch('http://cdp.test/api/insights/builtin-funnel', {
+      method: 'PATCH',
+      headers: { cookie, 'content-type': 'text/plain' },
+      body: JSON.stringify({ title: 'Renamed by a form post' }),
+    })
+    expect(plain.status).toBe(415)
+    expect((await plain.json<{ error: string }>()).error).toBe('unsupported_media_type')
+    expect((await stored('builtin-funnel'))!.title).toBe('Website visitors who subscribed')
+
+    for (const sort_order of [SORT_ORDER_MAX + 1, -SORT_ORDER_MAX - 1, Number.MAX_SAFE_INTEGER]) {
+      const res = await api('/builtin-funnel', { method: 'PATCH', body: { sort_order } })
+      expect(res.status, String(sort_order)).toBe(400)
+      expect((await res.json<{ error: string }>()).error).toBe('invalid_body')
+    }
+    expect((await api('/builtin-funnel', { method: 'PATCH', body: { sort_order: SORT_ORDER_MAX } })).status).toBe(200)
+    // The next pin goes last and stays a safe integer (max + 10, capped).
+    const last = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    expect(Number.isSafeInteger(last.sort_order) && last.sort_order <= SORT_ORDER_MAX).toBe(true)
+    expect((await api('/builtin-funnel', { method: 'PATCH', body: { sort_order: 20 } })).status).toBe(200)
+    expect((await api(`/${last.id}`, { method: 'DELETE' })).status).toBe(204)
+
+    // A segment tile always shows its count and "Open list" (09 D-64): a chart override is refused.
+    const list = await pin({ audit_id: await askRecorded('which Instagram readers have not opened in 30 days?', [{ name: 'segment', input: PRESET }]) })
+    const chart = await api(`/${list.id}`, { method: 'PATCH', body: { chart: 'number' } })
+    expect(chart.status).toBe(400)
+    expect((await chart.json<{ error: string }>()).error).toBe('invalid_body')
+    expect((await stored(list.id))!.chart).toBeNull()
+    expect((await api(`/${list.id}`, { method: 'DELETE' })).status).toBe(204)
+  })
+
   it('every board route needs a session: 401 without one', async () => {
     const anyId = 'builtin-funnel'
     for (const [path, method, body] of [
@@ -452,13 +582,96 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
 
   it('a pin whose rows name individual readers is refused: the board holds counts only', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const auditId = await askRecorded('list some Instagram readers', [
-      { name: 'query_sql', input: { sql: "SELECT pkey, signup_date FROM v_profiles WHERE source = 'instagram' LIMIT 5", explanation: 'five Instagram readers' } },
-    ])
-    const before = await env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')
+    const before = await tileCount()
+    for (const sql of [
+      "SELECT pkey, signup_date FROM v_profiles WHERE source = 'instagram' LIMIT 5",
+      // A key inside a longer cell, and a key with its pk_ prefix cut off, name readers too.
+      "SELECT ' ' || group_concat(pkey) AS ks, count(*) AS n FROM v_profiles WHERE source = 'instagram'",
+      "SELECT substr(pkey, 4) AS k, engagement_score FROM v_profiles WHERE source = 'instagram' LIMIT 5",
+    ]) {
+      const auditId = await askRecorded('list some Instagram readers', [{ name: 'query_sql', input: { sql, explanation: 'Instagram readers' } }])
+      const res = await api('', { method: 'POST', body: { audit_id: auditId } })
+      expect(res.status, sql).toBe(400)
+      expect((await res.json<{ error: string }>()).error).toBe('not_aggregate')
+    }
+    expect(await tileCount()).toBe(before)
+  })
+
+  it('a traced input holding an email is refused at pin (the saved input is scanned before insert)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
+    await editTracedInput(auditId, { ...WENT_COLD_AUGUST, source: [JOY] })
+    const before = await tileCount()
     const res = await api('', { method: 'POST', body: { audit_id: auditId } })
     expect(res.status).toBe(400)
-    expect((await res.json<{ error: string }>()).error).toBe('not_aggregate')
-    expect(await env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')).toBe(before)
+    const body = await res.json<{ error: string; message: string; details: Array<{ field: string }> }>()
+    expect(body.error).toBe('blocked_pii')
+    expect(body.details[0].field).toBe('saved input')
+    expect(body.message).not.toContain('@')
+    expect(JSON.stringify(body)).not.toContain(JOY)
+    expect(await tileCount()).toBe(before)
+  })
+
+  it('a stored tile whose params or SQL drifted to hold an email is that tile’s error; the board answers 200 without the email', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const aggregate = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    const sqlTile = await pin({
+      audit_id: await askRecorded('how many Instagram signups went cold last month?', [
+        { name: 'query_sql', input: { sql: WENT_COLD_AUGUST_SQL, explanation: 'Instagram active readers whose cold_since is in August' } },
+      ]),
+    })
+    const aggregateParams = JSON.parse((await stored(aggregate.id))!.params) as Record<string, unknown>
+    const sqlParams = JSON.parse((await stored(sqlTile.id))!.params) as { sql: string }
+    const drifted = [
+      await insertCopy(aggregate.id, { ...aggregateParams, source: [JOY] }, 'Drifted params'),
+      await insertCopy(sqlTile.id, { ...sqlParams, sql: sqlParams.sql.replace("source = 'instagram'", `source = '${JOY}'`) }, 'Drifted SQL'),
+    ]
+    try {
+      const res = await api('')
+      expect(res.status).toBe(200)
+      const text = await res.text()
+      expect(text).not.toContain(JOY)
+      expect(findPII(text, await loadKnownEmails(env.DB))).toBeNull()
+      const { tiles } = JSON.parse(text) as { tiles: Tile[] }
+      for (const id of drifted) {
+        const tile = tiles.find((t) => t.id === id)!
+        expect(tile).toMatchObject({ status: 'error', result: null, params: {}, sql: null, prompt: null })
+        expect(tile.error).toContain('personal-data check')
+      }
+      expect(tiles.filter((t) => !drifted.includes(t.id)).every((t) => t.status === 'ok')).toBe(true)
+      // The block is in the audit trail, without the email (03 row 11).
+      const blocked = await env.DB.prepare("SELECT error FROM ai_audit WHERE kind = 'blocked' AND error LIKE 'blocked_pii:% in audit_row' ORDER BY rowid DESC LIMIT 2").all<{ error: string }>()
+      expect(blocked.results).toHaveLength(2)
+    } finally {
+      for (const id of drifted) await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(id).run()
+    }
+  })
+})
+
+describe('board runs in the audit log (05 §Proof surfaces, R5.5)', () => {
+  it('a board run is listed as board_run only on request; the questions stay on the default page', async () => {
+    const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
+    for (let i = 0; i < 4; i++) await board()
+    const boardTrace = await env.DB.prepare("SELECT trace_id FROM ai_audit WHERE tool_name = 'insight_panel' ORDER BY rowid DESC LIMIT 1").first<string>('trace_id')
+    const list = async (query: string) => {
+      const res = await SELF.fetch(`http://cdp.test/api/audit${query}`, { headers: { cookie } })
+      expect(res.status, query).toBe(200)
+      return (await res.json<{ traces: Array<{ trace_id: string; outcome: string; reached_ai: boolean; model_calls: number }> }>()).traces
+    }
+    // Four board runs came after the question; a default page of 3 still starts with it.
+    const page = await list('?limit=3')
+    expect(page[0].trace_id).toBe(auditId)
+    expect(page.every((t) => t.outcome !== 'board_run')).toBe(true)
+    const all = await list('?limit=100&board_runs=include')
+    const run = all.find((t) => t.trace_id === boardTrace)
+    expect(run).toMatchObject({ outcome: 'board_run', reached_ai: false, model_calls: 0 })
+    expect(all.filter((t) => t.outcome === 'board_run').length).toBeGreaterThanOrEqual(4)
+    expect(all.some((t) => t.trace_id === auditId && t.outcome === 'answered')).toBe(true)
+
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const bad = await SELF.fetch('http://cdp.test/api/audit?board_runs=yes', { headers: { cookie } })
+    expect(bad.status).toBe(400)
+    expect((await bad.json<{ error: string }>()).error).toBe('invalid_board_runs')
   })
 })

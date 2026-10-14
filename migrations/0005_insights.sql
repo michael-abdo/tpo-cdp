@@ -14,12 +14,13 @@ CREATE TABLE insights (
   chart        TEXT CHECK (chart IS NULL OR chart IN ('number','bar','line','table')), -- NULL = auto (shared/pick-chart.ts)
   sort_order   INTEGER NOT NULL,
   built_in     INTEGER NOT NULL DEFAULT 0 CHECK (built_in IN (0,1)), -- 1 = a former Growth panel; cannot be deleted
-  created_at   TEXT NOT NULL                        -- UTC, when the row was written
+  created_at   TEXT NOT NULL                        -- UTC wall clock, when the tile was pinned or seeded (02 §Time allow-list, 09 D-64)
 );
 
 -- The four former /growth panels as built-in tiles (09 D-64). Their numbers come from the panel
 -- functions in worker/insights/*.ts through the board-only insight_panel tool; the titles are the
--- ones the Growth page showed.
+-- ones the Growth page showed. created_at reads the wall clock ('now'): 02 §Time allows it for
+-- insights.created_at (09 D-64); no date rule reads it.
 INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at) VALUES
   ('builtin-source-app-conversion', 'Newsletter subscribers who then got the app', NULL, 'insight_panel', 1,
    '{"panel":"source-app-conversion"}', NULL, 10, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

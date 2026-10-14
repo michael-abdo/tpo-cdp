@@ -1,14 +1,17 @@
+/// <reference types="vite/client" />
 import { createElement, type ReactElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
-import { type ChartKind, pickChart } from '../../shared/pick-chart'
+import webCsv from '../../data/web_events.csv?raw'
+import { BAR_TOP_CATEGORIES, type ChartKind, pickChart } from '../../shared/pick-chart'
 import { AnswerCard } from '../../src/insights/ask'
 import { BoardGrid, TileActions } from '../../src/insights/board'
 import { cellText } from '../../src/insights/cells'
 import { InsightChart } from '../../src/insights/charts'
 import type { ChartResult, ChartSegment } from '../../src/insights/shapes'
 import type { AssistantResponse, InsightTile } from '../../src/types'
+import { parseCsv } from '../../worker/ingest/csv'
 
 // /insights (06 §/insights, 09 D-64) rendered with React's server renderer, the way
 // test/ui/assistant-result.test.ts renders the answer card: the answer card offers "Pin to board",
@@ -18,7 +21,9 @@ import type { AssistantResponse, InsightTile } from '../../src/types'
 //     returns it with no grouping (number) and grouped by cold_month (one point in time: line);
 //   - the web_events UTM values (instagram 667, facebook 496, google 393, referral 256, podcast 108,
 //     twitter 50) as a query_sql count of page views by utm_source over v_web_events (bar);
-//   - the two demo subjects' newsletter fields (table);
+//   - page views by page and campaign source over data/web_events.csv, counted here from the real
+//     rows (104 pairs: more than BAR_TOP_CATEGORIES, so the "Other" bar is drawn);
+//   - the two demo subjects' newsletter fields, without their emails (table);
 //   - the brief's R3 preset, 177 readers (segment).
 // The built-in tile is the seeded "Readers at risk of going cold" row (migrations/0005_insights.sql);
 // its result is given no rows, since the board's numbers for it are not stated in 02 §Counts.
@@ -30,6 +35,7 @@ const AUGUST = { kind: 'rolling', preset: 'last_month', from: '2026-08-01', to: 
 function render(element: ReactElement): { html: string; text: string } {
   const html = renderToString(createElement(MemoryRouter, null, element))
   const text = html
+    .replace(/<!-- -->/g, '') // React's marker between adjacent text nodes, not a break in the text
     .replace(/<[^>]*>/g, ' ')
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
@@ -56,12 +62,34 @@ const UTM: Array<[string, number]> = [
   ['twitter', 50],
 ]
 const BAR: ChartResult = { columns: ['utm_source', 'page_views'], rows: UTM.map(([utm_source, page_views]) => ({ utm_source, page_views })) }
+// The table shape a tool returns for subjects never carries an email (the scanner refuses it, 05):
+// the demo subjects' newsletter fields, keyed by nothing that names them.
 const TABLE: ChartResult = {
-  columns: ['email', 'source', 'signup_date', 'last_open_date'],
+  columns: ['source', 'signup_date', 'last_open_date', 'status'],
   rows: [
-    { email: 'joy.hall830@protonmail.com', source: 'instagram', signup_date: '2026-09-02', last_open_date: '2026-09-22' },
-    { email: 'julia.evans230@gmail.com', source: 'instagram', signup_date: '2026-09-13', last_open_date: '2026-09-15' },
+    { source: 'instagram', signup_date: '2026-09-02', last_open_date: '2026-09-22', status: 'active' },
+    { source: 'instagram', signup_date: '2026-09-13', last_open_date: '2026-09-15', status: 'active' },
   ],
+}
+
+/** Page views by `page from <utm_source>` over the real web_events.csv rows (09 D-47). */
+function pageViewsByEntry(): ChartResult {
+  const { header, rows } = parseCsv(webCsv)
+  const page = header.indexOf('page')
+  const utm = header.indexOf('utm_source')
+  const counts = new Map<string, number>()
+  for (const r of rows) {
+    const entry = `${r[page]} from ${r[utm] === '' ? 'no campaign' : r[utm]}`
+    counts.set(entry, (counts.get(entry) ?? 0) + 1)
+  }
+  return { columns: ['entry', 'page_views'], rows: [...counts].map(([entry, page_views]) => ({ entry, page_views })) }
+}
+
+/** The labels of the drawn bars, in drawing order (the aria-hidden chart, not the numbers table). */
+function drawnLabels(html: string): string[] {
+  const drawing = /<ol[^>]*data-bars=""[^>]*>([\s\S]*?)<\/ol>/.exec(html)
+  expect(drawing, 'a bar chart draws an <ol> of bars').not.toBeNull()
+  return [...(drawing?.[1] ?? '').matchAll(/data-bar-label="">([^<]*)</g)].map((m) => m[1].replace(/&amp;/g, '&'))
 }
 const PRESET: ChartSegment = {
   count: 177,
@@ -104,8 +132,7 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
 
   it('table: the rows are the text, with plain column names', () => {
     const { text } = chart('table', TABLE)
-    expect(text).toContain('joy.hall830@protonmail.com')
-    expect(text).toContain('julia.evans230@gmail.com')
+    expect(text).toContain('Instagram')
     expect(text).toContain('Signed up')
     expect(text).toContain('Sep 2, 2026')
   })
@@ -115,6 +142,42 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
     expect(text).toContain('177 readers match')
     expect(text).toContain('Open list')
     expect(html).not.toContain('<table')
+  })
+})
+
+describe('bars are sorted largest first, top 20 + "Other" (06 §/insights)', () => {
+  it('rows in any order are drawn largest first; the numbers table keeps the rows as returned', () => {
+    // The real UTM counts, smallest first: the order a GROUP BY without ORDER BY may return.
+    const ascending: ChartResult = { columns: BAR.columns, rows: [...BAR.rows].reverse() }
+    const { html } = chart('bar', ascending)
+    expect(drawnLabels(html)).toEqual(['Instagram', 'Facebook', 'Google', 'Referral', 'Podcast', 'twitter'])
+    const body = /<tbody>([\s\S]*?)<\/tbody>/.exec(html)?.[1] ?? ''
+    expect(body.indexOf('>twitter<')).toBeGreaterThan(-1)
+    expect(body.indexOf('>twitter<')).toBeLessThan(body.indexOf('>Instagram<'))
+  })
+
+  it(`more than ${BAR_TOP_CATEGORIES} categories: ${BAR_TOP_CATEGORIES} bars, then one "Other (N more)" bar with their sum`, () => {
+    const result = pageViewsByEntry()
+    expect(result.rows.length).toBeGreaterThan(BAR_TOP_CATEGORIES)
+    const { html } = chart('bar', result)
+    const labels = drawnLabels(html)
+    // Largest first; equal counts in label order, as the chart breaks ties.
+    const sorted = [...result.rows].sort((a, b) => (b.page_views as number) - (a.page_views as number) || String(a.entry).localeCompare(String(b.entry)))
+    const rest = sorted.slice(BAR_TOP_CATEGORIES)
+    expect(labels).toHaveLength(BAR_TOP_CATEGORIES + 1)
+    expect(labels.slice(0, BAR_TOP_CATEGORIES)).toEqual(sorted.slice(0, BAR_TOP_CATEGORIES).map((r) => cellText('entry', r.entry)))
+    expect(labels[BAR_TOP_CATEGORIES]).toBe(`Other (${rest.length.toLocaleString('en-US')} more)`)
+    const otherSum = rest.reduce((sum, r) => sum + (r.page_views as number), 0)
+    expect(html).toContain(`>${otherSum.toLocaleString('en-US')}<`)
+  })
+
+  it('a zero row draws no bar and is counted under the chart; it stays in the numbers table', () => {
+    // The real UTM counts with a sixth row edited to 0 (09 D-47: an edited copy of a real result).
+    const withZero: ChartResult = { columns: BAR.columns, rows: BAR.rows.map((r) => (r.utm_source === 'twitter' ? { ...r, page_views: 0 } : r)) }
+    const { html, text } = chart('bar', withZero)
+    expect(drawnLabels(html)).not.toContain('twitter')
+    expect(text).toContain('Not drawn: 1 at 0.')
+    expect(tableText(html)).toContain('twitter')
   })
 })
 
@@ -130,12 +193,35 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       definitions_used: ['went_cold_in', 'last_month'],
       partial: false,
       audit_id: crypto.randomUUID(),
+      pin_window: { from: '2026-08-01', to: '2026-08-31' },
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
     expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>[\s\S]*?Pin to board/)
     // The dialog's window choice: Aug 1–31 is last month on TODAY, so both kinds are offered.
     expect(text).toContain('Rolling: last month')
     expect(text).toContain('Fixed: Aug 1–31, 2026')
+  })
+
+  it('a lookup with its own dates (pin_window null) offers no time period choice, only the dates as text', () => {
+    // The recorded segment answer to "build me a list of our most engaged readers": the score's
+    // 30-day lookback is the answer's window, but the segment tool takes no window, so the server
+    // reports pin_window null (04 POST /api/assistant).
+    const data: AssistantResponse = {
+      type: 'segment',
+      text: 'Here are your most engaged active readers.',
+      table: null,
+      segment: { count: 177, filters: PRESET.filters },
+      window: { from: '2026-08-29', to: '2026-09-28' },
+      filters_applied: { status: ['active'] },
+      definitions_used: ['engagement_score'],
+      partial: false,
+      audit_id: crypto.randomUUID(),
+      pin_window: null,
+    }
+    const { html, text } = render(createElement(AnswerCard, { data, question: 'build me a list of our most engaged readers', onPinned: () => {} }))
+    expect(html).not.toContain('type="radio"')
+    expect(html).not.toContain('<fieldset')
+    expect(text).toContain('uses its own dates (Aug 29 – Sep 28, 2026)')
   })
 })
 
@@ -174,7 +260,7 @@ const builtIn: InsightTile = {
 }
 
 function actions(tile: InsightTile) {
-  return render(createElement(TileActions, { tile, above: null, below: null, onChanged: () => {}, onRemoved: () => {}, onExplain: () => {} }))
+  return render(createElement(TileActions, { tile, above: null, below: null, onChanged: () => {}, onRemoved: () => {}, onExplain: () => {}, onClose: () => {} }))
 }
 
 describe('tile options (06 §/insights tile menu)', () => {
@@ -184,18 +270,32 @@ describe('tile options (06 §/insights tile menu)', () => {
     expect(text).toContain('Rename')
     expect(text).toContain('Explain this')
     expect(text).toContain('Move down')
-    expect(text).not.toContain('Change window')
+    expect(text).not.toContain('Change time period')
   })
 
-  it('a pinned tile with a window has Remove and Change window', () => {
+  it('a pinned tile with a window has Remove and Change time period', () => {
     const { text } = actions(pinned)
     expect(text).toContain('Remove')
-    expect(text).toContain('Change window')
+    expect(text).toContain('Change time period')
   })
 
-  it('a tile shows its window in words and "Updated just now"', () => {
-    const { text } = render(createElement(BoardGrid, { tiles: [builtIn, pinned], onChanged: () => {}, onRemoved: () => {}, onExplain: () => {} }))
+  it('the time period form names the dates each preset covers today', () => {
+    const { text } = render(
+      createElement(TileActions, { tile: pinned, above: null, below: null, onChanged: () => {}, onRemoved: () => {}, onExplain: () => {}, onClose: () => {}, initialMode: 'window' }),
+    )
+    expect(text).toContain('Rolling: last month (Aug 1–31, 2026)')
+    // 02 §Derived "last N days" = TODAY − 30 .. TODAY.
+    expect(text).toContain('Rolling: last 30 days (Aug 29 – Sep 28, 2026)')
+    expect(text).toContain('Rolling: this month (Sep 1–28, 2026)')
+    expect(text).toContain('A rolling period moves with today')
+  })
+
+  it('a tile shows its window in words as a button that changes it, and "Updated just now"', () => {
+    const { html, text } = render(createElement(BoardGrid, { tiles: [builtIn, pinned], onChanged: () => {}, onRemoved: () => {}, onExplain: () => {} }))
     expect(text).toContain('Last month · Aug 1–31, 2026')
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*>[\s\S]*?Last month · Aug 1–31, 2026[\s\S]*?change time period for /)
+    // A tile with no period says when it is as of.
+    expect(text).toContain('As of Sep 28, 2026')
     expect(text).toContain('Updated just now')
     expect(text).toContain('46')
     // sort_order 30 before 50.

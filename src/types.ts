@@ -191,12 +191,14 @@ export interface AssistantResponse {
   partial: boolean
   /** The trace_id of the request's ai_audit rows (GET /api/audit/:trace_id). */
   audit_id: string
+  /** The time period "Pin to board" would store, or null when the lookup has none (04, 09 D-64). */
+  pin_window: { from: string; to: string } | null
 }
 
 export type AuditStatus = 'success' | 'error' | 'blocked'
 
 /** How a request ended (worker/routes/audit.ts AuditOutcome and traceOutcome). */
-export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished'
+export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished' | 'board_run'
 
 /** One line of GET /api/audit?limit= (worker/routes/audit.ts AuditTraceSummary). */
 export interface AuditTraceSummary {
@@ -306,7 +308,7 @@ export interface SourceAppCounts extends Explained {
   with_app_after_signup: number
 }
 
-/** GET /api/insights/source-app-conversion (04, 06 §/growth panel 1). */
+/** GET /api/insights/source-app-conversion (04; the built-in tile of 06 §/insights, 09 D-64). */
 export interface SourceAppConversion {
   total: SourceAppCounts
   by_source: (SourceAppCounts & { source: string | null })[]
@@ -319,7 +321,7 @@ export interface FunnelCounts extends Explained {
   subscribed: number
 }
 
-/** GET /api/insights/funnel (04, 06 §/growth panel 2; v_funnel). */
+/** GET /api/insights/funnel (04; the built-in tile of 06 §/insights, 09 D-64; v_funnel). */
 export interface Funnel {
   total: FunnelCounts
   by_first_page: (FunnelCounts & { first_page: string })[]
@@ -332,7 +334,7 @@ export interface GoingColdCounts extends Explained {
   at_risk: number
 }
 
-/** GET /api/insights/going-cold (04, 06 §/growth parked panel; going_cold_risk, 02 §Derived). */
+/** GET /api/insights/going-cold (04; the built-in tile of 06 §/insights, 09 D-64; going_cold_risk, 02 §Derived). */
 export interface GoingCold {
   total: GoingColdCounts
   /** Unsubscribed readers at risk, left out of every count above (02 §Defaults). */
@@ -353,7 +355,7 @@ export type DataQualityCheckKey =
   | 'page_views_unexpected_utm'
   | 'app_users_not_on_list'
 
-/** GET /api/insights/data-quality (04, 06 §/growth parked panel; T-INS-3). */
+/** GET /api/insights/data-quality (04; the built-in tile of 06 §/insights, 09 D-64; T-INS-3). */
 export interface DataQuality {
   /** Sums over import_runs, and the quarantine table by file and reason. */
   import: {

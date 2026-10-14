@@ -33,10 +33,6 @@ function timeText(value: string): string {
   return value.length === 7 ? humanMonth(value) : humanDate(value)
 }
 
-function shorten(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
-}
-
 // ── the numbers as text ──────────────────────────────────────────────────────────────────
 
 /**
@@ -119,40 +115,47 @@ export function NumberTile({ shape }: { shape: NumberShape }) {
   )
 }
 
-const BAR_ROW = 36
-/** The longest bar's share of the width; the rest leaves room for its value label. */
-const BAR_SPAN = 78
+/** The longest bar's share of the track. */
+const BAR_SPAN = 100
 
+/**
+ * Bars largest first (shapes.ts barShape: top BAR_TOP_CATEGORIES + "Other"). Each row is its label
+ * and value as HTML text, which wraps instead of being cut, over a one-bar SVG; a row whose value
+ * is 0 or missing draws no bar and is counted in a line under the chart instead.
+ */
 export function BarChart({ shape, result, caption }: { shape: BarShape; result: ChartResult; caption: string }) {
   const rows: { key: string; label: string; value: number | null; muted: boolean }[] = shape.bars.map((b) => ({ ...b, muted: false }))
   if (shape.other !== null) {
     rows.push({ key: 'other', label: `Other (${fmt(shape.other.count)} more)`, value: shape.other.value, muted: true })
   }
   const width = (v: number | null) => (v === null || shape.max <= 0 ? 0 : (Math.max(0, v) / shape.max) * BAR_SPAN)
+  const notDrawn = [
+    shape.undrawn.zero > 0 ? `${fmt(shape.undrawn.zero)} at ${cellText(shape.value, 0)}` : null,
+    shape.undrawn.missing > 0 ? `${fmt(shape.undrawn.missing)} with no data` : null,
+  ].filter((part) => part !== null)
   return (
     <ChartFigure caption={caption} result={result}>
-      <p className="mb-1 flex justify-between gap-3 text-xs text-ink-muted">
+      <p className="mb-1.5 flex justify-between gap-3 text-xs text-ink-muted">
         <span>{columnLabel(shape.category)}</span>
         <span>{columnLabel(shape.value)}</span>
       </p>
-      <svg width="100%" height={rows.length * BAR_ROW} focusable="false" className="block overflow-visible">
-        {rows.map((r, i) => {
-          const top = i * BAR_ROW
-          const w = width(r.value)
-          return (
-            <g key={r.key}>
-              <text x="0" y={top + 12} fontSize="12" fill="var(--ink)">
-                {shorten(r.label, 48)}
-              </text>
-              <rect x="0" y={top + 18} width="100%" height="10" rx="5" fill="var(--surface-2)" />
-              <rect x="0" y={top + 18} width={`${w}%`} height="10" rx="5" fill={r.muted ? 'var(--ink-subtle)' : 'var(--accent)'} />
-              <text x={`${w}%`} dx="6" y={top + 27} fontSize="12" fill="var(--ink-muted)" className="tabular-nums">
-                {r.value === null ? '' : cellText(shape.value, r.value)}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
+      <ol className="space-y-2" data-bars="">
+        {rows.map((r) => (
+          <li key={r.key} className="space-y-1">
+            <div className="flex items-baseline justify-between gap-3 text-xs">
+              <span className={`min-w-0 break-words ${r.muted ? 'text-ink-muted' : 'text-ink'}`} data-bar-label="">
+                {r.label}
+              </span>
+              <span className="shrink-0 tabular-nums text-ink-muted">{r.value === null ? '' : cellText(shape.value, r.value)}</span>
+            </div>
+            <svg width="100%" height="10" focusable="false" className="block">
+              <rect x="0" y="0" width="100%" height="10" rx="5" fill="var(--surface-2)" />
+              <rect x="0" y="0" width={`${width(r.value)}%`} height="10" rx="5" fill={r.muted ? 'var(--ink-subtle)' : 'var(--accent)'} />
+            </svg>
+          </li>
+        ))}
+      </ol>
+      {notDrawn.length > 0 && <p className="mt-2 text-xs text-ink-muted">Not drawn: {notDrawn.join(' and ')}. They are in the numbers.</p>}
     </ChartFigure>
   )
 }

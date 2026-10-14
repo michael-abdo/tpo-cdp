@@ -1,4 +1,4 @@
-// What "Ask a question" shows of the model's `filters_applied` (06 §/assistant footer, 09 D-58).
+// What "Ask a question" shows of the model's `filters_applied` (06 §/insights answer card footer, 09 D-58).
 // The model writes `filters_applied` itself, and the server does not screen it (respond.ts screens
 // only `text`), so the page runs the same D-58 check (shared/sql-sign.ts) over every key and every
 // string in it, and over its JSON as shown in Technical details. Any sign hides the whole object,

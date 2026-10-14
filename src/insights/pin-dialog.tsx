@@ -1,8 +1,10 @@
 // "Pin to board" (06 §/insights, 09 D-64): a modal dialog with the tile's title (prefilled from the
-// question) and, when the answer had a time period, the choice "Rolling: last month" or "Fixed:
-// Aug 1–31, 2026". The browser sends only the trace id and the title (04: never a tool, params or
-// SQL); the server takes the trace's last successful tool call and stores its window rolling when
-// it equals a preset, else fixed. When the person chose the other kind, one PATCH sets it.
+// question) and, when the pinned lookup takes a time period, the choice "Rolling: last month" or
+// "Fixed: Aug 1–31, 2026". Whether it takes one is the server's answer (`pin_window` of POST
+// /api/assistant, the same reading POST /api/insights does), so the dialog never offers a choice
+// the pin would drop; a lookup with its own dates shows them as plain text. The browser sends only
+// the trace id and the title (04: never a tool, params or SQL); the server stores the window
+// rolling when it equals a preset, else fixed. When the person chose the other kind, one PATCH sets it.
 // The native <dialog> gives the focus trap, Esc to close and the backdrop; focus goes back to the
 // button that opened it (06 §UI principles 7).
 
@@ -34,20 +36,24 @@ export function PinDialog({
   auditId,
   question,
   answerWindow,
+  pinWindow,
   onPinned,
 }: {
   open: boolean
   onClose: () => void
   auditId: string
   question: string
+  /** The dates the answer covered (AssistantResponse.window). */
   answerWindow: { from: string; to: string } | null
+  /** The time period the pin stores, or null when its lookup has none (AssistantResponse.pin_window). */
+  pinWindow: { from: string; to: string } | null
   onPinned: (tile: InsightTile, note: string | null) => void
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const inputId = useId()
   const [title, setTitle] = useState(question)
-  const preset = answerWindow === null ? null : matchingPreset(answerWindow.from, answerWindow.to)
+  const preset = pinWindow === null ? null : matchingPreset(pinWindow.from, pinWindow.to)
   const [choice, setChoice] = useState<Choice>(preset === null ? 'fixed' : 'rolling')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<{ message: string; code: string | null } | null>(null)
@@ -73,13 +79,13 @@ export function PinDialog({
       return
     }
     let note: string | null = null
-    if (answerWindow !== null && tile.window === null) {
-      // The lookup's dates are part of the tool itself (e.g. a query tool's SQL), so the server
-      // stored no window and the Rolling/Fixed choice cannot apply: say so instead of dropping it.
-      note = `Pinned “${tile.title}”. This lookup has its dates built in (${humanRange(answerWindow.from, answerWindow.to)}), so its time period cannot be changed.`
-    } else if (answerWindow !== null && tile.window !== null && tile.window.kind !== choice) {
+    if (pinWindow !== null && tile.window === null) {
+      // The server said this pin would keep a time period, then stored none: never silent.
+      console.error('insights: pin_window promised a time period the pin did not store', tile.id)
+      note = `Pinned “${tile.title}”, but its time period could not be kept.`
+    } else if (pinWindow !== null && tile.window !== null && tile.window.kind !== choice) {
       const wanted: InsightWindow | null =
-        choice === 'fixed' ? { fixed: [answerWindow.from, answerWindow.to] } : preset === null ? null : { rolling: preset }
+        choice === 'fixed' ? { fixed: [pinWindow.from, pinWindow.to] } : preset === null ? null : { rolling: preset }
       if (wanted !== null) {
         try {
           tile = await patchJson<InsightTile>(`/api/insights/${tile.id}`, { window: wanted } satisfies InsightPatch)
@@ -118,7 +124,13 @@ export function PinDialog({
             className="min-h-11 w-full rounded-lg border border-line-strong bg-page px-3 py-2 text-base text-ink"
           />
         </div>
-        {answerWindow !== null && (
+        {pinWindow === null && answerWindow !== null && (
+          <p className="text-sm text-ink">
+            <span className="font-medium">Time period:</span> uses its own dates ({humanRange(answerWindow.from, answerWindow.to)}).
+            <span className="block text-ink-muted">The lookup behind this answer sets them, so the tile keeps them.</span>
+          </p>
+        )}
+        {pinWindow !== null && (
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium text-ink">Time period</legend>
             {preset !== null && (
@@ -126,14 +138,14 @@ export function PinDialog({
                 <input type="radio" name="pin-window" checked={choice === 'rolling'} onChange={() => setChoice('rolling')} className="mt-1" />
                 <span>
                   Rolling: {PRESET_LABEL[preset].toLowerCase()}
-                  <span className="block text-ink-muted">Moves with today; now {humanRange(answerWindow.from, answerWindow.to)}.</span>
+                  <span className="block text-ink-muted">Moves with today; now {humanRange(pinWindow.from, pinWindow.to)}.</span>
                 </span>
               </label>
             )}
             <label className="flex min-h-6 items-start gap-2 text-sm">
               <input type="radio" name="pin-window" checked={choice === 'fixed'} onChange={() => setChoice('fixed')} className="mt-1" />
               <span>
-                Fixed: {humanRange(answerWindow.from, answerWindow.to)}
+                Fixed: {humanRange(pinWindow.from, pinWindow.to)}
                 <span className="block text-ink-muted">Always these dates.</span>
               </span>
             </label>

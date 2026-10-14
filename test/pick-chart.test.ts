@@ -27,6 +27,18 @@ describe('T-INS-7: pickChart picks the chart from the result shape (06 §/insigh
     expect(pickChart({ columns: result.columns, rows: [{ went_cold: null }] })).toBe('table')
   })
 
+  it('several rows of one number column, or one row of one text column, is a table, not one number', async () => {
+    // The real grouped result with its label column dropped: only the counts are left.
+    const bySource = await run('aggregate', { metric: 'subscribers', group_by: 'source', status: ['active', 'unsubscribed'] })
+    expect(bySource.rows.length).toBeGreaterThan(1)
+    const counts = bySource.columns.filter((c) => c !== 'source')
+    expect(counts).toEqual(['subscribers'])
+    expect(pickChart({ columns: counts, rows: bySource.rows.map((r) => ({ subscribers: r.subscribers })) })).toBe('table')
+    // One row, one column, and the cell is text.
+    const first = bySource.rows[0]
+    expect(pickChart({ columns: ['source'], rows: [{ source: first.source }] })).toBe('table')
+  })
+
   it('one row of several numbers is a table, not one number', async () => {
     const result = await run('aggregate', { metric: 'source_to_app' })
     expect(result.rows).toHaveLength(1)

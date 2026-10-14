@@ -30,6 +30,7 @@ function answer(filtersApplied: Record<string, unknown>): AssistantResponse {
     definitions_used: ['went_cold_in', 'last_month'],
     partial: false,
     audit_id: crypto.randomUUID(),
+    pin_window: { from: '2026-08-01', to: '2026-08-31' },
   }
 }
 

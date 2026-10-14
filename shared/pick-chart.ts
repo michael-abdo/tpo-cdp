@@ -34,11 +34,13 @@ export interface ChartInput {
   segment?: { count: number } | null
 }
 
-type ColumnKind = 'number' | 'time' | 'category' | 'other'
+export type ColumnKind = 'number' | 'time' | 'category' | 'other'
 
-const TIME_VALUE = /^\d{4}-\d{2}(?:-\d{2})?$/
+/** A time cell: `YYYY-MM` or `YYYY-MM-DD`. */
+export const TIME_VALUE = /^\d{4}-\d{2}(?:-\d{2})?$/
 
-function columnKind(rows: readonly Record<string, unknown>[], column: string): ColumnKind {
+/** A column's kind read from every row (the rules above); the one home the UI's chart shapes reuse. */
+export function columnKind(rows: readonly Record<string, unknown>[], column: string): ColumnKind {
   const values = rows.map((row) => row[column] ?? null)
   if (values.every((v) => v === null || typeof v === 'number') && values.some((v) => typeof v === 'number')) return 'number'
   if (values.every((v) => typeof v === 'string' && TIME_VALUE.test(v))) return 'time'

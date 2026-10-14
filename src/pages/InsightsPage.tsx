@@ -4,7 +4,9 @@
 // call (04). The four built-in tiles are the former Growth panels. An answer's "Pin to board" adds
 // a tile; a tile's "Explain this" fills the Ask bar and waits for Ask (09 D-39). /assistant and
 // /growth redirect here, keeping ?q= (src/App.tsx), so an old "Explain this" link still fills the box.
-// Every change ends with the board fetched again and a polite announcement (06 §UI principles 7).
+// Every change ends with the board fetched again and a polite announcement (06 §UI principles 7);
+// a plain Refresh announces "Board updated." once the new tiles are in. Refresh stays focusable
+// while it works (aria-disabled, clicks ignored), so a keyboard user keeps their place.
 
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
@@ -30,6 +32,13 @@ export default function InsightsPage() {
   const [announcement, setAnnouncement] = useState('')
   // Each load bumps the version; a fetch whose version was replaced never shows (the cleanup below).
   const [version, setVersion] = useState(0)
+  // Set by the Refresh button: the load that answers it says so.
+  const refreshNote = useRef(false)
+
+  /** A new polite message; the same words twice still change the text, so they are read again. */
+  function announce(message: string) {
+    setAnnouncement((prev) => (prev === message ? `${message}\u00a0` : message))
+  }
 
   useEffect(() => {
     let current = true
@@ -38,14 +47,19 @@ export default function InsightsPage() {
         if (!current) return
         setRefreshing(false)
         setBoard({ status: 'ok', data })
+        if (refreshNote.current) {
+          refreshNote.current = false
+          announce('Board updated.')
+        }
       },
       (err: unknown) => {
         if (!current) return
         console.error('insights: board failed to load', err)
         setRefreshing(false)
         // A failed refresh keeps the tiles already on screen and says so.
+        refreshNote.current = false
         setBoard((prev) => (prev.status === 'ok' ? prev : { status: 'error', message: errorMessage(err) }))
-        setAnnouncement(`The board could not be refreshed: ${errorMessage(err)}`)
+        announce(`The board could not be refreshed: ${errorMessage(err)}`)
       },
     )
     return () => {
@@ -58,8 +72,14 @@ export default function InsightsPage() {
     setVersion((v) => v + 1)
   }
 
+  function refresh() {
+    if (refreshing) return
+    refreshNote.current = true
+    load()
+  }
+
   function changed(message: string) {
-    setAnnouncement(message)
+    announce(message)
     load()
   }
 
@@ -92,7 +112,7 @@ export default function InsightsPage() {
           <h2 id="board-heading" ref={boardHeading} tabIndex={-1} className="mr-auto font-display text-xl font-medium text-ink focus:outline-none">
             Your board
           </h2>
-          <Button variant="quiet" icon={ICONS.refresh} onClick={load} disabled={refreshing}>
+          <Button variant="quiet" icon={ICONS.refresh} onClick={refresh} aria-disabled={refreshing} className="aria-disabled:cursor-wait aria-disabled:opacity-60">
             {refreshing && board.status === 'ok' ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>

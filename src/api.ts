@@ -74,7 +74,7 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
 
 /**
  * Export CSV (04 §Segments: POST /api/segments/export.csv) for these filters, saved as a download.
- * One home for /segments and the segment answer on /assistant (06 §/assistant "Export").
+ * One home for /segments and a segment answer on /insights (06 §/insights answer card).
  */
 export async function downloadSegmentCsv(filters: SegmentFilters): Promise<void> {
   const res = await request('/api/segments/export.csv', { method: 'POST', body: { filters } })

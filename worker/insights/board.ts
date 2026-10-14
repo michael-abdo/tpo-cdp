@@ -26,23 +26,27 @@
 //   - segment tiles return the count and the filters only, never rows (06: "Open list" opens the
 //     builder). Any other tile whose rows name a subject (a pkey or visitor_hash column, a pk_
 //     cell) is refused at pin: the board holds aggregates only (04).
-//   - PII: the title, prompt and params are scanned before insert; the executor scans every
-//     tool result, and the tile's whole result is scanned again before it leaves (05 §Scanner).
+//   - PII: the title, prompt and params are scanned before insert; on every run the stored params
+//     and the tool input built from them (with its SQL) are scanned before the executor sees them,
+//     the executor scans every tool result, and the tile's whole result is scanned again before it
+//     leaves (05 §Scanner). A hit is that tile's `blocked_pii` error, never the board's.
 //   - one tile's failure is that tile's `error`; the board still answers 200 (04). A failed
 //     audit write is not a tile error: it fails the request loud (03 row 11).
 //
 // Audit: each board request opens one trace with no session_sub, so its tool_call rows sit in
 // ai_audit like any other tool run but never count toward the assistant's per-session limit
-// (09 D-40 counts traces per session_sub). ran_at and created_at are wall-clock operational
-// timestamps like ai_audit.created_at; no date rule reads them.
+// (09 D-40 counts traces per session_sub); /api/audit lists such a trace as a `board_run`
+// (worker/routes/audit.ts). ran_at and created_at read the wall clock under 02 §Time's allow-list
+// (`insights.created_at`, a tile's `ran_at`; 09 D-64); no date rule reads them.
 
 import { pickChart, type ChartKind, CHART_OVERRIDES, type ChartOverride } from '../../shared/pick-chart'
 import { TODAY } from '../../shared/config'
+import { humanRange } from '../../shared/date-words'
 import { detectWindow, type InsightWindow, isCalendarDate, type ResolvedWindow, resolveWindow, windowProblems } from '../../shared/insight-window'
 import { type AuditTrace, AuditWriteError, startTrace } from '../assistant/audit/ai-audit'
 import { authorizeToolCall, validateSqlAgainstViews } from '../assistant/gates/gate2-tool-authorizer'
 import { GateDenied, lexSql, readOnlySelect, SqlLexError } from '../assistant/gates/gate3-readonly-sql'
-import { findPII, loadKnownEmails, PiiBlockedError } from '../assistant/gates/pii-guard'
+import { findPII, guardPayload, loadKnownEmails, PiiBlockedError } from '../assistant/gates/pii-guard'
 import { viewSchemas } from '../assistant/schema-context'
 import type { BuiltinHandler, ResultRow, ToolOutput } from '../assistant/tools/builtin-handlers'
 import { executeToolCall } from '../assistant/tools/tool-executor'
@@ -66,12 +70,18 @@ export type InsightPanel = (typeof INSIGHT_PANELS)[number]
 export const INSIGHT_PARAMS_VERSION = 1
 /** 01 §insights: titles are at most 120 characters. */
 export const TITLE_MAX_CHARS = 120
+/** sort_order stays within ±SORT_ORDER_MAX, so a pin's max + 10 is always a safe integer. */
+export const SORT_ORDER_MAX = 1_000_000_000
 
 const WINDOW_FROM = ':window_from'
 const WINDOW_TO = ':window_to'
 /** Columns of the v_* views that name one subject (01 §PII-free views, 05 §Pseudonymous key). */
 const SUBJECT_COLUMNS = new Set(['pkey', 'visitor_hash'])
-const PSEUDONYM_PREFIX = 'pk_'
+/**
+ * A pseudonymous key anywhere in a cell (`pk_` + 16 hex, shared/pseudonym.ts), or a run of exactly
+ * 16 hex characters standing alone (a key with its prefix cut off, e.g. substr(pkey, 4)).
+ */
+const PSEUDONYM = /pk_[0-9a-f]{16}|(?<![0-9a-z])[0-9a-f]{16}(?![0-9a-z])/i
 
 // ── the insight_panel tool ───────────────────────────────────────────────────────────────
 
@@ -333,8 +343,17 @@ function executorProblems(content: unknown): string {
 function namesASubject(output: ToolOutput): boolean {
   return (
     output.columns.some((c) => SUBJECT_COLUMNS.has(c)) ||
-    output.rows.some((row) => Object.values(row).some((v) => typeof v === 'string' && v.startsWith(PSEUDONYM_PREFIX)))
+    output.rows.some((row) => Object.values(row).some((v) => typeof v === 'string' && PSEUDONYM.test(v)))
   )
+}
+
+/**
+ * The "Explain this" question of a pinned tile: the question it was pinned from, plus the time
+ * period it shows now when it has one, so a tile moved to "This month" is not explained as "last
+ * month". The dates are the resolved window, never a client value.
+ */
+export function explainQuestion(prompt: string, window: ResolvedWindow | null): string {
+  return window === null ? prompt : `${prompt} (time period: ${humanRange(window.from, window.to)})`
 }
 
 /** A tile that cannot run for a reason the viewer can act on; `message` is shown on the tile. */
@@ -369,7 +388,7 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     segment: null,
     status: 'error',
     error: null,
-    // Wall clock: when this run happened ("Updated just now", 06); no date rule reads it.
+    // Wall clock: when this run happened (02 §Time allow-list, tile `ran_at`; 09 D-64).
     ran_at: new Date().toISOString(),
     explain: row.prompt ?? row.title,
     params: {},
@@ -384,6 +403,10 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     tile.params = params
     const { input, window } = callInput(row.tool, params, TODAY)
     tile.window = window
+    if (row.prompt !== null) tile.explain = explainQuestion(row.prompt, window)
+    // Stored state is scanned before it runs: a params or SQL value that drifted to hold an email
+    // must stop this tile, before the executor stores the input in an audit row (05 §Scanner).
+    await guardPayload(ctx.trace, { params, input }, 'audit_row', row.tool)
     if (!ctx.board.tools.byName.has(row.tool) && ctx.board.loadError !== null) throw new TileError('tools_unavailable', ctx.board.loadError.message)
     const executed = await executeToolCall({ db: ctx.db, trace: ctx.trace, tools: ctx.board.tools }, { id: `tile-${row.id}`, name: row.tool, input })
     const output = executed.output
@@ -429,7 +452,9 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
       console.warn(JSON.stringify({ at: 'insights-board', trace_id: ctx.trace.traceId, tile: row.id, outcome: 'tile_error' }))
     }
     const code = err instanceof TileError ? err.code : err instanceof PiiBlockedError ? 'blocked_pii' : 'tile_failed'
-    return { tile: { ...tile, status: 'error', error: message, result: null, segment: null }, code }
+    // A blocked tile carries nothing of what failed the scan: no params, SQL or question.
+    const scrubbed = err instanceof PiiBlockedError ? { params: {}, sql: null, prompt: null, explain: row.title } : {}
+    return { tile: { ...tile, ...scrubbed, status: 'error', error: message, result: null, segment: null }, code }
   }
 }
 
@@ -460,16 +485,26 @@ export async function listBoard(db: D1Database): Promise<{ today: string; tiles:
   return { today: TODAY, tiles }
 }
 
-function invalidBody(details: string[]): ApiError {
-  console.warn(JSON.stringify({ at: 'insights-board', outcome: 'invalid_body', details }))
+/** 400 invalid_body. `logged` replaces `details` in the log line when the details quote what the client sent. */
+function invalidBody(details: string[], logged: string[] = details): ApiError {
+  console.warn(JSON.stringify({ at: 'insights-board', outcome: 'invalid_body', details: logged }))
   return new ApiError(400, 'invalid_body', 'The request body is not valid for this endpoint.', details)
 }
 
-/** A body that is a JSON object with only `allowed` keys. */
+/**
+ * A body that is a JSON object with only `allowed` keys. An unknown key is a client's text, so the
+ * log names how many there were, never the keys (05 §Scanner "logging"); the response, which goes
+ * back only to that client, names them.
+ */
 export function bodyObject(body: unknown, allowed: readonly string[]): Record<string, unknown> {
   if (!isObject(body)) throw invalidBody(['body is not a JSON object'])
   const unknown = Object.keys(body).filter((k) => !allowed.includes(k))
-  if (unknown.length > 0) throw invalidBody(unknown.map((k) => `unknown field: ${k}`))
+  if (unknown.length > 0) {
+    throw invalidBody(
+      unknown.map((k) => `unknown field: ${k}`),
+      [`${unknown.length} unknown field${unknown.length === 1 ? '' : 's'}; allowed: ${allowed.join(', ')}`],
+    )
+  }
   return body
 }
 
@@ -515,29 +550,20 @@ export async function pinFromTrace(db: D1Database, rawBody: unknown): Promise<Ti
     throw new ApiError(404, 'not_found', 'There is no audit trace with this id.')
   }
   // Only an Ask answer is pinned: a trace with no model call (a board run, 03 row 11) has no answer to keep.
-  const modelCalls = await db.prepare("SELECT count(*) AS n FROM ai_audit WHERE trace_id = ? AND kind = 'model_request'").bind(traceId).first<number>('n')
-  const call = await db
-    .prepare(
-      `SELECT tool_name, request_json FROM ai_audit
-       WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'
-       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-    )
-    .bind(traceId)
-    .first<{ tool_name: string; request_json: string | null }>()
-  if (call === null || modelCalls === 0) {
+  const call = await pinnableCall(db, traceId)
+  if (call === null) {
     console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'nothing_to_pin' }))
     throw new ApiError(409, 'nothing_to_pin', 'This answer did not come from a data tool, so there is nothing to pin.')
   }
-  const input: unknown = call.request_json === null ? null : JSON.parse(call.request_json)
-  if (!isObject(input)) throw new Error(`insights-board: the tool_call row of trace ${traceId} holds no JSON object input`)
+  const { tool_name: toolName, input } = call
 
   const prompt = await tracePrompt(db, traceId)
   const title = body.title !== undefined ? checkedTitle(body.title) : prompt !== null ? defaultTitle(prompt) : null
   if (title === null) throw invalidBody(['title is required: this trace has no question to name the tile after'])
 
-  const params = storedParams(call.tool_name, input, TODAY)
+  const params = storedParams(toolName, input, TODAY)
   const board = await boardTools(db)
-  const problems = await revalidate(db, board, call.tool_name, callInput(call.tool_name, params, TODAY).input)
+  const problems = await revalidate(db, board, toolName, callInput(toolName, params, TODAY).input)
   if (problems.length > 0) {
     console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'revalidation_failed', problems }))
     throw new ApiError(400, 'invalid_pin', 'This answer can no longer be pinned: its saved tool call does not pass today’s checks.', problems)
@@ -549,18 +575,23 @@ export async function pinFromTrace(db: D1Database, rawBody: unknown): Promise<Ti
     id: crypto.randomUUID(),
     title,
     prompt,
-    tool: call.tool_name,
+    tool: toolName,
     tool_version: INSIGHT_PARAMS_VERSION,
     params: JSON.stringify(params),
     chart: null,
-    sort_order: (max ?? 0) + 10,
+    // A new tile goes last; sort_order is bounded (SORT_ORDER_MAX), so this stays a safe integer.
+    sort_order: Math.min((max ?? 0) + 10, SORT_ORDER_MAX),
     built_in: 0,
-    // Wall clock: when the tile was pinned; operational, no date rule reads it.
+    // Wall clock: when the tile was pinned (02 §Time allow-list, `insights.created_at`; 09 D-64).
     created_at: new Date().toISOString(),
   }
   const ctx = await openContext(db)
   const { tile, code } = await runTile(ctx, row)
+  // Fail safe: a tile whose first run fails is never stored (04).
   if (code === 'not_aggregate') throw new ApiError(400, 'not_aggregate', tile.error ?? 'The board shows counts only.')
+  if (code === 'blocked_pii') throw new ApiError(400, 'blocked_pii', 'This answer cannot be pinned: its result failed the personal-data check.')
+  if (code === 'tile_failed') throw new ApiError(500, 'internal_error', 'The answer could not be pinned because of a server error. The error has been logged.')
+  if (code !== null) throw new ApiError(400, 'invalid_pin', tile.error ?? 'This answer cannot be pinned: its lookup does not run.')
   await db
     .prepare(
       `INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at)
@@ -569,6 +600,37 @@ export async function pinFromTrace(db: D1Database, rawBody: unknown): Promise<Ti
     .bind(row.id, row.title, row.prompt, row.tool, row.tool_version, row.params, row.chart, row.sort_order, row.built_in, row.created_at)
     .run()
   return tile
+}
+
+/** The trace of an Ask answer: its last successful tool call (tool + the checked input), or null. */
+async function pinnableCall(db: D1Database, traceId: string): Promise<{ tool_name: string; input: Params } | null> {
+  // Only an Ask answer is pinned: a trace with no model call (a board run, 03 row 11) has no answer to keep.
+  const modelCalls = await db.prepare("SELECT count(*) AS n FROM ai_audit WHERE trace_id = ? AND kind = 'model_request'").bind(traceId).first<number>('n')
+  if (modelCalls === 0) return null
+  const call = await db
+    .prepare(
+      `SELECT tool_name, request_json FROM ai_audit
+       WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    )
+    .bind(traceId)
+    .first<{ tool_name: string; request_json: string | null }>()
+  if (call === null) return null
+  const input: unknown = call.request_json === null ? null : JSON.parse(call.request_json)
+  if (!isObject(input)) throw new Error(`insights-board: the tool_call row of trace ${traceId} holds no JSON object input`)
+  return { tool_name: call.tool_name, input }
+}
+
+/**
+ * The time period a pin of this answer would store, resolved on TODAY, or null when its lookup has
+ * none (a segment, a query with its dates written in more than once) or there is nothing to pin.
+ * The same reading POST /api/insights does, so the pin dialog offers Rolling/Fixed only when the
+ * server will keep the choice (04 POST /api/assistant `pin_window`).
+ */
+export async function pinWindow(db: D1Database, traceId: string): Promise<ResolvedWindow | null> {
+  const call = await pinnableCall(db, traceId)
+  if (call === null || Object.hasOwn(call.input, 'window')) return null
+  return callInput(call.tool_name, storedParams(call.tool_name, call.input, TODAY), TODAY).window
 }
 
 /** The question as a default title, cut to TITLE_MAX_CHARS with an ellipsis. */
@@ -594,7 +656,9 @@ export async function patchInsight(db: D1Database, id: string, rawBody: unknown)
     next.chart = body.chart as ChartOverride | null
   }
   if (body.sort_order !== undefined) {
-    if (typeof body.sort_order !== 'number' || !Number.isSafeInteger(body.sort_order)) throw invalidBody(['sort_order must be a whole number'])
+    if (typeof body.sort_order !== 'number' || !Number.isSafeInteger(body.sort_order) || Math.abs(body.sort_order) > SORT_ORDER_MAX) {
+      throw invalidBody([`sort_order must be a whole number from -${SORT_ORDER_MAX} to ${SORT_ORDER_MAX}`])
+    }
     next.sort_order = body.sort_order
   }
   if (body.window !== undefined) {
@@ -613,11 +677,17 @@ export async function patchInsight(db: D1Database, id: string, rawBody: unknown)
     }
     next.params = JSON.stringify(updated)
   }
+  // The tile is run as it would be stored, then stored: a segment tile always shows its count and
+  // "Open list" (09 D-64), so a chart override on it is refused rather than drawn without them.
+  const { tile } = await runTile(await openContext(db), next)
+  if (next.chart !== null && body.chart !== undefined && tile.segment !== null) {
+    throw invalidBody(['chart cannot be set on a list (segment) tile: it always shows its count and "Open list"'])
+  }
   await db
     .prepare('UPDATE insights SET title = ?, chart = ?, sort_order = ?, params = ? WHERE id = ?')
     .bind(next.title, next.chart, next.sort_order, next.params, id)
     .run()
-  return (await runTile(await openContext(db), next)).tile
+  return tile
 }
 
 /** DELETE /api/insights/:id → 204; a built-in tile is never deleted (04, 409 built_in). */

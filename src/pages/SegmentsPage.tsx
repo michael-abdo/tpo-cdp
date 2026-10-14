@@ -6,8 +6,8 @@
 // (02 §Derived "one runtime source"), raw names and the placeholders-only SQL shape. Status
 // defaults to active; the response's hidden_unsubscribed is shown in words when it is above 0.
 // The form sends what the inputs hold (02 §Normalization): labels below are display maps only.
-// A segment answer from /assistant arrives as router state {filters} ("Open in builder", 06
-// §/assistant): the form takes those filters and previews them once, so the count is the builder's.
+// A segment answer or tile on /insights arrives as router state {filters} ("Open list", 06
+// §/insights): the form takes those filters and previews them once, so the count is the builder's.
 
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
@@ -75,7 +75,7 @@ function toForm(f: SegmentFilters): Form {
   }
 }
 
-/** Router state set by "Open in builder" on /assistant. */
+/** Router state set by "Open list" on /insights. */
 function openedFilters(state: unknown): SegmentFilters | null {
   if (typeof state !== 'object' || state === null || !('filters' in state)) return null
   return (state as { filters: SegmentFilters }).filters
@@ -150,7 +150,7 @@ export default function SegmentsPage() {
     }
   }
 
-  // Filters opened from /assistant preview once per navigation (location.key), StrictMode included.
+  // Filters opened from /insights preview once per navigation (location.key), StrictMode included.
   const previewedFor = useRef<string | null>(null)
   useEffect(() => {
     if (opened === null || previewedFor.current === location.key) return

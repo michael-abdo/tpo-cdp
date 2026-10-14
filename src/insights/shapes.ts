@@ -3,7 +3,7 @@
 // column after it is the value. pickChart chooses the kind; these say whether a result has what a
 // kind needs (so "Change chart" offers only kinds that can draw) and pull out what is drawn.
 
-import { BAR_TOP_CATEGORIES, type ChartKind } from '../../shared/pick-chart'
+import { BAR_TOP_CATEGORIES, type ChartKind, columnKind } from '../../shared/pick-chart'
 import type { AssistantCell, SegmentFilters } from '../types'
 import { cellText, isRateColumn } from './cells'
 
@@ -21,8 +21,7 @@ export interface ChartSegment {
 export const FIRST_ROWS = 10
 
 // ── shapes ───────────────────────────────────────────────────────────────────────────────
-
-const TIME_VALUE = /^\d{4}-\d{2}(-\d{2})?$/
+// Column kinds are pickChart's own (shared/pick-chart.ts columnKind): one home for the rules.
 
 export function cell(row: Record<string, AssistantCell>, column: string): AssistantCell {
   return row[column] ?? null
@@ -30,25 +29,22 @@ export function cell(row: Record<string, AssistantCell>, column: string): Assist
 
 /** Columns holding only numbers (or no value), with at least one number. */
 function numericColumns(r: ChartResult): string[] {
-  return r.columns.filter(
-    (c) =>
-      r.rows.some((row) => typeof cell(row, c) === 'number') &&
-      r.rows.every((row) => cell(row, c) === null || typeof cell(row, c) === 'number'),
-  )
+  return r.columns.filter((c) => columnKind(r.rows, c) === 'number')
 }
 
 /** The first column when it holds only `YYYY-MM` or `YYYY-MM-DD` text (pickChart's time column). */
 function timeColumn(r: ChartResult): string | null {
   const [first] = r.columns
   if (first === undefined || r.rows.length === 0) return null
-  return r.rows.every((row) => typeof cell(row, first) === 'string' && TIME_VALUE.test(cell(row, first) as string)) ? first : null
+  return columnKind(r.rows, first) === 'time' ? first : null
 }
 
-/** The first column when it is not a number column: what the bars are labelled by (pickChart's category). */
+/** The first column when it is text: what the bars are labelled by (pickChart's category; a time column can label bars too). */
 function categoryColumn(r: ChartResult): string | null {
   const [first] = r.columns
-  if (first === undefined || numericColumns(r).includes(first)) return null
-  return r.rows.every((row) => cell(row, first) === null || typeof cell(row, first) === 'string') ? first : null
+  if (first === undefined) return null
+  const kind = columnKind(r.rows, first)
+  return kind === 'category' || kind === 'time' ? first : null
 }
 
 export interface NumberShape {
@@ -73,25 +69,34 @@ export interface BarShape {
   bars: { key: string; label: string; value: number }[]
   /** Categories past BAR_TOP_CATEGORIES; `value` is their sum, or null for a rate (a sum of shares means nothing). */
   other: { count: number; value: number | null } | null
+  /**
+   * Rows with no bar to draw: a value of 0 or no value. They stay in the numbers table; the chart
+   * says how many (06 §UI principles: say why something is not shown).
+   */
+  undrawn: { zero: number; missing: number }
   /** Rates share a 0–100% scale; counts run to the largest bar. */
   max: number
 }
 
-/** A category first and a number: bars sorted largest first, top BAR_TOP_CATEGORIES, the rest as "Other" (06). */
+/**
+ * A category first and a number: bars sorted largest first, top BAR_TOP_CATEGORIES, the rest as
+ * "Other" (06). A zero or missing value draws no bar, so it is counted in `undrawn` instead.
+ */
 export function barShape(r: ChartResult): BarShape | null {
   const category = categoryColumn(r)
   const value = numericColumns(r).find((c) => c !== category)
   if (category === null || value === undefined || r.rows.length === 0) return null
-  const sorted = r.rows
-    .map((row, i) => ({ key: `${i}`, label: cellText(category, cell(row, category)), value: cell(row, value) }))
-    .filter((b): b is { key: string; label: string; value: number } => typeof b.value === 'number')
+  const all = r.rows.map((row, i) => ({ key: `${i}`, label: cellText(category, cell(row, category)), value: cell(row, value) }))
+  const drawn = all
+    .filter((b): b is { key: string; label: string; value: number } => typeof b.value === 'number' && b.value !== 0)
     .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label))
+  const undrawn = { zero: all.filter((b) => b.value === 0).length, missing: all.filter((b) => typeof b.value !== 'number').length }
   const rate = isRateColumn(value)
-  const rest = sorted.slice(BAR_TOP_CATEGORIES)
+  const rest = drawn.slice(BAR_TOP_CATEGORIES)
   const other = rest.length === 0 ? null : { count: rest.length, value: rate ? null : rest.reduce((sum, b) => sum + b.value, 0) }
-  const bars = sorted.slice(0, BAR_TOP_CATEGORIES)
+  const bars = drawn.slice(0, BAR_TOP_CATEGORIES)
   const max = rate ? 1 : Math.max(0, ...bars.map((b) => b.value), other?.value ?? 0)
-  return { category, value, bars, other, max }
+  return { category, value, bars, other, undrawn, max }
 }
 
 export interface LineShape {

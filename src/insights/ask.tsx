@@ -13,7 +13,7 @@
 // envelope's message. Single-shot: there is no conversation history (09 D-34). A question handed
 // over by "Explain this" or ?q= is filled in, never sent: the reader presses Ask (09 D-39).
 
-import { type FormEvent, type RefObject, useRef, useState } from 'react'
+import { type FormEvent, type RefObject, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { DEFINITIONS } from '../../shared/derive'
 import { pickChart } from '../../shared/pick-chart'
@@ -36,7 +36,7 @@ import { DEFINITION_LABEL } from '../labels'
 import type { AssistantResponse, InsightTile, SegmentFilters } from '../types'
 import { InsightChart, SegmentTile, TableTile } from './charts'
 import { PinDialog } from './pin-dialog'
-import { BRIEF_QUESTIONS } from './questions'
+import { BRIEF_QUESTIONS, tileElementId } from './questions'
 
 /** Next steps for the 04 errors that have one; the message itself is the envelope's. */
 function nextStep(code: string | null): string | undefined {
@@ -67,16 +67,26 @@ export function AnswerCard({
   data,
   question,
   onPinned,
+  stale = false,
 }: {
   data: AssistantResponse
   question: string
   onPinned: (tile: InsightTile, note: string | null) => void
+  /** The Ask bar now holds another question ("Explain this"): this answer is dimmed and says so. */
+  stale?: boolean
 }) {
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [pinOpen, setPinOpen] = useState(false)
-  const [pinned, setPinned] = useState(false)
+  const [pinnedId, setPinnedId] = useState<string | null>(null)
   const pinButton = useRef<HTMLButtonElement>(null)
+  const seeTile = useRef<HTMLButtonElement>(null)
+
+  // The Pin button is gone once pinned, so focus moves to the control that replaced it, never to
+  // the page body (06 §UI principles 7, WCAG 2.4.3).
+  useEffect(() => {
+    if (pinnedId !== null) seeTile.current?.focus()
+  }, [pinnedId])
 
   async function exportCsv(filters: SegmentFilters) {
     setExporting(true)
@@ -93,7 +103,16 @@ export function AnswerCard({
 
   function closePin() {
     setPinOpen(false)
+    // Still mounted only when the dialog closed without a pin.
     pinButton.current?.focus()
+  }
+
+  function showTile() {
+    if (pinnedId === null) return
+    const tile = document.getElementById(tileElementId(pinnedId))
+    if (tile === null) return
+    tile.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+    tile.focus({ preventScroll: true })
   }
 
   // The model writes filters_applied; any D-58 sign of SQL in it hides it whole (src/filters-applied.ts).
@@ -102,7 +121,11 @@ export function AnswerCard({
   const result = data.table ?? { columns: [], rows: [] }
   const kind = data.table === null && data.segment === null ? null : pickChart({ ...result, segment: data.segment })
   return (
-    <section aria-labelledby="answer-heading" className="space-y-4 rounded-xl border border-line bg-surface p-5 shadow-soft sm:p-6">
+    <section
+      aria-labelledby="answer-heading"
+      className={`space-y-4 rounded-xl border border-line bg-surface p-5 shadow-soft sm:p-6 ${stale ? 'opacity-60' : ''}`}
+    >
+      {stale && <p className="text-sm font-medium text-ink">This answer is for your earlier question: “{question}”.</p>}
       <div className="flex flex-wrap items-center gap-2">
         <h2 id="answer-heading" className="mr-auto font-display text-lg font-medium text-ink">
           Answer
@@ -112,10 +135,15 @@ export function AnswerCard({
             Incomplete answer
           </Tag>
         )}
-        {pinned ? (
-          <Tag tone="success" icon={ICONS.done}>
-            Pinned to the board
-          </Tag>
+        {pinnedId !== null ? (
+          <>
+            <Tag tone="success" icon={ICONS.done}>
+              Pinned to the board
+            </Tag>
+            <Button ref={seeTile} variant="quiet" icon={ICONS.next} onClick={showTile}>
+              See it on the board
+            </Button>
+          </>
         ) : (
           <Button
             ref={pinButton}
@@ -236,9 +264,10 @@ export function AnswerCard({
         auditId={data.audit_id}
         question={question}
         answerWindow={data.window}
+        pinWindow={data.pin_window}
         onPinned={(tile, note) => {
           setPinOpen(false)
-          setPinned(true)
+          setPinnedId(tile.id)
           onPinned(tile, note)
         }}
       />
@@ -321,7 +350,7 @@ export function AskSection({
           </Button>
         </div>
         <p id="question-hint" className="text-sm text-ink-muted">
-          {filled !== null && question === filled && state === null
+          {filled !== null && question === filled && state?.question !== filled
             ? 'This question is filled in for you. Press Ask to send it, or change it first.'
             : 'One question at a time; each answer starts fresh. No reader’s email is sent to the AI.'}
         </p>
@@ -365,7 +394,15 @@ export function AskSection({
           )}
         </div>
       )}
-      {state?.status === 'ok' && <AnswerCard key={state.data.audit_id} data={state.data} question={state.question} onPinned={onPinned} />}
+      {state?.status === 'ok' && (
+        <AnswerCard
+          key={state.data.audit_id}
+          data={state.data}
+          question={state.question}
+          onPinned={onPinned}
+          stale={filled !== null && question === filled && state.question !== filled}
+        />
+      )}
     </div>
   )
 }
