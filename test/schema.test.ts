@@ -149,7 +149,7 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
   })
 })
 
-// The migration sequence (README "the eleven migrations"; 03 §Module layout). Two merged branches
+// The migration sequence (README "the ten migrations"; 03 §Module layout). Two merged branches
 // once each took the next number; this pins the order that applies on a fresh database (wrangler
 // and test/setup.ts apply the files in name order) and that the README's count tells the same story.
 describe('the migrations are one contiguous, ordered sequence', () => {
@@ -164,12 +164,11 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     '0008_ai_audit_cache',
     '0009_tool_approval',
     '0010_drop_tool_approval',
-    '0011_drop_pending_approval_rows',
   ]
   const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
     .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
     .sort()
-  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven']
+  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 
   it('migrations/ holds exactly these files, in this order', () => {
     expect(files).toEqual(NAMES)
@@ -188,59 +187,40 @@ describe('the migrations are one contiguous, ordered sequence', () => {
   })
 })
 
-// 0010_drop_tool_approval.sql (09 D-77: the approval queue is gone). 0009 added the column; 0010
-// drops it; migrations are never edited, so both stay in the sequence above and this pins the
-// column gone on the schema the whole sequence produces.
-describe('migration 0010 drops assistant_tools.requested_from_trace', () => {
-  it('PRAGMA table_info(assistant_tools) no longer lists it', async () => {
-    expect(await columnsOf('assistant_tools')).not.toContain('requested_from_trace')
-  })
-})
-
-// 0011_drop_pending_approval_rows.sql (09 D-77 cleanup: the queue left behind any row it had
-// already flagged). 0001..0011 have already applied by the time this file's tests run (an empty
-// table has nothing to delete), so this seeds the exact row shape 0009's removed requestApproval()
-// used to write (disabled 'query', name 'pending_<uuid>'), plus three look-alikes that each miss
-// one half of the real shape, then re-runs 0011's own statement text to prove it deletes only the
-// real shape.
-describe('migration 0011 drops leftover pending_ approval-queue rows', () => {
-  async function insertAssistantTool(id: string, name: string, enabled: 0 | 1): Promise<void> {
+// 0010_drop_tool_approval.sql (09 D-77: the approval queue is gone). By the time this file runs the
+// whole sequence has applied, so the column is already gone; the second test puts the 0009 shape
+// back (the column and the rows the queue wrote), runs 0010's own statements, and checks that only
+// a queued request is deleted (found by its flag, never by its name) before the column is dropped.
+describe('migration 0010 deletes the queued requests, then drops assistant_tools.requested_from_trace', () => {
+  async function insertTool(id: string, name: string, enabled: 0 | 1, requestedFrom: string | null): Promise<void> {
     await env.DB.prepare(
-      `INSERT INTO assistant_tools (id, name, description, input_schema, handler_type, execution_config, enabled, sort_order, created_at, updated_at)
-       VALUES (?, ?, 'x', '{"type":"object"}', 'query', '{"sql":"select 1","param_mapping":{}}', ?, 1, 'now', 'now')`,
+      `INSERT INTO assistant_tools (id, name, description, input_schema, handler_type, execution_config, enabled, sort_order, requested_from_trace, created_at, updated_at)
+       VALUES (?, ?, 'x', '{"type":"object"}', 'query', '{"sql":"select 1","param_mapping":{}}', ?, 1, ?, 'now', 'now')`,
     )
-      .bind(id, name, enabled)
+      .bind(id, name, enabled, requestedFrom)
       .run()
   }
 
-  it('deletes only a disabled pending_ row, keeping every row missing either half of that shape', async () => {
-    // The real shape requestApproval() wrote: disabled, name "pending_<uuid>".
-    await insertAssistantTool('t-pending', 'pending_0123456789abcdef0123456789abcdef', 0)
-    // An approved row: enabled, renamed away from "pending_" by the approver (real shape, kept).
-    await insertAssistantTool('t-approved', 'growth_signup_source_mix', 1)
-    // Disabled but not "pending_"-named (an ordinary disabled Growth row) -- misses the name half;
-    // kept only if the migration's `name LIKE 'pending\_%'` clause is still there.
-    await insertAssistantTool('t-other-disabled', 'manual_disabled_row', 0)
-    // "pending_"-named but enabled -- cannot happen for real (approving always renames), but it is
-    // the only way to prove the migration's `enabled = 0` clause is load-bearing, not redundant.
-    await insertAssistantTool('t-enabled-pending', 'pending_fedcba9876543210fedcba9876543210', 1)
+  it('PRAGMA table_info(assistant_tools) no longer lists it', async () => {
+    expect(await columnsOf('assistant_tools')).not.toContain('requested_from_trace')
+  })
 
-    const migration0011Files = import.meta.glob<string>('../migrations/0011_drop_pending_approval_rows.sql', {
-      query: '?raw',
-      import: 'default',
-      eager: true,
-    })
-    const migration0011 = Object.values(migration0011Files)[0]
-    expect(migration0011, '0011 migration file text loaded').toBeDefined()
-    // Strip `--` line comments first: a few of this file's own comments contain a semicolon, and
-    // a naive split on ';' would otherwise cut a statement in the middle of one.
-    const sqlOnly = (migration0011 ?? '').replace(/^--.*$/gm, '')
-    for (const statement of sqlOnly.split(';').map((s) => s.trim()).filter(Boolean)) {
+  it("deletes only a still-queued request (flagged and disabled), whatever it is named, then drops the column", async () => {
+    await env.DB.prepare('ALTER TABLE assistant_tools ADD COLUMN requested_from_trace TEXT').run()
+    await insertTool('t-queued', 'pending_0123456789abcdef0123456789abcdef', 0, 'trace-queued') // a request: deleted
+    await insertTool('t-approved', 'sources_ranked', 1, 'trace-approved') // approved before D-77: kept
+    await insertTool('t-lookalike', 'pending_lookalike', 0, null) // an ordinary disabled row: kept
+    const migration = Object.values(
+      import.meta.glob<string>('../migrations/0010_drop_tool_approval.sql', { query: '?raw', import: 'default', eager: true }),
+    )[0]
+    expect(migration, '0010 migration text loaded').toBeDefined()
+    for (const statement of (migration ?? '').replace(/^--.*$/gm, '').split(';').map((x) => x.trim()).filter(Boolean)) {
       await env.DB.prepare(statement).run()
     }
-
-    const { results } = await env.DB.prepare('SELECT id FROM assistant_tools ORDER BY id').all<{ id: string }>()
-    expect(results.map((row) => row.id)).toEqual(['t-approved', 't-enabled-pending', 't-other-disabled'])
+    const { results } = await env.DB.prepare("SELECT id FROM assistant_tools WHERE id LIKE 't-%' ORDER BY id").all<{ id: string }>()
+    expect(results.map((r) => r.id)).toEqual(['t-approved', 't-lookalike'])
+    expect(await columnsOf('assistant_tools')).not.toContain('requested_from_trace')
+    await env.DB.prepare("DELETE FROM assistant_tools WHERE id LIKE 't-%'").run()
   })
 })
 
