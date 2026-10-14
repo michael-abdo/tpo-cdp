@@ -7,7 +7,7 @@ import webCsv from '../data/web_events.csv?raw'
 import { TODAY as APP_TODAY } from '../shared/config'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { parseCsv } from '../worker/ingest/csv'
-import { buildSeed } from '../worker/ingest/link'
+import { buildSeed, type Seed } from '../worker/ingest/link'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
@@ -28,6 +28,7 @@ import {
   scoreDuplicates,
   type StoredAppEvent,
   TODAY,
+  visitorHash,
 } from './parity/oracle'
 
 // D-75 (09 decision log; design 21-subscriber-data-parity-spec.md): a second, independent
@@ -493,12 +494,51 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
 
   type Planted = Pick<ExpectedQuarantine, 'line_no' | 'reason' | 'raw_row'>
 
+  /** The oracle's and the app's import_runs for the same planted texts must agree on every
+   * file's rows_in/rows_out/merged/quarantined-count, and their total event counts must match —
+   * not just the one file's quarantine rows plantedQuarantine() diffs above. A rule that quarantines
+   * a row but ALSO lets it through as an event (the conflicting_email mutant O3: it still pushes
+   * the row onto `events` after queuing it) passes a quarantine-only diff but fails rows_out and
+   * events.length here, on both engines reading the SAME edited text (09 D-78(b)). */
+  function expectSameLinking(expected: OracleResult, seed: Seed): void {
+    for (const run of expected.importRuns) {
+      const seedRun = seed.runs.find((r) => r.file === run.file)
+      expect(
+        seedRun && {
+          file: seedRun.file,
+          rows_in: seedRun.rows_in,
+          rows_out: seedRun.rows_out,
+          merged: seedRun.merged,
+          quarantined: seedRun.quarantined.length,
+        },
+      ).toEqual(run)
+    }
+    expect(seed.events.length).toBe(expected.events.length)
+  }
+
+  /** A web-events case's visitor (by its real `visitor_id`, never printed raw here) must carry
+   * the same `email_norm`/`signup_ts` in both engines: the half of 02 §Linking 3/4 a
+   * quarantine-row-only diff never recomputes. */
+  async function expectSameVisitor(expected: OracleResult, seed: Seed, visitorId: string): Promise<void> {
+    const hash = await visitorHash(piiKeySecret(), visitorId)
+    const oracleVisitor = expected.visitors.get(hash)
+    const seedVisitor = seed.visitors.find((v) => v.visitor_hash === hash)
+    expect(oracleVisitor).toBeDefined()
+    expect(seedVisitor && { email_norm: seedVisitor.email_norm, signup_ts: seedVisitor.signup_ts }).toEqual({
+      email_norm: oracleVisitor!.email_norm,
+      signup_ts: oracleVisitor!.signup_ts,
+    })
+  }
+
   /** Builds both the oracle's and the app's quarantine rows for `file` from the same edited
-   * CSV texts, so a planted case is recomputed twice, never by one engine feeding the other. */
+   * CSV texts, so a planted case is recomputed twice, never by one engine feeding the other.
+   * Also asserts the two engines' import_runs and event counts agree (expectSameLinking) on
+   * every call, so every planted case — not just conflicting_email — proves its oracle copy
+   * tracks the app on the event/visitor half of the rule, not only the quarantined row. */
   async function plantedQuarantine(
     file: 'subscribers' | 'web_events' | 'app_users',
     texts: { subscribers: string; webEvents: string; appUsers: string },
-  ): Promise<{ oracleRows: Planted[]; appRows: Planted[] }> {
+  ): Promise<{ oracleRows: Planted[]; appRows: Planted[]; expected: OracleResult; seed: Seed }> {
     const secretValue = piiKeySecret()
     const expected = await buildExpected(texts, secretValue)
     const seed = await buildSeed(
@@ -509,6 +549,7 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
       },
       secretValue,
     )
+    expectSameLinking(expected, seed)
     const byLine = (a: Planted, b: Planted) => a.line_no - b.line_no
     return {
       oracleRows: expected.quarantine
@@ -519,6 +560,8 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
         .find((r) => r.file === file)!
         .quarantined.map(({ line_no, reason, raw_row }) => ({ line_no, reason, raw_row }))
         .sort(byLine),
+      expected,
+      seed,
     }
   }
 
@@ -535,7 +578,7 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
   })
 
   it('duplicate_user_id: app_users.csv:3 given line 2\'s real user_id — oracle and app agree, 0 mismatches', async () => {
-    const { oracleRows, appRows } = await plantedQuarantine('app_users', {
+    const { oracleRows, appRows, expected, seed } = await plantedQuarantine('app_users', {
       subscribers: subscribersCsv,
       webEvents: webCsv,
       appUsers: plant(appCsv, 3, (f) => ['u_2b6447a3', f[1], f[2]]),
@@ -544,10 +587,15 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
     expect(oracleRows).toEqual([
       { line_no: 3, reason: 'duplicate_user_id', raw_row: 'u_2b6447a3,daniel.hill389@gmail.com,2026-09-20' },
     ])
+    // Keep-first (worker/ingest/app.ts): the kept app user for u_2b6447a3 is line 2's real email
+    // in both engines, never line 3's planted duplicate overwriting it.
+    const keptEmail = normalizeEmail('julia.evans230@gmail.com')
+    expect(expected.appUsers.find((u) => u.user_id === 'u_2b6447a3')?.email_norm).toBe(keptEmail)
+    expect(seed.app_users.find((u) => u.user_id === 'u_2b6447a3')?.email_norm).toBe(keptEmail)
   })
 
   it('misplaced_email: web_events.csv:5405 (/about, blank email) given a real email — oracle and app agree, 0 mismatches', async () => {
-    const { oracleRows, appRows } = await plantedQuarantine('web_events', {
+    const { oracleRows, appRows, expected, seed } = await plantedQuarantine('web_events', {
       subscribers: subscribersCsv,
       webEvents: plant(webCsv, 5405, (f) => [f[0], f[1], f[2], f[3], 'julia.evans230@gmail.com']),
       appUsers: appCsv,
@@ -560,10 +608,13 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
         raw_row: 'v_c9e136fd6d,/about,2026-09-02 16:52:04,,julia.evans230@gmail.com',
       },
     ])
+    // The planted row never becomes an event or changes the visitor's real email/signup (joy's,
+    // from the unedited line 5421) — in both engines, not just plantedQuarantine's quarantine diff.
+    await expectSameVisitor(expected, seed, 'v_c9e136fd6d')
   })
 
   it('conflicting_email: web_events.csv:5442 (a later /subscribe row for joy\'s visitor, blank email) given a different real email — oracle and app agree, 0 mismatches', async () => {
-    const { oracleRows, appRows } = await plantedQuarantine('web_events', {
+    const { oracleRows, appRows, expected, seed } = await plantedQuarantine('web_events', {
       subscribers: subscribersCsv,
       webEvents: plant(webCsv, 5442, (f) => [f[0], f[1], f[2], f[3], 'julia.evans230@gmail.com']),
       appUsers: appCsv,
@@ -576,6 +627,10 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
         raw_row: 'v_c9e136fd6d,/subscribe,2026-09-03 00:51:44,,julia.evans230@gmail.com',
       },
     ])
+    // Only that row is set aside (21 §D-78): the visitor keeps joy's first email/signup, never
+    // julia's planted one, and (via plantedQuarantine's expectSameLinking) the row never also
+    // becomes an event in either engine — the exact shape of mutant O3.
+    await expectSameVisitor(expected, seed, 'v_c9e136fd6d')
   })
 
   it('a case-only /Subscribe row still links (0 quarantined) — oracle and app agree', async () => {
