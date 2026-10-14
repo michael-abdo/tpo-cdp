@@ -5,7 +5,7 @@ import { LOCAL_PART_MIN_CHARS } from '../shared/pii'
 import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { enforceGate1 } from '../worker/assistant/gates/gate1-input-sanitizer'
 import { seedDatabase } from './helpers/seed'
-import { eventIdPool, sendWebhook } from './helpers/webhook'
+import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 
 // T-HARD-1..3, 5..7 (08; 09 D-70 items 1, 2, 3, 5, 6, 7): the fixes for findings of the practice
 // self-audit. The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts); no network
@@ -24,6 +24,9 @@ import { eventIdPool, sendWebhook } from './helpers/webhook'
 //   page path. Refused values are real data put in the wrong place (a page path, an address, the
 //   address behind https://) or minimal edits of the accepted ones (09 D-47): upper-cased, cut to
 //   nothing, repeated past 120 characters, wrapped in an array, the scheme removed.
+// - T-HARD-3: users u_f1cad5ce (app_users.csv:15, eli.clark874@icloud.com) and u_38e852b0
+//   (app_users.csv:11, sarah.edwards657@gmail.com) on eli's device `d_f1cad5ce`; event times are
+//   taken from the wall clock (the bound is relative to it, 09 D-70 #3), as T-WH-7 does.
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -162,5 +165,54 @@ describe('T-HARD-2: webhook story and link must be slugs; other strings never re
     const { results } = await env.DB.prepare('SELECT * FROM v_app_events').all()
     expect(results.length).toBeGreaterThan(0)
     expect(JSON.stringify(results)).not.toContain(address)
+  })
+})
+
+const HOUR_MS = 3_600_000
+/** An ISO event time `offsetMs` after the wall clock. */
+const fromNow = (offsetMs: number) => new Date(nowSeconds() * 1000 + offsetMs).toISOString()
+
+async function scoreOf(email: string): Promise<number> {
+  const score = await env.DB.prepare('SELECT engagement_score FROM profiles WHERE email_norm = ?').bind(email).first<number>('engagement_score')
+  if (score === null) throw new Error('no profile for a real app user')
+  return score
+}
+
+function deviceOwner(deviceId: string) {
+  return env.DB.prepare('SELECT user_id, last_seen_ts FROM device_identity WHERE device_id = ?').bind(deviceId).first<{ user_id: string; last_seen_ts: string }>()
+}
+
+describe('T-HARD-3: an event time more than 24 h after the server clock is refused (09 D-70 #3)', () => {
+  const ELI = { user_id: 'u_f1cad5ce', email: 'eli.clark874@icloud.com' }
+  const SARAH = 'u_38e852b0'
+  const DEVICE = 'd_f1cad5ce'
+
+  it('a login 24 h + 1 min ahead is 400 on timestamp, stores nothing and cannot pin the device', async () => {
+    const login = { event_id: nextEventId(), event: 'login', user_id: ELI.user_id, device_id: DEVICE, timestamp: fromNow(-HOUR_MS) }
+    expect((await post(login)).status).toBe(202)
+    const owner = await deviceOwner(DEVICE)
+    expect(owner?.user_id).toBe(ELI.user_id)
+
+    const future = { event_id: nextEventId(), event: 'login', user_id: SARAH, device_id: DEVICE, timestamp: fromNow(24 * HOUR_MS + 60_000) }
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { status, text } = await post(future)
+    expect(status).toBe(400)
+    const json = JSON.parse(text) as { error: string; details: { field: string; issue: string }[] }
+    expect(json.error).toBe('invalid_event')
+    expect(json.details).toEqual([{ field: 'timestamp', issue: 'timestamp must be at most 24 hours after the server clock' }])
+    expect(text).not.toContain(String(future.timestamp).slice(0, 19))
+    expect(await storedCount(future.event_id)).toBe(0)
+    expect(await deviceOwner(DEVICE)).toEqual(owner)
+  })
+
+  it('an event 23 h ahead, after TODAY, is stored and counts toward the score (09 D-01)', async () => {
+    const before = await scoreOf(ELI.email)
+    const ahead = { event_id: nextEventId(), event: 'app_open', user_id: ELI.user_id, device_id: DEVICE, timestamp: fromNow(23 * HOUR_MS) }
+    expect((await post(ahead)).status).toBe(202)
+    expect(await storedCount(ahead.event_id)).toBe(1)
+    // One more app event in the last 30 days adds 2.5 points before rounding (02 §Derived).
+    const after = await scoreOf(ELI.email)
+    expect(after - before).toBeGreaterThanOrEqual(2)
+    expect(after - before).toBeLessThanOrEqual(3)
   })
 })

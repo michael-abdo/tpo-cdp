@@ -1,4 +1,4 @@
-// The app webhook body (04 §Webhook body and validation; R4.2–R4.4, 09 D-22, D-38, D-70 #2).
+// The app webhook body (04 §Webhook body and validation; R4.2–R4.4, 09 D-22, D-38, D-70 #2, #3).
 // Exactly the brief's shape, one event per request; unknown fields are ignored (zod strips them).
 // Issue texts are written here and never echo a submitted value or a sender-chosen property key
 // (04 §Error envelope); `story` and `link` are our keys (v_app_events reads them), so an issue
@@ -28,6 +28,13 @@ export function isAllowedLink(value: string): boolean {
   if (!/^https?:\/\//i.test(value) || value.includes('@') || /\s/.test(value)) return false
   return URL.canParse(value)
 }
+
+/**
+ * How far the event time may run ahead of the server clock (09 D-70 #3). A later time would win
+ * every device_identity comparison and pin the device to its user for good. Events after TODAY
+ * within this bound are stored and count as 0 days old (09 D-01).
+ */
+export const MAX_FUTURE_MS = 24 * 60 * 60 * 1000
 
 const EVENT_TIMESTAMP =
   /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?)?$/
@@ -97,7 +104,8 @@ const id = (field: string) =>
     .min(1, { error: `${field} must not be empty` })
     .max(ID_MAX_CHARS, { error: `${field} must be at most ${ID_MAX_CHARS} characters` })
 
-const eventSchema = z.object({
+/** The schema for a request received at `nowMs` (wall clock; 09 D-70 #3). */
+const eventSchema = (nowMs: number) => z.object({
   event_id: id('event_id'),
   event: z.enum(APP_EVENTS, { error: `event must be one of ${APP_EVENTS.join(', ')}` }),
   // R4.4: a string, null, or absent. Empty is rejected: no app user has an empty id.
@@ -114,6 +122,10 @@ const eventSchema = z.object({
           code: 'custom',
           message: 'timestamp must be ISO-8601 date and time, with Z, an offset, or no zone (UTC)',
         })
+        return z.NEVER
+      }
+      if (Date.parse(normalized) - nowMs > MAX_FUTURE_MS) {
+        ctx.addIssue({ code: 'custom', message: 'timestamp must be at most 24 hours after the server clock' })
         return z.NEVER
       }
       return normalized
@@ -159,13 +171,16 @@ export type ParseResult = { ok: true; event: WebhookEvent } | { ok: false; detai
 /** The names a `properties` issue may carry: our own keys only, never a sender's (see the header). */
 const NAMED_PROPERTIES = ['story', 'link']
 
-/** Validates an already JSON-parsed body. An array is "one event per request" (04). */
-export function parseWebhookEvent(body: unknown): ParseResult {
+/**
+ * Validates an already JSON-parsed body received at `nowMs` (wall clock, the bound of 09 D-70 #3).
+ * An array is "one event per request" (04).
+ */
+export function parseWebhookEvent(body: unknown, nowMs: number): ParseResult {
   if (Array.isArray(body)) return { ok: false, details: [{ field: 'body', issue: 'one event per request' }] }
   if (typeof body !== 'object' || body === null) {
     return { ok: false, details: [{ field: 'body', issue: 'body must be one JSON object' }] }
   }
-  const parsed = eventSchema.safeParse(body)
+  const parsed = eventSchema(nowMs).safeParse(body)
   if (!parsed.success) {
     // Only the top-level field name, or properties.story / properties.link: any other properties
     // key is sender-chosen text and is never echoed.

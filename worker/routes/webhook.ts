@@ -64,7 +64,7 @@ async function readBodyCapped(request: Request, max: number): Promise<Uint8Array
   return body
 }
 
-/** Wall clock in whole seconds; 02 §Time allows it for the replay window and received_at. */
+/** Wall clock in whole seconds; 02 §Time allows it for the replay window and received_at, 09 D-70 #3 for the future bound. */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
@@ -120,7 +120,9 @@ webhookRoutes.post('/app', async (c) => {
       { field: 'body', issue: 'body must be UTF-8 JSON' },
     ])
   }
-  const parsed = parseWebhookEvent(body)
+  // Wall clock: the bound on how far an event time may run ahead of it (09 D-70 #3), beside the
+  // replay window and received_at on the 02 §Time allow-list.
+  const parsed = parseWebhookEvent(body, nowSeconds() * 1000)
   if (!parsed.ok) throw invalidEvent('schema validation failed', parsed.details)
 
   const receivedAt = new Date(nowSeconds() * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
