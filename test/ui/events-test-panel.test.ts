@@ -87,6 +87,14 @@ describe('the result line\'s words (09 D-73; one home, D-72)', () => {
 })
 
 describe('the account field is the shared listbox contract (../listbox; WCAG 2.2 AA 4.1.2, 2.4.3)', () => {
+  it('both callers pass the real highlighted index to ListboxOption, so the bar and fill follow the arrow keys (WCAG 2.4.7)', () => {
+    // The render test above proves ListboxOption styles active=true; this pins that each caller
+    // computes active from its own keyboard index rather than a constant.
+    expect(panelSource).toMatch(/<ListboxOption[\s\S]{0,400}?active=\{i === nav\.active\}/)
+    expect(lookupSource).toMatch(/const isActive = i === active\b/)
+    expect(lookupSource).toMatch(/<ListboxOption[\s\S]{0,400}?active=\{isActive\}/)
+  })
+
   it('reuses the shared ../listbox + ../list-nav modules rather than re-implementing the keyboard contract (D-72: one home)', () => {
     expect(panelSource).toMatch(/from '\.\/listbox'/)
     expect(panelSource).toMatch(/from '\.\/list-nav'/)
