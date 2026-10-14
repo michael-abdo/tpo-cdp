@@ -23,6 +23,7 @@ import {
   EmptyState,
   ErrorLine,
   Field,
+  ICONS,
   Loading,
   PageHeader,
   ResponsiveTable,
@@ -199,19 +200,20 @@ export default function SegmentsPage() {
 
   const labelClass = 'block text-sm font-medium text-gray-900'
   const hintClass = 'text-sm text-gray-600'
-  const inputClass = 'min-h-9 rounded border border-gray-300 bg-white px-2 py-1 text-sm'
+  const inputClass = 'min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Build a list to email"
         purpose="Choose who to include, see how many readers match, then download the list."
+        icon={ICONS.segments}
       />
       <Announcer message={announcement} />
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl bg-accent-soft px-4 py-3 text-sm">
         <span className="text-gray-700">Not sure where to start?</span>
-        <Button onClick={applyPreset} aria-describedby="preset-hint">
+        <Button variant="quiet" icon={ICONS.next} onClick={applyPreset} aria-describedby="preset-hint">
           haven't opened in 30 days (the brief's example)
         </Button>
         <span id="preset-hint" className="text-gray-600">
@@ -219,7 +221,7 @@ export default function SegmentsPage() {
         </span>
       </div>
 
-      <form onSubmit={submit} noValidate className="grid gap-5 rounded border border-gray-200 p-4 sm:grid-cols-2">
+      <form onSubmit={submit} noValidate className="grid gap-5 rounded-xl border border-line bg-surface p-5 shadow-soft sm:grid-cols-2">
         <div className="space-y-1">
           <label htmlFor="status" className={labelClass}>
             Status
@@ -315,14 +317,14 @@ export default function SegmentsPage() {
         </div>
 
         <div className="sm:col-span-2">
-          <Button type="submit" variant={ok === null ? 'primary' : 'secondary'} className="px-5">
+          <Button type="submit" variant={ok === null ? 'primary' : 'secondary'} icon={ICONS.preview} className="px-5">
             Preview
           </Button>
         </div>
       </form>
 
       {result === null && (
-        <EmptyState>Choose who to include, then press Preview, or start from the example above.</EmptyState>
+        <EmptyState icon={ICONS.segments}>Choose who to include, then press Preview, or start from the example above.</EmptyState>
       )}
       {result?.status === 'loading' && <Loading label="Counting matching readers…" />}
       {result?.status === 'error' && (
@@ -339,7 +341,7 @@ export default function SegmentsPage() {
         <section aria-labelledby="result-heading" className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
-              <h2 id="result-heading" className="text-lg font-semibold text-gray-900">
+              <h2 id="result-heading" className="font-display text-2xl font-semibold text-gray-900">
                 {countSentence}
               </h2>
               {hidden > 0 && (
@@ -355,7 +357,7 @@ export default function SegmentsPage() {
               )}
             </div>
             {ok.data.count > 0 && (
-              <Button variant="primary" onClick={() => void exportCsv(ok.filters)} disabled={exporting}>
+              <Button variant="primary" icon={ICONS.export} onClick={() => void exportCsv(ok.filters)} disabled={exporting}>
                 {exporting ? 'Preparing download…' : 'Export CSV'}
               </Button>
             )}

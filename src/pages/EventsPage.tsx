@@ -25,6 +25,7 @@ import {
   EmptyState,
   ErrorLine,
   Field,
+  ICONS,
   Loading,
   PageHeader,
   ResponsiveTable,
@@ -84,7 +85,7 @@ function Reader({ e }: { e: RecentEvent }) {
       >
         {e.email ?? 'Unknown app user (no email on file)'}
       </Link>
-      {stitched(e) && <Tag>Linked after login</Tag>}
+      {stitched(e) && <Tag tone="accent">Linked after login</Tag>}
     </span>
   )
 }
@@ -244,13 +245,19 @@ export default function EventsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Recent app events"
-        purpose={`The last 20 events the app sent, newest first. The list updates itself every ${POLL_SECONDS} seconds while this tab is in view. These times are live, so they can be later than the date in the top bar.`}
+        purpose="The last 20 events the app sent, newest first."
+        icon={ICONS.events}
         action={
-          <Button variant="primary" onClick={refresh} disabled={shown === null || refreshing}>
+          <Button variant="primary" icon={ICONS.loading} onClick={refresh} disabled={shown === null || refreshing}>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         }
       />
+      <Disclosure label="How this list updates">
+        <p className="text-sm text-gray-700">
+          The list updates itself every {POLL_SECONDS} seconds while this tab is in view. These times are live, so they can be later than the date in the top bar.
+        </p>
+      </Disclosure>
       <Announcer message={said.n % 2 === 0 ? said.text : `${said.text}\u00a0`} />
       {shown === null ? (
         <Loading label="Loading the latest events…" />
@@ -267,7 +274,7 @@ export default function EventsPage() {
             />
           )}
           {events === null ? null : events.length === 0 ? (
-            <EmptyState>
+            <EmptyState icon={ICONS.events}>
               <p>
                 No events yet — send one with <code className="font-mono">npm run webhook:send</code>
               </p>

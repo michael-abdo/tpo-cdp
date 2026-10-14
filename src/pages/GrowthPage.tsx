@@ -21,6 +21,7 @@ import {
   Disclosure,
   EmptyState,
   ErrorLine,
+  ICONS,
   Loading,
   PageHeader,
   ResponsiveTable,
@@ -33,7 +34,7 @@ import type { DataQuality, DataQualityCheckKey, Funnel, GoingCold, SourceAppConv
 import { useGet } from '../useGet'
 
 /** Rows shown at level 1; the rest sit behind "Show the other …" (principle 2). */
-const TOP_ROWS = 5
+const TOP_ROWS = 3
 
 const n = (value: number) => value.toLocaleString('en-US')
 
@@ -64,8 +65,8 @@ function ShareBar({ rate }: { rate: number | null }) {
   const width = rate === null ? 0 : Math.max(0, Math.min(1, rate)) * 100
   return (
     <span className="flex items-center gap-2">
-      <span aria-hidden="true" className="block h-3 w-24 shrink-0 bg-gray-100 sm:w-40">
-        <span className="block h-3 rounded-r bg-blue-600" style={{ width: `${width}%` }} />
+      <span aria-hidden="true" className="block h-2 w-24 shrink-0 overflow-hidden rounded-full bg-surface-2 sm:w-40">
+        <span className="block h-2 rounded-full bg-accent" style={{ width: `${width}%` }} />
       </span>
       <span className="tabular-nums text-gray-900">{percent(rate)}</span>
     </span>
@@ -84,8 +85,15 @@ interface ShareRow {
 function ShareTable({ caption, groupHeader, rows }: { caption: string; groupHeader: string; rows: ShareRow[] }) {
   const columns: Column<ShareRow>[] = [
     { header: groupHeader, cell: (r) => <span className="break-words">{r.label}</span> },
-    { header: 'Share', cell: (r) => <ShareBar rate={r.rate} /> },
-    { header: 'How many', cell: (r) => <span className="tabular-nums">{r.count}</span> },
+    {
+      header: 'Share',
+      cell: (r) => (
+        <span className="block space-y-0.5">
+          <ShareBar rate={r.rate} />
+          <span className="block text-xs tabular-nums text-gray-600">{r.count}</span>
+        </span>
+      ),
+    },
     { header: 'Ask the assistant', cell: (r) => <ExplainLink question={r.explain} about={`${r.label}, ${r.count}`} /> },
   ]
   return <ResponsiveTable caption={caption} columns={columns} rows={rows} rowKey={(r) => r.key} />
@@ -115,7 +123,7 @@ function PanelState({ state }: { state: { status: 'loading' } | { status: 'error
 
 function NothingLoaded({ what }: { what: string }) {
   return (
-    <EmptyState>
+    <EmptyState icon={ICONS.growth}>
       <p className="font-medium text-gray-900">No {what} yet.</p>
       <p>
         This panel fills in once the three files are loaded. The{' '}
@@ -178,7 +186,7 @@ function SourceAppPanel() {
       summary="By where they signed up: the share who created an app account after joining the newsletter."
     >
       <p className="text-gray-900">
-        <span className="font-semibold tabular-nums">{n(d.total.with_app_after_signup)}</span> of{' '}
+        <span className="font-display text-2xl font-semibold tabular-nums text-accent-strong">{n(d.total.with_app_after_signup)}</span> of{' '}
         <span className="tabular-nums">{n(d.total.subscribers)}</span> subscribers ({percent(d.total.rate)}) created an app
         account after signing up.{' '}
         <ExplainLink question={d.total.explain} about="all subscribers who got the app after signing up" />
@@ -239,7 +247,7 @@ function FunnelPanel() {
   return (
     <Section title={title} summary="Where visitors first arrived on the website, and the share who went on to subscribe.">
       <p className="text-gray-900">
-        <span className="font-semibold tabular-nums">{n(d.total.subscribed)}</span> of{' '}
+        <span className="font-display text-2xl font-semibold tabular-nums text-accent-strong">{n(d.total.subscribed)}</span> of{' '}
         <span className="tabular-nums">{n(d.total.visitors)}</span> website visitors ({percent(d.total.rate)}) subscribed to the
         newsletter. <ExplainLink question={d.total.explain} about="all website visitors who subscribed" />
       </p>
@@ -247,10 +255,9 @@ function FunnelPanel() {
         <h3 className="text-sm font-semibold text-gray-900">By the first page they saw (most visitors first)</h3>
         <TopRows caption="Visitors who subscribed, by first page" groupHeader="First page" rows={pages} rest="pages" />
       </div>
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-900">By the campaign that brought them on their first visit (most visitors first)</h3>
+      <Disclosure label="By the campaign that brought them on their first visit">
         <TopRows caption="Visitors who subscribed, by campaign source" groupHeader="Campaign source" rows={utms} rest="campaign sources" />
-      </div>
+      </Disclosure>
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
           A visitor&apos;s first page and campaign source both come from their earliest visit. A visitor counts as subscribed
@@ -301,7 +308,7 @@ function GoingColdPanel() {
   return (
     <Section title={title} summary="Active subscribers who are slipping away, by where they signed up. A note to them now may keep them reading.">
       <p className="text-gray-900">
-        <span className="font-semibold tabular-nums">{n(d.total.at_risk)}</span> of{' '}
+        <span className="font-display text-2xl font-semibold tabular-nums text-accent-strong">{n(d.total.at_risk)}</span> of{' '}
         <span className="tabular-nums">{n(d.total.active)}</span> active subscribers ({percent(d.total.rate)}) are at risk of
         going cold. <ExplainLink question={d.total.explain} about="all active subscribers at risk of going cold" />
       </p>
@@ -367,7 +374,7 @@ function DataQualityPanel() {
   return (
     <Section title={title} summary="Values missing from the records we loaded, or values we did not expect. A gap here makes the other numbers less complete.">
       <p className="text-gray-900">
-        <span className="font-semibold tabular-nums">{n(d.import.quarantined)}</span> of{' '}
+        <span className="font-display text-2xl font-semibold tabular-nums text-accent-strong">{n(d.import.quarantined)}</span> of{' '}
         <span className="tabular-nums">{n(d.import.rows_in)}</span> rows in the three files ({percent(d.import.rate)}) were set
         aside while loading and are not counted.{' '}
         <Link to="/" className="inline-flex min-h-6 items-center text-sm text-blue-700 underline underline-offset-2 hover:text-blue-900">
@@ -406,15 +413,16 @@ function DataQualityPanel() {
 
 export default function GrowthPage() {
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Growth"
-        purpose="Which signup sources lead readers to the app, which website pages turn visitors into subscribers, who is about to go cold, and where the data has gaps. Each number's “Explain this” asks the assistant about it."
+        purpose="Where readers come from, who is slipping away, and where the data has gaps. “Explain this” asks the assistant about any number."
+        icon={ICONS.growth}
       />
       <SourceAppPanel />
       <FunnelPanel />
       <GoingColdPanel />
       <DataQualityPanel />
-    </>
+    </div>
   )
 }
