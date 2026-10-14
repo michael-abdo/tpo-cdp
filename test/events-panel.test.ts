@@ -234,6 +234,10 @@ describe('POST /api/events/test (09 D-73)', () => {
     }
   })
 
+  it('T-WH-PANEL-8a: TEST_EVENT_LIMITER is 20/min, exactly as 04 §POST /api/events/test documents it (kills M7d: a quietly widened binding)', () => {
+    expect(bindingLimit('TEST_EVENT_LIMITER')).toBe(20)
+  })
+
   it('T-WH-PANEL-8: 429 past its own limit, and a new session from the same address is still 429 (09 D-70 #6 style)', async () => {
     const limit = bindingLimit('TEST_EVENT_LIMITER')
     const ip = documentationIp()

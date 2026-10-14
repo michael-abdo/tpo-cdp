@@ -372,11 +372,17 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
   it('names every missing binding and secret in one error', () => {
     expect(() =>
       assertBindings(
-        envWithout('DB', 'WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'LOGIN_LIMITER', 'WEBHOOK_LIMITER', 'ASSISTANT_LIMITER', 'EXPORT_LIMITER'),
+        envWithout('DB', 'WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'LOGIN_LIMITER', 'WEBHOOK_LIMITER', 'ASSISTANT_LIMITER', 'EXPORT_LIMITER', 'TEST_EVENT_LIMITER'),
       ),
     ).toThrow(
-      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER',
+      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER, TEST_EVENT_LIMITER',
     )
+  })
+
+  it('runs before routing: /health with a missing TEST_EVENT_LIMITER is 500 naming it (04 §POST /api/events/test needs it; kills M16: TEST_EVENT_LIMITER dropped from the required list)', async () => {
+    const res = await app.fetch(new Request(`${BASE}/health`), envWithout('TEST_EVENT_LIMITER'))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ error: 'server_misconfigured', message: 'The server is missing required configuration: TEST_EVENT_LIMITER.' })
   })
 
   it('treats an empty secret as missing and does not check ANTHROPIC_API_KEY', async () => {
