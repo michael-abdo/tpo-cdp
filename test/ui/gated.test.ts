@@ -158,6 +158,20 @@ describe('isActivatingKey (the Tab-reveals-every-note regression)', () => {
     const body = useGatedSource.slice(start, useGatedSource.indexOf('\n  }', start))
     expect(body).toContain('isActivatingKey(e.key)')
   })
+
+  // The review's M2 probe: "useGated.activate also calls fetch('/api/x')" survived every
+  // existing check (the per-page tests only check markup; T-GATE-3's source scan only walks each
+  // PAGE component's body, never the hook's own). activate() is the hook's only state-changing
+  // function, so its body is read directly here.
+  it('activate() touches nothing but setActivated — no fetch, postJson, request, navigate or window.location', () => {
+    const [useGatedSource] = Object.values(
+      import.meta.glob<string>('../../src/use-gated.ts', { query: '?raw', import: 'default', eager: true }),
+    )
+    const start = useGatedSource.indexOf('function activate()')
+    const body = useGatedSource.slice(start, useGatedSource.indexOf('\n  }', start))
+    expect(body).toContain('setActivated(true)')
+    for (const pattern of [/\bfetch\(/, /\bpostJson\(/, /\brequest\(/, /\bnavigate\(/, /window\.location/]) expect(body).not.toMatch(pattern)
+  })
 })
 
 describe('ComingSoonTag', () => {
