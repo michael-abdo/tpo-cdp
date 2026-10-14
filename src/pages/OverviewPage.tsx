@@ -309,7 +309,7 @@ function WebhookHistory({ source }: { source: WebhookSource }) {
 }
 
 /** The Sources table (06 §Overview 2), rendered only from GET /api/sources. */
-function SourcesTable({ sources }: { sources: AnySource[] }) {
+function SourcesTable({ sources, children }: { sources: AnySource[]; children?: ReactNode }) {
   const latest = lastSync(sources)
   const review = toReview(sources)
   return (
@@ -369,6 +369,7 @@ function SourcesTable({ sources }: { sources: AnySource[] }) {
         details={(s) => <SourceHistory source={s} />}
         detailsLabel="History"
       />
+      {children}
     </Section>
   )
 }
@@ -623,7 +624,7 @@ function PossibleDuplicates() {
   )
 }
 
-/** Sources, then the two collapsed review sections under the table (06 §Overview 2–3). */
+/** Sources, with the two collapsed review sections inside the same card, under the table (06 §Overview 2–3). */
 function SourcesAndReview() {
   const state = useGet<Sources>('/api/sources')
   if (state === null || state.status === 'loading') return <Loading label="Loading the sources…" />
@@ -632,11 +633,12 @@ function SourcesAndReview() {
   const review = toReview(state.data.sources)
   return (
     <>
-      <SourcesTable sources={state.data.sources} />
-      <div className="space-y-3">
-        {review > 0 && <NeedsReview count={review} />}
-        <PossibleDuplicates />
-      </div>
+      <SourcesTable sources={state.data.sources}>
+        <div className="space-y-1">
+          {review > 0 && <NeedsReview count={review} />}
+          <PossibleDuplicates />
+        </div>
+      </SourcesTable>
     </>
   )
 }
