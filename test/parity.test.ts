@@ -1308,6 +1308,14 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(stub).toMatchObject({ pkey: expectedStubPkey, email_norm: null, kind: 'unknown_user_stub' })
     const anyEmailPkeys = new Set([...oracle.subscribers.keys(), ...oracle.appOnlyProfiles.keys()])
     expect(anyEmailPkeys.has(expectedStubPkey)).toBe(false)
+
+    // 09 D-78(b): v_app_events — the view the assistant's app-activity counts read — resolves
+    // this stub's own event to the independently recomputed stub pkey, matching Look up and
+    // /events, instead of pkey NULL under the old email-only join (NULL = NULL is never true).
+    const { results: stubViewRows } = await env.DB.prepare('SELECT event FROM v_app_events WHERE pkey = ?')
+      .bind(expectedStubPkey)
+      .all<{ event: string }>()
+    expect(stubViewRows).toEqual([{ event: 'app_open' }])
   })
 
   it('hardest case #16, the stitch: an anonymous app_open then a login on one device, then an anonymous read_story, all resolve to the logged-in user', async () => {

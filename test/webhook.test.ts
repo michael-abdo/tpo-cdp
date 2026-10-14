@@ -342,9 +342,12 @@ describe('T-WH-6 an unknown user_id', () => {
     expect(user).toEqual({ user_id: unknown, email_norm: null, created_at: receivedAt, from_csv: 0 })
     const profile = await env.DB.prepare('SELECT * FROM profiles WHERE pkey = ?').bind(stubKey).first()
     // 09 D-46: the stub's one app event counts: 25 × min(1, 1/10) = 2.5, rounded to 3.
+    // 09 D-78(b): user_id links this stub profile back to its app_users row for v_app_events,
+    // below; it is never set on a subscriber or app_only profile (those resolve by email_norm).
     expect(profile).toEqual({
       pkey: stubKey,
       email_norm: null,
+      user_id: unknown,
       kind: 'unknown_user_stub',
       engagement_score: 3,
       created_at: receivedAt,
@@ -365,6 +368,17 @@ describe('T-WH-6 an unknown user_id', () => {
     expect(await count('profiles WHERE pkey = ?', stubKey)).toBe(1)
     // Two app events: 25 × 2/10 = 5.
     expect(await storedScore(stubKey)).toBe(5)
+
+    // 09 D-78(b): the stub's events resolve to its own pkey in the PII-free view the assistant's
+    // app-activity counts read, exactly as Look up and /events already show them below, instead
+    // of vanishing under pkey NULL (the old email-only join never matches a stub, whose
+    // app_users.email_norm is NULL: SQL NULL = NULL is unknown, not true).
+    const { results: viewRows } = await env.DB.prepare(
+      'SELECT event FROM v_app_events WHERE pkey = ? ORDER BY event_ts',
+    )
+      .bind(stubKey)
+      .all<{ event: string }>()
+    expect(viewRows.map((r) => r.event)).toEqual(['read_story', 'app_open'])
 
     const { status: found, body } = await lookup(unknown)
     expect(found).toBe(200)

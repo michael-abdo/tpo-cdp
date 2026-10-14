@@ -149,10 +149,15 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
   })
 })
 
-// The migration sequence (README "the nine migrations"; 03 §Module layout). Two merged branches once
+// The migration sequence (README "the ten migrations"; 03 §Module layout). Two merged branches once
 // each took the next number; this pins the order that applies on a fresh database (wrangler and
 // test/setup.ts apply the files in name order) and that the README's count tells the same story.
-describe('the migrations are one contiguous, ordered sequence', () => {
+// 0010 is an intentional gap on this branch (data-fixes), not a bug: 0010_drop_tool_approval.sql
+// (09 D-77) lives on another branch, not yet merged here. The orchestrator renumbers nothing and
+// merges that branch first, so this branch's new migration (09 D-78(b)) takes 0011 directly; once
+// both branches are merged the files are contiguous 0001..0011 with no gap, as they are meant to
+// read from main.
+describe('the migrations are one contiguous, ordered sequence (with one gap on this branch)', () => {
   const NAMES = [
     '0001_core',
     '0002_views',
@@ -163,6 +168,7 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     '0007_profiles_email_index',
     '0008_ai_audit_cache',
     '0009_tool_approval',
+    '0011_unknown_user_profile_link',
   ]
   const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
     .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
@@ -173,15 +179,16 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     expect(files).toEqual(NAMES)
   })
 
-  it('every number appears once, from 0001 with no gap', () => {
+  it('every number appears once, from 0001, with the one intentional gap at 0010', () => {
     const numbers = files.map((name) => Number(name.slice(0, 4)))
-    expect(numbers).toEqual(files.map((_, i) => i + 1))
+    const expected = files.map((_, i) => (i < NAMES.length - 1 ? i + 1 : 11))
+    expect(numbers).toEqual(expected)
     expect(new Set(files.map((name) => name.slice(0, 4))).size).toBe(files.length)
   })
 
   it('the README says how many there are', () => {
     const said = /\bthe (\w+) migrations into the local D1\b/.exec(readme)?.[1]
-    expect(said, 'README names the migration count ("the nine migrations")').toBeDefined()
+    expect(said, 'README names the migration count ("the ten migrations")').toBeDefined()
     expect(WORDS.indexOf(said ?? ''), `README says "${said}"`).toBe(files.length)
   })
 })

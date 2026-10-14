@@ -61,6 +61,11 @@ describe('T-ING-1 the emitted seed loads and its counts equal 02 §Counts', () =
     expect(await count('SELECT count(*) AS n FROM app_users')).toBe(930)
     expect(await count('SELECT count(*) AS n FROM profiles')).toBe(2930)
     expect(await count("SELECT count(*) AS n FROM profiles WHERE kind = 'subscriber'")).toBe(2900)
+    // 09 D-78(b): the seed itself creates no unknown_user_stub profiles (those arrive only by
+    // webhook), so migrations/0011's new profiles.user_id column and v_app_events join move no
+    // 02 §Counts number on the seed data.
+    expect(await count("SELECT count(*) AS n FROM profiles WHERE kind = 'unknown_user_stub'")).toBe(0)
+    expect(await count('SELECT count(*) AS n FROM profiles WHERE user_id IS NOT NULL')).toBe(0)
   })
 
   it('import_runs has one row per file with rows_in, rows_out, merged, quarantined', async () => {

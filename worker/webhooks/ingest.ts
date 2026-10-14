@@ -114,8 +114,8 @@ export async function ingestEvent(
         .bind(event.event_id, event.user_id),
       db
         .prepare(
-          `INSERT OR IGNORE INTO profiles (pkey, email_norm, kind, engagement_score, created_at)
-           SELECT ?3, NULL, 'unknown_user_stub', ?4, e.received_at
+          `INSERT OR IGNORE INTO profiles (pkey, email_norm, user_id, kind, engagement_score, created_at)
+           SELECT ?3, NULL, ?2, 'unknown_user_stub', ?4, e.received_at
              FROM app_events e JOIN app_users u ON u.user_id = e.user_id
             WHERE e.event_id = ?1 AND e.user_id = ?2 AND u.from_csv = 0 AND u.email_norm IS NULL`,
         )
