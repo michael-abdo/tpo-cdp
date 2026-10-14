@@ -2,9 +2,10 @@
 // 04 §POST /api/assistant). Origin: palisade app/api/chat/route.ts POST L489-662 (14 §1.1, §4).
 // worker/routes/assistant.ts reads the body and calls `answerQuestion`; this file holds the order:
 //
-//   0  per-session limit: 100 calls/hour (04 §Auth, 09 D-40), counted from ai_audit rows
-//      because the Rate Limiting binding has no hour period (wrangler.jsonc). Approximate: two
-//      requests racing at call 100 can both pass, as with the binding
+//   0  per-client limit: ASSISTANT_LIMITER keyed by CF-Connecting-IP (wrangler.jsonc, 09 D-70 #6),
+//      so signing in again does not reset it; then the per-session limit: 100 calls/hour (04
+//      §Auth, 09 D-40), counted from ai_audit rows because the Rate Limiting binding has no hour
+//      period. Approximate: two requests racing at call 100 can both pass, as with the binding
 //   2  Gate 1 (enforceGate1)                         → 400 invalid_question
 //      ANTHROPIC_API_KEY present (the lazy check, 11 §Deploy) → 503 assistant_unavailable;
 //      a key that Anthropic rejects is reported by the first call as 502 model_error
@@ -45,6 +46,10 @@ export interface AssistantDeps {
   transportFor: (apiKey: string) => MessagesTransport
   /** The session's random `sub` (04 §Auth). */
   sessionSub: string
+  /** ASSISTANT_LIMITER (wrangler.jsonc): the per-client limit a new session does not reset (09 D-70 #6). */
+  clientLimiter: RateLimit
+  /** The client's CF-Connecting-IP, or 'local' where there is no edge (as the login limit). */
+  clientKey: string
 }
 
 /** The 04 response body. */
@@ -85,6 +90,15 @@ async function toolsOrRefuse(trace: AuditTrace, db: D1Database): Promise<LoadedT
 
 export async function answerQuestion(deps: AssistantDeps, question: string): Promise<AssistantResponse> {
   const trace = await startTrace(deps.db, deps.sessionSub)
+
+  const { success } = await deps.clientLimiter.limit({ key: deps.clientKey })
+  if (!success) {
+    throw await refuse(
+      trace,
+      new ApiError(429, 'rate_limited', 'Too many assistant questions from this network in the last minute. Wait a minute and try again.'),
+      'over the per-client limit (ASSISTANT_LIMITER)',
+    )
+  }
 
   const calls = await callsInLastHour(deps.db, deps.sessionSub)
   if (calls >= ASSISTANT_CALLS_PER_HOUR) {

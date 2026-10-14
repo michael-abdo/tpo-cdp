@@ -4,7 +4,7 @@ import { TODAY } from '../shared/config'
 import { noOpenInDays } from '../shared/derive'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
 import { SEGMENT_COLUMNS } from '../worker/segments/compile'
-import { loginCookie } from './helpers/auth'
+import { documentationIp, loginCookie } from './helpers/auth'
 import { realCsvs, seedDatabase } from './helpers/seed'
 
 // POST /api/segments/preview and /api/segments/export.csv (04 §/api/segments/preview,
@@ -52,10 +52,11 @@ beforeAll(async () => {
   cookie = await loginCookie()
 })
 
+/** A fresh documentation address per call keeps these tests off one EXPORT_LIMITER key. */
 function post(path: string, body: unknown, headers: Record<string, string> = { cookie }): Promise<Response> {
   return SELF.fetch(`http://cdp.test/api/segments/${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', 'cf-connecting-ip': documentationIp(), ...headers },
     body: JSON.stringify(body),
   })
 }
