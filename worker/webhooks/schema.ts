@@ -7,11 +7,8 @@
 import { z } from 'zod'
 import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 
-// The four event names (R4.3; the CHECK on app_events.event in 0001_core.sql matches) live in
-// shared/app-events.ts, their one home, so the "Send a test event" panel can pick from the same
-// list without a second copy (09 D-73, D-72).
-export { APP_EVENTS }
-export type { AppEventName }
+/** The four events the app sends (R4.3); their one home is shared/app-events.ts. */
+export { APP_EVENTS, type AppEventName }
 
 export const ID_MAX_CHARS = 64
 export const PROPERTY_VALUE_MAX_CHARS = 200

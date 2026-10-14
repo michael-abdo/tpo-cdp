@@ -9,7 +9,9 @@
  *
  * Changes from the 14 §4.2 drafts:
  * - `segment` takes exactly the 04 §/api/segments/preview `filters` object (04: "the assistant's
- *   segment tool takes exactly this filters object"), not the draft's own field set.
+ *   segment tool takes exactly this filters object"), not the draft's own field set. Its
+ *   properties are the contract fragment of shared/segment-filters.ts (19 §5.5, 09 D-69), so
+ *   `source` is the canonical enum and every string key has an enum or a pattern.
  * - `aggregate` takes `status` and `source` lists like the segment filters, so "Instagram signups"
  *   and the unsubscribed default (02 §Defaults) mean the same thing in both tools. Its metrics
  *   are the ones builtin-handlers.ts computes over the v_* views. The draft's
@@ -34,7 +36,9 @@
  * - `open_segment` is not seeded: it and the `passthrough` type are parked (16 §If time remains).
  */
 
+import { TODAY } from '../shared/config'
 import { addDays, DEFINITIONS, type DateWindow, lastNDays } from '../shared/derive'
+import { FILTER_KEYS, FILTER_SCHEMA, type FilterKey } from '../shared/segment-filters'
 import type { SqlValue } from '../worker/ingest/sql'
 
 export interface ToolSeed {
@@ -59,6 +63,31 @@ export const NEW_SUBSCRIBER_WINDOW: DateWindow = (() => {
   return window
 })()
 
+/** What each filter means to the model; the limits and patterns come from FILTER_SCHEMA. */
+const FILTER_DESCRIPTIONS: { readonly [K in FilterKey]: string } = {
+  status: 'Default ["active"]. Add "unsubscribed" only when the teammate asks for them.',
+  source: 'Acquisition sources, e.g. ["instagram"]. Absent = any source.',
+  days_since_open_gte: 'No email open in at least this many days (the "no open in N days" definition).',
+  include_never_opened: 'With days_since_open_gte, also include everyone who never opened. Default false.',
+  went_cold: `"any" = cold now (the cold definition); "YYYY-MM" = went cold in that month (went_cold_in), no month after ${TODAY.slice(0, 7)}.`,
+  signed_up_within_days: 'Signed up in the last N days including today (30 = the new_subscriber definition).',
+  engagement_gte: 'Stored engagement_score at least this (0–100).',
+  engagement_lte: 'Stored engagement_score at most this (0–100); not below engagement_gte.',
+  has_app: 'true = has an app account, false = has none, null or absent = either.',
+  site_visit_within_days: 'Visited the site in the last N days.',
+  site_visit_page: 'Visited this page path, e.g. "/shadrachs-picks"; with site_visit_within_days, inside that window.',
+  app_active_within_days: 'Sent any app event in the last N days.',
+  app_event: 'Sent this app event; with app_active_within_days, inside that window.',
+}
+
+/**
+ * The segment tool's input_schema properties: exactly the filter contract (shared/segment-filters.ts
+ * FILTER_SCHEMA, 19 §5.5), in FILTER_KEYS order, each with its description.
+ */
+export const SEGMENT_PROPERTIES: Record<string, Record<string, unknown>> = Object.fromEntries(
+  FILTER_KEYS.map((key) => [key, { ...FILTER_SCHEMA[key], description: FILTER_DESCRIPTIONS[key] }]),
+)
+
 export const TOOL_SEEDS: readonly ToolSeed[] = [
   {
     name: 'segment',
@@ -68,37 +97,13 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
       'listed most engaged first (the stored engagement_score, highest first). ' +
       'Use for "who/which subscribers…" questions, for "most engaged readers" (no extra filters; the rows are the ' +
       'ranking), and whenever the teammate may want to open or export the list. ' +
-      'Status defaults to ["active"]. days_since_open_gte is the brief\'s "no open in N days" filter, not "cold". ' +
-      'Never invent filters the user did not ask for.',
+      'Status defaults to ["active"]. days_since_open_gte is the brief\'s "no open in N days" filter, not "cold"; ' +
+      'to list subscribers who went cold use went_cold ("any" = cold now, or a month "YYYY-MM"); for a month it ' +
+      'matches the count aggregate went_cold gives over that month. ' +
+      'Every filter given must hold (AND). Never invent filters the user did not ask for.',
     inputSchema: {
       type: 'object',
-      properties: {
-        status: {
-          type: 'array',
-          items: { type: 'string', enum: ['active', 'unsubscribed'] },
-          minItems: 1,
-          description: 'Default ["active"]. Add "unsubscribed" only when the teammate asks for them.',
-        },
-        source: {
-          type: 'array',
-          items: { type: 'string' },
-          minItems: 1,
-          description: 'Signup sources, e.g. ["instagram"]. Absent = any source.',
-        },
-        days_since_open_gte: {
-          type: 'integer',
-          minimum: 1,
-          description: 'No email open in at least this many days (the "no open in N days" definition).',
-        },
-        include_never_opened: {
-          type: 'boolean',
-          description: 'With days_since_open_gte, also include everyone who never opened. Default false.',
-        },
-        has_app: {
-          type: ['boolean', 'null'],
-          description: 'true = has an app account, false = has none, null or absent = either.',
-        },
-      },
+      properties: SEGMENT_PROPERTIES,
     },
     handlerType: 'builtin',
     executionConfig: { handler_name: 'segment' },
@@ -252,4 +257,77 @@ export function toolSeedSql(values: readonly string[]): string {
 /** The bound form of one seed row, for D1 `prepare(sql).bind(...params)`. */
 export function toolSeedInsert(seed: ToolSeed): { sql: string; params: SqlValue[] } {
   return { sql: toolSeedSql(COLUMNS.map(() => '?')), params: toolSeedValues(seed, crypto.randomUUID()) }
+}
+
+/**
+ * The columns a seed defines and a re-seed compares (09 D-69: a schema change must reach a row that
+ * already exists). `enabled` and `sort_order` are left out: a teammate may disable or reorder a row.
+ */
+export const SEEDED_FIELDS = ['description', 'input_schema', 'handler_type', 'execution_config'] as const
+export type SeededField = (typeof SEEDED_FIELDS)[number]
+
+/** An assistant_tools row as read back: its name and the seeded columns, as stored. */
+export type StoredToolRow = { name: string } & { [F in SeededField]: string }
+
+/** JSON with every object's keys sorted, so two equal schemas compare equal whatever their key order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+
+/**
+ * The seeded rows whose stored columns differ from TOOL_SEEDS, each with the fields that differ, in
+ * TOOL_SEEDS order. Pure. A row the table lacks is not listed here (the read-back names it as
+ * missing). The insert never overwrites (`toolSeedSql`), so `npm run tools:seed` uses this to fail
+ * loud on a row a newer seed changed, such as the `segment` row before D-69's keys.
+ */
+export function staleToolRows(rows: readonly StoredToolRow[]): { name: string; fields: SeededField[] }[] {
+  const byName = new Map(rows.map((r) => [r.name, r]))
+  const stale: { name: string; fields: SeededField[] }[] = []
+  for (const seed of TOOL_SEEDS) {
+    const row = byName.get(seed.name)
+    if (row === undefined) continue
+    const want: { [F in SeededField]: string } = {
+      description: seed.description,
+      input_schema: canonicalJson(seed.inputSchema),
+      handler_type: seed.handlerType,
+      execution_config: canonicalJson(seed.executionConfig),
+    }
+    // assistant_tools CHECKs json_valid on both JSON columns (0001_core.sql), so the parse cannot fail on a stored row.
+    const have: { [F in SeededField]: string } = {
+      description: row.description,
+      input_schema: canonicalJson(JSON.parse(row.input_schema)),
+      handler_type: row.handler_type,
+      execution_config: canonicalJson(JSON.parse(row.execution_config)),
+    }
+    const fields = SEEDED_FIELDS.filter((f) => have[f] !== want[f])
+    if (fields.length > 0) stale.push({ name: seed.name, fields })
+  }
+  return stale
+}
+
+/** The UPDATE values of one seed, in `toolSeedUpdateSql` order: the seeded columns, then the name. */
+export function toolSeedUpdateValues(seed: ToolSeed): SqlValue[] {
+  return [seed.description, JSON.stringify(seed.inputSchema), seed.handlerType, JSON.stringify(seed.executionConfig), seed.name]
+}
+
+/**
+ * Overwrites one existing row's seeded columns with its seed (`npm run tools:seed -- … --update
+ * <name>`, the explicit opt-in). `enabled` and `sort_order` stay as they are; updated_at is the
+ * write time, as in `toolSeedSql`.
+ */
+export function toolSeedUpdateSql(values: readonly string[]): string {
+  if (values.length !== SEEDED_FIELDS.length + 1) throw new Error(`tool-seeds: expected ${SEEDED_FIELDS.length + 1} values, got ${values.length}`)
+  const set = SEEDED_FIELDS.map((f, i) => `${f} = ${values[i]}`).join(', ')
+  return `UPDATE assistant_tools SET ${set}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE name = ${values[SEEDED_FIELDS.length]}`
+}
+
+/** The bound form of one seed's update. */
+export function toolSeedUpdate(seed: ToolSeed): { sql: string; params: SqlValue[] } {
+  return { sql: toolSeedUpdateSql([...SEEDED_FIELDS, 'name'].map(() => '?')), params: toolSeedUpdateValues(seed) }
 }

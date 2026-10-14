@@ -16,7 +16,7 @@ import {
 } from '../worker/insights/board'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
-import { retiredIn } from './helpers/vocabulary'
+import { navArrayText, retiredIn } from './helpers/vocabulary'
 
 // T-VOC-1 (08; 09 D-66, 06 §Vocabulary) for the Insights work: every word /insights, its board, its
 // pin dialog and its server sentences can put on screen or hand to Ask is the brief's own. Scope:
@@ -29,7 +29,9 @@ import { retiredIn } from './helpers/vocabulary'
 // comments removed (their JSX text and literals; test/ui/ renders them). No network.
 
 function offences(where: string, texts: readonly string[]): string[] {
-  return texts.flatMap((text) => retiredIn(text).map((name) => `${where}: ${name} in "${text.trim().slice(0, 160)}"`))
+  return texts.flatMap((text) =>
+    retiredIn(text).map((name) => `${where}: ${name} in "${text.trim().slice(0, 160)}"`),
+  )
 }
 
 /** Source text without its comments (block comments, and // comments at a line start or after a space). */
@@ -42,7 +44,15 @@ function withoutComments(code: string): string {
 }
 
 const SOURCES = import.meta.glob(
-  ['../src/insights/*.{ts,tsx}', '../src/pages/InsightsPage.tsx', '../src/pages/AuditPage.tsx', '../src/App.tsx', '../src/api.ts', '../src/labels.ts'],
+  [
+    '../src/insights/*.{ts,tsx}',
+    '../src/pages/InsightsPage.tsx',
+    '../src/pages/AuditPage.tsx',
+    '../src/App.tsx',
+    '../src/nav.ts',
+    '../src/api.ts',
+    '../src/labels.ts',
+  ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>
 
@@ -52,28 +62,39 @@ beforeAll(async () => {
   await seedDatabase()
   for (const seed of TOOL_SEEDS) {
     const { sql, params } = toolSeedInsert(seed)
-    await env.DB.prepare(sql).bind(...params).run()
+    await env.DB.prepare(sql)
+      .bind(...params)
+      .run()
   }
   cookie = await loginCookie(documentationIp())
 })
 
-describe('T-VOC-1 for /insights: the brief\'s words (09 D-66, 06 §Vocabulary)', () => {
+describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", () => {
   it('the guard flags each retired term and lets the brief\'s question and "screen reader" through', () => {
     expect(retiredIn('Cold readers')).toEqual(['reader(s)'])
     expect(retiredIn('Find a reader')).toEqual(['reader(s)', 'Find a reader'])
     expect(retiredIn('Built a list of readers')).toEqual(['reader(s)', 'Build a list'])
-    expect(retiredIn('How many app users have an email that is not on the newsletter list?')).toEqual(['Newsletter list', 'App users'])
+    expect(retiredIn('How many app users have an email that is not on the newsletter list?')).toEqual([
+      'Newsletter list',
+      'App users',
+    ])
     expect(retiredIn('build me a list of our most engaged readers')).toEqual([])
     expect(retiredIn('so screen readers hear each change')).toEqual([])
-    expect(withoutComments("// the reader presses Ask\nconst a = 'https://x' // a reader\n/* readers */ const b = 1")).not.toMatch(/reader/)
+    expect(
+      withoutComments(
+        "// the reader presses Ask\nconst a = 'https://x' // a reader\n/* readers */ const b = 1",
+      ),
+    ).not.toMatch(/reader/)
   })
 
   it('no word of the source of the Insights page, its board, the audit page, the nav or the labels is retired', () => {
     expect(Object.keys(SOURCES).length).toBeGreaterThan(12)
-    expect(Object.entries(SOURCES).flatMap(([path, code]) => offences(path, withoutComments(code).split('\n')))).toEqual([])
+    expect(
+      Object.entries(SOURCES).flatMap(([path, code]) => offences(path, withoutComments(code).split('\n'))),
+    ).toEqual([])
   })
 
-  it('the board as the server sends it, and every question it hands to Ask, uses the brief\'s words', async () => {
+  it("the board as the server sends it, and every question it hands to Ask, uses the brief's words", async () => {
     const res = await SELF.fetch('http://cdp.test/api/insights', { headers: { cookie } })
     expect(res.status).toBe(200)
     const body = await res.text()
@@ -87,7 +108,7 @@ describe('T-VOC-1 for /insights: the brief\'s words (09 D-66, 06 §Vocabulary)',
     }
   })
 
-  it('the server\'s sentences, the pin dialog\'s words and the system prompt use the brief\'s words', async () => {
+  it("the server's sentences, the pin dialog's words and the system prompt use the brief's words", async () => {
     const sentences = [
       NOT_PINNABLE_MESSAGE,
       NOT_PINNABLE_OTHER_MESSAGE,
@@ -95,7 +116,9 @@ describe('T-VOC-1 for /insights: the brief\'s words (09 D-66, 06 §Vocabulary)',
       TILE_RUN_FAILED_MESSAGE,
       BLOCKED_TILE_TITLE,
       SEGMENT_PIN_NOTE,
-      ...['nothing_to_pin', 'not_found', 'invalid_pin', 'not_pinnable', 'internal_error'].map((code) => pinNext(code) ?? ''),
+      ...['nothing_to_pin', 'not_found', 'invalid_pin', 'not_pinnable', 'internal_error'].map(
+        (code) => pinNext(code) ?? '',
+      ),
       discardSentence('segment', 177),
       discardSentence('segment', 1),
       discardSentence('table', null),
@@ -106,8 +129,13 @@ describe('T-VOC-1 for /insights: the brief\'s words (09 D-66, 06 §Vocabulary)',
     expect(offences('server', sentences)).toEqual([])
   })
 
-  it('every label a result or a filter shows is the brief\'s: no retired word, the 06 field names', () => {
-    const labels = [...Object.values(COLUMN_LABEL), ...Object.values(FILTER_LABEL), ...Object.values(CHECK_LABEL), ...Object.values(DEFINITION_LABEL)]
+  it("every label a result or a filter shows is the brief's: no retired word, the 06 field names", () => {
+    const labels = [
+      ...Object.values(COLUMN_LABEL),
+      ...Object.values(FILTER_LABEL),
+      ...Object.values(CHECK_LABEL),
+      ...Object.values(DEFINITION_LABEL),
+    ]
     expect(offences('labels', labels)).toEqual([])
     // 06 §Vocabulary subscriber fields (email, signup date, status, acquisition source, last open date) and web field UTM source.
     expect({
@@ -129,9 +157,16 @@ describe('T-VOC-1 for /insights: the brief\'s words (09 D-66, 06 §Vocabulary)',
     })
   })
 
-  it('nav labels are the 06 words; "Insights" stays the operator\'s name for the page (09 D-64)', () => {
-    const app = SOURCES['../src/App.tsx']
-    const nav = app.slice(app.indexOf('const NAV'), app.indexOf(']\n', app.indexOf('const NAV')))
-    expect([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])).toEqual(['Overview', 'Look up', 'Segments', 'App events', 'Insights', 'AI audit log'])
+  it('nav labels are the 06 words; "Insights" stays the operator\'s name for the page (09 D-64, 09 D-71)', () => {
+    const nav = navArrayText(SOURCES['../src/nav.ts'])
+    expect([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])).toEqual([
+      'Overview',
+      'Look up',
+      'Segments',
+      'Insights',
+      'Techy',
+      'App events',
+      'AI audit log',
+    ])
   })
 })

@@ -52,6 +52,8 @@ interface JsonSchema {
   maxItems?: number
   minLength?: number
   maxLength?: number
+  /** ECMA-262, unanchored as JSON Schema defines it; the loader refused any pattern that does not compile. */
+  pattern?: string
   additionalProperties?: boolean | JsonSchema
 }
 
@@ -99,6 +101,8 @@ export function inputSchemaProblems(schema: JsonSchema, value: unknown, path = '
     const length = [...value].length
     if (schema.minLength !== undefined && length < schema.minLength) problems.push(`${path} must be at least ${schema.minLength} characters`)
     if (schema.maxLength !== undefined && length > schema.maxLength) problems.push(`${path} must be at most ${schema.maxLength} characters`)
+    // The problem names the pattern, never the value: the value is the model's untrusted input.
+    if (schema.pattern !== undefined && !new RegExp(schema.pattern, 'u').test(value)) problems.push(`${path} must match ${schema.pattern}`)
   }
   if (Array.isArray(value)) {
     if (schema.minItems !== undefined && value.length < schema.minItems) problems.push(`${path} must have at least ${schema.minItems} item(s)`)
