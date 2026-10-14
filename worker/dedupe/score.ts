@@ -253,18 +253,17 @@ function leadFor(band: Band): string {
 }
 
 /**
- * The one-line plain suggestion (06 §Overview): the verdict, plus the name basis, which is the
- * reason the pair is listed at all and has no chip of its own (09 D-72, one thing in one place).
- * The reason chips beside it already say which of the other fields match, so the sentence never
- * repeats them; it only ever adds the name. "only the name matches" is reserved for a hidden-band
- * pair where nothing else agrees either — the one case where the name is the sole basis for
- * anything.
+ * The one-line plain suggestion (06 §Overview): the review and auto bands say only the verdict —
+ * the reason chips beside it already say which fields match, and the name itself matched every
+ * candidate pair, so repeating "the name matches" there would say that fact twice (09 D-72, one
+ * thing in one place). "— only the name matches" is reserved for the one case where the name is
+ * the sole basis for anything: a hidden-band pair where nothing else agrees either.
  */
 export function suggestionFor(band: Band, agreement: Agreement): string {
   const lead = leadFor(band)
   const onlyName = !SCORED_FIELDS.some((f) => agreement[f])
   if (band === 'hidden' && onlyName) return `${lead} — only the name matches`
-  return `${lead} — the name matches`
+  return lead
 }
 
 /** `dp_` + the first 16 hex characters of SHA-256 over the two pkeys in sorted order. */
