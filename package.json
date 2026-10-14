@@ -18,7 +18,8 @@
     "db:seed:remote": "tsx scripts/db-remote.ts --seed",
     "db:reset:remote": "tsx scripts/db-remote.ts --reset",
     "tools:seed": "tsx scripts/seed-assistant-tools.ts",
-    "webhook:send": "tsx scripts/send-webhook.ts"
+    "webhook:send": "tsx scripts/send-webhook.ts",
+    "parity": "tsx test/parity/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
