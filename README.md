@@ -24,8 +24,8 @@ Sign in, then follow the brief's five requirements in order:
 | 1 | Pulls it together | **Overview** | Sources: 2,995 rows → 2,900 subscribers, 85 deduped, 10 set aside (8 blank, 2 invalid emails, listed under "rows to fix") |
 | 2 | Finds anyone | **Look up** | `joy.hall830@protonmail.com`: newsletter info, site visits and app activity in one view; try `joy.hall` (partial) or `joy.hal830` (typo) |
 | 3 | Builds a segment | **Segments** | the brief's example (Instagram, haven't opened in 30 days) → 177, then Export CSV |
-| 4 | Never sleeps | **App events** | send one signed event ([Webhook](#webhook)) → it appears here and in Look up, with no restart |
-| 5 | Talks back | **Insights** | ask the AI assistant the brief's three questions, pin an answer to the board (it re-runs with no AI call); open **AI audit log** to see exactly what the model received (no emails) |
+| 4 | Never sleeps | **Techy → App events** | send one signed event ([Webhook](#webhook)) → it appears here and in Look up, with no restart |
+| 5 | Talks back | **Insights** | ask the AI assistant the brief's three questions, pin an answer to the board (it re-runs with no AI call); open **Techy → AI audit log** to see exactly what the model received (no emails) |
 
 Then the extras: a Possible duplicates review instead of risky fuzzy merging, and each source's own health chips, both on Overview.
 
@@ -67,7 +67,7 @@ npm run webhook:send -- --event read_story --user u_2b6447a3   # 202, resolves t
 npm run webhook:send -- --event read_story --again             # 200 {"accepted":true,"duplicate":true}
 ```
 
-Then "App events" (`/events`) lists it within 5 seconds (the page asks for the list every 5 seconds while its tab is in view, and at once on Refresh) and "Look up" (`/lookup`) shows it in her app activity, with no restart.
+Then "Techy → App events" (`/events`) lists it within 5 seconds (the page asks for the list every 5 seconds while its tab is in view, and at once on Refresh) and "Look up" (`/lookup`) shows it in her app activity, with no restart.
 
 The session cookie is `Secure`. Chrome and Firefox accept it on `http://localhost`; another browser that refuses it there will not stay signed in locally, and the live app is the fallback.
 
@@ -411,7 +411,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the screen text of the Overview and of every file the vocabulary test scans from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 39 files, 751 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the screen text of the Overview and of every file the vocabulary test scans from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 40 files, 763 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
