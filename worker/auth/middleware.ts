@@ -11,7 +11,7 @@ import { SESSION_COOKIE, verifySession } from './session'
  * envelope; `message` is plain English and must never carry secrets, SQL values or row contents.
  */
 export class ApiError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 413 | 415 | 429 | 500 | 502 | 503
+  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 502 | 503
   readonly code: string
   readonly details?: readonly unknown[]
   constructor(status: ApiError['status'], code: string, message: string, details?: readonly unknown[]) {
@@ -26,9 +26,12 @@ export class ApiError extends Error {
 /** /api/* paths open without a session (04 §Auth). GET /health sits outside /api/* and is never guarded. */
 const OPEN_API_POSTS = new Set(['/api/login', '/api/logout'])
 
-/** Every /api/* POST must be JSON: with the Strict cookie this is the CSRF defence (04 §Auth). */
+/**
+ * Every /api/* POST must be JSON: with the Strict cookie this is the CSRF defence (04 §Auth).
+ * PATCH (PATCH /api/insights/:id, 04 §/api/insights board) carries a body too and is held to the same rule.
+ */
 export const requireJson: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.req.method === 'POST') {
+  if (c.req.method === 'POST' || c.req.method === 'PATCH') {
     const mediaType = (c.req.header('content-type') ?? '').split(';')[0].trim().toLowerCase()
     if (mediaType !== 'application/json') {
       throw new ApiError(415, 'unsupported_media_type', 'Requests must be sent with Content-Type: application/json.')
