@@ -72,7 +72,7 @@ function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desk
   const { pathname } = useLocation()
   const [open, setOpen] = useState(false)
   const id = useId()
-  const wrap = useRef<HTMLSpanElement>(null)
+  const wrap = useRef<HTMLDivElement>(null)
   const button = useRef<HTMLButtonElement>(null)
   const current = group.items.some((item) => underNav(pathname, item.to))
 
@@ -86,7 +86,7 @@ function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desk
   }, [open])
 
   return (
-    <span
+    <div
       ref={wrap}
       className={variant === 'desktop' ? 'relative inline-flex' : 'flex flex-col'}
       onKeyDown={(e) => {
@@ -135,7 +135,7 @@ function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desk
           </li>
         ))}
       </ul>
-    </span>
+    </div>
   )
 }
 

@@ -3,10 +3,10 @@ import { renderToString } from 'react-dom/server'
 import { createPath, Router, type To } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../src/App'
-import { closesOnPointer, escapeAction, NAV, nextOpen, pickCloses } from '../../src/nav'
+import { closesOnPointer, escapeAction, NAV, nextOpen } from '../../src/nav'
 
 // "Techy" (06 §Nav, 09 D-71): App events and AI audit log fold into one dropdown, last in the nav,
-// after the WAI-ARIA disclosure-navigation pattern. Three kinds of check:
+// after the WAI-ARIA disclosure-navigation pattern. Three kinds of check, with different reach:
 // (A) the NAV data itself (src/nav.ts NAV, the single source both the desktop and the phone nav
 // read) — this is what "a link is missing from the group" or "a link reappeared at top level"
 // actually mean, since the rendered nav is a pure map over this array.
@@ -15,10 +15,14 @@ import { closesOnPointer, escapeAction, NAV, nextOpen, pickCloses } from '../../
 // NavGroupMenu), so it renders in this same server markup right after the button — this proves DOM
 // order, the hidden attribute, aria-controls naming the panel's real id, and the two real links,
 // with no browser needed.
-// (C) the disclosure's decision logic (src/nav.ts escapeAction, closesOnPointer, pickCloses,
-// nextOpen), unit-tested directly since App.tsx only wires each one's result to state, focus and
-// stopPropagation — no DOM needed for Esc-closes, Esc-refocuses, outside-click-closes, link-pick-
-// closes or toggle-opens/closes either.
+// (C) the disclosure's decision logic (src/nav.ts escapeAction, closesOnPointer, nextOpen),
+// unit-tested directly with no DOM. This pins only the pure functions' own input→output mapping —
+// it does NOT pin that App.tsx's NavGroupMenu actually wires them up (the onKeyDown that calls
+// escapeAction and e.stopPropagation(), the button.current?.focus() on refocus, the document
+// pointerdown listener that calls closesOnPointer, the NavLink onClick that closes on pick, or the
+// button onClick that calls nextOpen). workerd has no DOM, so none of (A)/(B)/(C) can render a real
+// keydown, pointerdown or click and observe React's handler run; that wiring needs a live browser
+// check (README "Known gaps" → "Techy nav: DOM wiring has no automated test").
 
 function renderAt(url: string): string {
   const navigator = {
@@ -180,9 +184,11 @@ describe('"Techy" nav group: decision logic (src/nav.ts, 09 D-71) — no DOM nee
     expect(escapeAction('a', true)).toEqual({ close: false, refocus: false })
   })
 
-  it('pickCloses always says to close', () => {
-    expect(pickCloses()).toBe(true)
-  })
+  // pickCloses (src/nav.ts) takes no input and always returns the literal `true`; a test asserting
+  // that is a tautology on the function's type signature, not coverage of "picking a link closes
+  // the panel" (that claim needs the live DOM check above — App.tsx's NavLink onClick actually
+  // calling it and then setOpen(false)). Removed rather than kept as false coverage (09 D-71 fixer
+  // round 2).
 
   it('closesOnPointer: true outside every root, false inside any one of them', () => {
     const inside = {} as Node
