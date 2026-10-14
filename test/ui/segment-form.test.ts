@@ -9,6 +9,7 @@ import {
   DEFAULT_FORM,
   FIELD_ID,
   FIELD_OF,
+  type Form,
   type FormField,
   filterProblems,
   moreFiltersOn,
@@ -96,6 +97,24 @@ describe('T-SEG-6 the form round-trips every filter key (toFilters, toForm)', ()
     expect(toForm(BASE)).toEqual(DEFAULT_FORM)
     expect(moreFiltersOn(DEFAULT_FORM)).toBe(0)
     expect(moreFiltersOn(toForm(CASES['every key at once']))).toBe(5)
+  })
+
+  it('moreFiltersOn counts 1 for each More filters field set alone, and 1 (not 2) when both fields of one group are set (kills M34)', () => {
+    const alone: Record<'engagementFrom' | 'engagementTo' | 'signedUpDays' | 'wentCold' | 'siteDays' | 'sitePage' | 'appDays' | 'appEvent', Form> = {
+      engagementFrom: { ...DEFAULT_FORM, engagementFrom: '25' },
+      engagementTo: { ...DEFAULT_FORM, engagementTo: '40' },
+      signedUpDays: { ...DEFAULT_FORM, signedUpDays: '30' },
+      wentCold: { ...DEFAULT_FORM, wentCold: 'any' },
+      siteDays: { ...DEFAULT_FORM, siteDays: '30' },
+      sitePage: { ...DEFAULT_FORM, sitePage: '/shadrachs-picks' },
+      appDays: { ...DEFAULT_FORM, appDays: '7' },
+      appEvent: { ...DEFAULT_FORM, appEvent: 'read_story' },
+    }
+    for (const [field, form] of Object.entries(alone)) expect(moreFiltersOn(form), field).toBe(1)
+
+    expect(moreFiltersOn({ ...DEFAULT_FORM, engagementFrom: '25', engagementTo: '40' })).toBe(1)
+    expect(moreFiltersOn({ ...DEFAULT_FORM, siteDays: '30', sitePage: '/shadrachs-picks' })).toBe(1)
+    expect(moreFiltersOn({ ...DEFAULT_FORM, appDays: '7', appEvent: 'read_story' })).toBe(1)
   })
 
   it('a box is sent as typed, never range-checked in the browser (02 §Normalization)', () => {
