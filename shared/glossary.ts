@@ -1,11 +1,12 @@
 // The glossary (09 D-63, 06 §Overview InfoTip): the only home of the plain words for pipeline terms
 // (source, sync, rows read, kept, merged, rejected, the source statuses, the two source checks of
-// 09 D-65, webhook, the quarantine reasons and Overview's headline numbers), each with one or two sentences a
-// non-technical reader can follow (06 §UI principles 4). Derived metrics keep their text in
-// DEFINITIONS (shared/derive.ts, 02 §Derived) under the plain headings of DEFINITION_LABEL below; explain()
-// reads either, so an InfoTip has one lookup and never shows a raw name.
+// 09 D-65, webhook, the quarantine reasons, Overview's headline numbers and the app's event names), each with one or two sentences a
+// non-technical Growth teammate can follow, in the brief's words (06 §UI principles 4, §Vocabulary). Derived metrics keep their text in
+// DEFINITIONS (shared/derive.ts, 02 §Derived) under the plain headings of DEFINITION_LABEL (src/labels.ts, their
+// one home per 09 D-68); explain() reads either, so an InfoTip has one lookup and never shows a raw name.
 // test/sources.test.ts (T-SRC-2) checks every term the Overview names exists here or there.
 
+import { DEFINITION_LABEL } from '../src/labels'
 import { DEFINITIONS, type DefinitionKey } from './derive'
 
 export interface GlossaryEntry {
@@ -20,7 +21,7 @@ export interface GlossaryEntry {
 export const GLOSSARY = {
   source: {
     term: 'Source',
-    text: 'Where reader data comes from: a file exported from another tool, or the app sending events as they happen.',
+    text: 'Where the data comes from: a file exported from another tool, or the app sending events as they happen.',
   },
   sync: {
     term: 'Sync',
@@ -48,11 +49,11 @@ export const GLOSSARY = {
   },
   kept: {
     term: 'Kept',
-    text: 'Records stored from the file: the rows read, minus rows merged into another row and rows rejected.',
+    text: 'Records stored from the file: the rows read, minus rows deduped into another row and rows rejected.',
   },
   merged: {
-    term: 'Merged',
-    text: 'Rows whose email matched another row once capital letters and spaces were ignored. Each set became one reader, keeping the earliest signup.',
+    term: 'Deduped',
+    text: 'Rows whose email matched another row once capital letters and spaces were ignored. Each set became one subscriber, keeping the earliest signup.',
   },
   rejected: {
     term: 'Rejected',
@@ -76,7 +77,7 @@ export const GLOSSARY = {
   possible_duplicates: {
     term: 'possible duplicate',
     many: 'possible duplicates',
-    text: 'Two readers with different emails whose names match. Nothing merges on its own; a person decides whether they are the same reader.',
+    text: 'Two subscribers with different emails whose names match. Nothing is deduped on its own; a person decides whether they are the same person.',
   },
   // Quarantine reasons (02 §Quarantine): the codes are the keys, so a reason from the API finds its words.
   blank_row: {
@@ -100,26 +101,44 @@ export const GLOSSARY = {
     text: "A date isn't written in the file's own date format, so it can't be read.",
   },
   // Overview's headline numbers (06 §Overview 1).
-  readers_signed_up: {
-    term: 'Readers who signed up',
-    text: 'Newsletter readers after merging duplicate emails, unsubscribed ones included. Rejected rows are not counted.',
+  subscribers_signed_up: {
+    term: 'Subscribers',
+    text: 'Newsletter subscribers after deduping emails, unsubscribed ones included. Rejected rows are not counted.',
   },
-  readers_subscribed: {
-    term: 'Readers still subscribed',
-    text: 'Readers who signed up and have not unsubscribed.',
+  subscribers_active: {
+    term: 'Active subscribers',
+    text: 'Subscribers who have not unsubscribed.',
   },
   app_accounts: {
-    term: 'App users',
-    text: 'Accounts in the app, including people not on the newsletter list and accounts first seen in an app event.',
+    term: 'App accounts',
+    text: 'Accounts in the app, including people who are not newsletter subscribers and accounts first seen in an app event.',
   },
   events_received: {
-    term: 'Events received',
+    term: 'App events',
     text: 'App events received through the webhook since launch. The same event sent twice counts once.',
   },
   // /segments (19-segments-spec §2, 09 D-69).
   previous_searches: {
     term: 'Previous searches',
     text: 'The last 5 segments you previewed in this browser, newest first; only the filters are kept, never the subscribers. To share one with the Growth team, ask the AI assistant for it and pin it to Insights, or export the CSV.',
+  },
+  // The app's event names (worker/webhooks/schema.ts APP_EVENTS), shown as the brief writes them, each
+  // with a plain gloss in an InfoTip (06 §Vocabulary "live events", 09 D-66).
+  app_open: {
+    term: 'app_open',
+    text: 'Someone opened the app.',
+  },
+  read_story: {
+    term: 'read_story',
+    text: 'Someone read a story in the app.',
+  },
+  link_click: {
+    term: 'link_click',
+    text: 'Someone clicked a link in the app.',
+  },
+  login: {
+    term: 'login',
+    text: 'Someone logged in to the app on a device. Events from that device sent while no one was logged in are linked to them.',
   },
 } as const satisfies Record<string, GlossaryEntry>
 
@@ -129,27 +148,6 @@ export type TipKey = GlossaryKey | DefinitionKey
 
 export function isGlossaryKey(key: string): key is GlossaryKey {
   return Object.hasOwn(GLOSSARY, key)
-}
-
-/**
- * Plain headings for the definitions (02 §Derived, 06 §UI principles 4, 09 D-66): the one home of
- * these words. An InfoTip on a definition shows its heading (explain()), and /segments, /assistant
- * and /growth head each definition with it (src/labels.ts re-exports it); the raw name
- * (`engagement_score`) shows only in Technical details.
- */
-export const DEFINITION_LABEL: { readonly [K in DefinitionKey]: string } = {
-  days_since_open: 'Days since last open',
-  cold_since: 'Cold date',
-  cold: 'Cold',
-  went_cold_in: 'Went cold in a month',
-  no_open_in_days: "Haven't opened in N days",
-  new_subscriber: 'New subscriber',
-  going_cold_risk: 'At risk of going cold',
-  engagement_score: 'Engagement',
-  has_app: 'Uses the app',
-  app_after_signup: 'Got the app after signing up',
-  last_month: 'Last month',
-  last_n_days: 'Last N days',
 }
 
 /** The words and text for a term, from the glossary or DEFINITIONS; an unknown key throws (fail loud). */

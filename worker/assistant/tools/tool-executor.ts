@@ -48,11 +48,21 @@ export interface ToolCall {
   input: unknown
 }
 
+/**
+ * Why a call did not run, for a caller with no model to send the error to (the insights board,
+ * 09 D-64a): a Gate 2/3 refusal or an input the handler refused (`refused`, the call itself is
+ * wrong), a query the database refused (`query_failed`, a server-side failure worth a retry), or
+ * a tool name that is not loaded (`unknown_tool`).
+ */
+export type CallRefusal = 'refused' | 'query_failed' | 'unknown_tool'
+
 export interface ExecutedCall {
   /** What goes back to the model, already framed and scanned. */
   result: Anthropic.ToolResultBlockParam
   /** The full result for the UI table; null when the call did not run. */
   output: ToolOutput | null
+  /** Why the call did not run; null when it ran (`output` set). */
+  refusal: CallRefusal | null
 }
 
 export interface ToolContext {
@@ -76,7 +86,7 @@ async function deny(ctx: ToolContext, call: ToolCall, tool: LoadedTool, denial: 
     sql: denial.sql,
     error: `${denial.gate}_denied: ${denial.problems.join('; ')}`,
   })
-  return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
+  return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null, refusal: 'refused' }
 }
 
 /** Runs one tool_use block and returns its tool_result. Throws on a PII hit or an unexpected failure. */
@@ -88,7 +98,7 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
     console.error(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, error: 'unknown_tool' }))
     await ctx.trace.write({ kind: 'blocked', status: 'blocked', error: UNKNOWN_TOOL_ERROR })
     const content = formatToolError('unknown', ['there is no tool with that name; use only the tools provided'])
-    return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
+    return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null, refusal: 'unknown_tool' }
   }
   if (!authorization.allowed) {
     return deny(ctx, call, authorization.tool, new GateDenied('gate2', authorization.problems.map((p) => `input_schema: ${p}`)), started)
@@ -114,7 +124,8 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
         sql: err.sql,
         error: `${err.code}: ${err.problems.join('; ')}`,
       })
-      return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null }
+      const refusal = err.code === 'query_failed' ? 'query_failed' : 'refused'
+      return { result: { type: 'tool_result', tool_use_id: call.id, content, is_error: true }, output: null, refusal }
     }
     const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
     console.error(JSON.stringify({ at: 'tool-executor', trace_id: ctx.trace.traceId, tool_name: tool.name, error: 'tool_failed', reason }))
@@ -135,5 +146,5 @@ export async function executeToolCall(ctx: ToolContext, call: ToolCall): Promise
     sql: output.sql ?? null,
     row_count: output.total_rows,
   })
-  return { result: { type: 'tool_result', tool_use_id: call.id, content }, output }
+  return { result: { type: 'tool_result', tool_use_id: call.id, content }, output, refusal: null }
 }

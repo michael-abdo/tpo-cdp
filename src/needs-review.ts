@@ -1,7 +1,7 @@
 // Overview's "Rows to fix" tab (06 §Overview, 09 D-61, D-65): which set-aside rows a person can fix, the
 // one plain sentence that says why, the fields to show as written, and what to do. Pure, so
 // test/quarantine.test.ts runs it on the real GET /api/quarantine answer; src/pages/OverviewPage.tsx
-// is the only other reader.
+// is the only other caller.
 
 import { sourceById } from '../shared/sources'
 import type { QuarantineList } from './types'
@@ -18,34 +18,34 @@ export function needsReview(reason: string): boolean {
 }
 
 /**
- * Per file: the fields shown and its date format (02 §Quarantine). The file's name and the noun for
+ * Per file: the fields shown, labelled with the brief's field names (06 §Vocabulary), and its date format (02 §Quarantine). The file's name and the noun for
  * its rows come from the source registry (shared/sources.ts), their only home.
  */
-const FILES: Record<SetAsideFile, { columns: { name: string; label: string }[]; dateFormat: string }> = {
+export const FILES: Record<SetAsideFile, { columns: { name: string; label: string }[]; dateFormat: string }> = {
   subscribers: {
     columns: [
       { name: 'email', label: 'Email' },
-      { name: 'signup_date', label: 'Signed up' },
+      { name: 'signup_date', label: 'Signup date' },
       { name: 'status', label: 'Status' },
-      { name: 'acquisition_source', label: 'Source' },
+      { name: 'acquisition_source', label: 'Acquisition source' },
     ],
     dateFormat: 'YYYY-MM-DD',
   },
   web_events: {
     columns: [
-      { name: 'visitor_id', label: 'Visitor' },
+      { name: 'visitor_id', label: 'Visitor ID' },
       { name: 'page', label: 'Page' },
-      { name: 'timestamp', label: 'Time' },
-      { name: 'utm_source', label: 'Campaign source' },
+      { name: 'timestamp', label: 'Timestamp' },
+      { name: 'utm_source', label: 'UTM source' },
       { name: 'email', label: 'Email' },
     ],
     dateFormat: 'YYYY-MM-DD HH:MM:SS',
   },
   app_users: {
     columns: [
-      { name: 'user_id', label: 'App user' },
+      { name: 'user_id', label: 'User ID' },
       { name: 'email', label: 'Email' },
-      { name: 'created_at', label: 'Created' },
+      { name: 'created_at', label: 'Created date' },
     ],
     dateFormat: 'YYYY-MM-DD',
   },
@@ -61,9 +61,9 @@ const WHY: Record<Exclude<QuarantinedRow['reason'], 'blank_row'>, string> = {
 function fixText(file: SetAsideFile, reason: keyof typeof WHY): string {
   const csv = csvName(file)
   const { dateFormat } = FILES[file]
-  if (reason === 'invalid_email') return `Correct the email in ${csv}, then re-run the seed.`
-  if (reason === 'missing_field') return `Fill in the empty field in ${csv}, then re-run the seed.`
-  return `Write the date as ${dateFormat} in ${csv}, then re-run the seed.`
+  if (reason === 'invalid_email') return `Correct the email in ${csv}, then re-import the file.`
+  if (reason === 'missing_field') return `Fill in the empty field in ${csv}, then re-import the file.`
+  return `Write the date as ${dateFormat} in ${csv}, then re-import the file.`
 }
 
 export interface ReviewGroup {

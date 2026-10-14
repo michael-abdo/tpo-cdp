@@ -15,10 +15,15 @@
 //      differs from the stored one.
 //   5. The resolved user and profile for the response, by the read-time rule of 01 §Identity
 //      resolution (the same joins as v_app_events in 0002_views.sql).
-// Then, for a stored event only (a duplicate writes nothing, 07 §B), profiles.engagement_score is
-// recomputed with DEFINITIONS and stored for every profile the event can change (09 D-46, R4.10):
-// the resolved user's, and the device's previous owner's when the event carries a user_id, since
-// the device_identity upsert can move that device's anonymous events away from them.
+// Then profiles.engagement_score is recomputed with DEFINITIONS and stored for every profile the
+// event can change (09 D-46, R4.10): the resolved user's, and the device's previous owner's when
+// the event carries a user_id, since the device_identity upsert can move that device's anonymous
+// events away from them. The recompute runs after the batch has committed, so it can fail with
+// the event stored; the sender then retries and gets a 200 duplicate. A duplicate therefore
+// re-runs the recompute for the stored event (09 D-70 #7): its resolved user, and when it carries
+// a user_id every user with an event on its device (the previous owner is one of them, since
+// device_identity is only ever written from app_events). The recompute is deterministic, so on a
+// healthy store the re-run writes the scores already there.
 // Nothing is cached (03 §No-restart): the next lookup or segment read sees the row.
 
 import { daysBetween, DEFINITIONS } from '../../shared/derive'
@@ -27,7 +32,7 @@ import { resolveUserEvents } from '../identity/resolve'
 import type { WebhookEvent } from './schema'
 
 export type IngestResult =
-  /** event_id was already stored; nothing was written (R4.8). */
+  /** event_id was already stored; no event, stub or mapping was written (R4.8); scores re-run (09 D-70 #7). */
   | { duplicate: true }
   /** Stored. The user the event resolves to and that user's profile key; both null when unresolved. */
   | { duplicate: false; resolved: { user_id: string | null; pkey: string | null } }
@@ -36,6 +41,9 @@ interface ResolvedRow {
   user_id: string | null
   email_norm: string | null
   email_pkey: string | null
+  /** The stored event's own user_id and device (for a duplicate: the first write's, 07 §B). */
+  event_user_id: string | null
+  device_id: string
 }
 
 /**
@@ -122,7 +130,8 @@ export async function ingestEvent(
   statements.push(
     db
       .prepare(
-        `SELECT COALESCE(e.user_id, d.user_id) AS user_id, u.email_norm, p.pkey AS email_pkey
+        `SELECT COALESCE(e.user_id, d.user_id) AS user_id, u.email_norm, p.pkey AS email_pkey,
+                e.user_id AS event_user_id, e.device_id
            FROM app_events e
            LEFT JOIN device_identity d ON e.user_id IS NULL AND d.device_id = e.device_id
            LEFT JOIN app_users u ON u.user_id = COALESCE(e.user_id, d.user_id)
@@ -136,11 +145,16 @@ export async function ingestEvent(
   const inserted = results[0].meta.changes
   if (inserted !== 0 && inserted !== 1)
     throw new Error(`webhook ingest: the event insert changed ${inserted} rows`)
-  if (inserted === 0) return { duplicate: true }
 
   const rows = results[results.length - 1].results as ResolvedRow[]
   if (rows.length !== 1)
     throw new Error(`webhook ingest: ${rows.length} resolution rows for the stored event`)
+
+  if (inserted === 0) {
+    await recomputeEngagement(db, piiKeySecret, await duplicateAffected(db, rows[0]))
+    return { duplicate: true }
+  }
+
   const resolved = { user_id: rows[0].user_id, pkey: await profileKey(db, piiKeySecret, rows[0]) }
 
   const affected = new Set<string>()
@@ -149,6 +163,23 @@ export async function ingestEvent(
   await recomputeEngagement(db, piiKeySecret, affected)
 
   return { duplicate: false, resolved }
+}
+
+/**
+ * The users whose scores the stored event could have changed when it was first written (09 D-70
+ * #7): its resolved user, and for an event with a user_id every user with an event on its device.
+ */
+async function duplicateAffected(db: D1Database, row: ResolvedRow): Promise<Set<string>> {
+  const affected = new Set<string>()
+  if (row.user_id !== null) affected.add(row.user_id)
+  if (row.event_user_id !== null) {
+    const { results } = await db
+      .prepare('SELECT DISTINCT user_id FROM app_events WHERE device_id = ? AND user_id IS NOT NULL')
+      .bind(row.device_id)
+      .all<{ user_id: string }>()
+    for (const { user_id } of results) affected.add(user_id)
+  }
+  return affected
 }
 
 /** `TODAY − 30 .. TODAY` (02 §Derived "last N days"), the window of both 30-day score inputs. */

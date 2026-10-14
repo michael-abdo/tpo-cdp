@@ -1,8 +1,10 @@
+/// <reference types="vite/client" />
 import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import { appAfterSignup, coldSince, engagementScore } from '../shared/derive'
 import { normalizeEmail } from '../shared/normalize'
 import { PII_COLUMNS } from '../shared/pii'
+import readme from '../README.md?raw'
 import { pkeyForEmail, visitorHash } from '../shared/pseudonym'
 
 // Schema from migrations/ as applied by test/setup.ts: 01 §Tables, §PII-free views, §PII
@@ -144,5 +146,39 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
     ])
     expect(results[0]?.app_after_signup).toBe(1)
     expect(storedColdSince).toBe('2026-10-22')
+  })
+})
+
+// The migration sequence (README "the six migrations"; 03 §Module layout). Two merged branches once
+// each took the next number; this pins the order that applies on a fresh database (wrangler and
+// test/setup.ts apply the files in name order) and that the README's count tells the same story.
+describe('the migrations are one contiguous, ordered sequence', () => {
+  const NAMES = [
+    '0001_core',
+    '0002_views',
+    '0003_ai_audit_session',
+    '0004_duplicate_reviews',
+    '0005_ai_audit_client',
+    '0006_insights',
+  ]
+  const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
+    .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
+    .sort()
+  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+
+  it('migrations/ holds exactly these files, in this order', () => {
+    expect(files).toEqual(NAMES)
+  })
+
+  it('every number appears once, from 0001 with no gap', () => {
+    const numbers = files.map((name) => Number(name.slice(0, 4)))
+    expect(numbers).toEqual(files.map((_, i) => i + 1))
+    expect(new Set(files.map((name) => name.slice(0, 4))).size).toBe(files.length)
+  })
+
+  it('the README says how many there are', () => {
+    const said = /\bthe (\w+) migrations into the local D1\b/.exec(readme)?.[1]
+    expect(said, 'README names the migration count ("the six migrations")').toBeDefined()
+    expect(WORDS.indexOf(said ?? ''), `README says "${said}"`).toBe(files.length)
   })
 })

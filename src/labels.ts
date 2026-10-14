@@ -1,10 +1,11 @@
 // Plain words for stored values, column names and filter keys (06 §UI principles 4). Display maps
 // only: the values sent to the API and the raw names shown in Technical details stay as they are.
-// /segments, /assistant and /growth read the same maps, so a subscriber's fields carry the same words on each.
+// /segments and /insights read the same maps, so a subscriber's fields carry the same words on each.
 // Field words are the brief's own (06 §Vocabulary, 09 D-66): Signup date, Acquisition source, Last open date, UTM source.
 
+import type { DefinitionKey } from '../shared/derive'
 import { FILTER_KEYS, type FilterKey, type SegmentFilters } from '../shared/segment-filters'
-import type { AppEventName } from '../shared/app-events'
+import type { DataQualityCheckKey } from './types'
 
 /** Signup sources as stored (02 §Normalization: canonical lowercase) → display words. */
 export const SOURCE_LABEL: Readonly<Record<string, string>> = {
@@ -48,7 +49,25 @@ export const COLUMN_LABEL = {
   visitors: 'Visitors',
   subscribed: 'Subscribed',
   events: 'Events',
+  // The built-in tiles' columns (worker/insights/board.ts panelOutput, the former Growth panels).
+  with_app: 'Have the app',
+  at_risk: 'At risk',
+  active: 'Active subscribers',
+  check: 'What we checked',
+  count: 'Count',
+  of: 'Out of',
 } as const satisfies Record<string, string>
+
+/** The data-quality checks (worker/insights/data-quality.ts DATA_QUALITY_CHECKS) in words; the "Gaps in the data" tile's rows. */
+export const CHECK_LABEL: Record<DataQualityCheckKey, string> = {
+  subscribers_without_source: 'Subscribers with no acquisition source',
+  subscribers_unexpected_source: 'Subscribers with an acquisition source we don’t recognise',
+  page_views_without_utm: 'Site visits with no UTM source',
+  page_views_unexpected_utm: 'Site visits with a UTM source we don’t recognise',
+  app_users_not_on_list: 'App accounts whose email is not a subscriber',
+}
+
+export const checkLabel = (key: string) => (CHECK_LABEL as Record<string, string | undefined>)[key] ?? words(key)
 
 /** Segment filter keys (FILTER_KEYS) and the aggregate inputs a model may echo in filters_applied. */
 export const FILTER_LABEL: Readonly<Record<string, string>> = {
@@ -80,21 +99,25 @@ export function words(name: string): string {
 export const columnLabel = (name: string) => (COLUMN_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 export const filterLabel = (name: string) => (FILTER_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 
-/** Plain headings for the definitions (02 §Derived); their one home is shared/glossary.ts, which InfoTips read too. */
-export { DEFINITION_LABEL } from '../shared/glossary'
-
 /**
- * A plain gloss for each app event (shared/app-events.ts APP_EVENTS): the one map /events,
- * /lookup and the App activity filter on /segments read. Any other name shows as sent.
+ * Plain headings for the definitions (02 §Derived): the one home of these words (09 D-68). /insights,
+ * /segments and every InfoTip on a definition (shared/glossary.ts explain()) read them; the raw names
+ * show only in Technical details.
  */
-export const EVENT_LABEL: Readonly<Record<AppEventName, string>> = {
-  app_open: 'Opened the app',
-  read_story: 'Read a story',
-  link_click: 'Clicked a link',
-  login: 'Logged in',
+export const DEFINITION_LABEL: Record<DefinitionKey, string> = {
+  days_since_open: 'Days since last open',
+  cold_since: 'Cold date',
+  cold: 'Cold',
+  went_cold_in: 'Went cold in a month',
+  no_open_in_days: "Haven't opened in N days",
+  new_subscriber: 'New subscriber',
+  going_cold_risk: 'At risk of going cold',
+  engagement_score: 'Engagement',
+  has_app: 'Uses the app',
+  app_after_signup: 'Got the app after signing up',
+  last_month: 'Last month',
+  last_n_days: 'Last N days',
 }
-
-export const eventLabel = (event: string) => (EVENT_LABEL as Record<string, string | undefined>)[event] ?? event
 
 /** `2026-08` → `August 2026` (`long`) or `Aug 2026` (`short`); the digits are read as written, in UTC. */
 export function monthLabel(month: string, style: 'long' | 'short' = 'long'): string {

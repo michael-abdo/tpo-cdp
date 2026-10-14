@@ -2,6 +2,8 @@
 
 import type { DefinitionKey } from '../shared/derive'
 import type { SegmentFilters } from '../shared/segment-filters'
+import type { InsightWindow, ResolvedWindow } from '../shared/insight-window'
+import type { ChartKind, ChartOverride } from '../shared/pick-chart'
 import type { CheckKind, CsvSourceId, SourceId } from '../shared/sources'
 import type { FieldWeight, Reason, ScoredField } from '../worker/dedupe/score'
 import type { QuarantineReason, SubscriberStatus } from '../worker/ingest/quarantine'
@@ -103,9 +105,9 @@ export interface DuplicateDecision {
 export interface Duplicates {
   /** Candidate pairs checked (subscribers sharing a name stem). */
   candidates: number
-  /** Shown pairs (score 50+) with no decision yet, over all of them. */
+  /** Shown pairs (score bands.review_min or more) with no decision yet, over all of them. */
   to_review: number
-  /** Score 50+, highest first, at most 50. */
+  /** Score bands.review_min or more, highest first, at most 50. */
   review: {
     pair_id: string
     a: DuplicateReader
@@ -117,6 +119,8 @@ export interface Duplicates {
     decision: DuplicateDecision | null
   }[]
   hidden_below_review: number
+  /** The D-62 band edges from worker/dedupe/score.ts: auto_min and up = auto, review_min..auto_min − 1 = review. */
+  bands: { auto_min: number; review_min: number }
   /** m, u and the two log2 weights per scored field; null when there are no candidates. */
   weights: Record<ScoredField, FieldWeight> | null
   /** Pairs agreeing on domain, signup within 7 days and source, observed vs expected by chance. */
@@ -176,19 +180,27 @@ export interface Lookup {
     last_open_date: string | null
     merged_count: number
   } | null
-  web: {
-    visitor_id: string
-    first_page: string
-    first_utm_source: string | null
-    events: { page: string; event_ts: string; utm_source: string | null; pre_signup: boolean }[]
-  } | null
-  app: {
-    user_id: string
-    created_at: string
-    from_csv: boolean
-    devices: string[]
-    events: { event: string; event_ts: string; properties: unknown; attached_via: 'direct' | 'login_stitch' }[]
-  } | null
+  /** The earliest visitor's fields, plus every visitor of the profile (09 D-70 item 4), earliest first. */
+  web: (LookupVisitor & { visitors: LookupVisitor[] }) | null
+  /** The earliest app account's fields, plus every account of the profile (09 D-70 item 4), earliest first. */
+  app: (LookupAppAccount & { accounts: LookupAppAccount[] }) | null
+}
+
+/** One website visitor (browser) of a looked-up profile. */
+export interface LookupVisitor {
+  visitor_id: string
+  first_page: string
+  first_utm_source: string | null
+  events: { page: string; event_ts: string; utm_source: string | null; pre_signup: boolean }[]
+}
+
+/** One app account of a looked-up profile. */
+export interface LookupAppAccount {
+  user_id: string
+  created_at: string
+  from_csv: boolean
+  devices: string[]
+  events: { event: string; event_ts: string; properties: unknown; attached_via: 'direct' | 'login_stitch' }[]
 }
 
 /** One row of GET /api/events/recent, resolved at read time (01 §Identity resolution). */
@@ -252,12 +264,18 @@ export interface AssistantResponse {
   partial: boolean
   /** The trace_id of the request's ai_audit rows (GET /api/audit/:trace_id). */
   audit_id: string
+  /** The time period "Pin to board" would store, or null when the lookup has none (04, 09 D-64). */
+  pin_window: { from: string; to: string } | null
+  /** The dates the pinned lookup sets itself when it takes no time period; the tile's footer shows them too. */
+  pin_own_dates: { from: string; to: string } | null
+  /** Why this answer cannot be pinned, one plain sentence (09 D-64a), or null; the card then offers no Pin. */
+  pin_refusal: string | null
 }
 
 export type AuditStatus = 'success' | 'error' | 'blocked'
 
 /** How a request ended (worker/routes/audit.ts AuditOutcome and traceOutcome). */
-export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished'
+export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished' | 'board_run'
 
 /** One line of GET /api/audit?limit= (worker/routes/audit.ts AuditTraceSummary). */
 export interface AuditTraceSummary {
@@ -306,7 +324,59 @@ export interface AuditTrace {
   rows: AuditRow[]
 }
 
-/** The counts every /growth number shares: the `explain` question opens /assistant prefilled (09 D-39). */
+/** The chart kinds a person can pick for a tile; `segment` follows from the result and is never picked (01 §insights). */
+export type ChartChoice = ChartOverride
+
+/** One tile of GET /api/insights (04 §/api/insights board, 09 D-64), re-run on this request. */
+export interface InsightTile {
+  id: string
+  title: string
+  /** The question that produced it, a label only; null for the built-in tiles. */
+  prompt: string | null
+  tool: string
+  built_in: boolean
+  sort_order: number
+  /** Resolved against TODAY by the server (shared/insight-window.ts). */
+  window: ResolvedWindow | null
+  /** The dates the lookup sets itself when it has no window (a query row's built-in period), or null. */
+  own_dates: { from: string; to: string } | null
+  /** The chart drawn: the override when set, else pickChart on the result. */
+  chart: ChartKind
+  chart_override: ChartChoice | null
+  /** Aggregates only; null when the tile failed this run. */
+  result: { columns: string[]; rows: Record<string, AssistantCell>[]; summary: Record<string, unknown> } | null
+  /** A segment tile's count and filters, never its rows. */
+  segment: { count: number; filters: SegmentFilters } | null
+  status: 'ok' | 'error'
+  /** Why the tile did not run, in plain words; null when ok. */
+  error: string | null
+  /** Technical details of a failed run (the gates' or the database's problems); never shown at level 1 (09 D-64a). */
+  error_details: string | null
+  /** UTC, when this request re-ran the tile. */
+  ran_at: string
+  /** The question "Explain this" puts in the Ask bar. */
+  explain: string
+  /** Technical details: the stored tool input (filters, keys and the window only, never PII). */
+  params: Record<string, unknown>
+  /** Technical details: the SQL that ran, for a SQL tile; null otherwise. */
+  sql: string | null
+}
+
+/** GET /api/insights */
+export interface InsightBoard {
+  today: string
+  tiles: InsightTile[]
+}
+
+/** PATCH /api/insights/:id; the window is re-validated by the server. */
+export interface InsightPatch {
+  title?: string
+  window?: InsightWindow
+  chart?: ChartChoice | null
+  sort_order?: number
+}
+
+/** The counts every insight panel shares (worker/insights/*.ts; the built-in tiles, 09 D-64). */
 interface Explained {
   /** Share as a fraction, 4 decimals; null when the group is empty. */
   rate: number | null
@@ -320,7 +390,7 @@ export interface SourceAppCounts extends Explained {
   with_app_after_signup: number
 }
 
-/** GET /api/insights/source-app-conversion (04, 06 §/growth panel 1). */
+/** GET /api/insights/source-app-conversion (04; the built-in tile of 06 §/insights, 09 D-64). */
 export interface SourceAppConversion {
   total: SourceAppCounts
   by_source: (SourceAppCounts & { source: string | null })[]
@@ -333,7 +403,7 @@ export interface FunnelCounts extends Explained {
   subscribed: number
 }
 
-/** GET /api/insights/funnel (04, 06 §/growth panel 2; v_funnel). */
+/** GET /api/insights/funnel (04; the built-in tile of 06 §/insights, 09 D-64; v_funnel). */
 export interface Funnel {
   total: FunnelCounts
   by_first_page: (FunnelCounts & { first_page: string })[]
@@ -346,7 +416,7 @@ export interface GoingColdCounts extends Explained {
   at_risk: number
 }
 
-/** GET /api/insights/going-cold (04, 06 §/growth parked panel; going_cold_risk, 02 §Derived). */
+/** GET /api/insights/going-cold (04; the built-in tile of 06 §/insights, 09 D-64; going_cold_risk, 02 §Derived). */
 export interface GoingCold {
   total: GoingColdCounts
   /** Unsubscribed readers at risk, left out of every count above (02 §Defaults). */
@@ -367,7 +437,7 @@ export type DataQualityCheckKey =
   | 'page_views_unexpected_utm'
   | 'app_users_not_on_list'
 
-/** GET /api/insights/data-quality (04, 06 §/growth parked panel; T-INS-3). */
+/** GET /api/insights/data-quality (04; the built-in tile of 06 §/insights, 09 D-64; T-INS-3). */
 export interface DataQuality {
   /** Sums over import_runs, and the quarantine table by file and reason. */
   import: {

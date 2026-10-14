@@ -5,7 +5,8 @@ import subscribersCsv from '../data/subscribers.csv?raw'
 import overviewSource from '../src/pages/OverviewPage.tsx?raw'
 import { TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
-import { DEFINITION_LABEL, explain, GLOSSARY, isGlossaryKey } from '../shared/glossary'
+import { explain, GLOSSARY, isGlossaryKey } from '../shared/glossary'
+import { DEFINITION_LABEL } from '../src/labels'
 import { CHECK_KINDS, LOADS_BY_LABEL, SOURCES } from '../shared/sources'
 import type { Duplicates, DuplicateReview, Sources } from '../src/types'
 import { parseCsv } from '../worker/ingest/csv'
@@ -61,6 +62,9 @@ const subscriberChecks = (rows_to_fix: number, possible_duplicates: number) => [
   { kind: 'possible_duplicates', count: possible_duplicates },
 ]
 
+/** A CSV source with only the rows_to_fix check (web_events, app_users; 09 D-65). */
+const fixChecks = (rows_to_fix: number) => [{ kind: 'rows_to_fix', count: rows_to_fix }]
+
 const csvRun = (rows_in: number, rows_out: number, merged: number, rejected: number, needs_review: number) => ({
   id: expect.any(Number),
   ran_at: ranAt,
@@ -77,8 +81,8 @@ describe('GET /api/sources before the first seed', () => {
     const list = await sources()
     expect(list.map((s) => [s.id, s.status, s.records, s.runs, s.checks])).toEqual([
       ['subscribers', 'not_loaded', 0, [], subscriberChecks(0, 0)],
-      ['web_events', 'not_loaded', 0, [], []],
-      ['app_users', 'not_loaded', 0, [], []],
+      ['web_events', 'not_loaded', 0, [], fixChecks(0)],
+      ['app_users', 'not_loaded', 0, [], fixChecks(0)],
       ['app_events', 'live', 0, [], []],
     ])
     for (const s of list) expect(s.kind === 'csv' ? s.last_sync : s.last_received).toBeNull()
@@ -101,7 +105,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     const [subscribers, web, app] = list
     expect(subscribers).toEqual({
       id: 'subscribers',
-      name: 'Newsletter list',
+      name: 'beehiiv',
       kind: 'csv',
       unit: 'subscribers',
       unit_one: 'subscriber',
@@ -112,8 +116,8 @@ describe('GET /api/sources (T-SRC-1)', () => {
       last_sync: ranAt,
       runs: [csvRun(2995, 2900, 85, 10, 2)],
     })
-    expect(web).toMatchObject({ status: 'ok', checks: [], records: 10000, last_sync: ranAt, runs: [csvRun(10000, 10000, 0, 0, 0)] })
-    expect(app).toMatchObject({ status: 'ok', checks: [], records: 930, last_sync: ranAt, runs: [csvRun(930, 930, 0, 0, 0)] })
+    expect(web).toMatchObject({ status: 'ok', checks: fixChecks(0), records: 10000, last_sync: ranAt, runs: [csvRun(10000, 10000, 0, 0, 0)] })
+    expect(app).toMatchObject({ status: 'ok', checks: fixChecks(0), records: 930, last_sync: ranAt, runs: [csvRun(930, 930, 0, 0, 0)] })
     // 04's key order, for each kind.
     expect(Object.keys(subscribers)).toEqual([
       'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'checks', 'records', 'last_sync', 'runs',
@@ -313,12 +317,12 @@ async function review(pairId: string): Promise<void> {
 // Runs after T-SRC-1 on the same seeded D1. Each test puts back what it changed (reviews, reasons,
 // run counts), so the file's later tests see the plain seed.
 describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
-  it('subscribers = [rows_to_fix 2, possible_duplicates 16] and needs_review; the other sources declare none', async () => {
+  it('subscribers = [rows_to_fix 2, possible_duplicates 16] and needs_review; web_events, app_users = [rows_to_fix 0]; app_events none', async () => {
     const list = await sources()
     expect(list.map((s) => [s.id, s.checks])).toEqual([
       ['subscribers', subscriberChecks(2, 16)],
-      ['web_events', []],
-      ['app_users', []],
+      ['web_events', fixChecks(0)],
+      ['app_users', fixChecks(0)],
       ['app_events', []],
     ])
     expect(list[0]?.status).toBe('needs_review')
@@ -332,6 +336,8 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
     for (const entry of SOURCES) {
       const declared: readonly string[] = entry.checks
       expect(declared).toEqual(CHECK_KINDS.filter((k) => declared.includes(k)))
+      // 09 D-65: every CSV source declares rows_to_fix, so a fixable row in any file reaches a screen.
+      if (entry.kind === 'csv') expect(declared).toContain('rows_to_fix')
     }
   })
 
@@ -376,8 +382,8 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
     expect((await sources())[0]).toMatchObject({ status: 'needs_review', checks: subscriberChecks(2, 16) })
   })
 
-  it('fails loud with a 500 when a source that declares no rows_to_fix check holds a row a person can fix', async () => {
-    // 09 D-47: one of the seed's real invalid-email rows moved to the Website visits run, with both
+  it('a row a person can fix in another CSV file shows as that source\'s rows_to_fix chip, not a 500', async () => {
+    // 09 D-47: one of the seed's real invalid-email rows moved to the Website run, with both
     // runs' set-aside counts moved with it so import_runs and quarantine still agree.
     const runOf = (file: string) =>
       env.DB.prepare('SELECT id FROM import_runs WHERE file = ?').bind(file).first<{ id: number }>()
@@ -395,15 +401,16 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
     await move('web_events', subRun.id, webRun.id)
     try {
       const res = await fetchSources()
-      expect(res.status).toBe(500)
-      expect(await res.json()).toEqual({
-        error: 'internal_error',
-        message: 'Something went wrong on the server. The error has been logged.',
-      })
+      expect(res.status).toBe(200)
+      const [subscribers, web] = (await res.json<Sources>()).sources
+      expect(subscribers).toMatchObject({ status: 'needs_review', checks: subscriberChecks(1, 16) })
+      expect(web).toMatchObject({ status: 'needs_review', checks: fixChecks(1), runs: [csvRun(10000, 10000, 0, 1, 1)] })
     } finally {
       await move('subscribers', webRun.id, subRun.id)
     }
-    expect((await sources())[0]).toMatchObject({ status: 'needs_review', checks: subscriberChecks(2, 16) })
+    const [subscribers, web] = await sources()
+    expect(subscribers).toMatchObject({ status: 'needs_review', checks: subscriberChecks(2, 16) })
+    expect(web).toMatchObject({ status: 'ok', checks: fixChecks(0) })
   })
 
   it('the Overview has no standalone Needs review or Possible duplicates section: both open only as tabs of a source row', () => {
@@ -452,8 +459,8 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     // The four headline numbers plus the Sources and run terms written out on the page.
     expect(new Set(named)).toEqual(
       new Set([
-        'readers_signed_up',
-        'readers_subscribed',
+        'subscribers_signed_up',
+        'subscribers_active',
         'app_accounts',
         'events_received',
         'live',
@@ -499,15 +506,15 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     const { fixtures } = env.SCREEN_TEXTS
     expect(Object.keys(fixtures)).toEqual(Object.keys(SCAN_FIXTURES))
     // The AST splits "Read {n} files from …" into the runs either side of the interpolation.
-    expect(fixtures.interpolated_file_count).toEqual(['Read ', ' files from the Newsletter list'])
+    expect(fixtures.interpolated_file_count).toEqual(['Read ', ' files from beehiiv'])
     for (const key of Object.keys(SCAN_FIXTURES) as ScanFixture[]) {
       const offences = sourceTextOffences(fixtures[key])
       if (key === 'comment_only') expect(offences, key).toEqual([])
       else expect(offences.length, `${key}: ${SCAN_FIXTURES[key]}`).toBeGreaterThan(0)
     }
     expect(sourceTextOffences(fixtures.interpolated_file_count)).toEqual([
-      '"Newsletter list" in " files from the Newsletter list"',
-      'file count in " files from the Newsletter list"',
+      '"beehiiv" in " files from beehiiv"',
+      'file count in " files from beehiiv"',
     ])
     // " subscribers" is both the unit and, once trimmed, the bare source id.
     expect(sourceTextOffences(fixtures.interpolated_unit)).toEqual([

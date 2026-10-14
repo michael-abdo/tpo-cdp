@@ -584,6 +584,6 @@ describe('Gate 2/3 inside the request: a refusal goes back to the model and the 
     expect(rows[1].error).toMatch(/^gate2_denied: subscribers is not one of the views/)
     expect(rows[3].sql).toBe(`${corrected} LIMIT 100`)
     // The refusal is a step the loop goes on from, as an unknown tool is (worker/routes/audit.ts).
-    expect(traceOutcome({ last_kind: 'blocked', last_status: 'blocked', last_error: rows[1].error })).toBe('unfinished')
+    expect(traceOutcome({ last_kind: 'blocked', last_status: 'blocked', last_error: rows[1].error, board_run: 0 })).toBe('unfinished')
   })
 })

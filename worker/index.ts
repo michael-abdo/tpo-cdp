@@ -56,7 +56,7 @@ app.route('/api', duplicateRoutes)
 app.route('/api', lookupRoutes)
 app.route('/api', segmentRoutes)
 app.route('/api', eventRoutes)
-// GET /api/insights/{source-app-conversion|funnel|going-cold|data-quality}: the four /growth panels (04, 06 §/growth; R6).
+// /api/insights: the board (GET, POST pin, PATCH/DELETE /:id; 09 D-64) and the four panel GETs (04, 06 §/insights; R5, R6).
 app.route('/api', insightRoutes)
 // GET /api/audit?limit= and /api/audit/:trace_id: the ai_audit viewer, session only (04, 05 §Proof surfaces).
 app.route('/api', auditRoutes)

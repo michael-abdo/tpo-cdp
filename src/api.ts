@@ -44,7 +44,10 @@ async function toApiError(res: Response): Promise<ApiError> {
 }
 
 /** fetch with credentials and the JSON content type on bodies; resolves only on a 2xx. */
-export async function request(path: string, init: { method?: 'GET' | 'POST'; body?: unknown } = {}): Promise<Response> {
+export async function request(
+  path: string,
+  init: { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown } = {},
+): Promise<Response> {
   const res = await fetch(path, {
     method: init.method ?? 'GET',
     credentials: 'same-origin',
@@ -65,9 +68,13 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await request(path, { method: 'POST', body })).json() as Promise<T>
 }
 
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return (await request(path, { method: 'PATCH', body })).json() as Promise<T>
+}
+
 /**
  * Export CSV (04 §Segments: POST /api/segments/export.csv) for these filters, saved as a download.
- * One home for /segments and the segment answer on /assistant (06 §/assistant "Export").
+ * One home for /segments and a segment answer on /insights (06 §/insights answer card).
  */
 export async function downloadSegmentCsv(filters: SegmentFilters): Promise<void> {
   const res = await request('/api/segments/export.csv', { method: 'POST', body: { filters } })

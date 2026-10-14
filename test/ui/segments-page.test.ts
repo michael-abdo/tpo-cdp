@@ -5,7 +5,8 @@ import componentsSource from '../../src/components.tsx?raw'
 import segmentsSource from '../../src/pages/SegmentsPage.tsx?raw'
 import { TODAY } from '../../shared/config'
 import { addDays, DEFINITIONS, isNewSubscriber, NEW_SUBSCRIBER_DAYS } from '../../shared/derive'
-import { DEFINITION_LABEL, explain, GLOSSARY, isGlossaryKey } from '../../shared/glossary'
+import { explain, GLOSSARY, isGlossaryKey } from '../../shared/glossary'
+import { DEFINITION_LABEL } from '../../src/labels'
 import { BRIEF_EXAMPLE } from '../../src/previous-searches'
 import { DaysBox, MatchingRows, NEW_SUBSCRIBERS_HINT, RowDetails, SearchOutcome } from '../../src/pages/SegmentsPage'
 import type { SegmentRow } from '../../src/types'
@@ -67,7 +68,7 @@ describe('/segments: a search run from Previous searches shows its count beside 
     expect(start).toBeGreaterThan(0)
     const section = segmentsSource.slice(start, segmentsSource.indexOf('</section>', start))
     expect(section.indexOf('<SearchOutcome outcome={outcome} />')).toBeGreaterThan(section.indexOf('</ul>'))
-    // The page fills it for a previous search or "Open list" only, and the targets carry the ids.
+    // The page fills it for a previous search or "Open segment" only, and the targets carry the ids.
     expect(segmentsSource).toContain("result === null || origin === 'form' || cleared")
     expect(segmentsSource).toContain("load(row.filters, 'previous')")
     expect(segmentsSource).toContain("preview(toFilters(toForm(opened)), 'opened')")

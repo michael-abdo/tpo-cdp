@@ -1,4 +1,4 @@
-// / Overview (06 §Overview, 09 D-63, D-65): where reader data comes from, how each load went, and
+// / Overview (06 §Overview, 09 D-63, D-65): where the data comes from, how each load went, and
 // what needs a person. Every number is the API's; nothing is computed here but sums for the header line.
 // Level 1, top to bottom: four headline Metrics (GET /api/overview), each with an InfoTip; the
 // Sources table (GET /api/sources) with its one-line header. Each source's Status cell is chips
@@ -56,10 +56,9 @@ import type {
   WebhookSource,
 } from '../types'
 import { useGet } from '../useGet'
-import { AUTO_MIN_SCORE, REVIEW_MIN_SCORE } from '../../worker/dedupe/score'
 
 const TITLE = 'Overview'
-const PURPOSE = 'Where reader data comes from, how each load went, and what needs a person.'
+const PURPOSE = 'Where the data comes from, how each load went, and what needs a person.'
 
 function n(value: number): string {
   return value.toLocaleString('en-US')
@@ -70,8 +69,8 @@ const rowCount = (count: number) => `${n(count)} ${count === 1 ? 'row' : 'rows'}
 
 /** The four headline numbers (06 §Overview 1): the glossary names and explains each. */
 const HEADLINE: { term: GlossaryKey; icon: LucideIcon; value: (o: Overview) => number }[] = [
-  { term: 'readers_signed_up', icon: Users, value: (o) => o.subscribers },
-  { term: 'readers_subscribed', icon: UserCheck, value: (o) => o.active },
+  { term: 'subscribers_signed_up', icon: Users, value: (o) => o.subscribers },
+  { term: 'subscribers_active', icon: UserCheck, value: (o) => o.active },
   { term: 'app_accounts', icon: Smartphone, value: (o) => o.app_users },
   { term: 'events_received', icon: ICONS.events, value: (o) => o.events_received },
 ]
@@ -623,11 +622,11 @@ function DuplicateCard({
   return (
     <li className="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-soft">
       <div className="grid gap-3 sm:grid-cols-2">
-        {[pair.a, pair.b].map((reader) => (
-          <dl key={reader.email} className="space-y-1 rounded-lg bg-surface-2 p-3">
-            <Field label="Email">{reader.email}</Field>
-            <Field label="Signed up">{humanDate(reader.signup_date)}</Field>
-            <Field label="Source">{sourceLabel(reader.source)}</Field>
+        {[pair.a, pair.b].map((person) => (
+          <dl key={person.email} className="space-y-1 rounded-lg bg-surface-2 p-3">
+            <Field label="Email">{person.email}</Field>
+            <Field label="Signup date">{humanDate(person.signup_date)}</Field>
+            <Field label="Acquisition source">{sourceLabel(person.source)}</Field>
           </dl>
         ))}
       </div>
@@ -683,7 +682,7 @@ function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: D
   return (
     <TechnicalDetails>
       <p>
-        candidates: {data.candidates} reader pairs sharing a name stem (email local part without trailing
+        candidates: {data.candidates} pairs of profiles sharing a name stem (email local part without trailing
         digits). score = round(100 × 2^W / (1 + 2^W)), W = sum of the field weights; agree weight log2(m/u),
         disagree weight log2((1−m)/(1−u)); u measured from the candidates, m assumed (09 D-62).
       </p>
@@ -792,9 +791,9 @@ function PossibleDuplicates({ onReviewed }: { onReviewed: () => void }) {
         </ul>
       )}
       <p className="text-sm text-ink-muted">
-        Score {AUTO_MIN_SCORE} or more: very likely the same person. {REVIEW_MIN_SCORE}–{AUTO_MIN_SCORE - 1}:
-        worth a look. Under {REVIEW_MIN_SCORE}: not shown ({n(data.hidden_below_review)}{' '}
-        {data.hidden_below_review === 1 ? 'pair' : 'pairs'}). Nothing is merged automatically — your answer is
+        Score {data.bands.auto_min} or more: very likely the same person. {data.bands.review_min}–
+        {data.bands.auto_min - 1}: worth a look. Under {data.bands.review_min}: not shown ({n(data.hidden_below_review)}{' '}
+        {data.hidden_below_review === 1 ? 'pair' : 'pairs'}). Nothing is deduped automatically — your answer is
         only recorded.
       </p>
       <DuplicateTechnicalDetails data={data} pairs={data.review} />
@@ -892,7 +891,7 @@ export default function OverviewPage() {
           className="inline-flex items-center gap-1.5 font-medium text-accent-strong underline underline-offset-4 hover:text-ink"
         >
           <Icon icon={ICONS.lookup} />
-          Next: find a reader <span aria-hidden="true">→</span>
+          Next: look up anyone <span aria-hidden="true">→</span>
         </Link>
       </p>
     </>

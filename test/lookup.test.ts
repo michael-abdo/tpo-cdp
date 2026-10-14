@@ -65,8 +65,23 @@ interface LookupBody {
     app_after_signup: boolean
   }
   newsletter: Record<string, unknown> | null
-  web: { visitor_id: string; first_page: string; first_utm_source: string | null; events: WebEvent[] } | null
-  app: { user_id: string; created_at: string; from_csv: boolean; devices: string[]; events: unknown[] } | null
+  web: (Visitor & { visitors: Visitor[] }) | null
+  app: (AppAccount & { accounts: AppAccount[] }) | null
+}
+
+interface Visitor {
+  visitor_id: string
+  first_page: string
+  first_utm_source: string | null
+  events: WebEvent[]
+}
+
+interface AppAccount {
+  user_id: string
+  created_at: string
+  from_csv: boolean
+  devices: string[]
+  events: unknown[]
 }
 
 async function found(q: string): Promise<LookupBody> {
@@ -127,7 +142,10 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     ])
 
     const web = body.web!
-    expect(Object.keys(web)).toEqual(['visitor_id', 'first_page', 'first_utm_source', 'events'])
+    expect(Object.keys(web)).toEqual(['visitor_id', 'first_page', 'first_utm_source', 'events', 'visitors'])
+    // One visitor: the list holds exactly the single-object fields (09 D-70 item 4).
+    const { visitors, ...first } = web
+    expect(visitors).toEqual([first])
     expect(web.visitor_id).toBe('v_c9e136fd6d')
     expect(web.first_page).toBe('/')
     expect(web.first_utm_source).toBe('instagram')
@@ -145,14 +163,9 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
       pre_signup: false,
     })
 
-    expect(body.app).toEqual({
-      user_id: 'u_ceed5f12',
-      created_at: '2026-09-03',
-      from_csv: true,
-      devices: [],
-      events: [],
-    })
-    expect(Object.keys(body.app!)).toEqual(['user_id', 'created_at', 'from_csv', 'devices', 'events'])
+    const joyApp = { user_id: 'u_ceed5f12', created_at: '2026-09-03', from_csv: true, devices: [], events: [] }
+    expect(body.app).toEqual({ ...joyApp, accounts: [joyApp] })
+    expect(Object.keys(body.app!)).toEqual(['user_id', 'created_at', 'from_csv', 'devices', 'events', 'accounts'])
   })
 
   it('julia.evans230: web null, app created 2026-08-22 before signup, so not app_after_signup', async () => {
@@ -198,13 +211,8 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     })
     expect(body.newsletter).toBeNull()
     expect(body.web).toBeNull()
-    expect(body.app).toEqual({
-      user_id: 'u_09acb8a4',
-      created_at: '2026-09-10',
-      from_csv: true,
-      devices: [],
-      events: [],
-    })
+    const account = { user_id: 'u_09acb8a4', created_at: '2026-09-10', from_csv: true, devices: [], events: [] }
+    expect(body.app).toEqual({ ...account, accounts: [account] })
     expect((await found('u_09acb8a4')).profile.pkey).toBe(body.profile.pkey)
   })
 

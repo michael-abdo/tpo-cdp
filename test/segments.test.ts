@@ -12,7 +12,7 @@ import { respond } from '../worker/assistant/respond'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
 import { compileModelSegment, compileSegment, parseFilters, SEGMENT_COLUMNS } from '../worker/segments/compile'
-import { loginCookie } from './helpers/auth'
+import { documentationIp, loginCookie } from './helpers/auth'
 import { realCsvs, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
@@ -64,10 +64,11 @@ beforeAll(async () => {
   cookie = await loginCookie()
 })
 
+/** A fresh documentation address per call keeps these tests off one EXPORT_LIMITER key. */
 function post(path: string, body: unknown, headers: Record<string, string> = { cookie }): Promise<Response> {
   return SELF.fetch(`http://cdp.test/api/segments/${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', 'cf-connecting-ip': documentationIp(), ...headers },
     body: JSON.stringify(body),
   })
 }

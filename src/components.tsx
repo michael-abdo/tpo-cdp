@@ -6,12 +6,19 @@
 
 import {
   Activity,
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   CalendarDays,
+  CalendarRange,
+  ChartColumn,
+  ChartNoAxesCombined,
+  Check,
   ChevronRight,
   CircleAlert,
   CircleCheck,
   Download,
+  Ellipsis,
   Eye,
   History,
   Inbox,
@@ -24,19 +31,25 @@ import {
   Menu,
   MessageCircleQuestion,
   Moon,
+  Pencil,
+  Pin,
   Radio,
+  RefreshCw,
   ScrollText,
   Search,
   ShieldBan,
   Sun,
-  TrendingUp,
+  Trash2,
   TriangleAlert,
   UserSearch,
+  Users,
+  X,
 } from 'lucide-react'
 import {
   type ButtonHTMLAttributes,
   Fragment,
   type ReactNode,
+  type Ref,
   useEffect,
   useId,
   useLayoutEffect,
@@ -45,7 +58,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { explain, type TipKey } from '../shared/glossary'
+import { explain, isGlossaryKey, type TipKey } from '../shared/glossary'
 
 export type { LucideIcon }
 
@@ -59,9 +72,10 @@ export const ICONS = {
   lookup: UserSearch,
   segments: ListFilter,
   events: Activity,
-  assistant: MessageCircleQuestion,
-  growth: TrendingUp,
+  insights: ChartNoAxesCombined,
   audit: ScrollText,
+  // asking (the Ask bar on /insights, "Explain this", the audit log's empty state)
+  assistant: MessageCircleQuestion,
   // primary actions
   search: Search,
   preview: Eye,
@@ -72,8 +86,21 @@ export const ICONS = {
   themeLight: Sun,
   themeDark: Moon,
   today: CalendarDays,
+  refresh: RefreshCw,
   info: Info,
   history: History,
+  // insights board (09 D-64)
+  pin: Pin,
+  tileOptions: Ellipsis,
+  moveUp: ArrowUp,
+  moveDown: ArrowDown,
+  rename: Pencil,
+  remove: Trash2,
+  window: CalendarRange,
+  chart: ChartColumn,
+  openSegment: Users,
+  close: X,
+  done: Check,
   // status
   success: CircleCheck,
   blocked: ShieldBan,
@@ -102,6 +129,8 @@ export function Button({
   className?: string
   /** Optional lucide icon shown before the label (the label stays visible). */
   icon?: LucideIcon
+  /** For returning focus to the button (a dialog or menu it opened has closed). */
+  ref?: Ref<HTMLButtonElement>
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'>) {
   const look =
     variant === 'primary'
@@ -373,7 +402,9 @@ const TIP_WIDTH = 288
  * page-enter animation's transform would make `fixed` relative to the page block instead of the
  * viewport, and a table's overflow would clip it; from <body> it does neither and never widens the
  * page. The button is `select-none`, so copying the text around it never picks up its
- * screen-reader words (no "Mergedwhat Merged means85").
+ * screen-reader words (no "Mergedwhat Merged means85"). Where there is no `document` (a server
+ * render, as test/ui renders pages) the popover is left out, as React's server renderer cannot
+ * render portals; the app renders only in the browser (createRoot), where it is always there.
  */
 export function InfoTip({ term }: { term: TipKey }) {
   const { term: words, text } = explain(term)
@@ -438,26 +469,40 @@ export function InfoTip({ term }: { term: TipKey }) {
         <Icon icon={ICONS.info} className="size-3.5" />
         <span className="sr-only"> What “{words}” means </span>
       </button>
-      {createPortal(
-        <span
-          ref={pop}
-          id={id}
-          role="status"
-          className={
-            open
-              ? 'fixed z-30 block rounded-lg border border-line-strong bg-surface p-3 text-left text-sm font-normal tracking-normal text-ink normal-case shadow-soft'
-              : 'sr-only'
-          }
-        >
-          {open && (
-            <>
-              <span className="block font-medium">{words}</span>{' '}
-              <span className="mt-1 block text-ink-muted">{text}</span>
-            </>
-          )}
-        </span>,
-        document.body,
-      )}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <span
+            ref={pop}
+            id={id}
+            role="status"
+            className={
+              open
+                ? 'fixed z-30 block rounded-lg border border-line-strong bg-surface p-3 text-left text-sm font-normal tracking-normal text-ink normal-case shadow-soft'
+                : 'sr-only'
+            }
+          >
+            {open && (
+              <>
+                <span className="block font-medium">{words}</span>{' '}
+                <span className="mt-1 block text-ink-muted">{text}</span>
+              </>
+            )}
+          </span>,
+          document.body,
+        )}
+    </span>
+  )
+}
+
+/**
+ * An app event name as the brief writes it (app_open, read_story, link_click, login), with its plain
+ * gloss in an InfoTip from the glossary (06 §Vocabulary, 09 D-66); a name with no gloss shows as sent.
+ */
+export function EventName({ event }: { event: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="font-mono">{event}</span>
+      {isGlossaryKey(event) && <InfoTip term={event} />}
     </span>
   )
 }

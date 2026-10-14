@@ -8,7 +8,9 @@
 // times and the stored request_json, response_json and SQL exactly as stored (06 §UI principles 2).
 // A search box counts matches in that stored text, so searching "@" shows zero (12 beat 5); the
 // count is announced politely. The re-hydrated result is never stored (05 §Re-hydration), so it
-// is on /assistant only.
+// is on /insights only. Board runs (/insights re-running its tiles with no AI call, 09 D-64) are not
+// questions: the list leaves them out unless "Show board refreshes" is ticked, and names them as
+// what they are, never as unfinished questions.
 
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
@@ -56,11 +58,13 @@ const TRACE_OUTCOME: Record<AuditOutcome, string> = {
   blocked: 'Blocked',
   failed: 'Failed',
   unfinished: 'Not finished',
+  board_run: 'Board refresh, no AI call',
 }
 
 /** A trace's result: how it ended, plus a note when an earlier step was blocked or failed and it still answered. */
 function traceResult(t: AuditTraceSummary): string {
   const ended = TRACE_OUTCOME[t.outcome]
+  if (t.outcome === 'board_run' && t.status !== 'success') return `${ended} (a tile ${t.status === 'blocked' ? 'was blocked' : 'failed'})`
   if (t.outcome !== 'answered' || t.status === 'success') return ended
   return `${ended} (a step ${t.status === 'blocked' ? 'was blocked' : 'failed'} on the way)`
 }
@@ -75,6 +79,7 @@ const STEP_LOOK = {
 
 /** The list's Result tag look, from how the request ended. */
 function resultLook(t: AuditTraceSummary) {
+  if (t.outcome === 'board_run') return { tone: 'neutral', icon: ICONS.refresh } as const
   if (t.outcome === 'blocked') return STEP_LOOK.blocked
   if (t.outcome === 'failed' || t.outcome === 'unfinished') return STEP_LOOK.error
   return STEP_LOOK.success
@@ -82,9 +87,10 @@ function resultLook(t: AuditTraceSummary) {
 
 /** Plain words for the seeded tools (scripts/tool-seeds.ts); any other tool is named in Technical details. */
 const TOOL_LABEL: Record<string, string> = {
-  segment: 'Built a list of readers',
-  aggregate: 'Counted readers',
+  segment: 'Built a segment',
+  aggregate: 'Counted subscribers, visits or events',
   query_sql: 'Ran a read-only query on the data',
+  insight_panel: 'Re-ran a built-in board tile',
 }
 
 /** `first`: the trace's first model request, which carried the question. */
@@ -238,6 +244,8 @@ function TraceView({ traceId }: { traceId: string }) {
       console.error('audit: request_json is not JSON', err)
     }
   }
+  // Only a board run stores tool steps with no model call: an Ask writes its model call first (loop.ts).
+  const boardRun = firstModel === undefined && rows.some((r) => r.kind === 'tool_call')
   const titles = rows.map((row) => stepTitle(row, row === firstModel))
   const perRow = rows.map((row) => (needle === '' ? null : rowMatches(row, needle)))
   const total = perRow.reduce<number>((sum, n) => sum + (n ?? 0), 0)
@@ -255,7 +263,9 @@ function TraceView({ traceId }: { traceId: string }) {
       {header(
         question !== null
           ? `“${question}”`
-          : firstModel === undefined
+          : boardRun
+            ? 'A board refresh on Insights: the pinned tiles re-ran their saved lookups. Nothing was sent to the AI.'
+            : firstModel === undefined
             ? rows.some((r) => r.kind === 'blocked' && (r.error ?? '').endsWith(' in model_output'))
               ? 'This question was sent to the AI, but its reply was blocked, so the question was not stored.'
               : 'This request stopped before anything was sent to the AI.'
@@ -317,7 +327,12 @@ function traceColumns(): Column<AuditTraceSummary>[] {
       header: 'Question',
       cell: (t) => (
         <Link to={`/audit/${t.trace_id}`} className={`${linkClass} break-words`}>
-          {t.question ?? (t.reached_ai ? 'Sent to the AI; its reply was blocked, so the question was not stored' : 'Stopped before it reached the AI')}
+          {t.question ??
+            (t.outcome === 'board_run'
+              ? `Board refresh: ${fmt(t.tool_calls)} ${t.tool_calls === 1 ? 'tile' : 'tiles'} re-ran, nothing sent to the AI`
+              : t.reached_ai
+                ? 'Sent to the AI; its reply was blocked, so the question was not stored'
+                : 'Stopped before it reached the AI')}
         </Link>
       ),
     },
@@ -340,10 +355,11 @@ function TraceList() {
   // Each Refresh bumps the version; the list stays on screen while a refresh is in flight.
   const [version, setVersion] = useState(0)
   const [settled, setSettled] = useState<{ version: number; state: Answer } | null>(null)
+  const [withBoard, setWithBoard] = useState(false)
 
   useEffect(() => {
     let current = true
-    getJson<AuditList>(`/api/audit?limit=${LIST_LIMIT}`).then(
+    getJson<AuditList>(`/api/audit?limit=${LIST_LIMIT}${withBoard ? '&board_runs=include' : ''}`).then(
       (data) => current && setSettled({ version, state: { status: 'ok', data } }),
       (err: unknown) =>
         current && setSettled({ version, state: { status: 'error', message: errorMessage(err) } }),
@@ -351,7 +367,7 @@ function TraceList() {
     return () => {
       current = false
     }
-  }, [version])
+  }, [version, withBoard])
 
   const refreshing = settled !== null && settled.version !== version
   const traces = settled?.state.status === 'ok' ? settled.state.data.traces : null
@@ -365,7 +381,7 @@ function TraceList() {
       <PageHeader
         title="AI audit log"
         icon={ICONS.audit}
-        purpose={`Every question sent to the assistant, newest first (the last ${LIST_LIMIT}). Open one to see exactly what the AI was sent and what it sent back.`}
+        purpose={`Every question sent to the AI assistant, newest first (the last ${LIST_LIMIT}). Open one to see exactly what the AI was sent and what it sent back.`}
         action={
           <Button
             variant="primary"
@@ -377,6 +393,17 @@ function TraceList() {
         }
       />
       <Announcer message={announcement} />
+      <label className="flex min-h-6 items-center gap-2 text-sm text-ink">
+        <input
+          type="checkbox"
+          checked={withBoard}
+          onChange={(e) => {
+            setWithBoard(e.target.checked)
+            setVersion((v) => v + 1)
+          }}
+        />
+        Show board refreshes (Insights tiles re-running their saved lookups; nothing is sent to the AI)
+      </label>
       {settled === null ? (
         <Loading label="Loading the audit log…" />
       ) : settled.state.status === 'error' ? (
@@ -384,9 +411,9 @@ function TraceList() {
       ) : settled.state.data.traces.length === 0 ? (
         <EmptyState
           action={
-            <Link to="/assistant" className={`${linkClass} gap-1.5`}>
+            <Link to="/insights" className={`${linkClass} gap-1.5`}>
               <Icon icon={ICONS.assistant} />
-              Ask a question
+              Ask the AI assistant
             </Link>
           }
         >

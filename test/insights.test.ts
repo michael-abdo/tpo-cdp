@@ -9,6 +9,7 @@ import { goingColdRisk } from '../shared/derive'
 import { CANONICAL_SOURCES, canonicalSource, normalizeEmail } from '../shared/normalize'
 import type { DataQualityCheckKey as UiCheckKey } from '../src/types'
 import { sanitizeQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
+import { KnownEmails } from '../worker/assistant/gates/pii-guard'
 import { parseCsv } from '../worker/ingest/csv'
 import { DATA_QUALITY_CHECKS, type DataQuality, type DataQualityCheckKey } from '../worker/insights/data-quality'
 import type { Funnel } from '../worker/insights/funnel'
@@ -135,7 +136,8 @@ const round4 = (n: number, d: number) => Math.round((n / d) * 10000) / 10000
 function expectAskable(explain: string) {
   expect(explain.endsWith('?')).toBe(true)
   expect(explain).not.toContain('@')
-  expect(sanitizeQuestion(explain).ok).toBe(true)
+  // Redaction never blocks, so the known-email set does not change `ok`; the empty set suffices.
+  expect(sanitizeQuestion(explain, new KnownEmails([])).ok).toBe(true)
 }
 
 describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
@@ -187,7 +189,7 @@ describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
     explains.forEach(expectAskable)
     expect(new Set(explains).size).toBe(explains.length)
     for (const row of body.by_source) {
-      expect(row.explain).toContain(row.source === null ? 'no signup source recorded' : `"${row.source}"`)
+      expect(row.explain).toContain(row.source === null ? 'no acquisition source recorded' : `"${row.source}"`)
     }
     // The panel counts every status, so the question must ask the assistant to as well (02 §Defaults).
     for (const e of explains) expect(e).toContain('including unsubscribed')
@@ -337,9 +339,13 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
     const explains = [body.total.explain, body.hidden_unsubscribed.explain, ...body.by_source.map((r) => r.explain)]
     explains.forEach(expectAskable)
     expect(new Set(explains).size).toBe(explains.length)
-    for (const e of explains) expect(e).toContain('going_cold_risk')
+    // The rule by what it means, from DEFINITIONS, never its code name (06 §UI principles 4; "Explain this" fills the Ask bar).
+    for (const e of explains) {
+      expect(e).toContain('at risk of going cold (opened an email in the last 30 days but not in the last 14, or will become cold within the next 7 days)')
+      expect(e).not.toContain('going_cold_risk')
+    }
     for (const row of body.by_source) {
-      expect(row.explain).toContain(row.source === null ? 'no signup source recorded' : `"${row.source}"`)
+      expect(row.explain).toContain(row.source === null ? 'no acquisition source recorded' : `"${row.source}"`)
     }
     expect(body.hidden_unsubscribed.explain).toContain('unsubscribed')
   })

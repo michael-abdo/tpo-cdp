@@ -16,6 +16,17 @@ export type WebColumn = (typeof WEB_COLUMNS)[number]
 /** The page whose `email` links a visitor to a subscriber (the brief's rule, 02 §Linking 2). */
 export const SUBSCRIBE_PAGE = '/subscribe'
 
+/**
+ * Whether a row's page is the subscribe page (09 D-70 item 9): its path with any query string and
+ * one trailing slash removed equals SUBSCRIBE_PAGE, so `/subscribe?utm_source=instagram` and
+ * `/subscribe/` link like `/subscribe`. The page itself is stored as written.
+ */
+export function isSubscribePage(page: string): boolean {
+  const query = page.indexOf('?')
+  const path = query === -1 ? page : page.slice(0, query)
+  return path === SUBSCRIBE_PAGE || path === `${SUBSCRIBE_PAGE}/`
+}
+
 /** The CSV's own timestamp format, `YYYY-MM-DD HH:MM:SS`, nothing looser (02 §Quarantine). */
 const CSV_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}) ([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/
 
@@ -106,7 +117,7 @@ export function ingestWeb(csv: ParsedCsv): WebIngest {
     const rawEmail = row[col.email].trim()
     const emailNorm = rawEmail === '' ? null : normalizeEmail(rawEmail)
 
-    if (emailNorm !== null && page !== SUBSCRIBE_PAGE) {
+    if (emailNorm !== null && !isSubscribePage(page)) {
       throw new Error(
         `web_events.csv line ${lineNo}: email on page "${page}"; only ${SUBSCRIBE_PAGE} rows link (02 §Linking 2)`,
       )

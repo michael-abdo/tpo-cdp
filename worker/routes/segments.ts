@@ -122,6 +122,13 @@ segmentRoutes.post('/segments/preview', async (c) => {
 })
 
 segmentRoutes.post('/segments/export.csv', async (c) => {
+  // The whole list in one response, so a per-client limit (EXPORT_LIMITER, 09 D-70 #6). Cloudflare
+  // sets CF-Connecting-IP at the edge; local dev has no edge, so every local client shares one key.
+  const { success } = await c.env.EXPORT_LIMITER.limit({ key: c.req.header('cf-connecting-ip') ?? 'local' })
+  if (!success) {
+    console.warn(JSON.stringify({ at: 'segments/export.csv', outcome: 'rate_limited' }))
+    throw new ApiError(429, 'rate_limited', 'Too many exports from this network in the last minute. Wait a minute and try again.')
+  }
   const body = await readBody(c.req.raw, 'segments/export.csv', EXPORT_KEYS)
   const segment = compileSegment(filtersFrom(body, 'segments/export.csv'))
   const rows = await segmentRows(c.env.DB, segment)

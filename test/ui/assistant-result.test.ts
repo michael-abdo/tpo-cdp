@@ -3,12 +3,12 @@ import { renderToString } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import { FILTERS_HIDDEN_MESSAGE } from '../../src/filters-applied'
-import { Result } from '../../src/pages/AssistantPage'
+import { AnswerCard } from '../../src/insights/ask'
 import type { AssistantResponse } from '../../src/types'
 
-// "Ask a question" (06 §/assistant, 09 D-58): the answer block as the page renders it. The model
+// The answer card of /insights (06 §/insights, formerly /assistant; 09 D-58, D-64) as the page renders it. The model
 // writes filters_applied and the server passes it through unscreened (test/audit.test.ts), so this
-// renders the page's own Result with React's server renderer and reads every character it would
+// renders the page's own AnswerCard with React's server renderer and reads every character it would
 // show, at both levels and in Technical details (<details> content is in the HTML even when closed).
 // The response is the recorded answer to the brief's first question (46 = Instagram active
 // went_cold_in 2026-08, 02 §Counts), as the server returns it; filters_applied is the model's
@@ -16,6 +16,8 @@ import type { AssistantResponse } from '../../src/types'
 
 const REAL = { status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 const SQL = 'SELECT email_norm FROM subscribers'
+/** The brief's first question (R5.2), the one this recorded answer replies to. */
+const QUESTION = 'how many Instagram signups went cold last month?'
 
 function answer(filtersApplied: Record<string, unknown>): AssistantResponse {
   return {
@@ -28,12 +30,15 @@ function answer(filtersApplied: Record<string, unknown>): AssistantResponse {
     definitions_used: ['went_cold_in', 'last_month'],
     partial: false,
     audit_id: crypto.randomUUID(),
+    pin_window: { from: '2026-08-01', to: '2026-08-31' },
+    pin_own_dates: null,
+    pin_refusal: null,
   }
 }
 
 /** The rendered HTML, and its text with tags removed and entities decoded. */
 function render(data: AssistantResponse): { html: string; text: string } {
-  const html = renderToString(createElement(MemoryRouter, null, createElement(Result, { data })))
+  const html = renderToString(createElement(MemoryRouter, null, createElement(AnswerCard, { data, question: QUESTION, onPinned: () => {} })))
   const text = html
     .replace(/<[^>]*>/g, ' ')
     .replace(/&#x27;/g, "'")
@@ -44,7 +49,7 @@ function render(data: AssistantResponse): { html: string; text: string } {
   return { html, text }
 }
 
-describe("/assistant renders the model's filters_applied only through the D-58 screen", () => {
+describe("/insights' answer card renders the model's filters_applied only through the D-58 screen", () => {
   it('clean filters show in words under "How this answer was worked out" and as raw JSON in Technical details', () => {
     const { text } = render(answer(REAL))
     expect(text).toContain('Acquisition source')

@@ -1,6 +1,6 @@
-// GET /api/audit?limit= and GET /api/audit/:trace_id (04 §GET /api/audit; 06 §/audit; 05 §Proof
-// surfaces; R5.5). Mounted at /api by worker/index.ts, behind requireSession. Read-only over
-// ai_audit (01), the rows worker/assistant/audit/ai-audit.ts wrote:
+// GET /api/audit?limit=&board_runs= and GET /api/audit/:trace_id (04 §GET /api/audit; 06 §/audit;
+// 05 §Proof surfaces; R5.5). Mounted at /api by worker/index.ts, behind requireSession. Read-only
+// over ai_audit (01), the rows worker/assistant/audit/ai-audit.ts wrote:
 //   - the list: the latest assistant traces, newest first, one line each: when it started, the
 //     redacted question as the model received it (messages[0] of the trace's first model_request
 //     row; null when the request stopped before any model call, e.g. at Gate 1), how the request
@@ -8,7 +8,10 @@
 //     status, the number of model and tool rows, and the tokens summed over the trace. Outcome and
 //     status differ on purpose: a D-58 discard, an unknown tool, a Gate 2/3 refusal or an invalid
 //     tool input writes a blocked or error row and the request still answers 200, so the worst row
-//     is not the result
+//     is not the result. A board run (an /insights board refresh, pin or tile change re-running
+//     tiles with no model call, 09 D-64) is a trace with no session_sub: its outcome is
+//     `board_run`, and the list leaves such traces out unless `board_runs=include`, so a board
+//     that refreshes on every view never pushes the questions off the page
 //   - one trace: every ai_audit row of the trace in write order, each field as stored. request_json
 //     is the exact payload sent after the scanner (the writer refuses a row that fails the PII
 //     scan), so nothing here can hold an email; the re-hydrated result is never stored (05
@@ -21,6 +24,9 @@ import { SQL_DISCARD_ERROR } from '../assistant/route'
 import { isGateDenialError, TOOL_FAILED_ERROR, UNKNOWN_TOOL_ERROR } from '../assistant/tools/tool-executor'
 import type { AppEnv } from '../env'
 
+/** `board_runs=include` adds board runs to the list; absent, they are left out. */
+export const BOARD_RUNS_INCLUDE = 'include'
+
 /** Traces the list returns when the request names no limit. */
 export const AUDIT_DEFAULT_LIMIT = 20
 /** Upper bound on the list's traces. */
@@ -29,7 +35,11 @@ export const AUDIT_MAX_LIMIT = 100
 export type AuditStatus = 'success' | 'error' | 'blocked'
 
 /**
- * How a request ended, from the last row its trace holds:
+ * How a request ended, from the last row its trace holds (a board run is read first, from the trace
+ * as a whole):
+ *   board_run               an /insights board run: no session (only the board opens a trace
+ *                           without one, worker/insights/board.ts) and no model call. Tiles re-ran
+ *                           their saved lookups; nothing was sent to the AI
  *   answered                the last row is a successful model call: the request returned 200
  *                           (the iteration cap and a malformed block also end here, as partial)
  *   answered_text_replaced  the last row is the D-58 discard: 200 with the server sentence
@@ -40,7 +50,7 @@ export type AuditStatus = 'success' | 'error' | 'blocked'
  *                           tool, a Gate 2/3 refusal, an invalid tool input): the request is still running, or it
  *                           stopped on an error that wrote no row
  */
-export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished'
+export type AuditOutcome = 'answered' | 'answered_text_replaced' | 'blocked' | 'failed' | 'unfinished' | 'board_run'
 
 /** One line of GET /api/audit. */
 export interface AuditTraceSummary {
@@ -82,6 +92,14 @@ export interface AuditRowOut {
   created_at: string
 }
 
+function boardRuns(raw: string | undefined): boolean {
+  if (raw === undefined) return false
+  if (raw === BOARD_RUNS_INCLUDE) return true
+  const message = `board_runs must be "${BOARD_RUNS_INCLUDE}" or absent.`
+  console.warn(JSON.stringify({ at: 'audit', outcome: 'invalid_board_runs' }))
+  throw new ApiError(400, 'invalid_board_runs', message, [message])
+}
+
 function auditLimit(raw: string | undefined): number {
   if (raw === undefined) return AUDIT_DEFAULT_LIMIT
   const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN
@@ -98,10 +116,13 @@ interface LastRow {
   last_kind: AuditRowOut['kind']
   last_status: AuditStatus
   last_error: string | null
+  /** 1 when the trace is a board run (no session_sub and no model call), else 0. */
+  board_run: number
 }
 
-/** How the request ended, from its trace's last row (AuditOutcome). */
-export function traceOutcome({ last_kind: kind, last_status: status, last_error: error }: LastRow): AuditOutcome {
+/** How the request ended (AuditOutcome). */
+export function traceOutcome({ last_kind: kind, last_status: status, last_error: error, board_run: boardRun }: LastRow): AuditOutcome {
+  if (boardRun === 1) return 'board_run'
   // The discard row names its sign after the fixed text: "<SQL_DISCARD_ERROR> (select_line)".
   if (kind === 'blocked' && error !== null && error.startsWith(SQL_DISCARD_ERROR)) return 'answered_text_replaced'
   if (kind === 'model_request' && status === 'success') return 'answered'
@@ -124,13 +145,15 @@ WITH traces AS (
           OR sum(kind = 'blocked' AND error LIKE '% in model_output') > 0) AS reached_ai,
          sum(kind = 'tool_call') AS tool_calls,
          coalesce(sum(tokens_in), 0) AS tokens_in,
-         coalesce(sum(tokens_out), 0) AS tokens_out
+         coalesce(sum(tokens_out), 0) AS tokens_out,
+         (sum(session_sub IS NOT NULL) = 0 AND sum(kind = 'model_request') = 0) AS board_run
   FROM ai_audit
   GROUP BY trace_id
+  HAVING ? = 1 OR board_run = 0
   ORDER BY started_at DESC, first_rowid DESC
   LIMIT ?
 )
-SELECT t.trace_id, t.started_at, t.status, t.reached_ai, t.model_calls, t.tool_calls, t.tokens_in, t.tokens_out,
+SELECT t.trace_id, t.started_at, t.status, t.reached_ai, t.model_calls, t.tool_calls, t.tokens_in, t.tokens_out, t.board_run,
        (SELECT CASE json_type(a.request_json, '$.messages[0].content')
                  WHEN 'text' THEN json_extract(a.request_json, '$.messages[0].content') END
         FROM ai_audit a
@@ -154,8 +177,9 @@ export const auditRoutes = new Hono<AppEnv>()
 
 auditRoutes.get('/audit', async (c) => {
   const limit = auditLimit(c.req.query('limit'))
+  const includeBoardRuns = boardRuns(c.req.query('board_runs'))
   const { results } = await c.env.DB.prepare(LIST_SQL)
-    .bind(limit)
+    .bind(includeBoardRuns ? 1 : 0, limit)
     .all<Omit<AuditTraceSummary, 'outcome' | 'reached_ai'> & { reached_ai: number } & LastRow>()
   const traces: AuditTraceSummary[] = results.map((r) => ({
     trace_id: r.trace_id,

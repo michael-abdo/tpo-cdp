@@ -5,8 +5,9 @@
 // out the \b anchors and words the system-prompt pattern differently; the origin source wins.
 // The \b anchors matter: without them "migrant story" hits (GRANT|REVOKE)\s+\w and "impact as"
 // hits "act as".
-// Changes (14 §4, §6 #4/#5; 09 D-24):
-//   - email redaction to `[email]`: user text with an email is redacted and continues
+// Changes (14 §4, §6 #4/#5; 09 D-24, D-70 #1):
+//   - email redaction to `[email]`: user text with an email is redacted and continues; so is the
+//     local part of a known email typed on its own (`joy.hall830`), as a whole token
 //   - a pattern hit or an over-long question is a 400 `invalid_question` with a loud log line and
 //     an ai_audit row kind=blocked, not the origin's canned 200 reply
 //   - the origin's "conversation >= 50 messages" check is not ported: the assistant is single-shot
@@ -18,7 +19,7 @@
 
 import type { AuditTrace } from '../audit/ai-audit'
 import { ApiError } from '../../auth/middleware'
-import { redactEmails } from './pii-guard'
+import { decodeAt, type KnownEmails, redactEmails, redactKnownLocalParts } from './pii-guard'
 
 /** The origin's cap (14 §3.4 "length > 2000 → length_exceeded"). */
 export const QUESTION_MAX_CHARS = 2000
@@ -61,11 +62,12 @@ export const GATE1_PATTERNS: readonly Gate1Pattern[] = [
 declare const gate1Passed: unique symbol
 
 /**
- * A question that passed Gate 1, emails redacted. Only `sanitizeQuestion` makes one, so the
+ * A question that passed Gate 1, emails and known local parts redacted. Only `sanitizeQuestion` makes one, so the
  * request builder (build-request.ts) cannot be handed raw user text by mistake.
  */
 export interface SanitizedQuestion {
   readonly text: string
+  /** Email-shaped spans plus known local parts replaced by `[email]`. */
   readonly emailsRedacted: number
   readonly [gate1Passed]: true
 }
@@ -75,14 +77,19 @@ export type Gate1Result =
   | { ok: false; reason: 'length_exceeded'; length: number }
   | { ok: false; reason: Gate1Category; pattern: string }
 
-/** Pure. Order as the origin: length, then the patterns in list order, then (here) redaction. */
-export function sanitizeQuestion(raw: string): Gate1Result {
+/**
+ * Pure. Order as the origin: length, then the patterns in list order, then (here) redaction:
+ * email-shaped spans first, then the local parts of `known` (the request's known-email set).
+ */
+export function sanitizeQuestion(raw: string, known: KnownEmails): Gate1Result {
   if (raw.length > QUESTION_MAX_CHARS) return { ok: false, reason: 'length_exceeded', length: raw.length }
   for (const pattern of GATE1_PATTERNS) {
     if (pattern.regex.test(raw)) return { ok: false, reason: pattern.category, pattern: pattern.id }
   }
-  const { text, count } = redactEmails(raw)
-  return { ok: true, question: { text, emailsRedacted: count } as SanitizedQuestion }
+  // %40 is decoded first, so a URL-encoded address is redacted as an email (09 D-70 #1).
+  const emails = redactEmails(decodeAt(raw))
+  const locals = redactKnownLocalParts(emails.text, known)
+  return { ok: true, question: { text: locals.text, emailsRedacted: emails.count + locals.count } as SanitizedQuestion }
 }
 
 /**
@@ -92,7 +99,7 @@ export function sanitizeQuestion(raw: string): Gate1Result {
  * `invalid_question` (04).
  */
 export async function enforceGate1(trace: AuditTrace, raw: string): Promise<SanitizedQuestion> {
-  const result = sanitizeQuestion(raw)
+  const result = sanitizeQuestion(raw, trace.knownEmails)
   if (result.ok) return result.question
   const detail =
     result.reason === 'length_exceeded'

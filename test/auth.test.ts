@@ -370,8 +370,12 @@ describe('constant-time comparison without crypto.subtle.timingSafeEqual (fallba
 
 describe('assertBindings (11 §Deploy, fail fast)', () => {
   it('names every missing binding and secret in one error', () => {
-    expect(() => assertBindings(envWithout('DB', 'WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'LOGIN_LIMITER', 'WEBHOOK_LIMITER'))).toThrow(
-      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER',
+    expect(() =>
+      assertBindings(
+        envWithout('DB', 'WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'LOGIN_LIMITER', 'WEBHOOK_LIMITER', 'ASSISTANT_LIMITER', 'EXPORT_LIMITER'),
+      ),
+    ).toThrow(
+      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER',
     )
   })
 

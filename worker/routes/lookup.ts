@@ -5,7 +5,11 @@
 // each email-less user's key, 02 §Linking 4); `d_…` a device, which names its current user
 // through device_identity (01 §Identity resolution: the most recent user by event_ts, 09 D-43);
 // `v_…` a website visitor, which names the profile its /subscribe email linked (02 §Linking 2).
-// One profile, four sections, each null when absent. Stored derived columns are read as stored
+// One profile, four sections, each null when absent. A profile can hold several app accounts or
+// several website visitors (09 D-70 item 4: one email on two accounts or two browsers is normal):
+// `app.accounts` and `web.visitors` list every one, first = earliest (the order v_profiles reads:
+// app by created_at, visitor by first_seen_ts then visitor_hash), and the single-object fields of
+// `app` and `web` repeat that first one. Stored derived columns are read as stored
 // (09 D-46); app_after_signup comes from shared/derive.ts, never from SQL. Identity resolution
 // for app events is worker/identity/resolve.ts. Nothing is cached (03 §No-restart). 04 defines
 // one error for this route: any q that names no profile (blank, missing, neither an id nor a
@@ -74,10 +78,10 @@ interface WebEventRow {
 
 const notFound = () => new ApiError(404, 'not_found', 'No profile matches that email or id.')
 
-/** At most one row, or a loud error: the 04 shape holds one of each per profile. Never names the key (PII). */
+/** At most one row, or a loud error where a key allows only one (a primary or derived key). Never names the key (PII). */
 function single<T>(rows: T[], what: string): T | null {
   if (rows.length > 1)
-    throw new Error(`lookup: ${rows.length} ${what} rows for one profile; the 04 shape holds one`)
+    throw new Error(`lookup: ${rows.length} ${what} rows for one key, which allows only one`)
   return rows[0] ?? null
 }
 
@@ -168,6 +172,55 @@ async function resolveQuery(env: AppEnv['Bindings'], raw: string): Promise<Found
 /** Mounted at /api by worker/index.ts, behind requireSession. */
 export const lookupRoutes = new Hono<AppEnv>()
 
+/** One website visitor of a profile, as 04 shows it. */
+async function webVisitor(db: D1Database, visitor: VisitorRow) {
+  const signupTs = visitor.signup_ts
+  if (signupTs === null) {
+    throw new Error('lookup: a linked web visitor has no signup_ts, which the seed always writes (worker/ingest/web.ts)')
+  }
+  const { results } = await db
+    .prepare('SELECT page, event_ts, utm_source FROM web_events WHERE visitor_id = ? ORDER BY event_ts, id')
+    .bind(visitor.visitor_id)
+    .all<WebEventRow>()
+  return {
+    visitor_id: visitor.visitor_id,
+    first_page: visitor.first_page,
+    first_utm_source: visitor.first_utm_source,
+    events: results.map((e) => ({
+      page: e.page,
+      event_ts: e.event_ts,
+      utm_source: e.utm_source,
+      pre_signup: e.event_ts < signupTs,
+    })),
+  }
+}
+
+/** One app account of a profile, as 04 shows it; its events resolved by worker/identity/resolve.ts. */
+async function appAccount(db: D1Database, appUser: AppUserRow) {
+  const [devices, events] = await Promise.all([
+    devicesForUser(db, appUser.user_id),
+    resolveUserEvents(db, appUser.user_id),
+  ])
+  return {
+    user_id: appUser.user_id,
+    created_at: appUser.created_at,
+    from_csv: appUser.from_csv === 1,
+    devices,
+    events: events.map((e) => ({
+      event: e.event,
+      event_ts: e.event_ts,
+      properties: e.properties,
+      attached_via: e.attached_via,
+    })),
+  }
+}
+
+/** The first item's fields plus the whole list under `key` (04: today's single object, then every one). */
+function firstWithAll<T extends object, K extends string>(items: T[], key: K): (T & Record<K, T[]>) | null {
+  if (items.length === 0) return null
+  return { ...items[0], [key]: items } as T & Record<K, T[]>
+}
+
 lookupRoutes.get('/lookup', async (c) => {
   const found = await resolveQuery(c.env, c.req.query('q') ?? '')
   if (found === null) throw notFound()
@@ -175,10 +228,13 @@ lookupRoutes.get('/lookup', async (c) => {
   const db = c.env.DB
 
   let subscriber: SubscriberRow | null = null
-  let visitor: VisitorRow | null = null
-  let appUser = found.appUser
+  let visitors: VisitorRow[] = []
+  // A stub's one account came with it; an email profile's accounts are read by its email.
+  let appUsers: AppUserRow[] = found.appUser === null ? [] : [found.appUser]
   if (profile.email_norm !== null) {
-    const [subs, visitors, apps] = await db.batch([
+    // Earliest first, in the order v_profiles reads them (0002_views.sql): app accounts by
+    // created_at (MIN), visitors by first_seen_ts then visitor_hash (its first_page).
+    const [subs, visitorRows, apps] = await db.batch([
       db
         .prepare(
           'SELECT signup_date, status, source, last_open_date, cold_since, merged_count FROM subscribers WHERE email_norm = ?',
@@ -186,62 +242,24 @@ lookupRoutes.get('/lookup', async (c) => {
         .bind(profile.email_norm),
       db
         .prepare(
-          'SELECT visitor_id, first_page, first_utm_source, signup_ts FROM web_visitors WHERE email_norm = ?',
+          'SELECT visitor_id, first_page, first_utm_source, signup_ts FROM web_visitors WHERE email_norm = ? ORDER BY first_seen_ts, visitor_hash',
         )
         .bind(profile.email_norm),
       db
-        .prepare(`${APP_USER_COLUMNS} WHERE email_norm = ?`)
+        .prepare(`${APP_USER_COLUMNS} WHERE email_norm = ? ORDER BY created_at, user_id`)
         .bind(profile.email_norm),
     ])
+    // subscribers.email_norm is the table's primary key: one row at most.
     subscriber = single(subs.results as SubscriberRow[], 'subscribers')
-    visitor = single(visitors.results as VisitorRow[], 'web_visitors')
-    appUser = single(apps.results as AppUserRow[], 'app_users')
+    visitors = visitorRows.results as VisitorRow[]
+    appUsers = apps.results as AppUserRow[]
   }
 
-  let web = null
-  if (visitor !== null) {
-    const signupTs = visitor.signup_ts
-    if (signupTs === null) {
-      throw new Error('lookup: a linked web visitor has no signup_ts, which the seed always writes (worker/ingest/web.ts)')
-    }
-    const { results } = await db
-      .prepare('SELECT page, event_ts, utm_source FROM web_events WHERE visitor_id = ? ORDER BY event_ts, id')
-      .bind(visitor.visitor_id)
-      .all<WebEventRow>()
-    web = {
-      visitor_id: visitor.visitor_id,
-      first_page: visitor.first_page,
-      first_utm_source: visitor.first_utm_source,
-      events: results.map((e) => ({
-        page: e.page,
-        event_ts: e.event_ts,
-        utm_source: e.utm_source,
-        pre_signup: e.event_ts < signupTs,
-      })),
-    }
-  }
+  const web = firstWithAll(await Promise.all(visitors.map((v) => webVisitor(db, v))), 'visitors')
+  const app = firstWithAll(await Promise.all(appUsers.map((u) => appAccount(db, u))), 'accounts')
 
-  let app = null
-  if (appUser !== null) {
-    const [devices, events] = await Promise.all([
-      devicesForUser(db, appUser.user_id),
-      resolveUserEvents(db, appUser.user_id),
-    ])
-    app = {
-      user_id: appUser.user_id,
-      created_at: appUser.created_at,
-      from_csv: appUser.from_csv === 1,
-      devices,
-      events: events.map((e) => ({
-        event: e.event,
-        event_ts: e.event_ts,
-        properties: e.properties,
-        attached_via: e.attached_via,
-      })),
-    }
-  }
-
-  const appCreatedAt = appUser?.created_at ?? null
+  // has_app and app_after_signup read the earliest account, as v_profiles does (MIN(created_at)).
+  const appCreatedAt = appUsers[0]?.created_at ?? null
   return c.json({
     profile: {
       pkey: profile.pkey,
@@ -287,24 +305,30 @@ function escapeLike(fragment: string): string {
 
 // Three groups, each alphabetical (04): 0 = email starts with q, 1 = email contains q elsewhere,
 // 2 = app user_id starts with q and the user was not already listed by its email. The groups
-// are disjoint, so one LIMIT of SEARCH_LIMIT + 1 tells whether more than SEARCH_LIMIT exist.
+// are disjoint and each lists a profile once, so one LIMIT of SEARCH_LIMIT + 1 tells whether
+// more than SEARCH_LIMIT exist. A profile with several app accounts (09 D-70 item 4) names one:
+// in groups 0/1 its earliest (created_at, then user_id; the first of /api/lookup's
+// app.accounts), in group 2 the lowest matching user_id (GROUP BY its email; a stub has none and
+// stands alone).
 // ?1 = %q%, ?2 = q%, ?3 = SEARCH_LIMIT + 1; every pattern is escaped, every value bound.
 const SEARCH_SQL = `
 SELECT grp, pkey, kind, email, user_id, status FROM (
   SELECT CASE WHEN p.email_norm LIKE ?2 ESCAPE '\\' THEN 0 ELSE 1 END AS grp,
-         p.pkey AS pkey, p.kind AS kind, p.email_norm AS email, a.user_id AS user_id,
+         p.pkey AS pkey, p.kind AS kind, p.email_norm AS email,
+         (SELECT a.user_id FROM app_users a WHERE a.email_norm = p.email_norm
+          ORDER BY a.created_at, a.user_id LIMIT 1) AS user_id,
          s.status AS status, p.email_norm AS sort_key
   FROM profiles p
   LEFT JOIN subscribers s ON s.email_norm = p.email_norm
-  LEFT JOIN app_users a ON a.email_norm = p.email_norm
   WHERE p.email_norm LIKE ?1 ESCAPE '\\'
   UNION ALL
-  SELECT 2, p.pkey, p.kind, a.email_norm, a.user_id, s.status, a.user_id
+  SELECT 2, p.pkey, p.kind, a.email_norm, MIN(a.user_id), s.status, MIN(a.user_id)
   FROM app_users a
   LEFT JOIN profiles p ON p.email_norm = a.email_norm
   LEFT JOIN subscribers s ON s.email_norm = a.email_norm
   WHERE a.user_id LIKE ?2 ESCAPE '\\'
     AND (a.email_norm IS NULL OR a.email_norm NOT LIKE ?1 ESCAPE '\\')
+  GROUP BY a.email_norm, CASE WHEN a.email_norm IS NULL THEN a.user_id END
 )
 ORDER BY grp, sort_key
 LIMIT ?3`

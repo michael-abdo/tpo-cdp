@@ -1,5 +1,6 @@
 // Routes for the screens built so far (06 §Navigation): /login, / (Overview), /lookup, /segments, /events,
-// /assistant, /growth and /audit (with /audit/:traceId for one trace).
+// /insights and /audit (with /audit/:traceId for one trace). /assistant and /growth merged into
+// /insights (09 D-64) and redirect there, keeping the query string, so ?q= still fills the Ask bar.
 // Every page except /login sits under the top bar; the session itself is checked by the API,
 // whose 401 sends the browser back to /login (src/api.ts).
 // Shell a11y (06 §UI principles 7): "Skip to content" link, aria-current on the nav, focus moves to
@@ -12,23 +13,21 @@ import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
 import { ErrorLine, Icon, ICONS, type LucideIcon } from './components'
 import { effectiveTheme, setTheme, type Theme } from './theme'
-import AssistantPage from './pages/AssistantPage'
 import AuditPage from './pages/AuditPage'
 import EventsPage from './pages/EventsPage'
-import GrowthPage from './pages/GrowthPage'
+import InsightsPage from './pages/InsightsPage'
 import LoginPage from './pages/LoginPage'
 import LookupPage from './pages/LookupPage'
 import OverviewPage from './pages/OverviewPage'
 import SegmentsPage from './pages/SegmentsPage'
 
-/** Nav labels say what each screen does, in plain words (principles 1, 4). */
+/** Nav labels are the brief's words for each screen (06 §Vocabulary, 09 D-66, D-67; principles 1, 4); "Insights" is D-64's. */
 const NAV: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/', label: 'Overview', icon: ICONS.overview },
-  { to: '/lookup', label: 'Find a reader', icon: ICONS.lookup },
+  { to: '/lookup', label: 'Look up', icon: ICONS.lookup },
   { to: '/segments', label: 'Segments', icon: ICONS.segments },
   { to: '/events', label: 'App events', icon: ICONS.events },
-  { to: '/assistant', label: 'Ask a question', icon: ICONS.assistant },
-  { to: '/growth', label: 'Growth', icon: ICONS.growth },
+  { to: '/insights', label: 'Insights', icon: ICONS.insights },
   { to: '/audit', label: 'AI audit log', icon: ICONS.audit },
 ]
 
@@ -215,6 +214,12 @@ function Shell() {
   )
 }
 
+/** An old path's link lands on /insights with its query (?q=) intact (09 D-64). */
+function ToInsights() {
+  const { search } = useLocation()
+  return <Navigate to={`/insights${search}`} replace />
+}
+
 export default function App() {
   const navigate = useNavigate()
   useEffect(() => {
@@ -229,8 +234,9 @@ export default function App() {
         <Route path="lookup" element={<LookupPage />} />
         <Route path="segments" element={<SegmentsPage />} />
         <Route path="events" element={<EventsPage />} />
-        <Route path="assistant" element={<AssistantPage />} />
-        <Route path="growth" element={<GrowthPage />} />
+        <Route path="insights" element={<InsightsPage />} />
+        <Route path="assistant" element={<ToInsights />} />
+        <Route path="growth" element={<ToInsights />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="audit/:traceId" element={<AuditPage />} />
       </Route>

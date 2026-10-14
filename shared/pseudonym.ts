@@ -12,7 +12,7 @@ import { normalizeEmail } from './normalize'
 const KEY_PREFIX = 'pk_'
 const KEY_HEX_CHARS = 16
 
-async function keyFor(secret: string, message: string): Promise<string> {
+async function keyFor(secret: string, message: string, prefix: string = KEY_PREFIX): Promise<string> {
   if (secret === '') throw new Error('PII_KEY_SECRET is empty; pseudonymous keys cannot be derived')
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey(
@@ -25,7 +25,7 @@ async function keyFor(secret: string, message: string): Promise<string> {
   const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(message)))
   let hex = ''
   for (const byte of mac.subarray(0, KEY_HEX_CHARS / 2)) hex += byte.toString(16).padStart(2, '0')
-  return KEY_PREFIX + hex
+  return prefix + hex
 }
 
 function requireValue(value: string, what: string): void {
@@ -55,4 +55,14 @@ export async function pkeyForUnknownUser(secret: string, userId: string): Promis
 export async function visitorHash(secret: string, visitorId: string): Promise<string> {
   requireValue(visitorId, 'visitorId')
   return keyFor(secret, `visitor:${visitorId}`)
+}
+
+/**
+ * `ai_audit.client_key` (migrations/0005, 09 D-70 #6): `ck_` + hashes `client:` + the client's
+ * CF-Connecting-IP, so the assistant's hourly limit can count per client without storing the
+ * address. A different prefix from `pk_`: it names a network, never a profile.
+ */
+export async function clientKeyHash(secret: string, clientIp: string): Promise<string> {
+  requireValue(clientIp, 'clientIp')
+  return keyFor(secret, `client:${clientIp}`, 'ck_')
 }

@@ -4,7 +4,7 @@
 // and "More filters", grouped as the brief groups a subscriber (Newsletter info, Site visits, App
 // activity). More filters starts open, so went cold, new subscribers and site visits (the brief's
 // Growth questions) are one choice away; it still collapses (19 §7 note, 2026-10-14). A search run
-// from Previous searches or "Open list" shows its count beside the list, with a link down to the
+// from Previous searches or "Open segment" shows its count beside the list, with a link down to the
 // result and Export CSV, and focus stays on the clicked item (19 §2). Preview (POST
 // /api/segments/preview) shows the count as a sentence and the segment's name; Export CSV (POST
 // /api/segments/export.csv) runs on the filters the server echoed for the shown result, so the
@@ -13,8 +13,8 @@
 // "one runtime source"), raw names and the placeholders-only SQL shape. Status defaults to active;
 // the response's hidden_unsubscribed is shown in words when it is above 0. The form sends what
 // the inputs hold (02 §Normalization): labels are display maps only, and the page choices come
-// from GET /api/segments/options. A segment from Insights or an AI answer arrives as router state
-// {filters} ("Open list", 06 §/insights): the form takes those filters and previews them once.
+// from GET /api/segments/options. A segment from /insights (a tile or an AI answer) arrives as router state
+// {filters} ("Open segment", 06 §/insights): the form takes those filters and previews them once.
 // Every 200 preview records the echoed filters in Previous searches (src/previous-searches.ts);
 // a click on one re-runs it, so every count shown is live (03 §No-restart).
 
@@ -23,6 +23,7 @@ import { useLocation } from 'react-router'
 import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 import { TODAY } from '../../shared/config'
 import { DEFINITIONS, type DefinitionKey, NEW_SUBSCRIBER_DAYS } from '../../shared/derive'
+import { GLOSSARY } from '../../shared/glossary'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../worker/ingest/quarantine'
 import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
@@ -44,7 +45,7 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDate } from '../format'
-import { COLUMN_LABEL, DEFINITION_LABEL, EVENT_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
+import { COLUMN_LABEL, DEFINITION_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
 import { clearSearches, type PreviousSearch, readSearches, recordSearch, visibleSearches } from '../previous-searches'
 import type { SegmentFilters, SegmentOptions, SegmentPreview, SegmentRow } from '../types'
 import { useGet } from '../useGet'
@@ -118,7 +119,7 @@ function toForm(f: SegmentFilters): Form {
   }
 }
 
-/** Router state set by "Open list" on Insights or an AI answer. */
+/** Router state set by "Open segment" on /insights (a tile or an AI answer). */
 function openedFilters(state: unknown): SegmentFilters | null {
   if (typeof state !== 'object' || state === null || !('filters' in state)) return null
   return (state as { filters: SegmentFilters }).filters
@@ -184,7 +185,7 @@ const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? 
 /** The result heading and the Announcer's words for a count. */
 const countSentence = (count: number) => (count === 0 ? 'No subscribers match' : plural(count, 'subscriber matches', 'subscribers match'))
 
-/** Where the shown preview was started: the form's Preview button, a previous search, or "Open list". */
+/** Where the shown preview was started: the form's Preview button, a previous search, or "Open segment". */
 type Origin = 'form' | 'previous' | 'opened'
 
 /** The id of the result heading and of the preview's error line, which SearchOutcome links to. */
@@ -291,7 +292,7 @@ export function RowDetails({ row }: { row: SegmentRow }) {
 }
 
 /**
- * What a search started from Previous searches or "Open list" gave, shown beside the list: the
+ * What a search started from Previous searches or "Open segment" gave, shown beside the list: the
  * result sits below the form, often below the fold, and focus stays on the clicked item (19 §2),
  * so the count and the way to Export CSV must be visible where the click was. Not a live region:
  * the page's Announcer already reads the count. The link moves to the result heading, from which
@@ -339,7 +340,7 @@ function PreviousSearches({
 }: {
   rows: PreviousSearch[]
   hasStored: boolean
-  /** The outcome of the search last run from here or from "Open list"; null after a form Preview. */
+  /** The outcome of the search last run from here or from "Open segment"; null after a form Preview. */
   outcome: Outcome | null
   onRun: (row: PreviousSearch) => void
   onClear: () => void
@@ -446,7 +447,7 @@ export default function SegmentsPage() {
     void preview(toFilters(next), from)
   }
 
-  // Filters opened from Insights or an AI answer preview once per navigation (location.key), StrictMode included.
+  // Filters opened from /insights (a tile or an AI answer) preview once per navigation (location.key), StrictMode included.
   const previewedFor = useRef<string | null>(null)
   useEffect(() => {
     if (opened === null || previewedFor.current === location.key) return
@@ -761,7 +762,7 @@ export default function SegmentsPage() {
                   <option value="">Any event</option>
                   {APP_EVENTS.map((e) => (
                     <option key={e} value={e}>
-                      {e} ({EVENT_LABEL[e]})
+                      {e}: {GLOSSARY[e].text}
                     </option>
                   ))}
                 </select>
