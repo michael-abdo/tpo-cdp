@@ -12,6 +12,9 @@
 // Disclosure (06 §UI principles 2): level 1 = who, status, signup, last open and one summary per
 // column; "Details" per column = visit / event lists; "Technical details" = ids, keys, merge
 // counts, second-precise UTC times, raw field values and formulas.
+// One thing in one place (09 D-72): the demo subject is the placeholder only (no "Try an example"
+// button), the hint adds only what the label and placeholder do not say, and an app account's
+// user ID is in the App activity column's Technical details, not the header's.
 // Several app accounts or website visitors on one profile (09 D-70 item 4, 04 `app.accounts`,
 // `web.visitors`): level 1 counts across all of them and says how many; Details and Technical
 // details list each one under its own heading, earliest first.
@@ -52,11 +55,13 @@ import type { Lookup, LookupAppAccount, LookupSearch, LookupVisitor } from '../t
 /** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
 const SUGGEST_DEBOUNCE_MS = 250
 const NO_MATCH = 'No profile matches — try part of the email'
+/** After a 404 or a no-match, the lead-in to the suggestion list, said once (09 D-72). */
+const ONE_OF_THESE = 'Did you mean one of these?'
 /** The page's one-line purpose, the brief's own words for it (06 §Vocabulary, 09 D-66). */
 const PURPOSE = 'Finds anyone: newsletter info, site visits and app activity in one view.'
 const LISTBOX_ID = 'lookup-suggestions'
 const HINT_ID = 'lookup-hint'
-/** A demo subject from 02 §Counts, offered as the one-click first step (06 §UI principles 6). */
+/** A demo subject from 02 §Counts, shown as the placeholder: the one place the example lives (09 D-72). */
 const EXAMPLE = 'joy.hall830@protonmail.com'
 
 const KIND_LABEL: Record<Lookup['profile']['kind'], string> = {
@@ -114,7 +119,7 @@ function Column({
 }
 
 function Header({ data }: { data: Lookup }) {
-  const { profile, newsletter, app } = data
+  const { profile, newsletter } = data
   // A profile with no email is named in words; the raw app id lives in Technical details (06 §UI principles 2, 4).
   const identity = profile.email ?? 'App account with no email on file'
   const facts: string[] = []
@@ -142,16 +147,10 @@ function Header({ data }: { data: Lookup }) {
             <Field label="Kind">
               <span className="font-mono">{profile.kind}</span>
             </Field>
-            {app !== null && (
-              <Field label="User ID">
-                <span className="font-mono">{app.accounts.map((a) => a.user_id).join(', ')}</span>
-              </Field>
-            )}
             <Field label="Score formula">
               <span className="font-mono">{DEFINITIONS.engagement_score.formula}</span>
             </Field>
           </dl>
-          <p>All timestamps are UTC.</p>
         </TechnicalDetails>
       </Disclosure>
     </div>
@@ -604,7 +603,7 @@ function DidYouMean({ suggestions, onPick }: { suggestions: Suggestion[]; onPick
   }
   return (
     <div className="space-y-1 text-sm text-gray-800">
-      <p>Did you mean one of these?</p>
+      <p>{ONE_OF_THESE}</p>
       <ul className="space-y-0.5">
         {suggestions.map((s) => (
           <li key={s.pkey}>{link(s)}</li>
@@ -727,7 +726,7 @@ export default function LookupPage() {
           : `${NO_MATCH}. Did you mean ${nearby.map((m) => m.email).join(' or ')}?`
       messageVisible = nearby.length === 0
     } else {
-      const lead = notFound !== null ? `${notFound.message} Did you mean one of these? ` : ''
+      const lead = notFound !== null ? `${notFound.message} ${ONE_OF_THESE} ` : ''
       const more = suggested.truncated ? ', more if you keep typing' : ''
       message = `${lead}${plural(suggested.matches.length, 'match', 'matches')}${more}.`
     }
@@ -737,11 +736,6 @@ export default function LookupPage() {
   } else if (result !== null) {
     message = `Showing profile for ${result.profile.email ?? 'an app account with no email on file'}.`
   }
-  // The one-click first step (principle 6): on the empty page and after a search that found nobody.
-  // Near spellings are the better next step, so the example steps aside for them (principle 5).
-  const showExample =
-    nearby.length === 0 &&
-    ((state === null && !listShown) || (notFound !== null && (zeroMatches || !listShown)))
 
   return (
     <div className="space-y-5">
@@ -778,15 +772,14 @@ export default function LookupPage() {
         </div>
         {result === null && (
           <p id={HINT_ID} className="text-sm text-gray-600">
-            Type a subscriber's email or an app account's user ID (starts with u_), or just part of it. Suggestions appear after{' '}
-            {QUERY_FRAGMENT_MIN_LENGTH} letters.
+            Part of it is enough: matches appear after {QUERY_FRAGMENT_MIN_LENGTH} letters. A user ID starts with u_.
           </p>
         )}
         {result === null && (
           <Disclosure label="More ways to look someone up">
             <p className="text-sm text-gray-700">
-              Find also opens a profile from a profile key, a device ID or a visitor ID, copied from a
-              profile's Technical details. Suggestions search emails and user IDs only.
+              Find also opens a profile from a profile key, a device ID or a visitor ID copied from a
+              profile's Technical details; no matches are listed for these.
             </p>
             <TechnicalDetails>
               <dl className="space-y-1">
@@ -810,7 +803,9 @@ export default function LookupPage() {
         {listShown && suggestions.status === 'loading' && <Loading label="Finding matches…" />}
         {listShown && suggestions.status === 'error' && <ErrorLine message={suggestions.message} />}
         {listboxShown && notFound !== null && (
-          <p className="text-sm text-gray-800">{notFound.message} Did you mean one of these?</p>
+          <p className="text-sm text-gray-800">
+            {notFound.message} {ONE_OF_THESE}
+          </p>
         )}
         {listboxShown && (
           <SuggestionList
@@ -829,11 +824,6 @@ export default function LookupPage() {
           </div>
         )}
         <Announcer message={message} visible={messageVisible} />
-        {showExample && (
-          <Button icon={ICONS.next} onClick={() => go(EXAMPLE)}>
-            Try an example: {EXAMPLE}
-          </Button>
-        )}
       </div>
 
       {/* While suggestions are open the old profile steps aside, so the current profile is never in doubt. */}
