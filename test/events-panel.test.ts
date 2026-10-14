@@ -2,6 +2,7 @@
 import { env, SELF } from 'cloudflare:test'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TODAY } from '../shared/config'
+import { demoTimestamp } from '../shared/demo-timestamp'
 import { webhookRoutes } from '../worker/routes/webhook'
 import wranglerConfig from '../wrangler.jsonc?raw'
 import { documentationIp, loginCookie } from './helpers/auth'
@@ -101,11 +102,21 @@ describe('POST /api/events/test (09 D-73)', () => {
       email: KNOWN_USER_EMAIL,
     })
     expect(body.event.event_id).toMatch(/^evt_[0-9a-f]+$/)
-    expect(body.event.device_id).toMatch(/^d_[0-9a-f]+$/)
+    // 8 random bytes (16 hex chars), not fewer (09 D-73 amended, round-4 fixer): a short id can
+    // collide with an existing device (real or anonymous) and silently re-point its identity.
+    expect(body.event.device_id).toMatch(/^d_[0-9a-f]{16}$/)
     // 09 D-01 / 02 §Time: a demo event's timestamp is TODAY (shared/config.ts) plus the current
     // UTC time of day, never wall-clock "now" — a mutant that used `new Date().toISOString()`
-    // directly would date the event after TODAY and fails this.
-    expect(body.event.event_ts.startsWith(TODAY)).toBe(true)
+    // directly would date the event after TODAY and fails this. The time-of-day half is also
+    // pinned exactly, with a fake clock, in the "demoTimestamp" describe block below.
+    expect(body.event.event_ts).toMatch(new RegExp(`^${TODAY}T\\d{2}:\\d{2}:\\d{2}Z$`))
+    const sentAt = Math.floor(Date.now() / 1000)
+    const [, hh, mm, ss] = /^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2}):(\d{2})Z$/.exec(body.event.event_ts) as RegExpExecArray
+    const eventSeconds = Number(hh) * 3600 + Number(mm) * 60 + Number(ss)
+    const nowSeconds = sentAt % 86400
+    // Within a few seconds of the real UTC clock (not a frozen or stale time of day); wraps at
+    // midnight UTC are not exercised by this suite's run time, so a plain difference is enough.
+    expect(Math.abs(eventSeconds - nowSeconds)).toBeLessThanOrEqual(5)
     const [first] = await recent()
     expect(first).toEqual(body.event)
   })
@@ -114,7 +125,7 @@ describe('POST /api/events/test (09 D-73)', () => {
     const first = await (await sendTest({ user_id: KNOWN_USER, event: 'app_open' })).json<TestEventResponse>()
     const second = await (await sendTest({ user_id: KNOWN_USER, event: 'login' })).json<TestEventResponse>()
     expect(second.event.device_id).not.toBe(first.event.device_id)
-    expect(second.event.device_id).toMatch(/^d_[0-9a-f]+$/)
+    expect(second.event.device_id).toMatch(/^d_[0-9a-f]{16}$/)
   })
 
   it('T-WH-PANEL-5: Send again (resend) answers 200 duplicate and leaves app_events unchanged', async () => {
@@ -263,7 +274,7 @@ describe('POST /api/events/test (09 D-73)', () => {
       .run()
     const first = await (await sendTest({ user_id: user, event: 'login' })).json<TestEventResponse>()
     const second = await (await sendTest({ user_id: user, event: 'app_open' })).json<TestEventResponse>()
-    for (const id of [first.event.device_id, second.event.device_id]) expect(id).toMatch(/^d_[0-9a-f]+$/)
+    for (const id of [first.event.device_id, second.event.device_id]) expect(id).toMatch(/^d_[0-9a-f]{16}$/)
     expect(first.event.device_id).not.toBe('d_existing9')
     expect(second.event.device_id).not.toBe('d_existing9')
     expect(second.event.device_id).not.toBe(first.event.device_id)
@@ -298,6 +309,30 @@ describe('POST /api/events/test (09 D-73)', () => {
     expect(owner).toBe(userB)
     const anonResolved = (await recent()).find((e) => e.event_id === 'evt_panel9b_anon_read')
     expect(anonResolved).toMatchObject({ user_id: userB, attached_via: 'login_stitch' })
+  })
+})
+
+// demoTimestamp() (shared/demo-timestamp.ts, imported by both the panel route and
+// scripts/send-webhook.ts, D-72 one home): TODAY plus the CURRENT UTC time of day, never a
+// frozen or dropped time of day. T-WH-PANEL-4 above only checks `startsWith(TODAY)`, which a
+// mutant returning `${TODAY}T00:00:00Z` would still pass; this fakes the clock so the time-of-day
+// half is pinned exactly, independent of 02 §Time's wall-clock allow-list / 09 D-01.
+describe('demoTimestamp (shared/demo-timestamp.ts; 02 §Time, 09 D-01/D-73 amended 2026-10-14)', () => {
+  it('returns TODAY at the exact faked UTC time of day, not midnight and not real "now"', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-10-14T16:23:36.789Z'))
+      expect(demoTimestamp()).toBe(`${TODAY}T16:23:36Z`)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('scripts/send-webhook.ts imports demoTimestamp from shared/demo-timestamp and defines no copy of its own (D-72 one home)', () => {
+    const code = import.meta.glob<string>('../scripts/send-webhook.ts', { query: '?raw', import: 'default', eager: true })
+    const text = code['../scripts/send-webhook.ts']
+    expect(text).toMatch(/import \{ demoTimestamp \} from '\.\.\/shared\/demo-timestamp'/)
+    expect(text).not.toMatch(/function demoTimestamp/)
   })
 })
 

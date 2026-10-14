@@ -144,6 +144,8 @@ eventRoutes.post('/events/test', async (c) => {
       user_id: body.user_id,
       // Always fresh (09 D-73 amended 2026-10-14): a test send must never re-point an
       // existing device's identity, real or anonymous, at this account or any other.
+      // 8 bytes (64 bits), not 4: a fresh id must not collide with an existing device and
+      // silently stitch that device's events to this account.
       device_id: freshId('d_', 8),
       timestamp: demoTimestamp(),
     })
