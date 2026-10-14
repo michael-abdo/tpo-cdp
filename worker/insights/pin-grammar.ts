@@ -118,7 +118,11 @@ function classifyExpression(tokens: readonly SqlToken[], all: readonly SqlToken[
   let base = tokens
   let alias: string | null = null
   if (base.length >= 2 && isWord(base.at(-2), 'AS') && isWord(base.at(-1))) {
-    alias = base.at(-1)!.text.toLowerCase()
+    // Kept exactly as written (not lowercased): D1 returns the column under this exact alias, and
+    // board.ts's maskSmallGroups (the small-group mask, D-64b B) looks the row up by this same
+    // name. Lowercasing here once let `AS Subscribers` mask nothing, because the result came back
+    // spelled `Subscribers` (09 D-64b finding).
+    alias = base.at(-1)!.text
     base = base.slice(0, -2)
   }
   const indexOf = (t: SqlToken) => all.indexOf(t)
@@ -207,6 +211,25 @@ export function classifyPinnableSql(sql: string): PinGrammarResult {
   if (tokens.some((t) => isWord(t, 'HAVING'))) {
     problems.push('HAVING is not allowed: groups under 5 people are hidden automatically at run time, whatever HAVING says')
   }
+  // Exactly one relation: no JOIN (there is only one SELECT by this point, so a JOIN can only be
+  // this query's own FROM list, never a subquery's) and no comma-joined FROM list. A join let
+  // count(*) describe one relation's rows while an aggregate read a WHERE-narrowed slice of the
+  // other, so the small-group check (B) masked the wrong thing (09 D-64b finding).
+  if (tokens.some((t) => isWord(t, 'JOIN'))) problems.push('a pinned query may read only one view: no JOIN')
+  const fromAt = tokens.findIndex((t) => t.depth === 0 && isWord(t, 'FROM'))
+  let viewName: string | null = null
+  if (fromAt !== -1) {
+    let fromEnd = tokens.length
+    for (let i = fromAt + 1; i < tokens.length; i += 1) {
+      if (tokens[i].depth === 0 && tokens[i].kind === 'word' && CLAUSE_END.has(tokens[i].text.toUpperCase()) && tokens[i].text.toUpperCase() !== 'FROM') {
+        fromEnd = i
+        break
+      }
+    }
+    const fromClause = tokens.slice(fromAt + 1, fromEnd)
+    if (fromClause.some((t) => t.depth === 0 && isPunct(t, ','))) problems.push('a pinned query may read only one view: no comma-joined FROM list')
+    if (isWord(fromClause[0])) viewName = fromClause[0].text.toLowerCase()
+  }
   if (problems.length > 0) return { ok: false, problems }
 
   // The SELECT list: from the first SELECT to the first clause-ending keyword at depth 0.
@@ -269,10 +292,26 @@ export function classifyPinnableSql(sql: string): PinGrammarResult {
     return { ok: true, shape: 'list', identifierColumn: 'pkey' }
   }
 
+  // A totals query's every column must already be count(*)/count(DISTINCT …), an aggregate or a
+  // grouped dimension (09 D-64b A). A bare approved numeric/date column ('plain_approved', the
+  // list shape's own allowance) is a SQLite bug waiting to fire: inside an aggregate query it
+  // reads one arbitrary row's value, and with max()/min() present that row is a real, identifiable
+  // person's (09 D-64b finding: `max(engagement_score)` next to a bare `signup_date`).
+  const plain = expressions.filter((e) => e.kind === 'plain_approved')
+  if (plain.length > 0) {
+    problems.push(`a totals query's columns must be count(*), count(DISTINCT pkey|visitor_hash), an aggregate or a grouped dimension — not the plain column ${plain[0].name}`)
+  }
   const counts = expressions.filter((e) => e.kind === 'count_star' || e.kind === 'count_distinct')
   if (counts.length === 0) {
-    return { ok: false, problems: ['a totals query needs at least one count(*) or count(DISTINCT pkey|visitor_hash) column to anchor the small-group check'] }
+    problems.push('a totals query needs at least one count(*) or count(DISTINCT pkey|visitor_hash) column to anchor the small-group check')
   }
+  // count(*) anchors the small-group mask on "rows read", which is a people count only on
+  // v_profiles (one row per person). On every other view (an event view, a pre-grouped view) the
+  // mask anchor must be a real distinct-person count: count(DISTINCT pkey|visitor_hash).
+  if (viewName !== 'v_profiles' && expressions.some((e) => e.kind === 'count_star')) {
+    problems.push(`count(*) only counts people on v_profiles; on ${viewName ?? 'this view'} use count(DISTINCT pkey) or count(DISTINCT visitor_hash) to anchor the small-group check`)
+  }
+  if (problems.length > 0) return { ok: false, problems: [...new Set(problems)] }
   const dimensions = expressions.filter((e) => e.kind === 'dimension')
   const groupTexts = new Set(splitOn(groupBy, 0).map(canon))
   const dimensionTexts = new Set(dimensions.map((e) => e.name))

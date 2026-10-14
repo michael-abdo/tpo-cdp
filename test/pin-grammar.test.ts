@@ -39,6 +39,48 @@ describe('classifyPinnableSql: shape A (totals)', () => {
     expect(classifyPinnableSql('SELECT email_norm, count(*) AS n FROM v_profiles GROUP BY email_norm')).toMatchObject({ ok: false })
     expect(classifyPinnableSql('SELECT count(*) AS n, sum(story) AS s FROM v_app_events')).toMatchObject({ ok: false })
   })
+
+  it('a bare approved column (plain_approved) alongside a count is refused, even ungrouped (09 D-64b finding: max() + a bare date column)', () => {
+    // SQLite reads an ungrouped bare column from one arbitrary row; with max() present, that row
+    // is the top scorer's own record, so signup_date/last_open_date/cold_since named one real person.
+    expect(
+      classifyPinnableSql(
+        'SELECT count(*) AS n, max(engagement_score) AS top, signup_date, last_open_date, app_created_at, cold_since FROM v_profiles',
+      ),
+    ).toMatchObject({ ok: false })
+    expect(classifyPinnableSql('SELECT source, count(*) AS n, engagement_score FROM v_profiles GROUP BY source')).toMatchObject({ ok: false })
+  })
+})
+
+describe('classifyPinnableSql: FROM is exactly one view (09 D-64b finding: a join moved the small-group anchor off the aggregate it masked)', () => {
+  it('a comma-joined FROM list is refused', () => {
+    expect(
+      classifyPinnableSql(
+        "SELECT count(*) AS n, avg(a.engagement_score) AS s FROM v_profiles a, v_funnel b WHERE a.source = 'x' AND a.status = 'unsubscribed'",
+      ),
+    ).toMatchObject({ ok: false })
+  })
+
+  it('a JOIN is refused', () => {
+    expect(classifyPinnableSql('SELECT count(*) AS n FROM v_profiles JOIN v_funnel ON 1 = 1')).toMatchObject({ ok: false })
+  })
+
+  it('count(*) on a non-v_profiles view is refused: it counts rows, not people', () => {
+    expect(classifyPinnableSql('SELECT count(*) AS n FROM v_app_events')).toMatchObject({ ok: false })
+    expect(classifyPinnableSql('SELECT count(*) AS n FROM v_web_events')).toMatchObject({ ok: false })
+  })
+
+  it('count(DISTINCT pkey) on an event view still pins: it is a real people count', () => {
+    const r = classifyPinnableSql('SELECT count(DISTINCT pkey) AS n FROM v_app_events')
+    expect(r).toMatchObject({ ok: true, shape: 'totals', countColumns: ['n'] })
+  })
+})
+
+describe('classifyPinnableSql: an alias keeps its exact case (09 D-64b finding: AS Subscribers never matched the lowercased countColumns)', () => {
+  it('a mixed-case count alias still reports as written, so board.ts can find it in the D1 row', () => {
+    const r = classifyPinnableSql('SELECT source, status, count(*) AS Subscribers FROM v_profiles GROUP BY source, status')
+    expect(r).toMatchObject({ ok: true, shape: 'totals', countColumns: ['Subscribers'] })
+  })
 })
 
 describe('classifyPinnableSql: "lists" (a person list)', () => {
