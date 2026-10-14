@@ -1,8 +1,8 @@
 // Plain words for stored values, column names and filter keys (06 §UI principles 4). Display maps
 // only: the values sent to the API and the raw names shown in Technical details stay as they are.
 // /segments, /assistant and /growth read the same maps, so a subscriber's fields carry the same words on each.
+// Field words are the brief's own (06 §Vocabulary, 09 D-66): Signup date, Acquisition source, Last open date, UTM source.
 
-import type { DefinitionKey } from '../shared/derive'
 import { FILTER_KEYS, type FilterKey, type SegmentFilters } from '../shared/segment-filters'
 import type { AppEventName } from '../shared/app-events'
 
@@ -28,20 +28,20 @@ export const statusLabel = (s: string) => STATUS_LABEL[s] ?? s
  */
 export const COLUMN_LABEL = {
   email: 'Email',
-  pkey: 'Reader key',
+  pkey: 'Profile key',
   status: 'Status',
-  source: 'Signed up from',
-  signup_date: 'Signed up',
-  last_open_date: 'Last opened',
+  source: 'Acquisition source',
+  signup_date: 'Signup date',
+  last_open_date: 'Last open date',
   engagement_score: 'Engagement',
   has_app: 'Uses the app',
   signup_month: 'Signup month',
   cold_month: 'Month they went cold',
   first_page: 'First page visited',
-  utm_source: 'Campaign source',
+  utm_source: 'UTM source',
   event: 'App event',
   subscribers: 'Subscribers',
-  cold: 'Cold readers',
+  cold: 'Cold subscribers',
   went_cold: 'Went cold',
   with_app_after_signup: 'Got the app after signing up',
   rate: 'Rate',
@@ -53,7 +53,7 @@ export const COLUMN_LABEL = {
 /** Segment filter keys (FILTER_KEYS) and the aggregate inputs a model may echo in filters_applied. */
 export const FILTER_LABEL: Readonly<Record<string, string>> = {
   status: 'Status',
-  source: 'Signed up from',
+  source: 'Acquisition source',
   days_since_open_gte: "Haven't opened an email in at least",
   include_never_opened: 'Also includes people who never opened',
   has_app: 'Uses the app',
@@ -80,21 +80,8 @@ export function words(name: string): string {
 export const columnLabel = (name: string) => (COLUMN_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 export const filterLabel = (name: string) => (FILTER_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 
-/** Plain headings for the definitions (02 §Derived), on /assistant and /growth; the raw names show only in Technical details. */
-export const DEFINITION_LABEL: Record<DefinitionKey, string> = {
-  days_since_open: 'Days since last open',
-  cold_since: 'Cold date',
-  cold: 'Cold',
-  went_cold_in: 'Went cold in a month',
-  no_open_in_days: "Haven't opened in N days",
-  new_subscriber: 'New subscriber',
-  going_cold_risk: 'At risk of going cold',
-  engagement_score: 'Engagement',
-  has_app: 'Uses the app',
-  app_after_signup: 'Got the app after signing up',
-  last_month: 'Last month',
-  last_n_days: 'Last N days',
-}
+/** Plain headings for the definitions (02 §Derived); their one home is shared/glossary.ts, which InfoTips read too. */
+export { DEFINITION_LABEL } from '../shared/glossary'
 
 /**
  * A plain gloss for each app event (shared/app-events.ts APP_EVENTS): the one map /events,

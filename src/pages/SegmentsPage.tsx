@@ -1,8 +1,11 @@
 // /segments (06 §/segments, R3; 09 D-69, 19-segments-spec §2 and §7): "Build a segment". Previous
 // searches first (the last 5 filter objects this browser previewed, named by segmentLabel, with the
 // brief's example always there and tagged), then the filter form in plain words: the basic filters
-// at level 1 and "More filters" (level 2, opened by itself when one is set) grouped as the brief
-// groups a subscriber: Newsletter info, Site visits, App activity. Preview (POST
+// and "More filters", grouped as the brief groups a subscriber (Newsletter info, Site visits, App
+// activity). More filters starts open, so went cold, new subscribers and site visits (the brief's
+// Growth questions) are one choice away; it still collapses (19 §7 note, 2026-10-14). A search run
+// from Previous searches or "Open list" shows its count beside the list, with a link down to the
+// result and Export CSV, and focus stays on the clicked item (19 §2). Preview (POST
 // /api/segments/preview) shows the count as a sentence and the segment's name; Export CSV (POST
 // /api/segments/export.csv) runs on the filters the server echoed for the shown result, so the
 // file always matches the count on screen. Level 2 / Technical details (06 §UI principles 2–5):
@@ -15,11 +18,11 @@
 // Every 200 preview records the echoed filters in Previous searches (src/previous-searches.ts);
 // a click on one re-runs it, so every count shown is live (03 §No-restart).
 
-import { type FormEvent, type RefObject, useEffect, useRef, useState } from 'react'
+import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
 import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 import { TODAY } from '../../shared/config'
-import { DEFINITIONS } from '../../shared/derive'
+import { DEFINITIONS, type DefinitionKey } from '../../shared/derive'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../worker/ingest/quarantine'
 import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
@@ -41,7 +44,7 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDate } from '../format'
-import { COLUMN_LABEL, EVENT_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
+import { COLUMN_LABEL, DEFINITION_LABEL, EVENT_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
 import { clearSearches, type PreviousSearch, readSearches, recordSearch, visibleSearches } from '../previous-searches'
 import type { SegmentFilters, SegmentOptions, SegmentPreview, SegmentRow } from '../types'
 import { useGet } from '../useGet'
@@ -88,15 +91,8 @@ const DEFAULT_FORM: Form = {
   appEvent: '',
 }
 
-/** The footer definitions, each with a plain heading; the raw name shows only in Technical details. */
-const FOOTER_DEFINITIONS = [
-  { label: 'Days since last open', def: DEFINITIONS.days_since_open },
-  { label: "Haven't opened in N days", def: DEFINITIONS.no_open_in_days },
-  { label: 'Cold', def: DEFINITIONS.cold },
-  { label: 'Went cold in a month', def: DEFINITIONS.went_cold_in },
-  { label: 'New subscriber', def: DEFINITIONS.new_subscriber },
-  { label: 'Engagement', def: DEFINITIONS.engagement_score },
-]
+/** The footer definitions, each under its plain heading (DEFINITION_LABEL); the raw name shows only in Technical details. */
+const FOOTER_DEFINITIONS: readonly DefinitionKey[] = ['days_since_open', 'no_open_in_days', 'cold', 'went_cold_in', 'new_subscriber', 'engagement_score']
 
 /** The CSV's columns as the export writes them (04 §Segments). */
 const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
@@ -185,6 +181,15 @@ type Result =
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`
+/** The result heading and the Announcer's words for a count. */
+const countSentence = (count: number) => (count === 0 ? 'No subscribers match' : plural(count, 'subscriber matches', 'subscribers match'))
+
+/** Where the shown preview was started: the form's Preview button, a previous search, or "Open list". */
+type Origin = 'form' | 'previous' | 'opened'
+
+/** The id of the result heading and of the preview's error line, which SearchOutcome links to. */
+const RESULT_HEADING_ID = 'result-heading'
+const PREVIEW_ERROR_ID = 'preview-error'
 
 /** The table's columns: a column whose every row would repeat the filter is left out (principle 5). */
 function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
@@ -198,7 +203,20 @@ function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
   return cols
 }
 
-function RowDetails({ row }: { row: SegmentRow }) {
+/** The matching subscribers as a table (cards on phones), each row with its Details. */
+export function MatchingRows({ filters, rows }: { filters: SegmentFilters; rows: SegmentRow[] }) {
+  return (
+    <ResponsiveTable
+      caption="Matching subscribers"
+      columns={columnsFor(filters)}
+      rows={rows}
+      rowKey={(r) => r.email}
+      details={(r) => <RowDetails row={r} />}
+    />
+  )
+}
+
+export function RowDetails({ row }: { row: SegmentRow }) {
   return (
     <dl className="space-y-1">
       <Field label={COLUMN_LABEL.signup_date}>{humanDate(row.signup_date)}</Field>
@@ -209,12 +227,47 @@ function RowDetails({ row }: { row: SegmentRow }) {
 }
 
 /**
+ * What a search started from Previous searches or "Open list" gave, shown beside the list: the
+ * result sits below the form, often below the fold, and focus stays on the clicked item (19 §2),
+ * so the count and the way to Export CSV must be visible where the click was. Not a live region:
+ * the page's Announcer already reads the count. The link moves to the result heading, from which
+ * Tab reaches Export CSV.
+ */
+export type Outcome = { status: 'loading' } | { status: 'ok'; count: number } | { status: 'error' }
+
+export function SearchOutcome({ outcome }: { outcome: Outcome }) {
+  const linkClass = 'font-medium text-accent-strong underline underline-offset-4 hover:text-accent'
+  return (
+    <p className="rounded-lg bg-surface-2 px-3 py-2 text-sm text-ink" data-testid="search-outcome">
+      {outcome.status === 'loading' && 'Counting matching subscribers…'}
+      {outcome.status === 'ok' && (
+        <>
+          <span className="font-semibold">{countSentence(outcome.count)}.</span>{' '}
+          <a href={`#${RESULT_HEADING_ID}`} className={linkClass}>
+            {outcome.count === 0 ? 'See the result' : 'See them and export the CSV'}
+          </a>
+        </>
+      )}
+      {outcome.status === 'error' && (
+        <>
+          This search didn't run.{' '}
+          <a href={`#${PREVIEW_ERROR_ID}`} className={linkClass}>
+            See why
+          </a>
+        </>
+      )}
+    </p>
+  )
+}
+
+/**
  * Previous searches (19-segments-spec §2): one button per search, named by segmentLabel, with the
  * brief's example tagged. Labels wrap, never truncate; nothing is hover-only.
  */
 function PreviousSearches({
   rows,
   hasStored,
+  outcome,
   onRun,
   onClear,
   buttonRef,
@@ -222,6 +275,8 @@ function PreviousSearches({
 }: {
   rows: PreviousSearch[]
   hasStored: boolean
+  /** The outcome of the search last run from here or from "Open list"; null after a form Preview. */
+  outcome: Outcome | null
   onRun: (row: PreviousSearch) => void
   onClear: () => void
   buttonRef: (key: string, el: HTMLButtonElement | null) => void
@@ -260,6 +315,7 @@ function PreviousSearches({
           </li>
         ))}
       </ul>
+      {outcome !== null && <SearchOutcome outcome={outcome} />}
       {hasStored && (
         <div className="flex justify-end">
           <Button variant="quiet" onClick={onClear}>
@@ -275,8 +331,10 @@ export default function SegmentsPage() {
   const location = useLocation()
   const opened = openedFilters(location.state)
   const [form, setForm] = useState<Form>(() => (opened === null ? DEFAULT_FORM : toForm(opened)))
-  const [moreOpen, setMoreOpen] = useState(() => opened !== null && moreFiltersOn(toForm(opened)) > 0)
+  // Open from the start (19 §7 note): the brief's Growth filters sit here; the toggle still collapses it.
+  const [moreOpen, setMoreOpen] = useState(true)
   const [result, setResult] = useState<Result | null>(null)
+  const [origin, setOrigin] = useState<Origin>('form')
   const [showAll, setShowAll] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
@@ -296,7 +354,8 @@ export default function SegmentsPage() {
     buttons.current.get(key)?.focus()
   }, [stored])
 
-  async function preview(filters: SegmentFilters) {
+  async function preview(filters: SegmentFilters, from: Origin) {
+    setOrigin(from)
     setResult({ status: 'loading' })
     setShowAll(false)
     setExportError(null)
@@ -316,11 +375,11 @@ export default function SegmentsPage() {
   }
 
   /** Fills the form with filters (opening More filters when one is set) and previews them. */
-  function load(filters: SegmentFilters) {
+  function load(filters: SegmentFilters, from: Origin) {
     const next = toForm(filters)
     setForm(next)
     if (moreFiltersOn(next) > 0) setMoreOpen(true)
-    void preview(toFilters(next))
+    void preview(toFilters(next), from)
   }
 
   // Filters opened from Insights or an AI answer preview once per navigation (location.key), StrictMode included.
@@ -328,17 +387,17 @@ export default function SegmentsPage() {
   useEffect(() => {
     if (opened === null || previewedFor.current === location.key) return
     previewedFor.current = location.key
-    void preview(toFilters(toForm(opened)))
+    void preview(toFilters(toForm(opened)), 'opened')
   }, [opened, location.key])
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    void preview(toFilters(form))
+    void preview(toFilters(form), 'form')
   }
 
   function runPrevious(row: PreviousSearch) {
     focusKey.current = row.key
-    load(row.filters)
+    load(row.filters, 'previous')
   }
 
   function clearPrevious() {
@@ -370,12 +429,17 @@ export default function SegmentsPage() {
   const daysBlank = form.days.trim() === ''
   const ok = result?.status === 'ok' ? result : null
   const hidden = ok !== null && !ok.filters.status.includes('unsubscribed') ? ok.data.hidden_unsubscribed : 0
-  const countSentence =
-    ok === null ? '' : ok.data.count === 0 ? 'No subscribers match' : plural(ok.data.count, 'subscriber matches', 'subscribers match')
+  const heading = ok === null ? '' : countSentence(ok.data.count)
+  const outcome: Outcome | null =
+    result === null || origin === 'form'
+      ? null
+      : result.status === 'ok'
+        ? { status: 'ok', count: result.data.count }
+        : { status: result.status }
   const moreOn = moreFiltersOn(form)
   const shownRows = ok === null ? 0 : showAll ? ok.data.rows.length : Math.min(FIRST_ROWS, ok.data.rows.length)
 
-  let announcement = countSentence
+  let announcement = heading
   if (result?.status === 'loading') announcement = 'Counting matching subscribers…'
   if (exporting) announcement = 'Preparing download…'
   if (cleared) announcement = 'Previous searches cleared.'
@@ -394,15 +458,15 @@ export default function SegmentsPage() {
     monthChoices.push({ value: form.wentCold, label: monthLabel(form.wentCold, 'short') })
   }
 
-  /** A "… in the last N days" number box. */
-  function daysBox(id: string, label: string, value: string, set: (v: string) => void, tip?: 'new_subscriber') {
+  /** A "… in the last N days" number box; `tip` is an InfoTip beside its label. */
+  function daysBox(id: string, label: string, value: string, set: (v: string) => void, tip?: ReactNode) {
     return (
       <div className="space-y-1">
         <div className="flex items-center gap-1">
           <label htmlFor={id} className={labelClass}>
             {label}
           </label>
-          {tip && <InfoTip term={tip} />}
+          {tip}
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -433,6 +497,7 @@ export default function SegmentsPage() {
       <PreviousSearches
         rows={visibleSearches(stored)}
         hasStored={stored.length > 0}
+        outcome={outcome}
         onRun={runPrevious}
         onClear={clearPrevious}
         headingRef={previousHeading}
@@ -584,7 +649,7 @@ export default function SegmentsPage() {
 
             <fieldset className="grid gap-4 sm:grid-cols-2">
               <legend className={`${groupClass} mb-2`}>Newsletter info</legend>
-              {daysBox('signed-up-days', 'Signed up in the last', form.signedUpDays, (v) => setForm({ ...form, signedUpDays: v }), 'new_subscriber')}
+              {daysBox('signed-up-days', 'Signed up in the last', form.signedUpDays, (v) => setForm({ ...form, signedUpDays: v }), <InfoTip term="new_subscriber" />)}
               <div className="space-y-1">
                 <div className="flex items-center gap-1">
                   <label htmlFor="went-cold" className={labelClass}>
@@ -678,6 +743,7 @@ export default function SegmentsPage() {
       {result?.status === 'loading' && <Loading label="Counting matching subscribers…" />}
       {result?.status === 'error' && (
         <ErrorLine
+          id={PREVIEW_ERROR_ID}
           message={result.message}
           next={
             result.invalidFilters
@@ -687,11 +753,11 @@ export default function SegmentsPage() {
         />
       )}
       {ok !== null && (
-        <section aria-labelledby="result-heading" className="space-y-3">
+        <section aria-labelledby={RESULT_HEADING_ID} className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
-              <h2 id="result-heading" className="font-display text-2xl font-semibold text-gray-900">
-                {countSentence}
+              <h2 id={RESULT_HEADING_ID} tabIndex={-1} className="scroll-mt-28 font-display text-2xl font-semibold text-gray-900 focus:outline-none">
+                {heading}
               </h2>
               <p className="text-sm text-gray-800">{segmentLabel(ok.filters)}</p>
               {hidden > 0 && <p className={hintClass}>{plural(hidden, 'unsubscribed subscriber', 'unsubscribed subscribers')} not shown.</p>}
@@ -716,13 +782,7 @@ export default function SegmentsPage() {
 
           {ok.data.rows.length > 0 && (
             <>
-              <ResponsiveTable
-                caption="Matching subscribers"
-                columns={columnsFor(ok.filters)}
-                rows={ok.data.rows.slice(0, shownRows)}
-                rowKey={(r) => r.email}
-                details={(r) => <RowDetails row={r} />}
-              />
+              <MatchingRows filters={ok.filters} rows={ok.data.rows.slice(0, shownRows)} />
               {!showAll && ok.data.rows.length > FIRST_ROWS && (
                 <Button onClick={() => setShowAll(true)}>Show all {fmt(ok.data.rows.length)} in preview</Button>
               )}
@@ -733,18 +793,18 @@ export default function SegmentsPage() {
 
       <Disclosure label="How these filters work" className="border-t border-gray-200 pt-4">
         <dl className="space-y-2 text-sm">
-          {FOOTER_DEFINITIONS.map(({ label, def }) => (
-            <div key={def.name}>
-              <dt className="font-medium text-gray-900">{label}</dt>
-              <dd className="text-gray-700">{def.doc}</dd>
+          {FOOTER_DEFINITIONS.map((key) => (
+            <div key={key}>
+              <dt className="font-medium text-gray-900">{DEFINITION_LABEL[key]}</dt>
+              <dd className="text-gray-700">{DEFINITIONS[key].doc}</dd>
             </div>
           ))}
         </dl>
         <TechnicalDetails>
           <p className="font-medium">Definitions (shared/derive.ts)</p>
-          {FOOTER_DEFINITIONS.map(({ def }) => (
-            <p key={def.name}>
-              <span className="font-mono">{def.name}</span>: <span className="font-mono">{def.formula}</span>
+          {FOOTER_DEFINITIONS.map((key) => (
+            <p key={key}>
+              <span className="font-mono">{DEFINITIONS[key].name}</span>: <span className="font-mono">{DEFINITIONS[key].formula}</span>
             </p>
           ))}
           <p>

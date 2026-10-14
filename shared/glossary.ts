@@ -2,7 +2,8 @@
 // (source, sync, rows read, kept, merged, rejected, the source statuses, the two source checks of
 // 09 D-65, webhook, the quarantine reasons and Overview's headline numbers), each with one or two sentences a
 // non-technical reader can follow (06 §UI principles 4). Derived metrics keep their text in
-// DEFINITIONS (shared/derive.ts, 02 §Derived); explain() reads either, so an InfoTip has one lookup.
+// DEFINITIONS (shared/derive.ts, 02 §Derived) under the plain headings of DEFINITION_LABEL below; explain()
+// reads either, so an InfoTip has one lookup and never shows a raw name.
 // test/sources.test.ts (T-SRC-2) checks every term the Overview names exists here or there.
 
 import { DEFINITIONS, type DefinitionKey } from './derive'
@@ -130,12 +131,33 @@ export function isGlossaryKey(key: string): key is GlossaryKey {
   return Object.hasOwn(GLOSSARY, key)
 }
 
+/**
+ * Plain headings for the definitions (02 §Derived, 06 §UI principles 4, 09 D-66): the one home of
+ * these words. An InfoTip on a definition shows its heading (explain()), and /segments, /assistant
+ * and /growth head each definition with it (src/labels.ts re-exports it); the raw name
+ * (`engagement_score`) shows only in Technical details.
+ */
+export const DEFINITION_LABEL: { readonly [K in DefinitionKey]: string } = {
+  days_since_open: 'Days since last open',
+  cold_since: 'Cold date',
+  cold: 'Cold',
+  went_cold_in: 'Went cold in a month',
+  no_open_in_days: "Haven't opened in N days",
+  new_subscriber: 'New subscriber',
+  going_cold_risk: 'At risk of going cold',
+  engagement_score: 'Engagement',
+  has_app: 'Uses the app',
+  app_after_signup: 'Got the app after signing up',
+  last_month: 'Last month',
+  last_n_days: 'Last N days',
+}
+
 /** The words and text for a term, from the glossary or DEFINITIONS; an unknown key throws (fail loud). */
 export function explain(key: string): { term: string; text: string } {
   if (isGlossaryKey(key)) return { term: GLOSSARY[key].term, text: GLOSSARY[key].text }
   if (Object.hasOwn(DEFINITIONS, key)) {
-    const d = DEFINITIONS[key as DefinitionKey]
-    return { term: d.name, text: d.doc }
+    const k = key as DefinitionKey
+    return { term: DEFINITION_LABEL[k], text: DEFINITIONS[k].doc }
   }
   throw new Error(`glossary: "${key}" is neither a glossary term nor a DEFINITIONS entry`)
 }

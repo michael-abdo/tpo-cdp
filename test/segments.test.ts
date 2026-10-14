@@ -500,6 +500,14 @@ describe('T-SEG-10 site visits', () => {
     expect((await preview({ ...PRESET, site_visit_page: '/shadrachs-picks' })).count).toBe(31)
   })
 
+  it('new subscribers who visited /shadrachs-picks = 120 active, 10 hidden (the README\'s Growth task)', async () => {
+    const page = visitedBy((v) => v.page === '/shadrachs-picks')
+    const expected = split((s) => isNewSubscriber(s.signup_date) && page.has(s.email))
+    expect(expected).toEqual({ active: 120, hidden: 10 })
+    const body = await preview({ signed_up_within_days: 30, site_visit_page: '/shadrachs-picks' })
+    expect({ active: body.count, hidden: body.hidden_unsubscribed }).toEqual(expected)
+  })
+
   it('a page holding an email, a raw id or no leading "/" is 400 invalid_filters', async () => {
     for (const page of [`/${JULIA}`, '/u_2b6447a3', 'news/church-attendance-study']) {
       await expectInvalid({ site_visit_page: page }, 'site_visit_page must be a site path')

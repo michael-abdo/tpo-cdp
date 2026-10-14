@@ -5,7 +5,7 @@ import subscribersCsv from '../data/subscribers.csv?raw'
 import overviewSource from '../src/pages/OverviewPage.tsx?raw'
 import { TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
-import { explain, GLOSSARY, isGlossaryKey } from '../shared/glossary'
+import { DEFINITION_LABEL, explain, GLOSSARY, isGlossaryKey } from '../shared/glossary'
 import { CHECK_KINDS, LOADS_BY_LABEL, SOURCES } from '../shared/sources'
 import type { Duplicates, DuplicateReview, Sources } from '../src/types'
 import { parseCsv } from '../worker/ingest/csv'
@@ -478,7 +478,13 @@ describe('Overview terms and source text (T-SRC-2)', () => {
 
   it('explain() reads both homes and fails loud on an unknown key; the two homes share no key', () => {
     expect(explain('merged')).toEqual({ term: GLOSSARY.merged.term, text: GLOSSARY.merged.text })
-    expect(explain('cold')).toEqual({ term: DEFINITIONS.cold.name, text: DEFINITIONS.cold.doc })
+    // A definition shows its plain heading, never its raw name (06 §UI principles 4, 09 D-66).
+    expect(explain('cold')).toEqual({ term: DEFINITION_LABEL.cold, text: DEFINITIONS.cold.doc })
+    expect(explain('engagement_score')).toEqual({ term: 'Engagement', text: DEFINITIONS.engagement_score.doc })
+    for (const key of Object.keys(DEFINITIONS) as (keyof typeof DEFINITIONS)[]) {
+      expect(explain(key).term, key).toBe(DEFINITION_LABEL[key])
+      expect(explain(key).term, key).not.toMatch(/_/)
+    }
     expect(() => explain('quarantined')).toThrow(/neither a glossary term nor a DEFINITIONS entry/)
     const shared = Object.keys(GLOSSARY).filter((k) => Object.hasOwn(DEFINITIONS, k))
     expect(shared).toEqual([])

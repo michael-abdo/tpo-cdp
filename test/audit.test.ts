@@ -584,7 +584,7 @@ describe("/assistant screens the model's filters_applied with the D-58 check bef
       status: 'shown',
       fields: [
         { key: 'status', label: 'Status', value: 'Active' },
-        { key: 'source', label: 'Signed up from', value: 'Instagram' },
+        { key: 'source', label: 'Acquisition source', value: 'Instagram' },
         { key: 'window_from', label: 'From', value: 'Aug 1, 2026' },
         { key: 'window_to', label: 'To', value: 'Aug 31, 2026' },
       ],
