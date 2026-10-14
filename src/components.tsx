@@ -473,7 +473,9 @@ export function InfoTip({ term }: { term: TipKey }) {
         <Icon icon={ICONS.info} className="size-3.5" />
         <span className="sr-only"> What “{words}” means </span>
       </button>
+      {/* No portal without a real body: server rendering and the tests' stub document have none. */}
       {typeof document !== 'undefined' &&
+        document.body != null &&
         createPortal(
           <span
             ref={pop}
