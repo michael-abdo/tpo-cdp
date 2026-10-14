@@ -8,7 +8,16 @@ import { ingestSubscribers } from '../worker/ingest/subscribers'
 import { csvTimestampToIso, ingestWeb } from '../worker/ingest/web'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, realCsvs } from './helpers/seed'
-import { JOY, rowAt, SECOND_ACCOUNT, SECOND_VISITOR, sharedIdCsvs } from './helpers/shared-ids'
+import {
+  JOY,
+  OWN_ACCOUNT,
+  OWN_ACCOUNT_EVENT,
+  rowAt,
+  SECOND_ACCOUNT,
+  SECOND_VISITOR,
+  sharedIdCsvs,
+} from './helpers/shared-ids'
+import { eventIdPool, sendWebhook } from './helpers/webhook'
 
 // 09 D-70 items 4 and 9, tests 08 T-HARD-4 and T-HARD-9 (item 8 is T-HARD-8 in
 // test/normalize.test.ts, beside T-NORM-3; the page half of item 4 is test/ui/lookup-profile.test.ts).
@@ -17,7 +26,8 @@ import { JOY, rowAt, SECOND_ACCOUNT, SECOND_VISITOR, sharedIdCsvs } from './help
 // files. Inputs, all derived from real rows (09 D-47: every value introduced occurs in data/*.csv
 // or is a removal):
 // - T-HARD-4: joy.hall830 with a second app account and a second web visitor, as
-//   test/helpers/shared-ids.ts derives them.
+//   test/helpers/shared-ids.ts derives them, and one app event on her later account u_ceed5f12:
+//   the brief's sample webhook with that user_id (09 D-11), sent through the real webhook.
 // - T-HARD-9 /subscribe variants: joy's /subscribe row with the page given a query built from
 //   the file's own column name and value (`?utm_source=instagram`) or a trailing slash; every
 //   /subscribe row of the real file rewritten the same way; real pages (/about, /), real pages
@@ -36,6 +46,8 @@ beforeAll(async () => {
   const seed = await buildSeed(sharedIdCsvs(), piiKeySecret())
   const ranAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   for (const file of seedSql(seed, ranAt)) await env.DB.batch(file.statements.map((s) => env.DB.prepare(s)))
+  const res = await sendWebhook(JSON.stringify({ event_id: eventIdPool()(), ...OWN_ACCOUNT_EVENT }))
+  expect(res.status).toBe(202)
   cookie = await loginCookie()
 })
 
@@ -61,10 +73,25 @@ describe('T-HARD-4 lookup returns every app account and web visitor of one profi
     const app = body.app!
     expect(app.accounts.map((a) => [a.user_id, a.created_at, a.from_csv])).toEqual([
       [SECOND_ACCOUNT, '2026-08-22', true],
-      ['u_ceed5f12', '2026-09-03', true],
+      [OWN_ACCOUNT, '2026-09-03', true],
     ])
     const { accounts, ...firstAccount } = app
     expect(firstAccount).toEqual(accounts[0])
+    // Each account carries only its own devices and events: the webhook named u_ceed5f12 alone.
+    expect(accounts.map((a) => [a.devices, a.events])).toEqual([
+      [[], []],
+      [
+        [OWN_ACCOUNT_EVENT.device_id],
+        [
+          {
+            event: OWN_ACCOUNT_EVENT.event,
+            event_ts: OWN_ACCOUNT_EVENT.timestamp,
+            properties: OWN_ACCOUNT_EVENT.properties,
+            attached_via: 'direct',
+          },
+        ],
+      ],
+    ])
 
     const web = body.web!
     expect(web.visitors.map((v) => v.visitor_id)).toEqual([SECOND_VISITOR, 'v_c9e136fd6d'])
@@ -94,9 +121,10 @@ describe('T-HARD-4 lookup returns every app account and web visitor of one profi
     expect([body.web!.first_page, body.web!.first_utm_source]).toEqual([view!.first_page, view!.first_utm_source])
   })
 
-  it('each account id and each visitor id opens the same whole profile', async () => {
+  it('each account id, each visitor id and the device opens the same whole profile', async () => {
     const byEmail = await lookup(JOY)
-    for (const q of [SECOND_ACCOUNT, 'u_ceed5f12', SECOND_VISITOR, 'v_c9e136fd6d']) expect(await lookup(q), q).toEqual(byEmail)
+    const ids = [SECOND_ACCOUNT, OWN_ACCOUNT, SECOND_VISITOR, 'v_c9e136fd6d', OWN_ACCOUNT_EVENT.device_id]
+    for (const q of ids) expect(await lookup(q), q).toEqual(byEmail)
   })
 
   it('partial lookup lists the profile once: by email with its earliest account, by a user id prefix with the lowest matching id', async () => {
@@ -133,6 +161,8 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
     // only the exact path /subscribe (query string and one trailing slash removed) links.
     const pages = ['/about', '/', '/about?utm_source=instagram', '/subscribe/about', '/subscribe/news/ai-regulation-bill']
     pages.push('/subscribe/about?utm_source=instagram', '/subscrib', '/subscrib?utm_source=instagram', '/subscrib/')
+    // One trailing slash is removed, not every one.
+    pages.push('/subscribe//', '/subscribe//?utm_source=instagram')
     for (const page of pages)
       expect(() => visitorOf([[subscribe[0], page, ...subscribe.slice(2)]]), page).toThrow('only /subscribe rows link')
   })

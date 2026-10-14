@@ -24,6 +24,23 @@ import type { SeedCsvs } from '../../worker/ingest/link'
 export const JOY = 'joy.hall830@protonmail.com'
 export const SECOND_ACCOUNT = 'u_ceed5f2'
 export const SECOND_VISITOR = 'v_e792b1c600'
+/** Joy's real account (app_users.csv:303), the later of her two by created_at. */
+export const OWN_ACCOUNT = 'u_ceed5f12'
+
+/**
+ * One app event on joy's later account, so each account's own events and devices are exercised:
+ * the brief's sample webhook (04 §Webhook body, 09 D-11) with its user_id set to u_ceed5f12, as
+ * test/lookup.test.ts T-API-1 sends it. test/hardening-ids.test.ts sends it through the real
+ * webhook; test/ui/lookup-profile.test.ts shows it in the shape GET /api/lookup returns, and the API
+ * test pins that shape against the same constant.
+ */
+export const OWN_ACCOUNT_EVENT = {
+  event: 'read_story',
+  user_id: OWN_ACCOUNT,
+  device_id: 'd_4b21e8',
+  timestamp: '2026-09-28T14:22:05Z',
+  properties: { story: 'supreme-court-ruling-explained' },
+} as const
 
 /** A copy of a real parsed row by its file line. */
 export function rowAt(csv: ParsedCsv, lineNo: number): string[] {

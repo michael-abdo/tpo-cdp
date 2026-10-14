@@ -373,7 +373,9 @@ const TIP_WIDTH = 288
  * page-enter animation's transform would make `fixed` relative to the page block instead of the
  * viewport, and a table's overflow would clip it; from <body> it does neither and never widens the
  * page. The button is `select-none`, so copying the text around it never picks up its
- * screen-reader words (no "Mergedwhat Merged means85").
+ * screen-reader words (no "Mergedwhat Merged means85"). Where there is no `document` (a server
+ * render, as test/ui renders pages) the popover is left out, as React's server renderer cannot
+ * render portals; the app renders only in the browser (createRoot), where it is always there.
  */
 export function InfoTip({ term }: { term: TipKey }) {
   const { term: words, text } = explain(term)
@@ -438,26 +440,27 @@ export function InfoTip({ term }: { term: TipKey }) {
         <Icon icon={ICONS.info} className="size-3.5" />
         <span className="sr-only"> What “{words}” means </span>
       </button>
-      {createPortal(
-        <span
-          ref={pop}
-          id={id}
-          role="status"
-          className={
-            open
-              ? 'fixed z-30 block rounded-lg border border-line-strong bg-surface p-3 text-left text-sm font-normal tracking-normal text-ink normal-case shadow-soft'
-              : 'sr-only'
-          }
-        >
-          {open && (
-            <>
-              <span className="block font-medium">{words}</span>{' '}
-              <span className="mt-1 block text-ink-muted">{text}</span>
-            </>
-          )}
-        </span>,
-        document.body,
-      )}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <span
+            ref={pop}
+            id={id}
+            role="status"
+            className={
+              open
+                ? 'fixed z-30 block rounded-lg border border-line-strong bg-surface p-3 text-left text-sm font-normal tracking-normal text-ink normal-case shadow-soft'
+                : 'sr-only'
+            }
+          >
+            {open && (
+              <>
+                <span className="block font-medium">{words}</span>{' '}
+                <span className="mt-1 block text-ink-muted">{text}</span>
+              </>
+            )}
+          </span>,
+          document.body,
+        )}
     </span>
   )
 }

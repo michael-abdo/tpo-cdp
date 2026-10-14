@@ -8,7 +8,7 @@ import type { Lookup, LookupAppAccount, LookupVisitor } from '../../src/types'
 import { ingestApp } from '../../worker/ingest/app'
 import { ingestSubscribers } from '../../worker/ingest/subscribers'
 import { ingestWeb } from '../../worker/ingest/web'
-import { JOY, SECOND_ACCOUNT, SECOND_VISITOR, sharedIdCsvs } from '../helpers/shared-ids'
+import { JOY, OWN_ACCOUNT, OWN_ACCOUNT_EVENT, SECOND_ACCOUNT, SECOND_VISITOR, sharedIdCsvs } from '../helpers/shared-ids'
 
 // The Look up page's half of 09 D-70 item 4 (08 T-HARD-4; the API half is test/hardening-ids.test.ts):
 // a profile with two app accounts and two web visitors shows how many at level 1 and each one under
@@ -16,7 +16,9 @@ import { JOY, SECOND_ACCOUNT, SECOND_VISITOR, sharedIdCsvs } from '../helpers/sh
 // of test/helpers/shared-ids.ts, shaped as GET /api/lookup returns it (04: earliest first, the
 // single-object fields = the first) by the seed's own pure ingest steps. Its pkey is shown only in
 // Technical details and asserted nowhere: it needs PII_KEY_SECRET, which this project cannot read,
-// so it carries 04's own placeholder.
+// so it carries 04's own placeholder. Her later account u_ceed5f12 holds one app event, the brief's
+// sample webhook as test/helpers/shared-ids.ts defines it, in the shape test/hardening-ids.test.ts
+// pins for GET /api/lookup.
 
 function joyProfile(): Lookup {
   const csvs = sharedIdCsvs()
@@ -38,11 +40,21 @@ function joyProfile(): Lookup {
   const accounts: LookupAppAccount[] = [...ingestApp(csvs.app_users).users.values()]
     .filter((u) => u.email_norm === JOY)
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
-    .map((u) => ({ user_id: u.user_id, created_at: u.created_at, from_csv: true, devices: [], events: [] }))
+    .map((u) => {
+      const own = u.user_id === OWN_ACCOUNT
+      const { event, timestamp, properties, device_id } = OWN_ACCOUNT_EVENT
+      return {
+        user_id: u.user_id,
+        created_at: u.created_at,
+        from_csv: true,
+        devices: own ? [device_id] : [],
+        events: own ? [{ event, event_ts: timestamp, properties, attached_via: 'direct' as const }] : [],
+      }
+    })
   const window = lastNDays(30)
-  const visitsLast30d = visitors
-    .flatMap((v) => v.events)
-    .filter((e) => daysBetween(window.from, e.event_ts) >= 0 && daysBetween(e.event_ts, window.to) >= 0).length
+  const inLast30d = (ts: string) => daysBetween(window.from, ts) >= 0 && daysBetween(ts, window.to) >= 0
+  const visitsLast30d = visitors.flatMap((v) => v.events).filter((e) => inLast30d(e.event_ts)).length
+  const appEventsLast30d = accounts.flatMap((a) => a.events).filter((e) => inLast30d(e.event_ts)).length
   return {
     profile: {
       pkey: 'pk_…',
@@ -50,7 +62,7 @@ function joyProfile(): Lookup {
       email: JOY,
       engagement_score: engagementScore({
         last_open_date: subscriber.last_open_date,
-        app_events_last_30d: 0,
+        app_events_last_30d: appEventsLast30d,
         site_visits_last_30d: visitsLast30d,
       }),
       cold_since: coldSince(subscriber.last_open_date, subscriber.signup_date),
@@ -78,7 +90,10 @@ describe('T-HARD-4 the Look up page shows every app account and web visitor (09 
   const data = joyProfile()
 
   it('starts from two of each, earliest first', () => {
-    expect(data.app!.accounts.map((a) => a.user_id)).toEqual([SECOND_ACCOUNT, 'u_ceed5f12'])
+    expect(data.app!.accounts.map((a) => [a.user_id, a.events.length])).toEqual([
+      [SECOND_ACCOUNT, 0],
+      [OWN_ACCOUNT, 1],
+    ])
     expect(data.web!.visitors.map((v) => [v.visitor_id, v.events.length])).toEqual([
       [SECOND_VISITOR, 3],
       ['v_c9e136fd6d', 9],
@@ -87,15 +102,21 @@ describe('T-HARD-4 the Look up page shows every app account and web visitor (09 
 
   it('level 1 counts across both and says how many', () => {
     const html = rendered(data)
-    expect(html).toContain('12 visits from 2 browsers')
-    expect(html).toContain('2 app accounts, the first joined Aug 22, 2026, before signing up')
+    // Each number needs both browsers: the first alone has 3 visits, 1 before signing up, the last
+    // on Sep 3; the second has 9, 3 before, the last on Sep 28.
+    expect(html).toContain('<p>12 visits from 2 browsers, 4 before signing up · last on Sep 28, 2026</p>')
+    expect(html).toContain('<p>2 app accounts, the first joined Aug 22, 2026, before signing up</p>')
+    // The one app event is on the second account; the first has none.
+    expect(html).toContain('<p>1 app event · last on Sep 28, 2026</p>')
+    expect(html).toContain('Show 1 app event')
   })
 
   it('Details and Technical details list each one under its own heading, with its own ids', () => {
     const html = rendered(data)
     for (const part of ['Browser 1 of 2 · 3 visits', 'Browser 2 of 2 · 9 visits', 'App account 1 of 2', 'App account 2 of 2'])
       expect(html).toContain(part)
-    expect(html).toContain('App account 2 of 2 · joined Sep 3, 2026')
+    expect(html).toContain('App account 1 of 2 · joined Aug 22, 2026 · 0 app events')
+    expect(html).toContain('App account 2 of 2 · joined Sep 3, 2026 · 1 app event')
     for (const id of [`>${SECOND_ACCOUNT}<`, '>u_ceed5f12<', `>${SECOND_VISITOR}<`, '>v_c9e136fd6d<']) expect(html).toContain(id)
   })
 
