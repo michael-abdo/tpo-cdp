@@ -61,7 +61,7 @@ const QUESTION = (who: string) => `Of ${who}, how many are ${RULE_WORDS}, and wh
 export const GOING_COLD_TOTAL_EXPLAIN = QUESTION('all active subscribers')
 
 /** The question behind the hidden-unsubscribed count. */
-export const GOING_COLD_HIDDEN_EXPLAIN = `How many unsubscribed readers are ${RULE_WORDS}?`
+export const GOING_COLD_HIDDEN_EXPLAIN = `How many subscribers who unsubscribed are ${RULE_WORDS}?`
 
 /** The question behind one source's row. */
 export function goingColdExplain(source: string | null): string {

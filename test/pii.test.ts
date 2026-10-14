@@ -211,6 +211,10 @@ describe('T-PII-1: a request built from a real profile question carries no PII',
     expect(system).toContain('Every number in an answer must come from a tool result. If no tool returned it, say you cannot answer.')
     expect(system).toContain('including opinions on news stories')
     expect(system).toContain('Never show SQL.')
+    // 09 D-66: the teammate reads plain words; the cold rule names no definition or filter, dates are never ISO in "text".
+    expect(system).toContain('say what going cold means in plain words, the way the teammate would say it, without naming any definition, filter, column or tool')
+    expect(system).toContain('write dates the way people read them, like "Aug 1–31, 2026" or "Sep 28, 2026", never as YYYY-MM-DD')
+    expect(system).not.toContain('and the answer says so')
     for (const type of ['answer', 'table', 'segment']) expect(system).toContain(`"${type}"`)
     expect(system).not.toContain('@')
   })

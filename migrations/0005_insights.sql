@@ -19,14 +19,14 @@ CREATE TABLE insights (
 
 -- The four former /growth panels as built-in tiles (09 D-64). Their numbers come from the panel
 -- functions in worker/insights/*.ts through the board-only insight_panel tool; the titles are the
--- ones the Growth page showed. created_at reads the wall clock ('now'): 02 §Time allows it for
+-- ones the Growth page showed, in the brief's words (09 D-66). created_at reads the wall clock ('now'): 02 §Time allows it for
 -- insights.created_at (09 D-64); no date rule reads it.
 INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at) VALUES
   ('builtin-source-app-conversion', 'Newsletter subscribers who then got the app', NULL, 'insight_panel', 1,
    '{"panel":"source-app-conversion"}', NULL, 10, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   ('builtin-funnel', 'Website visitors who subscribed', NULL, 'insight_panel', 1,
    '{"panel":"funnel"}', NULL, 20, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  ('builtin-going-cold', 'Readers at risk of going cold', NULL, 'insight_panel', 1,
+  ('builtin-going-cold', 'Subscribers at risk of going cold', NULL, 'insight_panel', 1,
    '{"panel":"going-cold"}', NULL, 30, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   ('builtin-data-quality', 'Gaps in the data', NULL, 'insight_panel', 1,
    '{"panel":"data-quality"}', NULL, 40, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));

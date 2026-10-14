@@ -246,7 +246,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
             text(
               finalText('46 Instagram signups went cold in August.', {
                 type: 'answer',
-                text: '46 active Instagram signups went cold in August 2026 (cold_since inside 2026-08-01..2026-08-31).',
+                text: '46 active Instagram signups went cold in Aug 1–31, 2026: that is when they reached 30 days without opening an email.',
                 window: { from: '2026-08-01', to: '2026-08-31' },
                 filters_applied: { status: ['active'], source: ['instagram'] },
                 definitions_used: ['went_cold_in', 'last_month'],
