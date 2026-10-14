@@ -25,7 +25,7 @@ import SegmentsPage from './pages/SegmentsPage'
 const NAV: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
   { to: '/', label: 'Overview', icon: ICONS.overview },
   { to: '/lookup', label: 'Find a reader', icon: ICONS.lookup },
-  { to: '/segments', label: 'Build a list', icon: ICONS.segments },
+  { to: '/segments', label: 'Segments', icon: ICONS.segments },
   { to: '/events', label: 'App events', icon: ICONS.events },
   { to: '/assistant', label: 'Ask a question', icon: ICONS.assistant },
   { to: '/growth', label: 'Growth', icon: ICONS.growth },

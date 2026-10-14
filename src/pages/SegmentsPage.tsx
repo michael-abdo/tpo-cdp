@@ -251,7 +251,7 @@ function PreviousSearches({
                 {row.example && (
                   <span className="ml-2 inline-flex align-middle">
                     <Tag tone="neutral">
-                      <span className="sr-only">(</span>the brief's example<span className="sr-only">)</span>
+                      <span className="sr-only"> (</span>the brief's example<span className="sr-only">)</span>
                     </Tag>
                   </span>
                 )}

@@ -74,7 +74,7 @@ export async function downloadSegmentCsv(filters: SegmentFilters): Promise<void>
   const url = URL.createObjectURL(await res.blob())
   const link = document.createElement('a')
   link.href = url
-  link.download = `readers-to-email-${TODAY}.csv`
+  link.download = `segment-${TODAY}.csv`
   link.click()
   URL.revokeObjectURL(url)
 }
