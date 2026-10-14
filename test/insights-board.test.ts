@@ -14,6 +14,7 @@ import {
   namesASubject,
   NOT_PINNABLE_MESSAGE,
   NOT_PINNABLE_OTHER_MESSAGE,
+  PERSON_LIST_CAP,
   PIN_FAILED_MESSAGE,
   REQUEST_APPROVAL_MESSAGE,
   SORT_ORDER_MAX,
@@ -21,6 +22,7 @@ import {
 } from '../worker/insights/board'
 import { detectWindow, resolveWindow } from '../shared/insight-window'
 import { sanitizeQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
+import { SQL_ROW_LIMIT } from '../worker/assistant/gates/gate3-readonly-sql'
 import { findPII, loadKnownEmails } from '../worker/assistant/gates/pii-guard'
 import { MODEL } from '../worker/assistant/build-request'
 import type { MessagesTransport } from '../worker/assistant/loop'
@@ -1313,6 +1315,150 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       expect(body.details[0].field).toBe('question')
       expect(await tileCount(), word).toBe(before)
     }
+  })
+})
+
+// T-INS-10..14 (09 D-64b, amending D-64a): a free-form query_sql answer pins when its SQL passes
+// the positive grammar of worker/insights/pin-grammar.ts — one test per shape (A: totals, B: the
+// small-group mask, "lists": a person list), plus the refusal that queues approval and the
+// approval flow itself. Every SQL here is one real tool call through the production assistant
+// route (askAnswer/askRecorded), never written SQL run outside that path.
+describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask, a person list), plus human approval', () => {
+  it('T-INS-10 shape A: a totals query (count(*), a dimension grouped) pins and matches the same count run directly', async () => {
+    const sql = "SELECT source, count(*) AS subscribers FROM v_profiles WHERE status = 'active' GROUP BY source"
+    const answer = await askAnswer('how many active subscribers come from each source?', [
+      { name: 'query_sql', input: { sql, explanation: 'active subscribers grouped by source' } },
+    ])
+    expect(answer.pin_refusal).toBeNull()
+    const tile = await pin({ audit_id: answer.audit_id })
+    expect(tile.status).toBe('ok')
+    expect(tile.result?.columns).toEqual(['source', 'subscribers'])
+    expect(tile.result?.rows.length).toBeGreaterThan(0)
+    // Wrapped as its own new, enabled query-type assistant_tools row (09 D-64b), not literally query_sql.
+    const storedRow = await stored(tile.id)
+    expect(storedRow!.tool).not.toBe('query_sql')
+    const toolRow = await env.DB.prepare('SELECT handler_type, enabled, requested_from_trace FROM assistant_tools WHERE name = ?').bind(storedRow!.tool).first<{
+      handler_type: string
+      enabled: number
+      requested_from_trace: string | null
+    }>()
+    expect(toolRow).toMatchObject({ handler_type: 'query', enabled: 1, requested_from_trace: null })
+    // Two paths, one number (the file's own rule): the same grouped counts, read directly.
+    const direct = await env.DB.prepare(sql).all<{ source: string; subscribers: number }>()
+    expect(new Map(tile.result!.rows.map((r) => [r.source, r.subscribers]))).toEqual(new Map(direct.results.map((r) => [r.source, r.subscribers])))
+    // Re-running the board re-runs it through the same wrapped tool, no model call, same numbers.
+    const onBoard = (await board()).tiles.find((t) => t.id === tile.id)!
+    expect(onBoard.result?.rows).toEqual(tile.result?.rows)
+    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
+
+  it('T-INS-11 shape B: any row whose people count reads under 5 shows "< 5" in every other column, every run', async () => {
+    // A real small group, found rather than assumed (09 D-47): the smallest (source, status, signup month) triple
+    // (finer than source+status alone, which this seed never makes small; a date bucket is itself an allowed dimension).
+    const smallest = await env.DB.prepare(
+      "SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS n FROM v_profiles GROUP BY source, status, substr(signup_date, 1, 7) ORDER BY n ASC LIMIT 1",
+    ).first<{ source: string | null; status: string; month: string; n: number }>()
+    expect(smallest!.n).toBeLessThan(5) // the seed must hold at least one tiny group for this test to mean anything
+    const sql =
+      'SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS subscribers FROM v_profiles ' +
+      'GROUP BY source, status, substr(signup_date, 1, 7)'
+    const answer = await askAnswer('how many subscribers by source, status and signup month?', [
+      { name: 'query_sql', input: { sql, explanation: 'subscribers by source, status and signup month' } },
+    ])
+    const tile = await pin({ audit_id: answer.audit_id })
+    expect(tile.status).toBe('ok')
+    const small = tile.result!.rows.find((r) => r.source === smallest!.source && r.status === smallest!.status && r.month === smallest!.month)!
+    expect(small.subscribers).toBe('< 5')
+    // The dimension columns stay visible; only the masked count differs from a direct read.
+    const big = tile.result!.rows.find((r) => typeof r.subscribers === 'number' && (r.subscribers as number) >= 5)
+    expect(big).toBeDefined()
+    // Masked on every run, not just the first (09 D-64b "at pin time and on every board run").
+    const onBoard = (await board()).tiles.find((t) => t.id === tile.id)!
+    expect(onBoard.result!.rows.find((r) => r.source === smallest!.source && r.status === smallest!.status && r.month === smallest!.month)!.subscribers).toBe(
+      '< 5',
+    )
+    // The real small count itself is nowhere in the response (never sent to the model either):
+    // every masked row shows the string "< 5", never the real number that triggered the mask.
+    for (const row of onBoard.result!.rows) expect(row.subscribers === '< 5' || (row.subscribers as number) >= 5).toBe(true)
+    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
+
+  it('T-INS-12 "lists": a bare pkey plus approved columns pins as a person list, re-hydrated to email and capped at 10', async () => {
+    const real = await env.DB.prepare("SELECT count(*) AS n FROM v_profiles WHERE source = 'instagram' AND status = 'active'").first<number>('n')
+    expect(real).toBeGreaterThan(SQL_ROW_LIMIT) // the test means something only once Gate 3's own cap, not just board.ts's, binds
+    const sql = "SELECT pkey, source, status FROM v_profiles WHERE source = 'instagram' AND status = 'active'"
+    const answer = await askAnswer('list Instagram active subscribers', [{ name: 'query_sql', input: { sql, explanation: 'Instagram active subscribers' } }])
+    expect(answer.pin_refusal).toBeNull()
+    const tile = await pin({ audit_id: answer.audit_id })
+    expect(tile.status).toBe('ok')
+    expect(tile.result?.columns).toEqual(['email', 'source', 'status'])
+    expect(tile.result?.rows.length).toBe(PERSON_LIST_CAP)
+    // Gate 3 itself returns at most SQL_ROW_LIMIT rows (03 row 8); rows_total is how many of
+    // those this run got back, not the unlimited real population (the full list is Segments/export).
+    expect(tile.result?.summary.rows_total).toBe(SQL_ROW_LIMIT)
+    expect(tile.result?.summary.may_have_more_rows).toBe(true)
+    expect(tile.result?.summary.rows_shown).toBe(PERSON_LIST_CAP)
+    // Re-hydrated for staff: every row names a real subscriber's email (05 §Re-hydration), no raw pk_ key left.
+    const JOY_PKEY_ROW = await env.DB.prepare(
+      "SELECT p.pkey AS pkey FROM profiles p JOIN subscribers s ON s.email_norm = p.email_norm WHERE s.source = 'instagram' AND s.status = 'active' LIMIT 1",
+    ).first<string>('pkey')
+    expect(JOY_PKEY_ROW).not.toBeNull()
+    for (const row of tile.result!.rows) {
+      expect(typeof row.email).toBe('string')
+      expect(row.email as string).not.toMatch(/^pk_/)
+    }
+    // "Explain this" sends the model totals only: the pinned explain text carries no row data.
+    expect(tile.explain).not.toContain('@')
+    expect(tile.explain).not.toMatch(/pk_[0-9a-f]{16}/)
+    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
+
+  it('T-INS-13 refusal: anything else is 400 not_pinnable with "Request approval" and queues a disabled row', async () => {
+    // Window functions are Gate 2/3-legal (so this runs fine live) but not one of the two pinnable shapes.
+    const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
+    const answer = await askAnswer('rank each source', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked' } }])
+    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_MESSAGE)
+    const beforeTiles = await tileCount()
+    const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; message: string; details: string[] }>()
+    expect(body).toMatchObject({ error: 'not_pinnable', message: REQUEST_APPROVAL_MESSAGE })
+    expect(body.details).toEqual(['window functions (OVER) are not allowed'])
+    expect(await tileCount()).toBe(beforeTiles)
+    const pending = await env.DB.prepare('SELECT enabled, requested_from_trace FROM assistant_tools WHERE requested_from_trace = ?')
+      .bind(answer.audit_id)
+      .first<{ enabled: number; requested_from_trace: string }>()
+    expect(pending).toMatchObject({ enabled: 0, requested_from_trace: answer.audit_id })
+  })
+
+  it('T-INS-14 approval: a wrong password is 403; the right one (+ name, note) enables the row and pins it', async () => {
+    const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
+    const answer = await askAnswer('rank each source again', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked, again' } }])
+    await api('', { method: 'POST', body: { audit_id: answer.audit_id } }) // queues the approval
+    const pendingId = await env.DB.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<string>('id')
+    expect(pendingId).not.toBeNull()
+
+    const wrong = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: 'not-it', name: 'Growth', note: 'ranking view' } })
+    expect(wrong.status).toBe(403)
+    expect((await wrong.json<{ error: string }>()).error).toBe('wrong_password')
+    expect(await env.DB.prepare('SELECT enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<number>('enabled')).toBe(0)
+
+    const beforeTiles = await tileCount()
+    const ok = await api(`/approvals/${pendingId}/approve`, {
+      method: 'POST',
+      body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'useful for the source review' },
+    })
+    expect(ok.status, await ok.clone().text()).toBe(201)
+    const tile = await ok.json<Tile>()
+    expect(tile.status).toBe('ok')
+    expect(await tileCount()).toBe((beforeTiles ?? 0) + 1)
+    const toolRow = await env.DB.prepare('SELECT enabled, metadata FROM assistant_tools WHERE id = ?').bind(pendingId).first<{ enabled: number; metadata: string }>()
+    expect(toolRow!.enabled).toBe(1)
+    expect(JSON.parse(toolRow!.metadata).approval).toMatchObject({ by: 'Growth', note: 'useful for the source review' })
+    // Approving twice (an already-enabled row) is 404, not a second tile.
+    const again = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'again' } })
+    expect(again.status).toBe(404)
+    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
 })
 
