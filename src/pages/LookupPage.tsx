@@ -27,7 +27,21 @@ import { Link, useSearchParams } from 'react-router'
 import { DEFINITIONS, isCold } from '../../shared/derive'
 import { QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
 import { ApiError, errorMessage, getJson } from '../api'
-import { Announcer, Button, Disclosure, ErrorLine, Field, Loading, PageHeader, Tag, TechnicalDetails } from '../components'
+import { AppWindow, Globe, Mail } from 'lucide-react'
+import {
+  Announcer,
+  Button,
+  Disclosure,
+  ErrorLine,
+  Field,
+  ICONS,
+  Icon,
+  type LucideIcon,
+  Loading,
+  PageHeader,
+  Tag,
+  TechnicalDetails,
+} from '../components'
 import { capitalized, humanDate, humanDateTime, utc } from '../format'
 import type { Lookup, LookupSearch } from '../types'
 
@@ -63,8 +77,11 @@ function eventLabel(event: string): string {
 function ScoreMeter({ score }: { score: number }) {
   return (
     <span className="inline-flex items-center gap-2 text-sm text-gray-800">
-      <span aria-hidden="true" className="inline-block h-2 w-24 overflow-hidden rounded bg-gray-200">
-        <span className="block h-full bg-blue-600" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
+      <span aria-hidden="true" className="inline-block h-2 w-24 overflow-hidden rounded-full bg-surface-2">
+        <span
+          className="block h-full rounded-full bg-accent"
+          style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+        />
       </span>
       Engagement {score} of 100
     </span>
@@ -72,10 +89,23 @@ function ScoreMeter({ score }: { score: number }) {
 }
 
 /** A column of the profile: an h3, one or two summary lines, then its level-2 Disclosure. */
-function Column({ title, summary, children }: { title: string; summary: ReactNode; children?: ReactNode }) {
+function Column({
+  title,
+  summary,
+  children,
+  icon,
+}: {
+  title: string
+  summary: ReactNode
+  children?: ReactNode
+  icon?: LucideIcon
+}) {
   return (
-    <section className="space-y-2 rounded border border-gray-200 p-4">
-      <h3 className="font-semibold text-gray-900">{title}</h3>
+    <section className="space-y-2 rounded-xl border border-line bg-surface p-5 shadow-soft">
+      <h3 className="flex items-center gap-2 font-semibold text-ink">
+        {icon && <Icon icon={icon} className="size-4 text-accent" />}
+        {title}
+      </h3>
       <div className="space-y-0.5 text-sm text-gray-700">{summary}</div>
       {children}
     </section>
@@ -95,7 +125,7 @@ function Header({ data }: { data: Lookup }) {
     facts.push(`signed up ${humanDate(newsletter.signup_date)}`)
   }
   return (
-    <div className="space-y-2 rounded border border-gray-200 p-4">
+    <div className="space-y-2 rounded-xl border border-line bg-surface p-5 shadow-soft">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <h2 className="break-all text-lg font-semibold text-gray-900">{identity}</h2>
         <ScoreMeter score={profile.engagement_score} />
@@ -133,15 +163,19 @@ function coldLine(coldSince: string, neverOpened: boolean): string {
 }
 
 function Newsletter({ data, coldSince }: { data: Lookup['newsletter']; coldSince: string | null }) {
-  if (data === null) return <Column title="Newsletter" summary={<p>No newsletter record</p>} />
+  if (data === null) return <Column title="Newsletter" icon={Mail} summary={<p>No newsletter record</p>} />
   const summary = (
     <>
-      <p>{data.last_open_date === null ? 'Never opened an email' : `Last opened ${humanDate(data.last_open_date)}`}</p>
+      <p>
+        {data.last_open_date === null
+          ? 'Never opened an email'
+          : `Last opened ${humanDate(data.last_open_date)}`}
+      </p>
       {coldSince !== null && <p>{coldLine(coldSince, data.last_open_date === null)}</p>}
     </>
   )
   return (
-    <Column title="Newsletter" summary={summary}>
+    <Column title="Newsletter" icon={Mail} summary={summary}>
       <Disclosure label="Details">
         <p className="text-sm text-gray-700">{DEFINITIONS.cold_since.doc}</p>
         <TechnicalDetails>
@@ -160,7 +194,7 @@ function Newsletter({ data, coldSince }: { data: Lookup['newsletter']; coldSince
 }
 
 function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: boolean }) {
-  if (data === null) return <Column title="Website" summary={<p>No website history</p>} />
+  if (data === null) return <Column title="Website" icon={Globe} summary={<p>No website history</p>} />
   const visits = data.events
   const before = visits.filter((e) => e.pre_signup).length
   const last = latest(visits.map((e) => e.event_ts))
@@ -182,12 +216,17 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
       </>
     )
   return (
-    <Column title="Website" summary={summary}>
-      <Disclosure label={visits.length === 0 ? 'Details' : `Show ${plural(visits.length, 'visit', 'visits')}`}>
+    <Column title="Website" icon={Globe} summary={summary}>
+      <Disclosure
+        label={visits.length === 0 ? 'Details' : `Show ${plural(visits.length, 'visit', 'visits')}`}
+      >
         {visits.length > 0 && (
           <ol className="space-y-1 text-sm">
             {visits.map((e, i) => (
-              <li key={`${e.event_ts}-${i}`} className={`rounded px-2 py-1 ${e.pre_signup ? 'bg-gray-50' : ''}`}>
+              <li
+                key={`${e.event_ts}-${i}`}
+                className={`rounded px-2 py-1 ${e.pre_signup ? 'bg-gray-50' : ''}`}
+              >
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="break-all font-mono text-gray-900">{e.page}</span>
                   {e.pre_signup && <Tag>Before signing up</Tag>}
@@ -228,10 +267,16 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
 }
 
 /** When the app account came relative to the newsletter signup, in words (02 §Linking 6). */
-function joinedWhen(app: NonNullable<Lookup['app']>, newsletter: Lookup['newsletter'], afterSignup: boolean): string {
+function joinedWhen(
+  app: NonNullable<Lookup['app']>,
+  newsletter: Lookup['newsletter'],
+  afterSignup: boolean,
+): string {
   if (newsletter === null) return ''
   if (afterSignup) return ', after signing up'
-  return app.created_at.slice(0, 10) === newsletter.signup_date ? ', the day they signed up' : ', before signing up'
+  return app.created_at.slice(0, 10) === newsletter.signup_date
+    ? ', the day they signed up'
+    : ', before signing up'
 }
 
 function AppActivity({
@@ -245,7 +290,7 @@ function AppActivity({
   afterSignup: boolean
   isStub: boolean
 }) {
-  if (data === null) return <Column title="App" summary={<p>No app account</p>} />
+  if (data === null) return <Column title="App" icon={AppWindow} summary={<p>No app account</p>} />
   const events = data.events
   const last = latest(events.map((e) => e.event_ts))
   const summary = (
@@ -263,8 +308,10 @@ function AppActivity({
     </>
   )
   return (
-    <Column title="App" summary={summary}>
-      <Disclosure label={events.length === 0 ? 'Details' : `Show ${plural(events.length, 'app event', 'app events')}`}>
+    <Column title="App" icon={AppWindow} summary={summary}>
+      <Disclosure
+        label={events.length === 0 ? 'Details' : `Show ${plural(events.length, 'app event', 'app events')}`}
+      >
         {events.length > 0 && (
           <ol className="space-y-1 text-sm">
             {events.map((e, i) => (
@@ -279,7 +326,9 @@ function AppActivity({
           </ol>
         )}
         <dl className="space-y-1">
-          <Field label="Added">{data.from_csv ? 'Imported from the app user list' : 'Created from an app event'}</Field>
+          <Field label="Added">
+            {data.from_csv ? 'Imported from the app user list' : 'Created from an app event'}
+          </Field>
           <Field label="Devices">
             {data.devices.length === 0 ? 'none seen yet' : plural(data.devices.length, 'device', 'devices')}
           </Field>
@@ -366,7 +415,10 @@ function useSuggestions(path: string | null): SuggestState | null {
       (err: unknown) => {
         if (!current) return
         const tooShort = err instanceof ApiError && err.status === 400 && err.code === 'query_too_short'
-        setSettled({ path, state: tooShort ? { status: 'too_short' } : { status: 'error', message: errorMessage(err) } })
+        setSettled({
+          path,
+          state: tooShort ? { status: 'too_short' } : { status: 'error', message: errorMessage(err) },
+        })
       },
     )
     return () => {
@@ -395,7 +447,7 @@ function SuggestionList({
       id={LISTBOX_ID}
       role="listbox"
       aria-label="Matching readers"
-      className="divide-y divide-gray-100 rounded border border-gray-300 text-sm"
+      className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface text-sm shadow-soft"
     >
       {matches.map((m, i) => {
         const isActive = i === active
@@ -574,7 +626,9 @@ export default function LookupPage() {
     if (zeroMatches) {
       // With near spellings the no-match line is drawn above the links, and the live region reads both.
       message =
-        nearby.length === 0 ? NO_MATCH : `${NO_MATCH}. Did you mean ${nearby.map((m) => m.email).join(' or ')}?`
+        nearby.length === 0
+          ? NO_MATCH
+          : `${NO_MATCH}. Did you mean ${nearby.map((m) => m.email).join(' or ')}?`
       messageVisible = nearby.length === 0
     } else {
       const lead = notFound !== null ? `${notFound.message} Did you mean one of these? ` : ''
@@ -590,11 +644,12 @@ export default function LookupPage() {
   // The one-click first step (principle 6): on the empty page and after a search that found nobody.
   // Near spellings are the better next step, so the example steps aside for them (principle 5).
   const showExample =
-    nearby.length === 0 && ((state === null && !listShown) || (notFound !== null && (zeroMatches || !listShown)))
+    nearby.length === 0 &&
+    ((state === null && !listShown) || (notFound !== null && (zeroMatches || !listShown)))
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Find a reader" />
+      <PageHeader title="Find a reader" icon={ICONS.lookup} />
       <form onSubmit={submit} className="max-w-xl space-y-1.5">
         <label htmlFor="lookup-q" className="block text-sm font-medium text-gray-900">
           Email or app user id
@@ -619,9 +674,9 @@ export default function LookupPage() {
             onKeyDown={onKeyDown}
             onBlur={onBlur}
             placeholder={`e.g. ${EXAMPLE}`}
-            className="min-h-9 w-full min-w-0 rounded border border-gray-400 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-500"
+            className="min-h-9 w-full min-w-0 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-gray-500"
           />
-          <Button type="submit" variant="primary" className="px-4">
+          <Button type="submit" variant="primary" icon={ICONS.search} className="px-4">
             Find
           </Button>
         </div>
@@ -662,7 +717,12 @@ export default function LookupPage() {
           <p className="text-sm text-gray-800">{notFound.message} Did you mean one of these?</p>
         )}
         {listboxShown && (
-          <SuggestionList matches={suggested.matches} truncated={suggested.truncated} active={active} onPick={pick} />
+          <SuggestionList
+            matches={suggested.matches}
+            truncated={suggested.truncated}
+            active={active}
+            onPick={pick}
+          />
         )}
         {state?.status === 'loading' && <Loading label="Looking up…" />}
         {state?.status === 'error' && <ErrorLine message={state.message} />}
@@ -673,7 +733,11 @@ export default function LookupPage() {
           </div>
         )}
         <Announcer message={message} visible={messageVisible} />
-        {showExample && <Button onClick={() => go(EXAMPLE)}>Try an example: {EXAMPLE}</Button>}
+        {showExample && (
+          <Button icon={ICONS.next} onClick={() => go(EXAMPLE)}>
+            Try an example: {EXAMPLE}
+          </Button>
+        )}
       </div>
 
       {/* While suggestions are open the old profile steps aside, so the current reader is never in doubt. */}

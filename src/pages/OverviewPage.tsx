@@ -4,12 +4,15 @@
 // level 2 = "How the data was combined" (rows in → kept · merged · set aside, reasons in words);
 // level 3 = Technical details (raw file names, reason codes, run times in UTC).
 
+import { Smartphone, UserCheck, Users } from 'lucide-react'
 import { Link } from 'react-router'
 import {
   Button,
   Disclosure,
   EmptyState,
   ErrorLine,
+  ICONS,
+  Icon,
   Loading,
   PageHeader,
   StatGrid,
@@ -51,7 +54,8 @@ function ImportLine({ run }: { run: Overview['import_runs'][number] }) {
   const file = FILES[run.file] ?? { name: run.file, unit: 'records' }
   return (
     <li>
-      <span className="font-medium">{file.name}:</span> {n(run.rows_in)} rows in <span aria-hidden="true">→</span>
+      <span className="font-medium">{file.name}:</span> {n(run.rows_in)} rows in{' '}
+      <span aria-hidden="true">→</span>
       <span className="sr-only">became</span> {n(run.rows_out)} {file.unit}
       {run.merged > 0 && (
         <>
@@ -76,7 +80,7 @@ const plainCount = (count: number, one: string, many: string) =>
 
 export default function OverviewPage() {
   const state = useGet<Overview>('/api/overview')
-  const header = <PageHeader title={TITLE} purpose={PURPOSE} />
+  const header = <PageHeader title={TITLE} purpose={PURPOSE} icon={ICONS.overview} />
 
   if (state === null || state.status === 'loading') {
     return (
@@ -102,7 +106,7 @@ export default function OverviewPage() {
         {header}
         <EmptyState
           action={
-            <Button variant="primary" onClick={() => window.location.reload()}>
+            <Button variant="primary" icon={ICONS.next} onClick={() => window.location.reload()}>
               Refresh
             </Button>
           }
@@ -127,15 +131,19 @@ export default function OverviewPage() {
     <>
       {header}
       <StatGrid label="Headline numbers">
-        <StatTile label="Readers who signed up" value={o.subscribers} />
-        <StatTile label="Readers still subscribed" value={o.active} />
-        <StatTile label="App users" value={o.app_users} />
+        <StatTile label="Readers who signed up" icon={Users} value={o.subscribers} />
+        <StatTile label="Readers still subscribed" icon={UserCheck} value={o.active} />
+        <StatTile label="App users" icon={Smartphone} value={o.app_users} />
         <StatTile
           label="Events received since launch"
+          icon={ICONS.events}
           value={o.events_received}
           note={
             o.events_received === 0 ? (
-              <Link to="/events" className="text-blue-700 underline underline-offset-2 hover:text-blue-900">
+              <Link
+                to="/events"
+                className="text-accent-strong underline underline-offset-2 hover:text-blue-900"
+              >
                 None yet — see App events
               </Link>
             ) : undefined
@@ -143,10 +151,23 @@ export default function OverviewPage() {
         />
       </StatGrid>
 
-      <p className="text-sm text-gray-700">
-        Loaded {plainCount(o.import_runs.length, 'file', 'files')} into one list:{' '}
-        {plainCount(o.import_runs.reduce((t, r) => t + r.merged, 0), 'duplicate', 'duplicates')} merged,{' '}
-        {plainCount(o.import_runs.reduce((t, r) => t + r.quarantined, 0), 'row', 'rows')} set aside.
+      <p className="flex items-start gap-2 text-sm text-ink-muted">
+        <Icon icon={ICONS.success} className="mt-0.5 size-4 text-success" />
+        <span>
+          Loaded {plainCount(o.import_runs.length, 'file', 'files')} into one list:{' '}
+          {plainCount(
+            o.import_runs.reduce((t, r) => t + r.merged, 0),
+            'duplicate',
+            'duplicates',
+          )}{' '}
+          merged,{' '}
+          {plainCount(
+            o.import_runs.reduce((t, r) => t + r.quarantined, 0),
+            'row',
+            'rows',
+          )}{' '}
+          set aside.
+        </span>
       </p>
       <Disclosure label="How the data was combined">
         <ul className="space-y-1 text-sm text-gray-800">
@@ -164,12 +185,24 @@ export default function OverviewPage() {
             <caption className="sr-only">Import runs, raw values</caption>
             <thead>
               <tr className="text-gray-600">
-                <th scope="col" className="py-1 pr-3 font-medium">file</th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">rows_in</th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">rows_out</th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">merged</th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">quarantined</th>
-                <th scope="col" className="hidden py-1 font-medium sm:table-cell">ran_at</th>
+                <th scope="col" className="py-1 pr-3 font-medium">
+                  file
+                </th>
+                <th scope="col" className="py-1 pr-3 text-right font-medium">
+                  rows_in
+                </th>
+                <th scope="col" className="py-1 pr-3 text-right font-medium">
+                  rows_out
+                </th>
+                <th scope="col" className="py-1 pr-3 text-right font-medium">
+                  merged
+                </th>
+                <th scope="col" className="py-1 pr-3 text-right font-medium">
+                  quarantined
+                </th>
+                <th scope="col" className="hidden py-1 font-medium sm:table-cell">
+                  ran_at
+                </th>
               </tr>
             </thead>
             <tbody className="font-mono">
@@ -191,14 +224,20 @@ export default function OverviewPage() {
           {reasons.length > 0 && (
             <p>
               quarantine_reasons:{' '}
-              <span className="font-mono">{reasons.map(([code, count]) => `${code} ${count}`).join(', ')}</span>
+              <span className="font-mono">
+                {reasons.map(([code, count]) => `${code} ${count}`).join(', ')}
+              </span>
             </p>
           )}
         </TechnicalDetails>
       </Disclosure>
 
       <p className="text-sm">
-        <Link to="/lookup" className="font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900">
+        <Link
+          to="/lookup"
+          className="inline-flex items-center gap-1.5 font-medium text-accent-strong underline underline-offset-4 hover:text-ink"
+        >
+          <Icon icon={ICONS.lookup} />
           Next: find a reader <span aria-hidden="true">→</span>
         </Link>
       </p>

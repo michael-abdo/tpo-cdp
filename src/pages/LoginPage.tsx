@@ -6,7 +6,8 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, errorMessage, request } from '../api'
-import { Announcer, ErrorLine } from '../components'
+import { LockKeyhole } from 'lucide-react'
+import { Announcer, Button, ErrorLine, Icon } from '../components'
 
 const ERROR_ID = 'login-error'
 const NOTICE_ID = 'login-limit'
@@ -40,11 +41,17 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gray-50 p-4 text-gray-900 sm:p-6">
-      <form onSubmit={submit} className="w-full max-w-sm space-y-5 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-        <div className="space-y-1">
-          <h1 className="text-lg font-semibold">Sign in to TPO Mini CDP</h1>
-          <p className="text-sm text-gray-600">Use the team password.</p>
+    <main className="flex min-h-dvh items-center justify-center bg-page p-4 text-ink sm:p-6">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm space-y-5 rounded-2xl border border-line bg-surface p-6 shadow-soft sm:p-8"
+      >
+        <div className="space-y-2">
+          <span className="inline-flex size-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
+            <Icon icon={LockKeyhole} className="size-5" />
+          </span>
+          <h1 className="font-display text-2xl font-medium">Sign in to TPO Mini CDP</h1>
+          <p className="text-sm text-ink-muted">Use the team password.</p>
         </div>
         <label className="block space-y-1 text-sm">
           <span className="font-medium">Password</span>
@@ -57,7 +64,7 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             aria-invalid={error !== null ? true : undefined}
             aria-describedby={error === null ? undefined : missed ? `${ERROR_ID} ${NOTICE_ID}` : ERROR_ID}
-            className={`w-full rounded border px-3 py-2 ${error !== null ? 'border-red-400' : 'border-gray-300'}`}
+            className={`w-full rounded-lg border bg-surface px-3 py-2 text-ink ${error !== null ? 'border-red-400' : 'border-line-strong'}`}
           />
         </label>
         {error !== null && (
@@ -70,13 +77,9 @@ export default function LoginPage() {
             )}
           </div>
         )}
-        <button
-          type="submit"
-          disabled={busy}
-          className="min-h-10 w-full rounded bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" disabled={busy} className="w-full">
           {busy ? 'Signing in…' : 'Sign in'}
-        </button>
+        </Button>
         <Announcer message={busy ? 'Signing in…' : ''} />
       </form>
     </main>
