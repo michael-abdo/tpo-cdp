@@ -101,6 +101,26 @@ export const GLOSSARY = {
     many: 'unreadable dates',
     text: "A date isn't written in the file's own date format, so it can't be read.",
   },
+  unknown_status: {
+    term: 'unknown status',
+    many: 'unknown statuses',
+    text: "The status field isn't active or unsubscribed, so it isn't clear which one the row means.",
+  },
+  misplaced_email: {
+    term: 'misplaced email',
+    many: 'misplaced emails',
+    text: "This row's email is on a page other than /subscribe, so it can't be linked to a subscriber.",
+  },
+  conflicting_email: {
+    term: 'conflicting email',
+    many: 'conflicting emails',
+    text: 'This visitor already signed up with a different email, so this row is not matched.',
+  },
+  duplicate_user_id: {
+    term: 'duplicate user ID',
+    many: 'duplicate user IDs',
+    text: 'An earlier row already used this user ID, so this row is not loaded.',
+  },
   // Overview's headline numbers (06 §Overview 1).
   subscribers_signed_up: {
     term: 'Subscribers',

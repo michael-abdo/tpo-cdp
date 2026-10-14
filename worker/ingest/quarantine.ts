@@ -11,7 +11,16 @@ import { normalizeEmail } from '../../shared/normalize'
  * email (missing_field), an unparseable email (invalid_email), the other required fields
  * (missing_field) and the dates (bad_date).
  */
-export const QUARANTINE_REASONS = ['blank_row', 'invalid_email', 'missing_field', 'bad_date'] as const
+export const QUARANTINE_REASONS = [
+  'blank_row',
+  'invalid_email',
+  'missing_field',
+  'bad_date',
+  'unknown_status',
+  'misplaced_email',
+  'conflicting_email',
+  'duplicate_user_id',
+] as const
 
 export type QuarantineReason = (typeof QUARANTINE_REASONS)[number]
 
@@ -63,12 +72,14 @@ export function isIsoDate(value: string): boolean {
 /**
  * Classifies one subscribers.csv row: `null` when it can become a subscriber, otherwise
  * its quarantine reason. A status that is present but not `active`/`unsubscribed` has no
- * reason in 02 §Quarantine, so it throws with the line number instead of being guessed.
+ * rule in 02 §Quarantine, so it is quarantined (`unknown_status`, 09 D-78) rather than
+ * guessed or aborting the whole seed. `lineNo` is accepted for call-site symmetry with the
+ * other classify* functions and existing callers; this function needs no line number itself.
  */
 export function classifySubscriberRow(
   header: readonly string[],
   row: readonly string[],
-  lineNo: number,
+  _lineNo: number,
 ): QuarantineReason | null {
   const col = requireHeaders('subscribers.csv', header, SUBSCRIBER_COLUMNS)
   const value = (c: SubscriberColumn) => row[col[c]].trim()
@@ -86,10 +97,6 @@ export function classifySubscriberRow(
   const lastOpen = value('last_open_date')
   if (!isIsoDate(signup) || (lastOpen !== '' && !isIsoDate(lastOpen))) return 'bad_date'
 
-  if (!(SUBSCRIBER_STATUSES as readonly string[]).includes(status)) {
-    throw new Error(
-      `subscribers.csv line ${lineNo}: status "${status}" is not one of ${SUBSCRIBER_STATUSES.join('|')}`,
-    )
-  }
+  if (!(SUBSCRIBER_STATUSES as readonly string[]).includes(status)) return 'unknown_status'
   return null
 }

@@ -4,7 +4,7 @@ import { pkeyForEmail } from '../shared/pseudonym'
 import type { Lookup } from '../src/types'
 import { buildSeed } from '../worker/ingest/link'
 import { seedSql } from '../worker/ingest/sql'
-import { ingestSubscribers } from '../worker/ingest/subscribers'
+import { ingestSubscribers, toCsvRecord } from '../worker/ingest/subscribers'
 import { csvTimestampToIso, ingestWeb } from '../worker/ingest/web'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, realCsvs } from './helpers/seed'
@@ -155,16 +155,33 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
     }
   })
 
-  it('an email on any other page still fails the seed loudly, even one that starts with /subscribe', () => {
+  it('an email on any other page is quarantined as misplaced_email, never thrown (09 D-78)', () => {
     const subscribe = rowAt(realCsvs().web_events, 5421)
     // Real pages, real pages joined under /subscribe, and /subscribe with its last letter removed:
-    // only the exact path /subscribe (query string and one trailing slash removed) links.
+    // only the exact path /subscribe (query string and one trailing slash removed, any letter case) links.
     const pages = ['/about', '/', '/about?utm_source=instagram', '/subscribe/about', '/subscribe/news/ai-regulation-bill']
     pages.push('/subscribe/about?utm_source=instagram', '/subscrib', '/subscrib?utm_source=instagram', '/subscrib/')
     // One trailing slash is removed, not every one.
     pages.push('/subscribe//', '/subscribe//?utm_source=instagram')
-    for (const page of pages)
-      expect(() => visitorOf([[subscribe[0], page, ...subscribe.slice(2)]]), page).toThrow('only /subscribe rows link')
+    for (const page of pages) {
+      const row = [subscribe[0], page, ...subscribe.slice(2)]
+      const result = visitorOf([row])
+      expect(result.quarantined, page).toEqual([
+        { line_no: 5421, reason: 'misplaced_email', raw_row: toCsvRecord(row) },
+      ])
+      expect(result.events, page).toEqual([])
+      expect(result.visitors.size, page).toBe(0)
+    }
+  })
+
+  it('/subscribe matches in any letter case, keeping the query-string and trailing-slash rule (09 D-78)', () => {
+    const subscribe = rowAt(realCsvs().web_events, 5421)
+    for (const page of ['/Subscribe', '/SUBSCRIBE', '/Subscribe/', '/Subscribe?utm_source=instagram']) {
+      const result = visitorOf([[subscribe[0], page, ...subscribe.slice(2)]])
+      expect(result.quarantined, page).toEqual([])
+      expect(result.visitors.get('v_c9e136fd6d'), page).toMatchObject({ email_norm: JOY, signup_ts: JOY_SUBSCRIBE_TS })
+      expect(result.events[0].page, page).toBe(page)
+    }
   })
 
   it('every real /subscribe row rewritten as /subscribe/ or with a query links the same 1,400 visitors', () => {

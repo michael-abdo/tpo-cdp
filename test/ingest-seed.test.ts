@@ -13,6 +13,7 @@ import { parseCsv } from '../worker/ingest/csv'
 import { buildSeed, type Seed } from '../worker/ingest/link'
 import { requireHeaders } from '../worker/ingest/quarantine'
 import { MAX_ROWS_PER_INSERT, MAX_STATEMENT_BYTES, seedSql, type SeedFile } from '../worker/ingest/sql'
+import { ingestSubscribers, toCsvRecord } from '../worker/ingest/subscribers'
 import { classifyWebRow, csvTimestampToIso, ingestWeb, WEB_COLUMNS } from '../worker/ingest/web'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 
@@ -524,5 +525,60 @@ describe('web and app rows fail fast on headers and are quarantined, never dropp
     }
     expect(await count('SELECT count(*) AS n FROM quarantine')).toBe(10)
     expect(await count('SELECT sum(quarantined) AS n FROM import_runs')).toBe(10)
+  })
+})
+
+// 09 D-78(a): a CSV value the ingest has no rule for is quarantined with its own reason, never
+// thrown, and never aborts the seed. Inputs are real rows minimally edited per 09 D-47 — every
+// value introduced already occurs in data/*.csv, or is a removal:
+// - unknown_status: subscribers.csv:2 (aaron.moore592@yahoo.com, unsubscribed) with its status
+//   changed to "unsubscribe" (the real value with its last character removed, as
+//   test/segments.test.ts T-SEG-3 already does for the same reason).
+// - duplicate_user_id: app_users.csv:3 (daniel.hill389@gmail.com) with its user_id overwritten
+//   by app_users.csv:2's real id (u_2b6447a3), so the same id appears on two rows.
+// - conflicting_email: web_events.csv:5421 (joy's real /subscribe row) followed by a second
+//   /subscribe row for the same visitor (v_c9e136fd6d) carrying julia.evans230@gmail.com (a real
+//   subscriber email) and web_events.csv:5440's real timestamp.
+describe('T-ING-7 a row with no rule is quarantined, never fatal (09 D-78)', () => {
+  it('subscribers: an unknown status is quarantined, not thrown; every other row is unaffected', () => {
+    const subs = parseCsv(subscribersCsv)
+    const real = [...subs.rows[subs.lineNos.indexOf(2)]]
+    expect(real).toEqual(['aaron.moore592@yahoo.com', '2026-09-11', 'unsubscribed', 'Instagram', '2026-09-17'])
+    const unknownStatus = [real[0], real[1], 'unsubscribe', real[3], real[4]]
+    const other = [...subs.rows[subs.lineNos.indexOf(70)]]
+    const result = ingestSubscribers({ header: subs.header, rows: [unknownStatus, other], lineNos: [2, 70] })
+    expect(result.quarantined).toEqual([
+      { line_no: 2, reason: 'unknown_status', raw_row: toCsvRecord(unknownStatus) },
+    ])
+    expect(result.subscribers.size).toBe(1)
+    expect(result.subscribers.get('chloe.reed603@yahoo.com')).toMatchObject({ merged_count: 1 })
+  })
+
+  it('app_users: a repeated user_id is quarantined, keeping the first row; no other row is affected', () => {
+    const a = parseCsv(appCsv)
+    const first = [...a.rows[a.lineNos.indexOf(2)]]
+    const second = [...a.rows[a.lineNos.indexOf(3)]]
+    expect(first).toEqual(['u_2b6447a3', 'julia.evans230@gmail.com', '2026-08-22'])
+    expect(second).toEqual(['u_baba14aa', 'daniel.hill389@gmail.com', '2026-09-20'])
+    const repeated = [first[0], second[1], second[2]]
+    const result = ingestApp({ header: a.header, rows: [first, repeated], lineNos: [2, 3] })
+    expect(result.quarantined).toEqual([
+      { line_no: 3, reason: 'duplicate_user_id', raw_row: toCsvRecord(repeated) },
+    ])
+    expect(result.users.size).toBe(1)
+    expect(result.users.get('u_2b6447a3')).toMatchObject({ email_norm: 'julia.evans230@gmail.com' })
+  })
+
+  it('web_events: a visitor with two different /subscribe emails quarantines only the later row', () => {
+    const w = parseCsv(webCsv)
+    const joyRow = [...w.rows[w.lineNos.indexOf(5421)]]
+    expect(joyRow).toEqual(['v_c9e136fd6d', '/subscribe', '2026-09-02 20:40:04', '', JOY])
+    const conflicting = [joyRow[0], '/subscribe', '2026-09-03 00:36:15', '', JULIA]
+    const result = ingestWeb({ header: w.header, rows: [joyRow, conflicting], lineNos: [5421, 5422] })
+    expect(result.quarantined).toEqual([
+      { line_no: 5422, reason: 'conflicting_email', raw_row: toCsvRecord(conflicting) },
+    ])
+    expect(result.events).toHaveLength(1)
+    expect(result.visitors.get('v_c9e136fd6d')).toMatchObject({ email_norm: JOY })
   })
 })

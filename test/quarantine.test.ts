@@ -84,7 +84,7 @@ describe('GET /api/quarantine (T-OVR-1)', () => {
     }
   })
 
-  it('each reason code filters to its own rows; the seed has no missing_field or bad_date rows', async () => {
+  it('each reason code filters to its own rows; the seed has none of the other reasons (09 D-78)', async () => {
     const counts: Record<string, number> = {}
     for (const reason of QUARANTINE_REASONS) {
       const res = await quarantine(`?reason=${reason}`)
@@ -93,7 +93,16 @@ describe('GET /api/quarantine (T-OVR-1)', () => {
       expect(rows.every((r) => r.reason === reason)).toBe(true)
       counts[reason] = rows.length
     }
-    expect(counts).toEqual({ blank_row: 8, invalid_email: 2, missing_field: 0, bad_date: 0 })
+    expect(counts).toEqual({
+      blank_row: 8,
+      invalid_email: 2,
+      missing_field: 0,
+      bad_date: 0,
+      unknown_status: 0,
+      misplaced_email: 0,
+      conflicting_email: 0,
+      duplicate_user_id: 0,
+    })
   })
 
   it('an unknown or empty reason → 400 invalid_reason, without echoing the input', async () => {
@@ -103,7 +112,8 @@ describe('GET /api/quarantine (T-OVR-1)', () => {
       const body = await res.json<{ error: string; message: string }>()
       expect(body).toEqual({
         error: 'invalid_reason',
-        message: 'reason must be one of blank_row, invalid_email, missing_field, bad_date, or left out.',
+        message:
+          'reason must be one of blank_row, invalid_email, missing_field, bad_date, unknown_status, misplaced_email, conflicting_email, duplicate_user_id, or left out.',
       })
     }
   })

@@ -17,13 +17,14 @@ export type WebColumn = (typeof WEB_COLUMNS)[number]
 export const SUBSCRIBE_PAGE = '/subscribe'
 
 /**
- * Whether a row's page is the subscribe page (09 D-70 item 9): its path with any query string and
- * one trailing slash removed equals SUBSCRIBE_PAGE, so `/subscribe?utm_source=instagram` and
- * `/subscribe/` link like `/subscribe`. The page itself is stored as written.
+ * Whether a row's page is the subscribe page (09 D-70 item 9, 09 D-78): its path with any query
+ * string and one trailing slash removed equals SUBSCRIBE_PAGE once both are lowercased, so
+ * `/subscribe?utm_source=instagram`, `/subscribe/` and `/Subscribe` all link like `/subscribe`.
+ * The page itself is stored as written (case included); only the match is case-insensitive.
  */
 export function isSubscribePage(page: string): boolean {
   const query = page.indexOf('?')
-  const path = query === -1 ? page : page.slice(0, query)
+  const path = (query === -1 ? page : page.slice(0, query)).toLowerCase()
   return path === SUBSCRIBE_PAGE || path === `${SUBSCRIBE_PAGE}/`
 }
 
@@ -74,8 +75,11 @@ export interface WebIngest {
 /**
  * Classifies one web_events.csv row: `null` when it can become an event, otherwise its
  * quarantine reason. Tested in order: blank_row, a blank `visitor_id`/`page`/`timestamp`
- * (missing_field), a non-blank email that does not normalize (invalid_email), then the
- * timestamp format (bad_date).
+ * (missing_field), a non-blank email that does not normalize (invalid_email), the timestamp
+ * format (bad_date), then an email on a page that is not `/subscribe` (`misplaced_email`,
+ * 09 D-78; `isSubscribePage` already ignores letter case, a query string and one trailing
+ * slash). The stateful check (two different `/subscribe` emails for one visitor) needs the
+ * visitor map and so stays in `ingestWeb`.
  */
 export function classifyWebRow(header: readonly string[], row: readonly string[]): QuarantineReason | null {
   const col = requireHeaders('web_events.csv', header, WEB_COLUMNS)
@@ -86,13 +90,17 @@ export function classifyWebRow(header: readonly string[], row: readonly string[]
   const email = value('email')
   if (email !== '' && normalizeEmail(email) === null) return 'invalid_email'
   if (csvTimestampToIso(value('timestamp')) === null) return 'bad_date'
+  if (email !== '' && !isSubscribePage(value('page'))) return 'misplaced_email'
   return null
 }
 
 /**
  * Builds events and visitors. A visitor's first event is its earliest `event_ts` (the earlier
- * line on a tie). An email on a row other than `/subscribe`, or two different emails for one
- * visitor, has no rule in 02 and throws with the line number rather than being guessed.
+ * line on a tie). An email on a row other than `/subscribe` is quarantined by `classifyWebRow`
+ * above (`misplaced_email`); a second, different email for a visitor that already has one has
+ * no rule in 02 either, and is quarantined here as `conflicting_email` rather than guessed or
+ * aborting the seed (09 D-78) — that row alone is set aside, the visitor keeps its first email
+ * and history.
  */
 export function ingestWeb(csv: ParsedCsv): WebIngest {
   const col = requireHeaders('web_events.csv', csv.header, WEB_COLUMNS)
@@ -117,15 +125,14 @@ export function ingestWeb(csv: ParsedCsv): WebIngest {
     const rawEmail = row[col.email].trim()
     const emailNorm = rawEmail === '' ? null : normalizeEmail(rawEmail)
 
-    if (emailNorm !== null && !isSubscribePage(page)) {
-      throw new Error(
-        `web_events.csv line ${lineNo}: email on page "${page}"; only ${SUBSCRIBE_PAGE} rows link (02 §Linking 2)`,
-      )
+    const known = visitors.get(visitorId)
+    if (emailNorm !== null && known !== undefined && known.email_norm !== null && known.email_norm !== emailNorm) {
+      quarantined.push({ line_no: lineNo, reason: 'conflicting_email', raw_row: toCsvRecord(row) })
+      return
     }
 
     events.push({ visitor_id: visitorId, page, event_ts: eventTs, utm_source: utm, line_no: lineNo })
 
-    const known = visitors.get(visitorId)
     if (!known) {
       visitors.set(visitorId, {
         visitor_id: visitorId,
@@ -138,9 +145,6 @@ export function ingestWeb(csv: ParsedCsv): WebIngest {
       return
     }
     if (emailNorm !== null) {
-      if (known.email_norm !== null && known.email_norm !== emailNorm) {
-        throw new Error(`web_events.csv line ${lineNo}: visitor has a second, different /subscribe email`)
-      }
       known.email_norm = emailNorm
       // The same email on two /subscribe rows: the earlier one is the signup.
       if (known.signup_ts === null || eventTs < known.signup_ts) known.signup_ts = eventTs

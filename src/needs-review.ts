@@ -56,6 +56,10 @@ const WHY: Record<Exclude<QuarantinedRow['reason'], 'blank_row'>, string> = {
   invalid_email: "their email isn't valid",
   missing_field: 'a required field is empty',
   bad_date: "a date isn't written the way the file writes dates",
+  unknown_status: "their status isn't active or unsubscribed",
+  misplaced_email: "their email is on a page other than /subscribe",
+  conflicting_email: 'this visitor already signed up with a different email',
+  duplicate_user_id: 'this user ID is already used by an earlier row',
 }
 
 /** How every fix ends, written once (09 D-72). */
@@ -66,7 +70,11 @@ function fixText(file: SetAsideFile, reason: keyof typeof WHY): string {
   const { dateFormat } = FILES[file]
   if (reason === 'invalid_email') return `Correct the email in ${csv}${THEN_REIMPORT}`
   if (reason === 'missing_field') return `Fill in the empty field in ${csv}${THEN_REIMPORT}`
-  return `Write the date as ${dateFormat} in ${csv}${THEN_REIMPORT}`
+  if (reason === 'bad_date') return `Write the date as ${dateFormat} in ${csv}${THEN_REIMPORT}`
+  if (reason === 'unknown_status') return `Change the status to active or unsubscribed in ${csv}${THEN_REIMPORT}`
+  if (reason === 'misplaced_email') return `Move the email to a /subscribe row, or remove it, in ${csv}${THEN_REIMPORT}`
+  if (reason === 'conflicting_email') return `Decide which email is right for this visitor in ${csv}${THEN_REIMPORT}`
+  return `Give this row its own user ID in ${csv}${THEN_REIMPORT}`
 }
 
 export interface ReviewGroup {

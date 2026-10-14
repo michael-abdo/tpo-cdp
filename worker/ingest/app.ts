@@ -46,7 +46,11 @@ export function classifyAppRow(header: readonly string[], row: readonly string[]
   return null
 }
 
-/** A `user_id` seen twice has no rule in 02 and throws with the line number. */
+/**
+ * A `user_id` seen twice has no rule in 02, so a repeat is quarantined (`duplicate_user_id`,
+ * 09 D-78) rather than guessed or aborting the seed: the first row with that id is kept, the
+ * later one is set aside.
+ */
 export function ingestApp(csv: ParsedCsv): AppIngest {
   const col = requireHeaders('app_users.csv', csv.header, APP_COLUMNS)
   const users = new Map<string, AppUser>()
@@ -63,7 +67,10 @@ export function ingestApp(csv: ParsedCsv): AppIngest {
     const emailNorm = normalizeEmail(row[col.email])
     if (emailNorm === null)
       throw new Error(`app_users.csv line ${lineNo}: email passed quarantine but did not normalize`)
-    if (users.has(userId)) throw new Error(`app_users.csv line ${lineNo}: user_id appears twice`)
+    if (users.has(userId)) {
+      quarantined.push({ line_no: lineNo, reason: 'duplicate_user_id', raw_row: toCsvRecord(row) })
+      return
+    }
     users.set(userId, {
       user_id: userId,
       email_norm: emailNorm,
