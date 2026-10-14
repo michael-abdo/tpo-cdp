@@ -79,7 +79,7 @@ export const FinalBlock = z
 const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
 
 // T-AI-5 by rejection, not stripping (09 D-58): the check itself lives in shared/sql-sign.ts, the
-// one home the AI assistant page also uses to screen filters_applied. Re-exported for the tests.
+// one home the Insights answer card also uses to screen filters_applied. Re-exported for the tests.
 export { type SqlSign, sqlSign }
 
 /** The server's own sentence for a discarded text, built from the typed result (09 D-58). D-58's

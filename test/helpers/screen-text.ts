@@ -29,7 +29,8 @@ export type ScanFixture = keyof typeof SCAN_FIXTURES
  * words), the glossary, the source registry, the metric definitions (shared/derive.ts DEFINITIONS:
  * the system prompt renders its Definitions section from them at runtime, and the UI footers and
  * Look up show them) and the server-written sentences (dedupe suggestions, assistant fallback
- * sentences, the system prompt, and the Growth panels' "Explain this" questions).
+ * sentences, the system prompt, the Insights board's and pin dialog's sentences, and the built-in
+ * Insights tiles' "Explain this" questions).
  */
 export const VOCABULARY_SCAN = {
   dirs: ['src'],
@@ -45,6 +46,8 @@ export const VOCABULARY_SCAN = {
     'worker/insights/funnel.ts',
     'worker/insights/going-cold.ts',
     'worker/insights/source-app.ts',
+    'worker/insights/board.ts',
+    'shared/insight-messages.ts',
   ],
 } as const
 

@@ -1,7 +1,7 @@
 /**
  * The D-58 check for a sign of SQL in model-written text (09 D-58, 08 T-AI-5). Defined here only:
- * the server discards the model's `text` with it (worker/assistant/respond.ts), and "Ask a
- * question" hides the model's `filters_applied` with it (src/filters-applied.ts), so both screens
+ * the server discards the model's `text` with it (worker/assistant/respond.ts), and the Insights
+ * answer card hides the model's `filters_applied` with it (src/filters-applied.ts), so both screens
  * are the same check.
  *
  * Every Unicode format character (\p{Cf}: U+00AD soft hyphen, U+200B-U+200D zero-width, U+2060 word
