@@ -38,6 +38,7 @@ export const VOCABULARY_SCAN = {
     'shared/glossary.ts',
     'shared/sources.ts',
     'shared/derive.ts',
+    'shared/features.ts',
     'worker/dedupe/score.ts',
     'worker/assistant/respond.ts',
     'worker/assistant/system-prompt.ts',
@@ -69,6 +70,7 @@ export const ONE_PLACE_SCAN = {
     'src/filters-applied.ts',
     'shared/glossary.ts',
     'shared/insight-messages.ts',
+    'shared/features.ts',
     'worker/dedupe/score.ts',
   ],
 } as const

@@ -9,6 +9,9 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  Bell,
+  Building2,
+  CalendarClock,
   CalendarDays,
   CalendarRange,
   ChartColumn,
@@ -18,6 +21,7 @@ import {
   ChevronRight,
   CircleAlert,
   CircleCheck,
+  CircleUserRound,
   Download,
   Ellipsis,
   Eye,
@@ -38,10 +42,13 @@ import {
   RefreshCw,
   ScrollText,
   Search,
+  Send,
   ShieldBan,
+  SlidersHorizontal,
   Sun,
   Trash2,
   TriangleAlert,
+  Upload,
   UserSearch,
   Users,
   Wrench,
@@ -113,6 +120,15 @@ export const ICONS = {
   live: Radio,
   empty: Inbox,
   loading: LoaderCircle,
+  // Gated future features (09 D-80): one icon per feature, named by its own page spec.
+  upload: Upload,
+  schedule: CalendarClock,
+  settings: SlidersHorizontal,
+  send: Send,
+  digest: Send,
+  notify: Bell,
+  workSignIn: Building2,
+  account: CircleUserRound,
 } satisfies Record<string, LucideIcon>
 
 /** Renders an ICONS entry (or any lucide icon) decoratively, sized to sit beside text. */
@@ -617,6 +633,32 @@ export function Tag({
     >
       {content}
     </button>
+  )
+}
+
+/**
+ * A visible, always-in-the-name "Coming soon" chip (09 D-80), the one home of its words: every
+ * gated control sits beside exactly one of these, so the state is never shown by colour alone.
+ */
+export function ComingSoonTag() {
+  return <Tag tone="neutral">Coming soon</Tag>
+}
+
+/**
+ * The note `useGated` (src/use-gated.ts) describes: always in the DOM with its real text (so `aria-describedby`
+ * resolves from the first render), `sr-only` until `activated`. A separate, always-`sr-only`
+ * `Announcer` fires the one polite announcement on activation (09 D-80), kept apart from this
+ * paragraph so the sentence is never shown twice on screen — only ever read twice.
+ */
+export function GatedNote({ id, activated, text }: { id: string; activated: boolean; text: string }) {
+  return (
+    <>
+      <p id={id} className={activated ? 'flex items-start gap-1.5 text-sm text-ink-muted' : 'sr-only'}>
+        <Icon icon={ICONS.info} className="mt-0.5 size-4" />
+        <span>{text}</span>
+      </p>
+      <Announcer message={activated ? text : ''} />
+    </>
   )
 }
 
