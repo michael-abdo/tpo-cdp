@@ -369,6 +369,34 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     expect(offAnswer.pin_refusal).toBe(NOT_PINNABLE_MESSAGE)
   })
 
+  it('a builtin row that aliases query_sql under another name is still not pinnable, at pin and on the board (09 D-64a)', async () => {
+    // The loader accepts a builtin row whose handler is query_sql under any name; the refusal follows the handler.
+    const alias: ToolSeed = { ...TOOL_SEEDS.find((t) => t.name === 'query_sql')!, name: 'free_sql', sortOrder: 901 }
+    const { sql: insert, params } = toolSeedInsert(alias)
+    await env.DB.prepare(insert).bind(...params).run()
+    try {
+      const answer = await askAnswer('how many Instagram signups went cold last month?', [
+        { name: 'free_sql', input: { sql: WENT_COLD_AUGUST_SQL, explanation: 'Instagram active subscribers whose cold_since is in August' } },
+      ])
+      expect(answer.pin_refusal).toBe(NOT_PINNABLE_MESSAGE)
+      const before = await tileCount()
+      const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'not_pinnable', message: NOT_PINNABLE_MESSAGE })
+      expect(await tileCount()).toBe(before)
+      // A stored row drifted to the alias never runs on the board.
+      const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+      const copy = await insertCopy(tile.id, { sql: WENT_COLD_AUGUST_SQL, explanation: 'drift' }, 'Drifted to an alias of query_sql')
+      await env.DB.prepare("UPDATE insights SET tool = 'free_sql' WHERE id = ?").bind(copy).run()
+      const t = (await board()).tiles.find((x) => x.id === copy)!
+      expect(t).toMatchObject({ status: 'error', result: null })
+      expect(t.error).toBe('This tile’s saved lookup no longer passes today’s checks, so it cannot run. Technical details say why.')
+      await env.DB.prepare('DELETE FROM insights WHERE id IN (?, ?)').bind(copy, tile.id).run()
+    } finally {
+      await env.DB.prepare('DELETE FROM assistant_tools WHERE name = ?').bind(alias.name).run()
+    }
+  })
+
   it('only segment and aggregate among the builtins pin: describe_schema and every other builtin is 400 not_pinnable', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     // A real input for each builtin that is not a count or a segment; a new builtin fails here until it is listed.
@@ -1093,8 +1121,18 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     expect(drift.meta.changes).toBeGreaterThan(0)
     try {
       const before = await tileCount()
+      const lastRow = await env.DB.prepare('SELECT max(rowid) AS r FROM ai_audit').first<number>('r')
       const res = await api('', { method: 'POST', body: { audit_id: auditId } })
       expect(res.status).toBe(400)
+      // The executor's own scan blocks it: no tool_call row claims success, and no stored row holds the email.
+      const after = await env.DB.prepare(
+        "SELECT count(*) AS n FROM ai_audit WHERE rowid > ? AND kind = 'tool_call' AND status = 'success'",
+      ).bind(lastRow).first<number>('n')
+      expect(after).toBe(0)
+      const leaked = await env.DB.prepare(
+        'SELECT count(*) AS n FROM ai_audit WHERE rowid > ? AND (instr(coalesce(request_json, \'\'), ?) > 0 OR instr(coalesce(response_json, \'\'), ?) > 0 OR instr(coalesce(sql, \'\'), ?) > 0)',
+      ).bind(lastRow, JOY, JOY, JOY).first<number>('n')
+      expect(leaked).toBe(0)
       const text = await res.text()
       expect(JSON.parse(text)).toMatchObject({ error: 'blocked_pii' })
       expect(text).not.toContain(JOY)
