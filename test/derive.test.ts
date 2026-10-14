@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { TODAY } from '../shared/config'
 import {
   DEFINITIONS,
+  addDays,
   appAfterSignup,
   coldSince,
   daysBetween,
@@ -170,6 +171,24 @@ describe('T-DER-3 engagement_score (02 §Derived formula, D-14)', () => {
     expect(engagementScore({ last_open_date: null, app_events_last_30d: 0, site_visits_last_30d: 5 })).toBe(
       25,
     )
+  })
+
+  it('a .5 tie rounds half up exactly, never shaved by float error (21 §hardest case 1)', () => {
+    // 50 × (1 − 24/30) is 9.999… in floating point, so 24 days + 1 app event (12.5) used to store 12.
+    expect(engagementScore({ last_open_date: addDays(TODAY, -24), app_events_last_30d: 1, site_visits_last_30d: 0 })).toBe(13)
+    expect(engagementScore({ last_open_date: addDays(TODAY, -27), app_events_last_30d: 1, site_visits_last_30d: 0 })).toBe(8)
+    // Independent oracle in thirtieths of a point: recency 50(30 − d), app 75a, site 150s; half up.
+    const exact = (d: number | null, a: number, s: number) => {
+      const t = (d === null ? 0 : 50 * Math.max(0, 30 - d)) + 75 * Math.min(a, 10) + 150 * Math.min(s, 5)
+      return Math.floor((2 * t + 30) / 60)
+    }
+    for (const d of [null, ...Array.from({ length: 36 }, (_, i) => i)])
+      for (let a = 0; a <= 12; a++)
+        for (let s = 0; s <= 7; s++)
+          expect(
+            engagementScore({ last_open_date: d === null ? null : addDays(TODAY, -d), app_events_last_30d: a, site_visits_last_30d: s }),
+            `d=${d} a=${a} s=${s}`,
+          ).toBe(exact(d, a, s))
   })
 
   it('a more recent open or more activity never lowers the score', () => {

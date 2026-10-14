@@ -137,7 +137,7 @@ async function expectedScore(email: string | null, appEvents: number): Promise<n
     const lastOpen = await env.DB.prepare('SELECT last_open_date FROM subscribers WHERE email_norm = ?')
       .bind(email)
       .first<string | null>('last_open_date')
-    if (lastOpen !== null) recency = 50 * Math.max(0, 1 - Math.max(0, days(lastOpen, TODAY)) / 30)
+    if (lastOpen !== null) recency = 50 * Math.max(0, 30 - Math.max(0, days(lastOpen, TODAY)))
     const { results } = await env.DB.prepare(
       `SELECT we.event_ts FROM web_events we JOIN web_visitors wv ON wv.visitor_id = we.visitor_id
         WHERE wv.email_norm = ?`,
@@ -146,7 +146,9 @@ async function expectedScore(email: string | null, appEvents: number): Promise<n
       .all<{ event_ts: string }>()
     site = results.filter((r) => days(r.event_ts, TODAY) >= 0 && days(r.event_ts, TODAY) <= 30).length
   }
-  return Math.round(recency + 25 * Math.min(1, appEvents / 10) + 25 * Math.min(1, site / 5))
+  // In thirtieths of a point (recency 50·(30 − d), app 75·a, site 150·s), half up, so no float error.
+  const thirtieths = recency + 75 * Math.min(appEvents, 10) + 150 * Math.min(site, 5)
+  return Math.floor((2 * thirtieths + 30) / 60)
 }
 
 function storedScore(pkey: string): Promise<number | null> {
