@@ -7,13 +7,14 @@
 //     same functions the board's insight_panel tool calls; every number the assistant can
 //     reproduce carries an `explain` question (09 D-39). going-cold and data-quality are parked
 //     items 4 and 5 of 16 §If time remains, built.
-//   - /insights/approvals (09 D-64b): a free-form query_sql pin that fails the positive grammar is
-//     queued here instead of refused outright; approving it needs the TOOL_APPROVAL password.
+//   - there is no approval queue (09 D-77 reverses D-64b (C)): a free-form query_sql pin that
+//     fails the positive grammar is refused outright (worker/insights/board.ts), so
+//     /insights/approvals/* routes no longer exist (404 like any unknown route).
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
 import type { AppEnv } from '../env'
-import { approveInsightTool, deleteInsight, listApprovals, listBoard, patchInsight, pinFromTrace } from '../insights/board'
+import { deleteInsight, listBoard, patchInsight, pinFromTrace } from '../insights/board'
 import { dataQuality } from '../insights/data-quality'
 import { funnel } from '../insights/funnel'
 import { goingCold } from '../insights/going-cold'
@@ -43,20 +44,6 @@ insightRoutes.get('/insights/funnel', async (c) => c.json(await funnel(c.env.DB)
 insightRoutes.get('/insights/going-cold', async (c) => c.json(await goingCold(c.env.DB)))
 
 insightRoutes.get('/insights/data-quality', async (c) => c.json(await dataQuality(c.env.DB)))
-
-insightRoutes.get('/insights/approvals', async (c) => c.json(await listApprovals(c.env.DB)))
-
-insightRoutes.post('/insights/approvals/:id/approve', async (c) => {
-  // TOOL_APPROVAL is a second shared password (09 D-64b); APPROVAL_LIMITER keeps it from being
-  // brute-forced by any signed-in session, the same shape LOGIN_LIMITER gives SITE_PASSWORD.
-  const clientKey = c.req.header('cf-connecting-ip') ?? 'local'
-  const { success } = await c.env.APPROVAL_LIMITER.limit({ key: clientKey })
-  if (!success) {
-    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'rate_limited', id: c.req.param('id') }))
-    throw new ApiError(429, 'rate_limited', 'Too many approval attempts. Wait a minute and try again.')
-  }
-  return c.json(await approveInsightTool(c.env.DB, c.req.param('id'), await jsonBody(c.req.raw), c.env.TOOL_APPROVAL), 201)
-})
 
 insightRoutes.patch('/insights/:id', async (c) => c.json(await patchInsight(c.env.DB, c.req.param('id'), await jsonBody(c.req.raw))))
 
