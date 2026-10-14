@@ -873,7 +873,7 @@ const freshToolName = (prefix: string) => `${prefix}_${crypto.randomUUID().repla
  * the grammar only ever proved the SQL safe to run and mask on the board, never safe to hand the
  * model as a callable tool (a "list" shape's wrapped row returns bare, un-re-hydrated pkeys to
  * whoever calls it — re-hydration is board.ts's own run-time step, not the generic executor's).
- * Idempotent per trace (`wrapped_from_trace`, in `metadata` like `requested_from_trace`): pinning
+ * Idempotent per trace (`wrapped_from_trace`, in the `metadata` JSON column): pinning
  * the same query_sql answer twice reuses the row instead of leaving an orphan enabled tool behind
  * each time; `created` tells the caller whether this call is the one that should clean it up on a
  * failed first run (board.ts `pin`).
