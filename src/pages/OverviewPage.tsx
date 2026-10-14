@@ -359,7 +359,7 @@ function SourcesTable({ sources }: { sources: AnySource[] }) {
             numeric: true,
             cell: (s: AnySource) => (
               <>
-                {n(s.records)} {s.unit}
+                {n(s.records)} {s.records === 1 ? s.unit_one : s.unit}
               </>
             ),
           },

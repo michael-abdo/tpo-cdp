@@ -26,6 +26,8 @@ interface Common {
   id: Source['id']
   name: string
   unit: string
+  /** The registry's record unit, singular (for a count of 1). */
+  unit_one: string
   records: number
 }
 
@@ -117,6 +119,7 @@ sourceRoutes.get('/sources', async (c) => {
         name: s.name,
         kind: s.kind,
         unit: s.unit[1],
+        unit_one: s.unit[0],
         loads_by: s.loads_by,
         status: 'live',
         records: event.records,
@@ -132,6 +135,7 @@ sourceRoutes.get('/sources', async (c) => {
       name: s.name,
       kind: s.kind,
       unit: s.unit[1],
+        unit_one: s.unit[0],
       loads_by: s.loads_by,
       status: last === undefined ? 'not_loaded' : last.needs_review > 0 ? 'needs_review' : 'ok',
       records: last?.rows_out ?? 0,

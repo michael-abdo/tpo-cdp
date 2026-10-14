@@ -29,6 +29,8 @@ interface SourceCommon {
   name: string
   /** The registry's record unit, plural. */
   unit: string
+  /** The registry's record unit, singular. */
+  unit_one: string
   records: number
 }
 

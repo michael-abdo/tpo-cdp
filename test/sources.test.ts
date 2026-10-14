@@ -90,7 +90,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     expect(list.map((s) => s.id)).toEqual(SOURCES.map((s) => s.id))
     for (const [i, s] of list.entries()) {
       const entry = SOURCES[i]
-      expect([s.name, s.kind, s.unit, s.loads_by]).toEqual([entry.name, entry.kind, entry.unit[1], entry.loads_by])
+      expect([s.name, s.kind, s.unit, s.unit_one, s.loads_by]).toEqual([entry.name, entry.kind, entry.unit[1], entry.unit[0], entry.loads_by])
     }
     const [subscribers, web, app] = list
     expect(subscribers).toEqual({
@@ -98,6 +98,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
       name: 'Newsletter list',
       kind: 'csv',
       unit: 'subscribers',
+      unit_one: 'subscriber',
       loads_by: 'seed',
       status: 'needs_review',
       records: 2900,
@@ -108,7 +109,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     expect(app).toMatchObject({ status: 'ok', records: 930, last_sync: ranAt, runs: [csvRun(930, 930, 0, 0, 0)] })
     // 04's key order, for each kind.
     expect(Object.keys(subscribers)).toEqual([
-      'id', 'name', 'kind', 'unit', 'loads_by', 'status', 'records', 'last_sync', 'runs',
+      'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'records', 'last_sync', 'runs',
     ])
     expect(Object.keys(subscribers.runs[0] ?? {})).toEqual([
       'id', 'ran_at', 'rows_in', 'rows_out', 'merged', 'rejected', 'needs_review',
@@ -123,6 +124,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
       name: 'App events',
       kind: 'webhook',
       unit: 'events',
+      unit_one: 'event',
       loads_by: 'webhook',
       status: 'live',
       records: 0,
@@ -132,7 +134,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     })
     // 04's key order for the webhook entry (toEqual above ignores order).
     expect(Object.keys(before ?? {})).toEqual([
-      'id', 'name', 'kind', 'unit', 'loads_by', 'status', 'records', 'today', 'last_received', 'runs',
+      'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'records', 'today', 'last_received', 'runs',
     ])
 
     await postEvent(BRIEF_TS)
