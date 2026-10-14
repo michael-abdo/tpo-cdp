@@ -169,6 +169,15 @@ describe('"Techy" nav group: the panel sits right after the button, not portalle
     expect(eventsAt).toBeGreaterThan(ulAt)
     expect(auditAt).toBeGreaterThan(eventsAt)
   })
+
+  it('the desktop panel sizes to its content (w-max), never a fixed pixel width that leaves empty space', () => {
+    const after = afterTechyButton(renderAt('/'))
+    const ulAt = after.indexOf('<ul')
+    const ulTagEnd = after.indexOf('>', ulAt)
+    const ulTag = after.slice(ulAt, ulTagEnd)
+    expect(ulTag).toMatch(/\bw-max\b/)
+    expect(ulTag).not.toMatch(/\bw-\[\d+px\]/)
+  })
 })
 
 describe('"Techy" nav group: decision logic (src/nav.ts, 09 D-71) — no DOM needed', () => {
