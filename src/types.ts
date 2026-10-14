@@ -1,6 +1,7 @@
 // Response shapes the UI reads, as 04 §Endpoints defines them (the worker routes are the producers).
 
 import type { DefinitionKey } from '../shared/derive'
+import type { CsvSourceId, SourceId } from '../shared/sources'
 import type { FieldWeight, Reason, ScoredField } from '../worker/dedupe/score'
 import type { QuarantineReason, SubscriberStatus } from '../worker/ingest/quarantine'
 
@@ -14,10 +15,58 @@ export interface Overview {
   quarantine_reasons: Record<string, number>
 }
 
-/** GET /api/quarantine?reason= (09 D-61): rows the import set aside, oldest file order. */
+/**
+ * GET /api/sources (09 D-63), in registry order. Restated here rather than imported from
+ * worker/routes/sources.ts, which types D1Database (absent from the browser project).
+ */
+export interface Sources {
+  sources: (CsvSource | WebhookSource)[]
+}
+
+interface SourceCommon {
+  id: SourceId
+  /** The registry's plain name (shared/sources.ts). */
+  name: string
+  /** The registry's record unit, plural. */
+  unit: string
+  records: number
+}
+
+export interface CsvSource extends SourceCommon {
+  kind: 'csv'
+  loads_by: 'seed'
+  status: 'ok' | 'needs_review' | 'not_loaded'
+  /** UTC `YYYY-MM-DDTHH:MM:SSZ`; null before the first seed. */
+  last_sync: string | null
+  /** Newest first. */
+  runs: SourceRun[]
+}
+
+export interface WebhookSource extends SourceCommon {
+  kind: 'webhook'
+  loads_by: 'webhook'
+  status: 'live'
+  /** Events whose event time falls on TODAY. */
+  today: number
+  last_received: string | null
+  runs: []
+}
+
+export interface SourceRun {
+  id: number
+  ran_at: string
+  rows_in: number
+  rows_out: number
+  merged: number
+  rejected: number
+  /** Rejected rows a person can fix (every reason but blank_row). */
+  needs_review: number
+}
+
+/** GET /api/quarantine?reason=&file= (09 D-61, D-63): rows the import set aside, oldest file order. */
 export interface QuarantineList {
   rows: {
-    file: 'subscribers' | 'web_events' | 'app_users'
+    file: CsvSourceId
     /** 1-based line in the CSV file (the header is line 1). */
     line_no: number
     reason: QuarantineReason

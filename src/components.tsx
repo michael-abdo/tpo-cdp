@@ -13,7 +13,9 @@ import {
   CircleCheck,
   Download,
   Eye,
+  History,
   Inbox,
+  Info,
   LayoutDashboard,
   ListFilter,
   LoaderCircle,
@@ -22,14 +24,27 @@ import {
   Menu,
   MessageCircleQuestion,
   Moon,
+  Radio,
   ScrollText,
   Search,
   ShieldBan,
   Sun,
   TrendingUp,
+  TriangleAlert,
   UserSearch,
 } from 'lucide-react'
-import { type ButtonHTMLAttributes, Fragment, type ReactNode, useState } from 'react'
+import {
+  type ButtonHTMLAttributes,
+  Fragment,
+  type ReactNode,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
+import { createPortal } from 'react-dom'
+import { explain, type TipKey } from '../shared/glossary'
 
 export type { LucideIcon }
 
@@ -56,10 +71,14 @@ export const ICONS = {
   themeLight: Sun,
   themeDark: Moon,
   today: CalendarDays,
+  info: Info,
+  history: History,
   // status
   success: CircleCheck,
   blocked: ShieldBan,
   error: CircleAlert,
+  warning: TriangleAlert,
+  live: Radio,
   empty: Inbox,
   loading: LoaderCircle,
 } satisfies Record<string, LucideIcon>
@@ -329,6 +348,110 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   )
 }
 
+/** Gap between the popover and the viewport edge, px (06 §UI principles 9: never wider than the screen). */
+const TIP_EDGE = 16
+/** The popover's widest size, px. */
+const TIP_WIDTH = 288
+
+/**
+ * A toggletip (06 §Overview InfoTip, D-55 #3): an ⓘ button beside a term; click, tap, Enter or
+ * Space opens a small popover with the term's text from the glossary or DEFINITIONS
+ * (shared/glossary.ts explain()); Esc (focus returns to the button), a click outside, scrolling or
+ * resizing closes it. Never hover-only. The popover is a polite live region that is always in the
+ * DOM and filled only while open, so aria-controls always names an element and screen readers hear
+ * the text when it opens. It is portalled to <body> and `position: fixed`: inside the page, the
+ * page-enter animation's transform would make `fixed` relative to the page block instead of the
+ * viewport, and a table's overflow would clip it; from <body> it does neither and never widens the
+ * page. The button is `select-none`, so copying the text around it never picks up its
+ * screen-reader words (no "Mergedwhat Merged means85").
+ */
+export function InfoTip({ term }: { term: TipKey }) {
+  const { term: words, text } = explain(term)
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const wrap = useRef<HTMLSpanElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
+  const pop = useRef<HTMLSpanElement>(null)
+
+  // Place the popover under the button (above it when there is no room), inside the viewport.
+  useLayoutEffect(() => {
+    const b = button.current
+    const p = pop.current
+    if (!open || b === null || p === null) return
+    const r = b.getBoundingClientRect()
+    const width = Math.min(TIP_WIDTH, window.innerWidth - 2 * TIP_EDGE)
+    const left = Math.min(
+      Math.max(TIP_EDGE, r.left + r.width / 2 - width / 2),
+      window.innerWidth - TIP_EDGE - width,
+    )
+    p.style.width = `${width}px`
+    p.style.left = `${left}px`
+    const below = r.bottom + 6
+    const above = r.top - 6 - p.offsetHeight
+    p.style.top = `${below + p.offsetHeight > window.innerHeight - TIP_EDGE && above >= TIP_EDGE ? above : below}px`
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target
+      if (!(t instanceof Node) || !(wrap.current?.contains(t) || pop.current?.contains(t))) close()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      close()
+      button.current?.focus()
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  return (
+    <span ref={wrap} className="inline-flex align-middle">
+      <button
+        ref={button}
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-ink-subtle select-none hover:bg-surface-2 hover:text-accent aria-expanded:text-accent"
+      >
+        <Icon icon={ICONS.info} className="size-3.5" />
+        <span className="sr-only"> What “{words}” means </span>
+      </button>
+      {createPortal(
+        <span
+          ref={pop}
+          id={id}
+          role="status"
+          className={
+            open
+              ? 'fixed z-30 block rounded-lg border border-line-strong bg-surface p-3 text-left text-sm font-normal tracking-normal text-ink normal-case shadow-soft'
+              : 'sr-only'
+          }
+        >
+          {open && (
+            <>
+              <span className="block font-medium">{words}</span>{' '}
+              <span className="mt-1 block text-ink-muted">{text}</span>
+            </>
+          )}
+        </span>,
+        document.body,
+      )}
+    </span>
+  )
+}
+
 /** Headline numbers as one <dl>; children are StatTile. Two columns on phones, four from 768 px. */
 export function StatGrid({ label, children }: { label?: string; children: ReactNode }) {
   return (
@@ -344,17 +467,21 @@ export function StatTile({
   value,
   note,
   icon,
+  tip,
 }: {
   label: string
   value: number
   note?: ReactNode
   icon?: LucideIcon
+  /** An InfoTip after the label. */
+  tip?: ReactNode
 }) {
   return (
     <div className="flex flex-col rounded-xl border border-line bg-surface p-4 shadow-soft sm:p-5">
       <dt className="order-2 mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
         {icon && <Icon icon={icon} className="size-4 text-accent" />}
         {label}
+        {tip}
       </dt>
       <dd className="order-1 font-display text-3xl font-medium tabular-nums text-ink">
         {value.toLocaleString('en-US')}
@@ -362,6 +489,24 @@ export function StatTile({
       {note !== undefined && <dd className="order-3 mt-2 text-sm">{note}</dd>}
     </div>
   )
+}
+
+/**
+ * A headline number with its plain label and an InfoTip that explains it (06 §Overview 1). `term`
+ * names the glossary or DEFINITIONS entry; the label stays visible text.
+ */
+export function Metric({
+  value,
+  label,
+  term,
+  icon,
+}: {
+  value: number
+  label: string
+  term: TipKey
+  icon?: LucideIcon
+}) {
+  return <StatTile label={label} value={value} icon={icon} tip={<InfoTip term={term} />} />
 }
 
 /** A small badge that carries its meaning in words, never colour alone (principle 7). */

@@ -11,8 +11,8 @@ import { FILE_HEADERS, quarantineFields } from '../worker/routes/quarantine'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// GET /api/quarantine?reason= (04 §/api/quarantine, 09 D-61) and the Overview "Needs review" card's
-// pure logic (src/needs-review.ts, 06 §Overview). T-OVR-1: the test D1 holds the real seed of
+// GET /api/quarantine?reason=&file= (04 §/api/quarantine, 09 D-61, D-63) and the Overview "Needs review"
+// section's pure logic (src/needs-review.ts, 06 §Overview). T-OVR-1: the test D1 holds the real seed of
 // data/*.csv; the counts (8 blank rows, the 2 invalid emails `not-an-email` and `@gmail.com`) are
 // 02 §Counts, the line numbers 1750 and 1788 are 08 T-OVR-1's.
 
@@ -115,6 +115,46 @@ describe('GET /api/quarantine (T-OVR-1)', () => {
   })
 })
 
+describe('GET /api/quarantine?file= (09 D-63: each run’s "View rejected rows")', () => {
+  it('file=subscribers → the same 10 rows as no filter; the other sources set nothing aside', async () => {
+    const all = await (await quarantine('')).json<QuarantineList>()
+    const res = await quarantine('?file=subscribers')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(all)
+    for (const file of ['web_events', 'app_users', 'app_events']) {
+      const other = await quarantine(`?file=${file}`)
+      expect(other.status).toBe(200)
+      expect(await other.json()).toEqual({ rows: [] })
+    }
+  })
+
+  it('file and reason combine: subscribers + invalid_email → lines 1750 and 1788; web_events + invalid_email → none', async () => {
+    const both = await (await quarantine('?file=subscribers&reason=invalid_email')).json<QuarantineList>()
+    expect(both.rows.map((r) => [r.file, r.line_no, r.reason])).toEqual([
+      ['subscribers', 1750, 'invalid_email'],
+      ['subscribers', 1788, 'invalid_email'],
+    ])
+    const other = await (await quarantine('?reason=invalid_email&file=web_events')).json<QuarantineList>()
+    expect(other).toEqual({ rows: [] })
+  })
+
+  it('a file outside the registry → 400 invalid_file, without echoing the input', async () => {
+    for (const query of ['?file=subscribers.csv', '?file=', '?file=SUBSCRIBERS', '?file=quarantine']) {
+      const res = await quarantine(query)
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({
+        error: 'invalid_file',
+        message: 'file must be one of subscribers, web_events, app_users, app_events, or left out.',
+      })
+    }
+  })
+
+  it('401 without a session cookie', async () => {
+    const res = await quarantine('?file=subscribers', {})
+    expect(res.status).toBe(401)
+  })
+})
+
 describe('quarantineFields', () => {
   it("each file's header is the first line of the real CSV, in the file's order", () => {
     const firstLine = (csv: string) => csv.split(/\r?\n/)[0]
@@ -129,7 +169,7 @@ describe('quarantineFields', () => {
   })
 })
 
-describe('Needs review card (src/needs-review.ts) on the real answers', () => {
+describe('Needs review section (src/needs-review.ts) on the real answers', () => {
   it('shows only when Overview reports a reason other than blank_row', async () => {
     const overview = await (
       await SELF.fetch('http://cdp.test/api/overview', { headers: { cookie } })
