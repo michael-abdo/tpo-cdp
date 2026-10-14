@@ -1,6 +1,6 @@
 import { env, SELF } from 'cloudflare:test'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { TODAY } from '../shared/config'
+import { HOSTED_URL, TODAY } from '../shared/config'
 import { pkeyForEmail, pkeyForUnknownUser } from '../shared/pseudonym'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
@@ -34,15 +34,19 @@ import {
 //   T-WH-7's "6 hours old" time is taken from the wall clock, as 08 asks.
 // - property values are real page slugs from web_events.csv (/news/supreme-court-ruling-explained,
 //   /news/church-attendance-study); the over-long value repeats the brief's slug and cuts it. The
-//   keys are `story` (the brief's) and `link`, the two keys v_app_events reads (0002_views.sql).
-//   Non-string property values are the brief's slug re-shaped (in an object, in an array) or
-//   removed (null); the nesting-depth cases wrap the brief's slug in empty arrays.
+//   keys are `story` (the brief's) and `link`, the two keys v_app_events reads (0002_views.sql),
+//   and `page`, a web_events.csv column, for a key the view does not read. A `link` is a URL (09
+//   D-70 #2): LINK is the hosted app's own URL (shared/config.ts HOSTED_URL) with a real page path.
+//   The size and nesting caps are exercised on `page`, since `story` and `link` have rules of
+//   their own (T-HARD-2). Non-string property values are the brief's slug re-shaped (in an object,
+//   in an array) or removed (null); the nesting-depth cases wrap the brief's slug in empty arrays.
 // - the wrong secret is WEBHOOK_SECRET with its last character removed; "not-an-email" is a
 //   real subscribers.csv value used as a non-JSON body. Secrets are never printed.
 
 const BRIEF_SAMPLE =
   '{"event_id":"evt_9f3a1c","event":"read_story","user_id":"u_2b6447a3","device_id":"d_4b21e8","timestamp":"2026-09-28T14:22:05Z","properties":{"story":"supreme-court-ruling-explained"}}'
 const BRIEF_TS = '2026-09-28T14:22:05Z'
+const LINK = `${HOSTED_URL}/news/supreme-court-ruling-explained`
 const JULIA = 'julia.evans230@gmail.com'
 const ALLOWED_EVENTS = ['app_open', 'read_story', 'link_click', 'login']
 const ISO_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
@@ -295,7 +299,7 @@ describe('T-WH-5 a known user_id', () => {
       event: 'link_click',
       user_id: 'u_2b6447a3',
       device_id: 'd_2b6447a3',
-      properties: { link: 'supreme-court-ruling-explained' },
+      properties: { link: LINK },
     })
     const { status, json } = await post(body)
     expect(status).toBe(202)
@@ -307,7 +311,7 @@ describe('T-WH-5 a known user_id', () => {
     expect(profile.app.events).toContainEqual({
       event: 'link_click',
       event_ts: BRIEF_TS,
-      properties: { link: 'supreme-court-ruling-explained' },
+      properties: { link: LINK },
       attached_via: 'direct',
     })
 
@@ -623,20 +627,20 @@ describe('T-WH-12 size and content-type caps', () => {
   it('answers 400 for a property string over 200 characters and accepts exactly 200', async () => {
     const long = Array(8).fill('supreme-court-ruling-explained').join('-')
     const over = await post(
-      event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8', properties: { story: long.slice(0, 201) } }),
+      event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8', properties: { page: long.slice(0, 201) } }),
     )
     expect(over.status).toBe(400)
     expect(over.json).toMatchObject({ error: 'invalid_event', details: [{ field: 'properties' }] })
-    // The sender's property key is never echoed (the message itself names read_story, so check details).
-    expect(JSON.stringify(over.json.details)).not.toContain('story')
+    // The sender's property key is never echoed.
+    expect(JSON.stringify(over.json.details)).not.toContain('page')
 
     const atCap = event({
       user_id: 'u_2b6447a3',
       device_id: 'd_4b21e8',
-      properties: { story: long.slice(0, 200) },
+      properties: { page: long.slice(0, 200) },
     })
     expect((await post(atCap)).status).toBe(202)
-    expect(JSON.parse((await stored(atCap.event_id as string))!.properties!).story).toHaveLength(200)
+    expect(JSON.parse((await stored(atCap.event_id as string))!.properties!).page).toHaveLength(200)
   })
 
   it('accepts any JSON object as properties and caps strings at any depth (04, 09 D-22)', async () => {
@@ -644,13 +648,13 @@ describe('T-WH-12 size and content-type caps', () => {
     const base = { user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }
     const accepted = event({
       ...base,
-      properties: { story: slug, link: { story: slug }, page: [slug], utm: null },
+      properties: { story: slug, link: LINK, page: [slug, { story: slug }], utm: null },
     })
     expect((await post(accepted)).status).toBe(202)
     expect(JSON.parse((await stored(accepted.event_id as string))!.properties!)).toEqual(accepted.properties)
 
     const long = Array(8).fill(slug).join('-').slice(0, 201)
-    for (const properties of [{ link: { story: long } }, { story: [slug, long] }]) {
+    for (const properties of [{ page: { story: long } }, { page: [slug, long] }]) {
       const rows = await count('app_events')
       const { status, json } = await post(event({ ...base, properties }))
       expect(status).toBe(400)
@@ -665,7 +669,7 @@ describe('T-WH-12 size and content-type caps', () => {
     const nested = (levels: number) => {
       let value: unknown = 'supreme-court-ruling-explained'
       for (let i = 1; i < levels; i++) value = [value]
-      return { story: value }
+      return { page: value }
     }
     const deepest = event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8', properties: nested(1000) })
     expect((await post(deepest)).status).toBe(202)
