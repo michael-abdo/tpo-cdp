@@ -14,11 +14,6 @@ export function utc(ts: string): string {
   return `${match[1]} ${match[2]} UTC`
 }
 
-/** A nullable date, with the reason it is empty spelled out. */
-export function dateOr(date: string | null, empty: string): string {
-  return date ?? empty
-}
-
 /** A stored timestamp without seconds, `Sep 2, 2026, 4:19 PM UTC`; utc() keeps the seconds for Technical details. */
 export function humanDateTime(ts: string): string {
   const match = STORED_UTC.exec(ts)

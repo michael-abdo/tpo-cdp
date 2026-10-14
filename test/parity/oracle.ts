@@ -756,11 +756,6 @@ export interface StoredAppEvent {
   event_ts: string
 }
 
-export interface StoredDeviceIdentity {
-  device_id: string
-  user_id: string
-}
-
 export interface ResolvedAppEvents {
   /** user_id -> count of events resolved to them in [TODAY-30 .. +inf) by event day (D-01: no upper bound). */
   countByUserId: Map<string, number>

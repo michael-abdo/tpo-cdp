@@ -15,8 +15,6 @@ export const PII_COLUMNS = [
   'properties',
 ] as const
 
-export type PiiColumn = (typeof PII_COLUMNS)[number]
-
 /**
  * An email anywhere in serialized text, case-insensitive. The local part excludes quotes
  * and brackets so a match inside JSON stops at the string delimiter. No `g` flag: the
