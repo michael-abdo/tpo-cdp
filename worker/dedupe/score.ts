@@ -253,15 +253,18 @@ function leadFor(band: Band): string {
 }
 
 /**
- * The one-line plain suggestion (06 §Overview); the default is "Probably different people — only the
- * name matches". It is the verdict only: the reason chips beside it already say which fields match
- * (09 D-72, one thing in one place), so the sentence names only the name, which has no chip, and
- * only when nothing else matches.
+ * The one-line plain suggestion (06 §Overview): the verdict, plus the name basis, which is the
+ * reason the pair is listed at all and has no chip of its own (09 D-72, one thing in one place).
+ * The reason chips beside it already say which of the other fields match, so the sentence never
+ * repeats them; it only ever adds the name. "only the name matches" is reserved for a hidden-band
+ * pair where nothing else agrees either — the one case where the name is the sole basis for
+ * anything.
  */
 export function suggestionFor(band: Band, agreement: Agreement): string {
   const lead = leadFor(band)
-  if (SCORED_FIELDS.some((f) => agreement[f])) return lead
-  return band === 'hidden' ? `${lead} — only the name matches` : `${lead} — the name matches`
+  const onlyName = !SCORED_FIELDS.some((f) => agreement[f])
+  if (band === 'hidden' && onlyName) return `${lead} — only the name matches`
+  return `${lead} — the name matches`
 }
 
 /** `dp_` + the first 16 hex characters of SHA-256 over the two pkeys in sorted order. */
