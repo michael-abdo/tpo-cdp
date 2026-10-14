@@ -2,8 +2,9 @@
 // form in plain words, Preview (POST /api/segments/preview), the count as a sentence, Export CSV
 // (POST /api/segments/export.csv, run on the filters the shown result came from, so the file always
 // matches the count on screen) and a short result table. Level 2 / Technical details (06 §UI
-// principles 2–5): per-row Details, "How these filters work" with the definitions from DEFINITIONS
-// (02 §Derived "one runtime source"), raw names and the placeholders-only SQL shape. Status
+// principles 2–5): per-row Details, and the raw names and formulas of the filters' definitions
+// from DEFINITIONS (02 §Derived "one runtime source") with the placeholders-only SQL shape. The
+// filters' plain words live only beside each filter (09 D-72): no footer restates them. Status
 // defaults to active; the response's hidden_unsubscribed is shown in words when it is above 0.
 // The form sends what the inputs hold (02 §Normalization): labels below are display maps only.
 // A segment answer or tile on /insights arrives as router state {filters} ("Open segment", 06
@@ -19,8 +20,6 @@ import {
   Announcer,
   Button,
   type Column,
-  Disclosure,
-  EmptyState,
   ErrorLine,
   Field,
   ICONS,
@@ -54,12 +53,8 @@ const DEFAULT_FORM: Form = { status: 'active', sources: [], days: '', includeNev
 /** The brief's R3 example (02 §Counts): Instagram, active, no open in 30 days including never-opened. */
 const BRIEF_PRESET: Form = { status: 'active', sources: ['instagram'], days: '30', includeNeverOpened: true, hasApp: 'any' }
 
-/** The footer definitions, each with a plain heading; the raw name shows only in Technical details. */
-const FOOTER_DEFINITIONS = [
-  { label: 'Days since last open', def: DEFINITIONS.days_since_open },
-  { label: "Haven't opened in N days", def: DEFINITIONS.no_open_in_days },
-  { label: 'Cold', def: DEFINITIONS.cold },
-]
+/** The definitions behind the recency filter; only their raw names and formulas show, in Technical details. */
+const FILTER_DEFINITIONS = [DEFINITIONS.days_since_open, DEFINITIONS.no_open_in_days]
 
 /** The CSV's columns as the export writes them (04 §Segments). */
 const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
@@ -213,12 +208,9 @@ export default function SegmentsPage() {
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl bg-accent-soft px-4 py-3 text-sm">
         <span className="text-gray-700">Not sure where to start?</span>
-        <Button variant="quiet" icon={ICONS.next} onClick={applyPreset} aria-describedby="preset-hint" className="justify-start text-left">
+        <Button variant="quiet" icon={ICONS.next} onClick={applyPreset} className="justify-start text-left">
           Instagram readers who haven't opened in 30 days
         </Button>
-        <span id="preset-hint" className="text-gray-600">
-          Active Instagram readers with no email opened in 30+ days, including never-opened.
-        </span>
       </div>
 
       <form onSubmit={submit} noValidate className="grid gap-5 rounded-xl border border-line bg-surface p-5 shadow-soft sm:grid-cols-2">
@@ -323,18 +315,11 @@ export default function SegmentsPage() {
         </div>
       </form>
 
-      {result === null && (
-        <EmptyState icon={ICONS.segments}>Choose who to include, then press Preview, or start from the example above.</EmptyState>
-      )}
       {result?.status === 'loading' && <Loading label="Counting matching readers…" />}
       {result?.status === 'error' && (
         <ErrorLine
           message={result.message}
-          next={
-            result.invalidFilters
-              ? "Check the “Haven't opened an email in at least” box: enter a whole number, 1 or more, or leave it blank."
-              : undefined
-          }
+          next={result.invalidFilters ? "Check the “Haven't opened an email in at least” box." : undefined}
         />
       )}
       {ok !== null && (
@@ -381,18 +366,10 @@ export default function SegmentsPage() {
         </section>
       )}
 
-      <Disclosure label="How these filters work" className="border-t border-gray-200 pt-4">
-        <dl className="space-y-2 text-sm">
-          {FOOTER_DEFINITIONS.map(({ label, def }) => (
-            <div key={def.name}>
-              <dt className="font-medium text-gray-900">{label}</dt>
-              <dd className="text-gray-700">{def.doc}</dd>
-            </div>
-          ))}
-        </dl>
+      <div className="border-t border-gray-200 pt-4">
         <TechnicalDetails>
           <p className="font-medium">Definitions (shared/derive.ts)</p>
-          {FOOTER_DEFINITIONS.map(({ def }) => (
+          {FILTER_DEFINITIONS.map((def) => (
             <p key={def.name}>
               <span className="font-mono">{def.name}</span>: <span className="font-mono">{def.formula}</span>
             </p>
@@ -407,7 +384,7 @@ export default function SegmentsPage() {
             </>
           )}
         </TechnicalDetails>
-      </Disclosure>
+      </div>
     </div>
   )
 }
