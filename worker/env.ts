@@ -9,9 +9,7 @@ export type AppEnv = {
 
 /**
  * Secrets read as strings. ANTHROPIC_API_KEY is deliberately absent: it is probed lazily on the
- * first assistant call (11 §Deploy). TOOL_APPROVAL, the D-64b human-approval queue's second
- * shared password, is gone (09 D-77 reverses D-64b (C)): there is no approval route left to
- * check it against, and the app now starts with no such secret.
+ * first assistant call (11 §Deploy).
  */
 const SECRET_NAMES = ['WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET'] as const
 const LIMITER_NAMES = ['LOGIN_LIMITER', 'WEBHOOK_LIMITER', 'ASSISTANT_LIMITER', 'EXPORT_LIMITER', 'TEST_EVENT_LIMITER'] as const

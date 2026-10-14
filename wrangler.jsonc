@@ -29,7 +29,6 @@
   // and per client (ai_audit.client_key, migrations/0005), and ASSISTANT_LIMITER adds a per-IP
   // burst limit; a new session resets neither (09 D-70 #6). TEST_EVENT_LIMITER is the "Send a
   // test event" panel's own limit (09 D-73): keyed by client, not session, same D-70 #6 style.
-  // APPROVAL_LIMITER is gone with the D-64b approval queue it rate-limited (09 D-77).
   "ratelimits": [
     { "name": "WEBHOOK_LIMITER", "namespace_id": "1001", "simple": { "limit": 300, "period": 60 } },
     { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },

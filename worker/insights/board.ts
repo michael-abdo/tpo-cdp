@@ -15,9 +15,7 @@
 //     `query`-type rows pin outright. A free-form `query_sql` answer pins only when its SQL
 //     matches the D-64b positive grammar (a totals query or a plain person list,
 //     worker/insights/pin-grammar.ts); anything else is refused outright with the grammar's own
-//     reasons — no approval queue, no second password, no "Request approval" button (09 D-77
-//     reverses D-64b (C): one real request in its lifetime, a required secret whose absence took
-//     every page down). `insight_panel` (board only) and any other builtin (describe_schema) are
+//     reasons; nothing is queued (09 D-77). `insight_panel` (board only) and any other builtin (describe_schema) are
 //     400 `not_pinnable` with a plain sentence of their own; the answer card learns this from
 //     pinPeriod (`pin_refusal`) and offers no Pin. This removes the free-form-SQL leak class
 //     instead of chasing it with an output denylist. A board run allows exactly what a pin allows,
