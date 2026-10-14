@@ -12,7 +12,9 @@
 
 import type { ReactNode } from 'react'
 
-/** The active row's own classes; merged after the caller's `className` so they always win. */
+/** The active row's own classes; appended after the caller's `className` in the class string
+ * (Tailwind resolves conflicts by CSS order, not string order, so this placement does not by
+ * itself make these win over a caller's conflicting utility — no caller has one today). */
 const ACTIVE_CLASSES = 'border-l-4 border-blue-600 bg-blue-50'
 const INACTIVE_CLASSES = 'border-l-4 border-transparent'
 

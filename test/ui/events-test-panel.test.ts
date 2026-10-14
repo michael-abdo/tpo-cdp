@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { APP_EVENTS } from '../../shared/app-events'
 import { TestEventPanel } from '../../src/events-test-panel'
 import { resultText } from '../../src/events-test-words'
+import { ListboxOption } from '../../src/listbox'
 
 const panelSource = import.meta.glob<string>('../../src/events-test-panel.tsx', { query: '?raw', import: 'default', eager: true })['../../src/events-test-panel.tsx']
 const listboxSource = import.meta.glob<string>('../../src/listbox.tsx', { query: '?raw', import: 'default', eager: true })['../../src/listbox.tsx']
@@ -105,12 +106,24 @@ describe('the account field is the shared listbox contract (../listbox; WCAG 2.2
   })
 
   it('the active option gets the shared LookupPage treatment — a left bar plus a fill, not a surface tint alone (06 §UI principles 7)', () => {
-    // The shared component carries the active styling now (D-72), so a mutant that weakens it
-    // to a tint (e.g. `active ? 'bg-surface' : ''`) fails here even though each page's own
-    // className prop still reads fine.
-    expect(listboxSource).toMatch(/border-l-4/)
-    expect(listboxSource).toMatch(/border-blue-600/)
-    expect(listboxSource).toMatch(/bg-blue-50/)
+    // Behaviour, not source text: render the real ListboxOption both ways and read its actual
+    // class list. This kills a mutant that swaps the ternary branches (active <-> inactive) or
+    // that drops the active classes and always renders className unchanged — both would still
+    // leave the literal strings 'border-l-4', 'border-blue-600' and 'bg-blue-50' somewhere in
+    // the source, which a text-presence check alone cannot tell apart from the real behaviour.
+    const activeHtml = renderToString(createElement(ListboxOption, { active: true, onPick: () => {} }, 'x'))
+    const inactiveHtml = renderToString(createElement(ListboxOption, { active: false, onPick: () => {} }, 'x'))
+    const classOf = (html: string): string => /class="([^"]*)"/.exec(html)?.[1] ?? ''
+    const activeClasses = classOf(activeHtml).split(/\s+/)
+    const inactiveClasses = classOf(inactiveHtml).split(/\s+/)
+    expect(activeClasses).toEqual(expect.arrayContaining(['border-l-4', 'border-blue-600', 'bg-blue-50']))
+    expect(inactiveClasses).not.toContain('border-blue-600')
+    expect(inactiveClasses).not.toContain('bg-blue-50')
+
+    // Pin the exact expression, too, so the two render calls above and a future refactor stay
+    // honest about which file owns this: ACTIVE_CLASSES is the ternary's true branch.
+    expect(listboxSource).toMatch(/const ACTIVE_CLASSES = 'border-l-4 border-blue-600 bg-blue-50'/)
+    expect(listboxSource).toMatch(/active \? ACTIVE_CLASSES : INACTIVE_CLASSES/)
     // Neither caller re-implements it: no page-local "active ?" ternary picking its own fill.
     expect(panelSource).not.toMatch(/active\s*\?\s*'[^']*'\s*:\s*''/)
     expect(panelSource).not.toMatch(/nav\.active\s*\?/)
