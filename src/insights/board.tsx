@@ -18,7 +18,8 @@ import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } fr
 import { TODAY } from '../../shared/config'
 import { resolveWindow } from '../../shared/insight-window'
 import { errorMessage, patchJson, request } from '../api'
-import { Button, ErrorLine, ICONS, Icon, TechnicalDetails } from '../components'
+import { Button, ComingSoonTag, ErrorLine, GatedNote, ICONS, Icon, TechnicalDetails } from '../components'
+import { useGated } from '../use-gated'
 import { humanDate, humanRange, utc } from '../format'
 import type { ChartChoice, InsightPatch, InsightTile } from '../types'
 import { InsightChart } from './charts'
@@ -221,6 +222,25 @@ function FormButtons({ saving, onCancel, disabled = false }: { saving: boolean; 
 }
 
 /**
+ * The gated "Set an alert" item (09 D-80, 22-pages/insights.md §2a), shown only on a tile with one
+ * number (chart 'number' or 'segment'): a bar, line or table has no single number to cross a line.
+ * Shares its flag and note with the board header's "Send the board" (schedules_and_digests, D-72:
+ * one flag, one note, written once). Activation only reveals and announces the note.
+ */
+export function SetAlertItem() {
+  const gated = useGated('schedules_and_digests')
+  return (
+    <li className="space-y-1">
+      <button type="button" {...gated.bind} onClick={gated.activate} className={`${panelLink} text-ink-subtle`}>
+        <Icon icon={ICONS.notify} /> Set an alert
+        <ComingSoonTag />
+      </button>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </li>
+  )
+}
+
+/**
  * The tile's level-2 panel. Built-in tiles have no Remove (09 D-64; the server would answer 409).
  * Moving swaps sort_order with the neighbour, one PATCH each.
  */
@@ -334,6 +354,7 @@ export function TileActions({
               <Icon icon={ICONS.assistant} /> Explain this
             </button>
           </li>
+          {(tile.chart === 'number' || tile.chart === 'segment') && <SetAlertItem />}
           <li>
             <button type="button" className={panelLink} disabled={above === null || saving} onClick={() => above !== null && void move(above, 'up')}>
               <Icon icon={ICONS.moveUp} /> Move up

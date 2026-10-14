@@ -14,7 +14,7 @@
 // envelope's message. Single-shot: there is no conversation history (09 D-34). A question handed
 // over by "Explain this" or ?q= is filled in, never sent: the teammate presses Ask (09 D-39).
 
-import { type FormEvent, type RefObject, useEffect, useRef, useState } from 'react'
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { DEFINITIONS } from '../../shared/derive'
 import { pickChart } from '../../shared/pick-chart'
@@ -22,15 +22,18 @@ import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
   Button,
+  ComingSoonTag,
   Disclosure,
   ErrorLine,
   Field,
+  GatedNote,
   ICONS,
   Icon,
   Loading,
   Tag,
   TechnicalDetails,
 } from '../components'
+import { useGated } from '../use-gated'
 import { humanRange } from '../format'
 import { filtersAppliedView } from '../filters-applied'
 import { DEFINITION_LABEL } from '../labels'
@@ -62,6 +65,49 @@ function plainMessage(code: string | null, message: string): string {
   if (code === 'no_tools') return "The assistant isn't set up yet, so it can't answer right now."
   if (/`|npm run/.test(message)) return "The assistant can't answer right now."
   return message
+}
+
+/**
+ * The gated "Ask a follow-up" field (09 D-80, 22-pages/insights.md §2b): the foot of the answer
+ * card, after "Time period · Filters · Definitions". No `<form>` while gated, so Enter can never
+ * submit; the input is readOnly and both it and the button point at the same note (one flag, one
+ * note). Activation = a click or Enter/Space on the button, or the first keystroke in the box.
+ */
+export function FollowUpField() {
+  const gated = useGated('follow_up_questions')
+  const id = useId()
+  return (
+    <div className="space-y-1.5 border-t border-line pt-3">
+      <div className="flex items-center gap-1">
+        <label htmlFor={id} className="block text-sm font-medium text-ink">
+          Ask a follow-up
+        </label>
+        <ComingSoonTag />
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input
+          id={id}
+          type="text"
+          readOnly
+          value=""
+          {...gated.bind}
+          onClick={gated.activate}
+          onKeyDown={gated.onKeyDown}
+          placeholder="and last month?"
+          className="min-h-9 w-full rounded-lg border border-dashed border-line-strong bg-page px-3 py-1.5 text-sm text-ink-subtle placeholder:text-ink-subtle"
+        />
+        <button
+          type="button"
+          {...gated.bind}
+          onClick={gated.activate}
+          className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-4 text-sm font-medium text-ink-subtle"
+        >
+          Ask<span className="sr-only"> a follow-up</span>
+        </button>
+      </div>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
+  )
 }
 
 export function AnswerCard({
@@ -266,6 +312,8 @@ export function AnswerCard({
           )}
         </TechnicalDetails>
       </Disclosure>
+
+      <FollowUpField />
 
       {data.pin_refusal === null && (
         <PinDialog

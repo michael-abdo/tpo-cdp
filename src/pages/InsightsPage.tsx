@@ -11,11 +11,36 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { errorMessage, getJson } from '../api'
-import { Announcer, Button, EmptyState, ErrorLine, ICONS, Loading, PageHeader } from '../components'
+import { Announcer, Button, ComingSoonTag, EmptyState, ErrorLine, GatedNote, ICONS, Icon, Loading, PageHeader } from '../components'
+import { useGated } from '../use-gated'
 import { AskSection } from '../insights/ask'
 import { BoardGrid } from '../insights/board'
 import { PREFILL_PARAM } from '../insights/questions'
 import type { InsightBoard, InsightTile } from '../types'
+
+/**
+ * The gated "Send the board" digest button (09 D-80, 22-pages/insights.md §2a): beside Refresh, in
+ * DOM order after it, so Tab reaches Refresh first. Shown only when the board loaded with at least
+ * one tile — an empty or failed board has nothing to send.
+ */
+export function SendTheBoardButton() {
+  const gated = useGated('schedules_and_digests')
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button
+        type="button"
+        {...gated.bind}
+        onClick={gated.activate}
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-2.5 py-1.5 text-sm font-medium text-ink-subtle"
+      >
+        <Icon icon={ICONS.digest} />
+        Send the board
+      </button>
+      <ComingSoonTag />
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </span>
+  )
+}
 
 type BoardState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ok'; data: InsightBoard }
 
@@ -115,6 +140,7 @@ export default function InsightsPage() {
           <Button variant="quiet" icon={ICONS.refresh} onClick={refresh} aria-disabled={refreshing} className="aria-disabled:cursor-wait aria-disabled:opacity-60">
             {refreshing && board.status === 'ok' ? 'Refreshing…' : 'Refresh'}
           </Button>
+          {board.status === 'ok' && board.data.tiles.length > 0 && <SendTheBoardButton />}
         </div>
         <Announcer message={announcement} visible />
         {board.status === 'loading' && <Loading label="Loading the board…" />}
