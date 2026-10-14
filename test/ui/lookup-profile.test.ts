@@ -120,6 +120,33 @@ describe('T-HARD-4 the Look up page shows every app account and web visitor (09 
     for (const id of [`>${SECOND_ACCOUNT}<`, '>u_ceed5f12<', `>${SECOND_VISITOR}<`, '>v_c9e136fd6d<']) expect(html).toContain(id)
   })
 
+  it('each Details section lists its own visits and its own app activity, not the first one’s', () => {
+    const html = rendered(data)
+    const between = (from: string, to: string | null) => {
+      const start = html.indexOf(from)
+      expect(start, from).toBeGreaterThanOrEqual(0)
+      const end = to === null ? html.length : html.indexOf(to, start + from.length)
+      expect(end, to ?? 'end').toBeGreaterThan(start)
+      return html.slice(start, end)
+    }
+    const browser1 = between('Browser 1 of 2', 'Browser 2 of 2')
+    const browser2 = between('Browser 2 of 2', 'App account 1 of 2')
+    const account1 = between('App account 1 of 2', 'App account 2 of 2')
+    const account2 = between('App account 2 of 2', null)
+    // Browser 1 holds its copied Jul 1 visit (web_events.csv:13) and none of joy's Sep 28 views.
+    expect(browser1).toContain('Jul 1, 2026')
+    expect(browser1).not.toContain('Sep 28, 2026')
+    expect(browser2).toContain('Sep 28, 2026')
+    // Joy's own nine views run Sep 2–28 (web_events.csv); a Jul 1 row under Browser 2 is the first browser's list.
+    expect(browser2).not.toContain('Jul 1, 2026')
+    expect(browser2).toContain('Sep 14, 2026')
+    // The read_story event and its device sit under account 2; account 1 has none.
+    expect(account2).toContain('read_story')
+    expect(account2).toContain('1 device')
+    expect(account1).toContain('none seen yet')
+    expect(account1).not.toContain('read_story')
+  })
+
   it('one account and one visitor read as before: no count, no per-item headings', () => {
     // Her real profile: the one account is u_ceed5f12, created the day after her signup.
     const one: Lookup = {
