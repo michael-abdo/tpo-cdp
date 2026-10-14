@@ -1,13 +1,14 @@
 /// <reference types="vite/client" />
 import { env, SELF } from 'cloudflare:test'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { webhookRoutes } from '../worker/routes/webhook'
 import wranglerConfig from '../wrangler.jsonc?raw'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
-import { sendWebhook } from './helpers/webhook'
+import { sendWebhook, signature as independentSignature, webhookSecret } from './helpers/webhook'
 
 // POST /api/events/test (04 §POST /api/events/test, 06 §/events panel, 09 D-73): the "Send a
-// test event" panel's server route. T-WH-PANEL-1..9 (08). The test D1 holds the real seed of
+// test event" panel's server route. T-WH-PANEL-1..12 (08). The test D1 holds the real seed of
 // data/*.csv (test/helpers/seed.ts); no network.
 // Inputs (09 D-11, D-47: real ids, minimal edits for the refusal paths):
 // - u_2b6447a3 is julia.evans230@gmail.com (app_users.csv:2, 02 §Counts demo subject): a real
@@ -284,6 +285,28 @@ describe('T-WH-PANEL-10: the panel reuses verify and ingest, it never re-impleme
       expect(logged.some((l) => l.includes('"at":"webhook"') && l.includes('"outcome":"duplicate"') && l.includes('"status":200'))).toBe(true)
     } finally {
       console.info = origInfo
+    }
+  })
+
+  it('runtime proof, not just text: the signature the route actually sends equals the independent signer\'s over the same timestamp and body (catches a mutant that keeps the real webhookMac import but stops using its output, e.g. a hard-coded zero signature paired with a verify-skipping header)', async () => {
+    const spy = vi.spyOn(webhookRoutes, 'request')
+    try {
+      const res = await sendTest({ user_id: KNOWN_USER, event: 'app_open' })
+      expect(res.status).toBe(202)
+      expect(spy).toHaveBeenCalledTimes(1)
+      const [path, init] = spy.mock.calls[0] as [string, RequestInit]
+      expect(path).toBe('/app')
+      const headers = init.headers as Record<string, string>
+      const ts = headers['x-webhook-timestamp']
+      const sentSignature = headers['x-webhook-signature']
+      expect(ts).toMatch(/^\d+$/)
+      expect(sentSignature).toMatch(/^v1=[0-9a-f]{64}$/)
+      const bodyBytes =
+        typeof init.body === 'string' ? new TextEncoder().encode(init.body) : new Uint8Array(init.body as ArrayBuffer)
+      const expected = await independentSignature(webhookSecret(), ts, bodyBytes)
+      expect(sentSignature).toBe(expected) // not merely well-formed: it matches the real secret and body
+    } finally {
+      spy.mockRestore()
     }
   })
 })
