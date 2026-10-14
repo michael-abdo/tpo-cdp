@@ -60,8 +60,7 @@ function ThemeToggle() {
       }}
     >
       <Icon icon={next === 'dark' ? ICONS.themeDark : ICONS.themeLight} />
-      {next === 'dark' ? 'Dark' : 'Light'}
-      <span className="sr-only"> theme</span>
+      {next === 'dark' ? 'Dark theme' : 'Light theme'}
     </button>
   )
 }

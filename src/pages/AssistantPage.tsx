@@ -85,6 +85,18 @@ function nextStep(code: string | null): string | undefined {
   }
 }
 
+/** Errors whose server text speaks to developers: plain words at level 1, raw text in Technical details. */
+function plainMessage(code: string | null, message: string): string {
+  if (code === 'no_tools') return "The assistant isn't set up yet, so it can't answer right now."
+  if (/`|npm run/.test(message)) return "The assistant can't answer right now."
+  return message
+}
+
+function plainNext(code: string | null): string | undefined {
+  if (code === 'no_tools') return 'Ask your admin to turn it on.'
+  return nextStep(code)
+}
+
 type State =
   | { status: 'loading'; question: string }
   | { status: 'error'; question: string; message: string; code: string | null }
@@ -376,7 +388,13 @@ export default function AssistantPage() {
       )}
       {state?.status === 'error' && (
         <div className="space-y-2">
-          <ErrorLine message={state.message} next={nextStep(state.code)} />
+          <ErrorLine message={plainMessage(state.code, state.message)} next={plainNext(state.code)} />
+          {plainMessage(state.code, state.message) !== state.message && (
+            <TechnicalDetails>
+              <p>Error code: {state.code ?? 'none'}</p>
+              <p>{state.message}</p>
+            </TechnicalDetails>
+          )}
           {/* 04: every assistant error except invalid_body writes ai_audit rows. */}
           {state.code !== null && state.code !== 'invalid_body' && (
             <p className="text-sm text-gray-600">

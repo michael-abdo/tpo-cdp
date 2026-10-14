@@ -34,7 +34,6 @@ import type { DataQuality, DataQualityCheckKey, Funnel, GoingCold, SourceAppConv
 import { useGet } from '../useGet'
 
 /** Rows shown at level 1; the rest sit behind "Show the other …" (principle 2). */
-const TOP_ROWS = 3
 
 const n = (value: number) => value.toLocaleString('en-US')
 
@@ -94,24 +93,18 @@ function ShareTable({ caption, groupHeader, rows }: { caption: string; groupHead
         </span>
       ),
     },
-    { header: 'Ask the assistant', cell: (r) => <ExplainLink question={r.explain} about={`${r.label}, ${r.count}`} /> },
+    { header: 'Ask the assistant', hideLabel: true, cell: (r) => <ExplainLink question={r.explain} about={`${r.label}, ${r.count}`} /> },
   ]
   return <ResponsiveTable caption={caption} columns={columns} rows={rows} rowKey={(r) => r.key} />
 }
 
-/** The top rows, then the rest behind one labelled toggle. */
-function TopRows({ caption, groupHeader, rows, rest }: { caption: string; groupHeader: string; rows: ShareRow[]; rest: string }) {
-  const top = rows.slice(0, TOP_ROWS)
-  const others = rows.slice(TOP_ROWS)
+/** Level 2: every row behind one labelled toggle, so level 1 shows only the headline number. */
+function TopRows({ caption, groupHeader, rows, label }: { caption: string; groupHeader: string; rows: ShareRow[]; label: string }) {
+  if (rows.length === 0) return null
   return (
-    <div className="space-y-2">
-      <ShareTable caption={caption} groupHeader={groupHeader} rows={top} />
-      {others.length > 0 && (
-        <Disclosure label={`Show the other ${n(others.length)} ${rest}`}>
-          <ShareTable caption={`${caption}, continued`} groupHeader={groupHeader} rows={others} />
-        </Disclosure>
-      )}
-    </div>
+    <Disclosure label={label}>
+      <ShareTable caption={caption} groupHeader={groupHeader} rows={rows} />
+    </Disclosure>
   )
 }
 
@@ -191,7 +184,7 @@ function SourceAppPanel() {
         account after signing up.{' '}
         <ExplainLink question={d.total.explain} about="all subscribers who got the app after signing up" />
       </p>
-      <TopRows caption="Subscribers who got the app, by signup source" groupHeader="Signed up from" rows={rows} rest="sources" />
+      <TopRows caption="Subscribers who got the app, by signup source" groupHeader="Signed up from" rows={rows} label="Show by source" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
           Of the {n(d.total.with_app)} subscribers with an app account, {n(d.total.with_app_after_signup)} created it after
@@ -251,13 +244,8 @@ function FunnelPanel() {
         <span className="tabular-nums">{n(d.total.visitors)}</span> website visitors ({percent(d.total.rate)}) subscribed to the
         newsletter. <ExplainLink question={d.total.explain} about="all website visitors who subscribed" />
       </p>
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-900">By the first page they saw (most visitors first)</h3>
-        <TopRows caption="Visitors who subscribed, by first page" groupHeader="First page" rows={pages} rest="pages" />
-      </div>
-      <Disclosure label="By the campaign that brought them on their first visit">
-        <TopRows caption="Visitors who subscribed, by campaign source" groupHeader="Campaign source" rows={utms} rest="campaign sources" />
-      </Disclosure>
+      <TopRows caption="Visitors who subscribed, by first page" groupHeader="First page" rows={pages} label="Show by first page" />
+      <TopRows caption="Visitors who subscribed, by campaign source" groupHeader="Campaign source" rows={utms} label="Show by campaign" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
           A visitor&apos;s first page and campaign source both come from their earliest visit. A visitor counts as subscribed
@@ -312,16 +300,17 @@ function GoingColdPanel() {
         <span className="tabular-nums">{n(d.total.active)}</span> active subscribers ({percent(d.total.rate)}) are at risk of
         going cold. <ExplainLink question={d.total.explain} about="all active subscribers at risk of going cold" />
       </p>
-      <p className="text-sm text-gray-700">
-        {n(hidden)} unsubscribed {hidden === 1 ? 'reader' : 'readers'} at risk {hidden === 1 ? 'is' : 'are'} not shown.{' '}
-        <ExplainLink question={d.hidden_unsubscribed.explain} about="unsubscribed readers at risk of going cold" />
-      </p>
-      <TopRows caption="Active subscribers at risk of going cold, by signup source" groupHeader="Signed up from" rows={rows} rest="sources" />
+      <TopRows caption="Active subscribers at risk of going cold, by signup source" groupHeader="Signed up from" rows={rows} label="Show by source" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
           Each share is out of the source&apos;s active subscribers. Unsubscribed readers are left out, as on every list, and
-          counted only in the line above.
+          counted only in the line below.
         </p>
+        <p className="text-sm text-gray-700">
+          {n(hidden)} unsubscribed {hidden === 1 ? 'reader' : 'readers'} at risk {hidden === 1 ? 'is' : 'are'} not shown.{' '}
+          <ExplainLink question={d.hidden_unsubscribed.explain} about="unsubscribed readers at risk of going cold" />
+        </p>
+
         <DefinitionList keys={d.definitions_used} />
         <TechnicalDetails>
           <p>
@@ -381,7 +370,7 @@ function DataQualityPanel() {
           See why on the Overview
         </Link>
       </p>
-      <ShareTable caption="Gaps in the records that loaded" groupHeader="What we checked" rows={rows} />
+      <TopRows caption="Gaps in the records that loaded" groupHeader="What we checked" rows={rows} label="Show each gap" />
       <Disclosure label="How this is counted">
         <p className="text-sm text-gray-700">
           Every reader is counted, unsubscribed or not: a gap matters whoever it belongs to. A source we don&apos;t recognise is

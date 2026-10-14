@@ -200,7 +200,7 @@ export default function SegmentsPage() {
 
   const labelClass = 'block text-sm font-medium text-gray-900'
   const hintClass = 'text-sm text-gray-600'
-  const inputClass = 'min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
+  const inputClass = 'block w-full min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
 
   return (
     <div className="space-y-6">
@@ -213,8 +213,8 @@ export default function SegmentsPage() {
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl bg-accent-soft px-4 py-3 text-sm">
         <span className="text-gray-700">Not sure where to start?</span>
-        <Button variant="quiet" icon={ICONS.next} onClick={applyPreset} aria-describedby="preset-hint">
-          haven't opened in 30 days (the brief's example)
+        <Button variant="quiet" icon={ICONS.next} onClick={applyPreset} aria-describedby="preset-hint" className="justify-start text-left">
+          Instagram readers who haven't opened in 30 days
         </Button>
         <span id="preset-hint" className="text-gray-600">
           Active Instagram readers with no email opened in 30+ days, including never-opened.
@@ -291,7 +291,7 @@ export default function SegmentsPage() {
               value={form.days}
               onChange={(e) => setForm({ ...form, days: e.target.value })}
               aria-describedby="days-hint"
-              className={`${inputClass} w-24`}
+              className={`${inputClass.replace("w-full", "")} w-24`}
             />
             <span className="text-sm text-gray-700">days</span>
           </div>

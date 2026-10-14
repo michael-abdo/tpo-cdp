@@ -397,6 +397,8 @@ export interface Column<T> {
   cell: (row: T) => ReactNode
   /** Right-aligns the column in the table. */
   numeric?: boolean
+  /** The header is for screen readers only; cards show the cell without a label row. */
+  hideLabel?: boolean
 }
 
 /**
@@ -441,7 +443,7 @@ export function ResponsiveTable<T>({
                   scope="col"
                   className={`px-3 py-2.5 font-semibold ${c.numeric ? 'text-right' : ''}`}
                 >
-                  {c.header}
+                  {c.hideLabel ? <span className="sr-only">{c.header}</span> : c.header}
                 </th>
               ))}
               {details && (
@@ -499,12 +501,19 @@ export function ResponsiveTable<T>({
         {rows.map((row) => (
           <li key={rowKey(row)} className="rounded-xl border border-line bg-surface p-4 shadow-soft">
             <dl className="space-y-1">
-              {columns.map((c) => (
-                <div key={c.header} className="flex gap-2 text-sm">
-                  <dt className="w-28 shrink-0 text-ink-muted">{c.header}</dt>
-                  <dd className="min-w-0 break-words">{c.cell(row)}</dd>
-                </div>
-              ))}
+              {columns.map((c) =>
+                c.hideLabel ? (
+                  <div key={c.header} className="flex gap-2 text-sm">
+                    <dt className="sr-only">{c.header}</dt>
+                    <dd className="min-w-0 break-words">{c.cell(row)}</dd>
+                  </div>
+                ) : (
+                  <div key={c.header} className="flex gap-2 text-sm">
+                    <dt className="w-28 shrink-0 text-ink-muted">{c.header}</dt>
+                    <dd className="min-w-0 break-words">{c.cell(row)}</dd>
+                  </div>
+                ),
+              )}
             </dl>
             {details && (
               <Disclosure label={detailsLabel} className="mt-2">
