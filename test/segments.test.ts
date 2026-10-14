@@ -13,6 +13,7 @@ import type { SegmentPreview } from '../src/types'
 import { EMAIL_REGEX, RAW_ID_REGEX } from '../shared/pii'
 import { FILTER_KEYS, FILTER_SCHEMA, type SegmentFilters } from '../shared/segment-filters'
 import { inputSchemaProblems } from '../worker/assistant/gates/gate2-tool-authorizer'
+import { redactDetail } from '../worker/assistant/gates/pii-guard'
 import { respond } from '../worker/assistant/respond'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
@@ -229,67 +230,89 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect(body.error).toBe('invalid_filters')
     expect(body.details).toEqual([`source must name at most ${CANONICAL_SOURCES.length} sources`])
   })
+
+  it('a mix of one canonical and one non-canonical source is 400 invalid_filters (kills a some->every membership mutant: a mixed list must not pass)', async () => {
+    const res = await post('preview', { filters: { source: ['instagram', INJECTION_PROBE] } })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; details: string[] }>()
+    expect(body.error).toBe('invalid_filters')
+    expect(body.details).toEqual([`source values must be one of ${CANONICAL_SOURCES.join(', ')}`])
+    expect(body.details.some((d) => d.includes(INJECTION_PROBE))).toBe(false)
+  })
+
+  it('9 raw source entries that fold/dedupe to exactly CANONICAL_SOURCES.length (7) unique values still pass (kills a cap-on-raw-length-not-unique-length mutant)', async () => {
+    const res = await post('preview', { filters: { source: [...CANONICAL_SOURCES, 'Instagram', 'twitter'] } })
+    expect(res.status).toBe(200)
+    const body = await res.json<{ filters: SegmentFilters }>()
+    expect(body.filters.source).toEqual([...CANONICAL_SOURCES].sort())
+  })
 })
 
 describe('segment request errors', () => {
-  it('an unknown filter key is 400 invalid_filters', async () => {
+  it('an unknown filter key is 400 invalid_filters, naming no key text at all (09 D-70 fixer round 4)', async () => {
     for (const path of ['preview', 'export.csv']) {
       const res = await post(path, { filters: { ...PRESET, pages_viewed: 16 } })
       expect(res.status).toBe(400)
       const body = await res.json<{ error: string; details: string[] }>()
       expect(body.error).toBe('invalid_filters')
-      expect(body.details).toEqual(['unknown filter: pages_viewed'])
+      expect(body.details).toEqual(['unknown filter'])
     }
   })
 
-  it('an email-shaped unknown top-level body key is redacted in the response and never reaches console.warn raw', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const res = await post('preview', { filters: PRESET, [JOY]: true })
+  it('two unknown filter keys give one "unknown filter" problem each (the count, not the keys, is what the array carries)', async () => {
+    const res = await post('preview', { filters: { pages_viewed: 1, other_key: 2 } })
     expect(res.status).toBe(400)
     const body = await res.json<{ error: string; details: string[] }>()
-    expect(body.details).toEqual(['unknown field: [email]'])
-    expect(body.details.some((d) => d.includes('@'))).toBe(false)
-    for (const call of warn.mock.calls) expect(JSON.stringify(call)).not.toContain(JOY)
-    warn.mockRestore()
+    expect(body.details).toEqual(['unknown filter', 'unknown filter'])
   })
 
-  it('an email-shaped unknown filter key is redacted in the response and never reaches console.warn raw', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    for (const path of ['preview', 'export.csv']) {
-      const res = await post(path, { filters: { [JOY]: 1 } })
-      expect(res.status).toBe(400)
-      const body = await res.json<{ error: string; details: string[] }>()
-      expect(body.details).toEqual(['unknown filter: [email]'])
-      expect(body.details.some((d) => d.includes('@'))).toBe(false)
-    }
-    for (const call of warn.mock.calls) expect(JSON.stringify(call)).not.toContain(JOY)
-    warn.mockRestore()
-  })
-
-  it('a %40-encoded unknown filter key and a raw id unknown body field are redacted in the response and never reach console.warn raw (09 D-70 item 1, fixer round 2)', async () => {
-    const encodedJoy = JOY.replace('@', '%40')
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    for (const path of ['preview', 'export.csv']) {
-      const res = await post(path, { filters: { [encodedJoy]: 1 } })
-      expect(res.status).toBe(400)
-      const body = await res.json<{ error: string; details: string[] }>()
-      expect(body.details).toEqual(['unknown filter: [email]'])
-      expect(body.details.some((d) => d.includes('%40') || d.includes('@'))).toBe(false)
-    }
-    // OWN_ACCOUNT (u_ceed5f12, a real app user id, 09 D-47) spelled as an unknown top-level field.
-    const res2 = await post('preview', { filters: PRESET, [OWN_ACCOUNT]: true })
-    expect(res2.status).toBe(400)
-    const body2 = await res2.json<{ error: string; details: string[] }>()
-    expect(body2.details).toEqual(['unknown field: [id]'])
-    expect(body2.details.some((d) => d.includes(OWN_ACCOUNT))).toBe(false)
-    for (const call of warn.mock.calls) {
-      const logged = JSON.stringify(call)
-      expect(logged).not.toContain(encodedJoy)
-      expect(logged).not.toContain(JOY)
-      expect(logged).not.toContain(OWN_ACCOUNT)
-    }
-    warn.mockRestore()
-  })
+  it(
+    'no caller-controlled key text ever reaches a 400 response or console.warn, for any key shape (09 D-70 item 1, ' +
+      'fixer rounds 2 and 4): an unknown filter key and an unknown top-level body field are always exactly ' +
+      '"unknown filter" / "unknown field", never the key, whatever PII shape that key spells. This replaces the ' +
+      "earlier per-shape redaction tests: redactDetail's regex approach missed a double-percent-encoded \"@\" " +
+      "(%2540), a raw id glued to a word character (RAW_ID_REGEX's \\b never fires mid-word, so " +
+      '"xu_ceed5f12"/"u_ceed5f12_x" slipped through), and a bare known local part with no "@" at all; dropping ' +
+      'the key echo entirely closes every one of those shapes at once, and any future one.',
+    async () => {
+      const encodedJoy = JOY.replace('@', '%40')
+      const doubleEncodedJoy = JOY.replace('@', '%2540') // "%40" itself percent-encoded again
+      const gluedIdPrefixed = `x${OWN_ACCOUNT}` // xu_ceed5f12
+      const gluedIdSuffixed = `${OWN_ACCOUNT}_x` // u_ceed5f12_x
+      const bareLocalPart = 'joy.hall830' // a known local part, no "@"
+      const bareLocalPartPlus = 'joy.hall830+x'
+      const bareLocalPartDotted = 'joy.hall830.protonmail'
+      const keys = [
+        JOY,
+        encodedJoy,
+        doubleEncodedJoy,
+        OWN_ACCOUNT,
+        gluedIdPrefixed,
+        gluedIdSuffixed,
+        bareLocalPart,
+        bareLocalPartPlus,
+        bareLocalPartDotted,
+      ]
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      for (const key of keys) {
+        for (const path of ['preview', 'export.csv']) {
+          const res = await post(path, { filters: { [key]: 1 } })
+          expect(res.status).toBe(400)
+          const body = await res.json<{ error: string; details: string[] }>()
+          expect(body.details).toEqual(['unknown filter'])
+        }
+        const res2 = await post('preview', { filters: PRESET, [key]: true })
+        expect(res2.status).toBe(400)
+        const body2 = await res2.json<{ error: string; details: string[] }>()
+        expect(body2.details).toEqual(['unknown field'])
+      }
+      for (const call of warn.mock.calls) {
+        const logged = JSON.stringify(call)
+        for (const key of keys) expect(logged).not.toContain(key)
+      }
+      warn.mockRestore()
+    },
+  )
 
   it('a non-canonical status value is 400 invalid_filters', async () => {
     const res = await post('preview', { filters: { ...PRESET, status: ['unsubscribe'] } })
@@ -303,6 +326,30 @@ describe('segment request errors', () => {
       expect(res.status).toBe(401)
       expect((await res.json<{ error: string }>()).error).toBe('unauthorized')
     }
+  })
+})
+
+// redactDetail unit tests (worker/assistant/gates/pii-guard.ts): both segments.ts call sites now
+// feed it only key-less literals ("unknown filter" / "unknown field", above), so these test the
+// function directly — it is still a documented backstop, and must stay correct on its own merits.
+// (fixer round 4, closing the fixer-round-2 mutation gaps O2a/O2b/O2c, which were about this
+// function's call sites in segments.ts before the key echo was removed.)
+describe('redactDetail (worker/assistant/gates/pii-guard.ts), tested directly', () => {
+  it('masks every raw id in a string, not only the first (kills a g->i flag mutant)', () => {
+    const text = `${OWN_ACCOUNT} and v_c9e136fd6d both matched`
+    expect(redactDetail(text)).toBe('[id] and [id] both matched')
+  })
+
+  it('decodes one level of %40 before masking the email (kills a decodeAt-dropped mutant)', () => {
+    expect(redactDetail(JOY.replace('@', '%40'))).toBe('[email]')
+  })
+
+  it('masks a literal email too, not only a %40 one', () => {
+    expect(redactDetail(JOY)).toBe('[email]')
+  })
+
+  it('masks both an email and a raw id in the same string', () => {
+    expect(redactDetail(`${JOY} used ${OWN_ACCOUNT}`)).toBe('[email] used [id]')
   })
 })
 

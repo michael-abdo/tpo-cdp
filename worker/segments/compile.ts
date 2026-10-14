@@ -188,7 +188,10 @@ export function parseFilters(input: unknown): SegmentFilters {
   const raw = input as Record<string, unknown>
   const problems: string[] = []
   for (const key of Object.keys(raw)) {
-    if (!(FILTER_KEYS as readonly string[]).includes(key)) problems.push(`unknown filter: ${key}`)
+    // No key text: an unknown filter key is a client's text, never echoed back or logged (04
+    // row 33's "the log names only how many"; 09 D-70 item 1, fixer round 4). The response's
+    // `details` array still carries one entry per unknown key, so its length is the count.
+    if (!(FILTER_KEYS as readonly string[]).includes(key)) problems.push('unknown filter')
   }
 
   let status = DEFAULT_STATUS

@@ -53,7 +53,10 @@ async function readBody(req: Request, route: string, allowed: readonly string[])
   }
   const unknown = Object.keys(body).filter((k) => !allowed.includes(k))
   if (unknown.length > 0) {
-    throw invalidBody(route, shape, unknown.map((k) => `unknown field: ${redactDetail(k)}`))
+    // No key text, same as parseFilters' "unknown filter" (09 D-70 item 1, fixer round 4):
+    // the field name is a client's text, never echoed back or logged. redactDetail is still
+    // run as a backstop, though a literal "unknown field" never needs redaction.
+    throw invalidBody(route, shape, unknown.map(() => redactDetail('unknown field')))
   }
   return body as Record<string, unknown>
 }
