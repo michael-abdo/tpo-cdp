@@ -202,7 +202,7 @@ export const DEFINITIONS = {
     doc: `True when the cold date has arrived: no open in ${COLD_DAYS} or more days, or never opened and signed up ${COLD_DAYS} or more days ago.`,
     formula: 'cold_since <= TODAY',
     sql: 'cold_since <= :today',
-    plain: `"Cold" (Overview) waits ${COLD_DAYS} days after signup.`,
+    plain: `"Cold" waits ${COLD_DAYS} days after signup.`,
     fn: isCold,
   },
   went_cold_in: {
