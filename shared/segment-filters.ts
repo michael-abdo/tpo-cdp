@@ -17,7 +17,8 @@
  * model-facing `segment` tool and the Insights board reach it only through Gate 2's
  * enum/guardPayload, and the page's own checkboxes list only CANONICAL_SOURCES, so no caller the
  * page exposes can pass a free string through to Previous searches (which also checks the same
- * enum itself, `src/previous-searches.ts` hasCanonicalSource, as a hand-edited-storage backstop).
+ * enum itself, `src/previous-searches.ts` meetsSchema's generic FILTER_SCHEMA check, as a
+ * hand-edited-storage backstop).
  *
  * Pure data: no validation code lives here (worker/segments/compile.ts parseFilters is the one
  * validator), and the browser never normalizes a value (02 §Normalization).

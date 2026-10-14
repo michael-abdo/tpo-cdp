@@ -14,10 +14,9 @@ import {
   namesASubject,
   NOT_PINNABLE_MESSAGE,
   NOT_PINNABLE_OTHER_MESSAGE,
+  NOT_PINNABLE_SHAPE_MESSAGE,
   PERSON_LIST_CAP,
   PIN_FAILED_MESSAGE,
-  REQUEST_APPROVAL_MESSAGE,
-  REQUEST_APPROVAL_OFFER_MESSAGE,
   SORT_ORDER_MAX,
   TILE_RUN_FAILED_MESSAGE,
 } from '../worker/insights/board'
@@ -32,7 +31,7 @@ import { loadTools } from '../worker/assistant/tools/tool-loader'
 import { requireJson, requireSession } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
-import { INSIGHT_PANEL, INSIGHT_PANELS, listApprovals, NOT_AGGREGATE_MESSAGE, type Tile } from '../worker/insights/board'
+import { INSIGHT_PANEL, INSIGHT_PANELS, NOT_AGGREGATE_MESSAGE, type Tile } from '../worker/insights/board'
 import { assistantRoutes } from '../worker/routes/assistant'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
@@ -56,17 +55,6 @@ const PRESET = { status: ['active'], source: ['instagram'], days_since_open_gte:
 const WENT_COLD_AUGUST_SQL =
   "SELECT count(*) AS went_cold FROM v_profiles WHERE status = 'active' AND source = 'instagram' " +
   "AND cold_since BETWEEN '2026-08-01' AND '2026-08-31' AND cold_since <= '2026-09-28'"
-
-/**
- * miniflare's rate limiter counts in windows aligned to the wall clock (epoch = floor(now / 60 s))
- * and clears every bucket when the window rolls over (test/auth.test.ts, same helper): wait for
- * the next window when less than needMs of the current one is left, so a burst never straddles a
- * minute boundary and restarts the count where 429 is due.
- */
-async function awaitLimiterWindow(needMs: number): Promise<void> {
-  const left = 60_000 - (Date.now() % 60_000)
-  if (left < needMs) await new Promise((resolve) => setTimeout(resolve, left + 250))
-}
 
 let turn = 0
 
@@ -359,7 +347,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     expect(NOT_PINNABLE_MESSAGE).toBe("Answers written as free-form queries can't be pinned. Ask the Growth team to add this as a saved question type.")
   })
 
-  it('a query_sql answer whose SQL fails the D-64b positive grammar is 400 not_pinnable with "Request approval"; it queues once per trace', async () => {
+  it('a query_sql answer whose SQL fails the D-64b positive grammar is 400 not_pinnable with the grammar\'s reasons; nothing is stored (09 D-77: no approval queue)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     // Runs fine (Gate 2/3 allow HAVING; it is a real successful tool call), but the D-64b grammar
     // refuses HAVING outright (09 D-64b: a crafted HAVING cannot wave a small group through, since
@@ -368,30 +356,25 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     const answer = await askAnswer('how many subscribers come from each source?', [
       { name: 'query_sql', input: { sql, explanation: 'subscribers grouped by source, only sources over 10' } },
     ])
-    // The preview (pin_refusal) only reads the grammar; nothing is queued until the card's own
-    // "Request approval" action actually calls POST /api/insights (09 D-64b finding), so it gets
-    // the offer wording, never the "has been sent" sentence that POST's own 400 below earns.
-    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_OFFER_MESSAGE)
+    // The preview (pin_refusal) is the same refusal the POST below gives: nothing is ever queued,
+    // so there is no second "has been sent" wording to earn later.
+    expect(answer.pin_refusal).toBe(NOT_PINNABLE_SHAPE_MESSAGE)
     const beforeTiles = await tileCount()
     const beforeTools = await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')
     const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
     expect(res.status).toBe(400)
     const body = await res.json<{ error: string; message: string; details: string[] }>()
     expect(body.error).toBe('not_pinnable')
-    expect(body.message).toBe(REQUEST_APPROVAL_MESSAGE)
+    expect(body.message).toBe(NOT_PINNABLE_SHAPE_MESSAGE)
     expect(body.details).toEqual(['HAVING is not allowed: groups under 5 people are hidden automatically at run time, whatever HAVING says'])
+    // Nothing stored: no tile, and no assistant_tools row either (09 D-77: no approval queue).
     expect(await tileCount()).toBe(beforeTiles)
-    // Nothing pins, but the SQL is queued, disabled, for a human (09 D-64b "Request approval").
-    expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')).toBe((beforeTools ?? 0) + 1)
-    const pending = await env.DB.prepare('SELECT enabled, requested_from_trace, execution_config FROM assistant_tools WHERE requested_from_trace = ?')
-      .bind(answer.audit_id)
-      .first<{ enabled: number; requested_from_trace: string; execution_config: string }>()
-    expect(pending).toMatchObject({ enabled: 0, requested_from_trace: answer.audit_id })
-    expect(JSON.parse(pending!.execution_config).sql).toContain('HAVING')
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')).toBe(beforeTools)
 
-    // Pinning the same trace again does not queue a second pending row.
-    await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
-    expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<number>('n')).toBe(1)
+    // Asking again gives the same refusal, still storing nothing.
+    const again = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
+    expect(again.status).toBe(400)
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')).toBe(beforeTools)
   })
 
   it('a builtin row that aliases query_sql under another name is still not pinnable, at pin and on the board (09 D-64a)', async () => {
@@ -1335,12 +1318,13 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
   })
 })
 
-// T-INS-10..14 (09 D-64b, amending D-64a): a free-form query_sql answer pins when its SQL passes
-// the positive grammar of worker/insights/pin-grammar.ts — one test per shape (A: totals, B: the
-// small-group mask, "lists": a person list), plus the refusal that queues approval and the
-// approval flow itself. Every SQL here is one real tool call through the production assistant
-// route (askAnswer/askRecorded), never written SQL run outside that path.
-describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask, a person list), plus human approval', () => {
+// T-INS-10..13 (09 D-64b, amending D-64a; D-77 drops the human-approval path (C)): a free-form
+// query_sql answer pins when its SQL passes the positive grammar of worker/insights/pin-grammar.ts
+// — one test per shape (A: totals, B: the small-group mask, "lists": a person list), plus the
+// outright refusal (nothing queued, nothing stored) for anything else. Every SQL here is one real
+// tool call through the production assistant route (askAnswer/askRecorded), never written SQL run
+// outside that path.
+describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask, a person list), anything else refused outright', () => {
   it('T-INS-10 shape A: a totals query (count(*), a dimension grouped) pins and matches the same count run directly', async () => {
     const sql = "SELECT source, count(*) AS subscribers FROM v_profiles WHERE status = 'active' GROUP BY source"
     const answer = await askAnswer('how many active subscribers come from each source?', [
@@ -1354,12 +1338,11 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     // Wrapped as its own new, enabled query-type assistant_tools row (09 D-64b), not literally query_sql.
     const storedRow = await stored(tile.id)
     expect(storedRow!.tool).not.toBe('query_sql')
-    const toolRow = await env.DB.prepare('SELECT handler_type, enabled, requested_from_trace FROM assistant_tools WHERE name = ?').bind(storedRow!.tool).first<{
+    const toolRow = await env.DB.prepare('SELECT handler_type, enabled FROM assistant_tools WHERE name = ?').bind(storedRow!.tool).first<{
       handler_type: string
       enabled: number
-      requested_from_trace: string | null
     }>()
-    expect(toolRow).toMatchObject({ handler_type: 'query', enabled: 1, requested_from_trace: null })
+    expect(toolRow).toMatchObject({ handler_type: 'query', enabled: 1 })
     // Two paths, one number (the file's own rule): the same grouped counts, read directly.
     const direct = await env.DB.prepare(sql).all<{ source: string; subscribers: number }>()
     expect(new Map(tile.result!.rows.map((r) => [r.source, r.subscribers]))).toEqual(new Map(direct.results.map((r) => [r.source, r.subscribers])))
@@ -1485,143 +1468,26 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
 
-  it('T-INS-13 refusal: anything else is 400 not_pinnable with "Request approval" and queues a disabled row', async () => {
+  it('T-INS-13 refusal: anything else is 400 not_pinnable with the grammar\'s reasons; nothing is stored, and the approval routes are gone (09 D-77)', async () => {
     // Window functions are Gate 2/3-legal (so this runs fine live) but not one of the two pinnable shapes.
     const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
     const answer = await askAnswer('rank each source', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked' } }])
-    expect(answer.pin_refusal).toBe(REQUEST_APPROVAL_OFFER_MESSAGE)
+    expect(answer.pin_refusal).toBe(NOT_PINNABLE_SHAPE_MESSAGE)
     const beforeTiles = await tileCount()
+    const beforeTools = await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')
     const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
     expect(res.status).toBe(400)
     const body = await res.json<{ error: string; message: string; details: string[] }>()
-    expect(body).toMatchObject({ error: 'not_pinnable', message: REQUEST_APPROVAL_MESSAGE })
+    expect(body).toMatchObject({ error: 'not_pinnable', message: NOT_PINNABLE_SHAPE_MESSAGE })
     expect(body.details).toEqual(['window functions (OVER) are not allowed'])
     expect(await tileCount()).toBe(beforeTiles)
-    const pending = await env.DB.prepare('SELECT enabled, requested_from_trace FROM assistant_tools WHERE requested_from_trace = ?')
-      .bind(answer.audit_id)
-      .first<{ enabled: number; requested_from_trace: string }>()
-    expect(pending).toMatchObject({ enabled: 0, requested_from_trace: answer.audit_id })
-  })
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')).toBe(beforeTools)
 
-  it('T-INS-14 approval: a wrong password is 403; the right one (+ name, note) enables the row and pins it', async () => {
-    const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
-    const answer = await askAnswer('rank each source again', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked, again' } }])
-    await api('', { method: 'POST', body: { audit_id: answer.audit_id } }) // queues the approval
-    const pendingId = await env.DB.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<string>('id')
-    expect(pendingId).not.toBeNull()
-
-    const wrong = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: 'not-it', name: 'Growth', note: 'ranking view', tool_name: 'sources_ranked', description: 'Ranks each acquisition source.' } })
-    expect(wrong.status).toBe(403)
-    expect((await wrong.json<{ error: string }>()).error).toBe('wrong_password')
-    expect(await env.DB.prepare('SELECT enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<number>('enabled')).toBe(0)
-
-    const beforeTiles = await tileCount()
-    const ok = await api(`/approvals/${pendingId}/approve`, {
-      method: 'POST',
-      body: {
-        password: env.TOOL_APPROVAL,
-        name: 'Growth',
-        note: 'useful for the source review',
-        tool_name: 'sources_ranked',
-        description: 'Ranks each acquisition source by name.',
-      },
-    })
-    expect(ok.status, await ok.clone().text()).toBe(201)
-    const tile = await ok.json<Tile>()
-    expect(tile.status).toBe('ok')
-    expect(await tileCount()).toBe((beforeTiles ?? 0) + 1)
-    const toolRow = await env.DB.prepare('SELECT name, description, enabled, metadata FROM assistant_tools WHERE id = ?').bind(pendingId).first<{
-      name: string
-      description: string
-      enabled: number
-      metadata: string
-    }>()
-    expect(toolRow!.enabled).toBe(1)
-    // The model reads the approver's name and sentence, never the queued placeholder.
-    expect(toolRow).toMatchObject({ name: 'sources_ranked', description: 'Ranks each acquisition source by name.' })
-    expect(tile.tool).toBe('sources_ranked')
-    const meta = JSON.parse(toolRow!.metadata)
-    expect(meta.approval).toMatchObject({ by: 'Growth', note: 'useful for the source review' })
-    // Unlike a grammar-approved pin's own wrapped row, an approved row carries no board_only tag:
-    // a human vouched for this SQL, so it pins like any other saved question type (09 D-64b) and
-    // becomes an ordinary, model-visible query tool (tool-loader.ts's own "fail safe toward
-    // visibility" rule) the assistant can call on a later question, the same as any D-41 row.
-    expect(meta.board_only).toBeUndefined()
-    const seen = (await loadTools(env.DB)).definitions.find((d) => d.name === 'sources_ranked')
-    expect(seen?.description).toBe('Ranks each acquisition source by name.')
-    expect((await loadTools(env.DB)).definitions.some((d) => /^pending_|needs Growth team approval/.test(`${d.name} ${d.description}`))).toBe(false)
-    // Approving twice (an already-enabled row) is 404, not a second tile.
-    const again = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'again', tool_name: 'sources_ranked_again', description: 'Ranks each source again.' } })
-    expect(again.status).toBe(404)
-    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
-  })
-
-  it('T-INS-14 approval needs a real tool name and a one-line description: missing, malformed, placeholder-shaped, taken or PII-bearing ones are 400 and the row stays pending', async () => {
-    const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
-    const answer = await askAnswer('rank each source, named', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked' } }])
-    await api('', { method: 'POST', body: { audit_id: answer.audit_id } }) // queues the approval
-    const pendingId = await env.DB.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<string>('id')
-    const base = { password: env.TOOL_APPROVAL, name: 'Growth', note: 'naming check' }
-    const cases: [Record<string, string>, string][] = [
-      [{ ...base, description: 'Ranks each source.' }, 'invalid_body'], // no tool_name
-      [{ ...base, tool_name: 'sources_by_rank' }, 'invalid_body'], // no description
-      [{ ...base, tool_name: 'Sources Ranked', description: 'Ranks each source.' }, 'invalid_body'],
-      [{ ...base, tool_name: 'pending_sources', description: 'Ranks each source.' }, 'invalid_body'],
-      [{ ...base, tool_name: 'segment', description: 'Ranks each source.' }, 'invalid_body'], // taken by a seeded tool
-      [{ ...base, tool_name: 'sources_by_rank', description: `Ranks sources for ${JOY}.` }, 'blocked_pii'],
-    ]
-    for (const [body, error] of cases) {
-      const res = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body })
-      expect(res.status, JSON.stringify(body)).toBe(400)
-      expect((await res.json<{ error: string }>()).error).toBe(error)
-    }
-    const row = await env.DB.prepare('SELECT name, enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<{ name: string; enabled: number }>()
-    expect(row!.enabled).toBe(0)
-    expect(row!.name).toMatch(/^pending_/)
-  })
-
-  it('T-INS-14 approval, first run fails: the response is an error and the row stays enabled=0 on the approvals list', async () => {
-    // Legal SQL (Gate 2/3 allow it live), refused by the D-64b grammar (OVER), so it queues for
-    // approval like T-INS-14's own case — but this one selects pkey bare, which the plain D-64a
-    // check (keyProjectionProblems, the one an approved row still gets) refuses at run time.
-    const sql = 'SELECT pkey, row_number() OVER (ORDER BY pkey) AS rn FROM v_profiles'
-    const answer = await askAnswer('rank every subscriber by pkey', [{ name: 'query_sql', input: { sql, explanation: 'subscribers ranked by pkey' } }])
-    await api('', { method: 'POST', body: { audit_id: answer.audit_id } }) // queues the approval
-    const pendingId = await env.DB.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<string>('id')
-    expect(pendingId).not.toBeNull()
-
-    const beforeTiles = await tileCount()
-    const res = await api(`/approvals/${pendingId}/approve`, {
-      method: 'POST',
-      body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'ranked by pkey, should never run', tool_name: 'subscribers_ranked', description: 'Ranks every subscriber.' },
-    })
-    expect(res.status).toBe(400)
-    expect((await res.json<{ error: string }>()).error).toBe('not_aggregate')
-    // The failed attempt puts the queued placeholder name back, so nothing named subscribers_ranked exists.
-    expect(await env.DB.prepare("SELECT count(*) AS n FROM assistant_tools WHERE name = 'subscribers_ranked'").first<number>('n')).toBe(0)
-    expect(await tileCount()).toBe(beforeTiles)
-    // Fail safe: the row the approve attempt would have enabled is still disabled and still
-    // listed as pending, so a human can see it was approved but never actually ran (09 D-64b
-    // finding: this used to leave it enabled=1 with no tile, 404 on a re-approve).
-    expect(await env.DB.prepare('SELECT enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<number>('enabled')).toBe(0)
-    const pending = await listApprovals(env.DB)
-    expect(pending.some((p) => p.id === pendingId)).toBe(true)
-  })
-
-  it('APPROVAL_LIMITER: the 11th approve attempt from one IP within a minute is 429, so TOOL_APPROVAL cannot be brute-forced', { timeout: 20_000 }, async () => {
-    await awaitLimiterWindow(8_000)
-    const ip = documentationIp()
-    const attempt = () => api('/approvals/does-not-exist/approve', { method: 'POST', ip, body: { password: 'not-it', name: 'x', note: 'y', tool_name: 'probe_tool', description: 'probe' } })
-    for (let i = 1; i <= 10; i++) {
-      const res = await attempt()
-      expect(res.status, `attempt ${i}`).not.toBe(429)
-    }
-    const eleventh = await attempt()
-    expect(eleventh.status).toBe(429)
-    expect((await eleventh.json<{ error: string }>()).error).toBe('rate_limited')
-    // The limit is per IP: a different client still gets through to the ordinary 403.
-    const otherIp = await api('/approvals/does-not-exist/approve', { method: 'POST', ip: documentationIp(), body: { password: 'not-it', name: 'x', note: 'y', tool_name: 'probe_tool', description: 'probe' } })
-    expect(otherIp.status).toBe(403)
+    // No approval queue left to approve against: both routes answer 404, like any unknown route.
+    const approvalsList = await api('/approvals', { method: 'GET' })
+    expect(approvalsList.status).toBe(404)
+    const approve = await api('/approvals/anything/approve', { method: 'POST', body: { password: 'x', name: 'x', note: 'y', tool_name: 'probe_tool', description: 'probe' } })
+    expect(approve.status).toBe(404)
   })
 
   it('a pinned "totals" tile masks by the SQL as it runs today, not the count/dimension columns it was pinned with (09 D-64b "on every board run")', async () => {

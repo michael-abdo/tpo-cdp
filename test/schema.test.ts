@@ -149,15 +149,10 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
   })
 })
 
-// The migration sequence (README "the ten migrations"; 03 §Module layout). Two merged branches once
-// each took the next number; this pins the order that applies on a fresh database (wrangler and
-// test/setup.ts apply the files in name order) and that the README's count tells the same story.
-// 0010 is an intentional gap on this branch (data-fixes), not a bug: 0010_drop_tool_approval.sql
-// (09 D-77) lives on another branch, not yet merged here. The orchestrator renumbers nothing and
-// merges that branch first, so this branch's new migration (09 D-78(b)) takes 0011 directly; once
-// both branches are merged the files are contiguous 0001..0011 with no gap, as they are meant to
-// read from main.
-describe('the migrations are one contiguous, ordered sequence (with one gap on this branch)', () => {
+// The migration sequence (README "the eleven migrations"; 03 §Module layout). Two merged branches
+// once each took the next number; this pins the order that applies on a fresh database (wrangler
+// and test/setup.ts apply the files in name order) and that the README's count tells the same story.
+describe('the migrations are one contiguous, ordered sequence', () => {
   const NAMES = [
     '0001_core',
     '0002_views',
@@ -168,28 +163,65 @@ describe('the migrations are one contiguous, ordered sequence (with one gap on t
     '0007_profiles_email_index',
     '0008_ai_audit_cache',
     '0009_tool_approval',
+    '0010_drop_tool_approval',
     '0011_unknown_user_profile_link',
   ]
   const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
     .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
     .sort()
-  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+  const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven']
 
   it('migrations/ holds exactly these files, in this order', () => {
     expect(files).toEqual(NAMES)
   })
 
-  it('every number appears once, from 0001, with the one intentional gap at 0010', () => {
+  it('every number appears once, from 0001 with no gap', () => {
     const numbers = files.map((name) => Number(name.slice(0, 4)))
-    const expected = files.map((_, i) => (i < NAMES.length - 1 ? i + 1 : 11))
-    expect(numbers).toEqual(expected)
+    expect(numbers).toEqual(files.map((_, i) => i + 1))
     expect(new Set(files.map((name) => name.slice(0, 4))).size).toBe(files.length)
   })
 
   it('the README says how many there are', () => {
     const said = /\bthe (\w+) migrations into the local D1\b/.exec(readme)?.[1]
-    expect(said, 'README names the migration count ("the ten migrations")').toBeDefined()
+    expect(said, 'README names the migration count ("the eleven migrations")').toBeDefined()
     expect(WORDS.indexOf(said ?? ''), `README says "${said}"`).toBe(files.length)
+  })
+})
+
+// 0010_drop_tool_approval.sql (09 D-77: the approval queue is gone). By the time this file runs the
+// whole sequence has applied, so the column is already gone; the second test puts the 0009 shape
+// back (the column and the rows the queue wrote), runs 0010's own statements, and checks that only
+// a queued request is deleted (found by its flag, never by its name) before the column is dropped.
+describe('migration 0010 deletes the queued requests, then drops assistant_tools.requested_from_trace', () => {
+  async function insertTool(id: string, name: string, enabled: 0 | 1, requestedFrom: string | null): Promise<void> {
+    await env.DB.prepare(
+      `INSERT INTO assistant_tools (id, name, description, input_schema, handler_type, execution_config, enabled, sort_order, requested_from_trace, created_at, updated_at)
+       VALUES (?, ?, 'x', '{"type":"object"}', 'query', '{"sql":"select 1","param_mapping":{}}', ?, 1, ?, 'now', 'now')`,
+    )
+      .bind(id, name, enabled, requestedFrom)
+      .run()
+  }
+
+  it('PRAGMA table_info(assistant_tools) no longer lists it', async () => {
+    expect(await columnsOf('assistant_tools')).not.toContain('requested_from_trace')
+  })
+
+  it("deletes only a still-queued request (flagged and disabled), whatever it is named, then drops the column", async () => {
+    await env.DB.prepare('ALTER TABLE assistant_tools ADD COLUMN requested_from_trace TEXT').run()
+    await insertTool('t-queued', 'pending_0123456789abcdef0123456789abcdef', 0, 'trace-queued') // a request: deleted
+    await insertTool('t-approved', 'sources_ranked', 1, 'trace-approved') // approved before D-77: kept
+    await insertTool('t-lookalike', 'pending_lookalike', 0, null) // an ordinary disabled row: kept
+    const migration = Object.values(
+      import.meta.glob<string>('../migrations/0010_drop_tool_approval.sql', { query: '?raw', import: 'default', eager: true }),
+    )[0]
+    expect(migration, '0010 migration text loaded').toBeDefined()
+    for (const statement of (migration ?? '').replace(/^--.*$/gm, '').split(';').map((x) => x.trim()).filter(Boolean)) {
+      await env.DB.prepare(statement).run()
+    }
+    const { results } = await env.DB.prepare("SELECT id FROM assistant_tools WHERE id LIKE 't-%' ORDER BY id").all<{ id: string }>()
+    expect(results.map((r) => r.id)).toEqual(['t-approved', 't-lookalike'])
+    expect(await columnsOf('assistant_tools')).not.toContain('requested_from_trace')
+    await env.DB.prepare("DELETE FROM assistant_tools WHERE id LIKE 't-%'").run()
   })
 })
 

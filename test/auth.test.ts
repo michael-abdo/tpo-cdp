@@ -383,11 +383,10 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
           'ASSISTANT_LIMITER',
           'EXPORT_LIMITER',
           'TEST_EVENT_LIMITER',
-          'APPROVAL_LIMITER',
         ),
       ),
     ).toThrow(
-      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER, TEST_EVENT_LIMITER, APPROVAL_LIMITER',
+      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER, TEST_EVENT_LIMITER',
     )
   })
 
@@ -401,6 +400,18 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
     expect(() => assertBindings({ ...env, WEBHOOK_SECRET: '' })).toThrow('WEBHOOK_SECRET')
     expect(() => assertBindings(envWithout('ANTHROPIC_API_KEY'))).not.toThrow()
     expect((await app.fetch(new Request(`${BASE}/health`), envWithout('ANTHROPIC_API_KEY'))).status).toBe(200)
+  })
+
+  it('boots and serves with no TOOL_APPROVAL binding (09 D-77: the approval queue, and its secret, are gone)', async () => {
+    // TOOL_APPROVAL is not a key of Env any more (worker-configuration.d.ts no longer declares it,
+    // since it comes from .dev.vars.example having no such line); envWithout can't take it as a
+    // (keyof Env)[] arg, so this test deletes it from a plain copy instead. The guard stays real:
+    // if TOOL_APPROVAL were ever added back to SECRET_NAMES, assertBindings would see it absent
+    // here and throw, same as it does today for any other secret envWithout removes.
+    const withoutToolApproval: Partial<Env> = { ...env }
+    delete (withoutToolApproval as Record<string, unknown>).TOOL_APPROVAL
+    expect(() => assertBindings(withoutToolApproval)).not.toThrow()
+    expect((await app.fetch(new Request(`${BASE}/health`), withoutToolApproval as Env)).status).toBe(200)
   })
 
   it('runs before routing: /health with a missing limiter is 500 naming it', async () => {
