@@ -82,6 +82,7 @@ Under "How this answer was worked out", each answer lists the time period, filte
 - **Pin** (`POST /api/insights {audit_id, title?}`): the trace's last successful tool call (tool + checked input) is read from `ai_audit`, re-checked against today's tool rows and stored in the one `insights` table. A body with a tool, inputs or SQL is refused (400 `invalid_body`); an unknown trace is 404; a trace with no successful tool call, or with no AI call at all (a board run), is 409 `nothing_to_pin`; a call that no longer passes the gates is 400 `invalid_pin`; a result that lists individual readers is 400 `not_aggregate` (the board holds counts).
 - **Re-run** (`GET /api/insights`): one failing tile shows its own error and the board still answers 200. The tool calls are audited under a trace with no session, so viewing the board never counts toward the 100-questions-per-hour limit.
 - **Windows**: a tool input's dates are stored rolling when they equal a preset on TODAY ("last month" = 2026-08-01..31; "last 30 days" = 2026-08-29..09-28, 02's "last N days"; "this month" = 2026-09-01..28), else fixed, and resolved against TODAY on every run. For `query_sql` the one `BETWEEN 'date' AND 'date'` is stored as `:window_from`/`:window_to`; the SQL that runs still passes Gate 2 and Gate 3 in full. `PATCH` changes a window only after the same checks.
+- **Tools with built-in dates**: a `query` tool row whose SQL holds its own dates (such as `pages_new_subscribers_hit_first`, seeded for 2026-08-29..09-28) takes no window input, so its tile has no window: no time period line and no Change window. Pinning one says the period cannot be changed.
 - **Built-in tiles** run through the board-only `insight_panel` tool, which calls the same functions as `GET /api/insights/{panel}`; it is not an `assistant_tools` row and the AI never sees it. Built-ins can be renamed or moved, not removed (409 `built_in`); `migrations/0005_insights.sql` seeds them.
 - **PII**: title, question and stored inputs are scanned before insert (an email in a title is 400 `blocked_pii`); the executor scans every tool result and the whole tile is scanned again before it leaves. Segment tiles carry a count and filters, never rows.
 - `PATCH /api/insights/:id {title?, window?, chart?, sort_order?}` and `DELETE /api/insights/:id` need a session; `PATCH` must be JSON, like every POST.
@@ -394,7 +395,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 31 files, 577 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 31 files, 578 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -420,7 +421,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 | — | `audit.test.ts`, `health.test.ts`, `overview.test.ts`, `pseudonym.test.ts` | the audit API and /audit's words for blocked steps, the D-58 screen of `filters_applied`, `/health`, Overview numbers, key derivation |
 | — | `events-poll.test.ts` | /events: the 5-second poll and what its screen-reader line says after each fetch, on real answers before and after webhook events |
 | — | `ui/assistant-result.test.ts` | the Insights answer card rendered: no model-written SQL in `filters_applied` reaches the page (typed by `tsconfig.ui-test.json`, DOM and JSX) |
-| — | `ui/insights.test.ts` | /insights rendered: the answer card offers "Pin to board" with the rolling/fixed choice; a built-in tile has no Remove; each chart kind (number, bar, line, table, segment) carries its numbers as text, on real rows and 02 §Counts numbers |
+| — | `ui/insights.test.ts` | /insights rendered: the answer card offers "Pin to board" with the rolling/fixed choice; a built-in tile has no Remove; each chart kind (number, bar, line, table, segment) carries its numbers as text, on real rows and 02 §Counts numbers; an empty first page reads "No tracked visit" |
 | — | `ui/audit-step.test.ts` | /audit rendered: a Gate 2 or Gate 3 block shows its own sentence in words, not the generic one |
 
 ## Known gaps

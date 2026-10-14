@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { type ChartKind, pickChart } from '../../shared/pick-chart'
 import { AnswerCard } from '../../src/insights/ask'
 import { BoardGrid, TileActions } from '../../src/insights/board'
+import { cellText } from '../../src/insights/cells'
 import { InsightChart } from '../../src/insights/charts'
 import type { ChartResult, ChartSegment } from '../../src/insights/shapes'
 import type { AssistantResponse, InsightTile } from '../../src/types'
@@ -199,5 +200,14 @@ describe('tile options (06 §/insights tile menu)', () => {
     expect(text).toContain('46')
     // sort_order 30 before 50.
     expect(text.indexOf('Readers at risk of going cold')).toBeLessThan(text.indexOf(BRIEF_Q1))
+  })
+})
+
+describe('an empty first page reads in words (06 §UI principles 4)', () => {
+  // julia.evans230@gmail.com has no web history (02 §Demo subjects), so a first-page grouping holds
+  // her in the null bucket; the bar label and its table must say why, not "None".
+  it('a null first_page is "No tracked visit"; "/" is the home page', () => {
+    expect(cellText('first_page', null)).toBe('No tracked visit')
+    expect(cellText('first_page', '/')).toBe('Home page (/)')
   })
 })

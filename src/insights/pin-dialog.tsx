@@ -73,7 +73,11 @@ export function PinDialog({
       return
     }
     let note: string | null = null
-    if (answerWindow !== null && tile.window !== null && tile.window.kind !== choice) {
+    if (answerWindow !== null && tile.window === null) {
+      // The lookup's dates are part of the tool itself (e.g. a query tool's SQL), so the server
+      // stored no window and the Rolling/Fixed choice cannot apply: say so instead of dropping it.
+      note = `Pinned “${tile.title}”. This lookup has its dates built in (${humanRange(answerWindow.from, answerWindow.to)}), so its time period cannot be changed.`
+    } else if (answerWindow !== null && tile.window !== null && tile.window.kind !== choice) {
       const wanted: InsightWindow | null =
         choice === 'fixed' ? { fixed: [answerWindow.from, answerWindow.to] } : preset === null ? null : { rolling: preset }
       if (wanted !== null) {
