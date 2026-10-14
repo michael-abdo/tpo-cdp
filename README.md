@@ -67,6 +67,17 @@ Open "Ask a question" (`/assistant`) on the live app, or locally with a real key
 
 Under "How this answer was worked out", each answer lists the time period, filters and definitions it used, when it used any. "See exactly what the AI saw for this answer" opens the trace on "AI audit log" (`/audit`): every model request and tool call as stored. Search it for `@` and it finds nothing. On "Growth", every number has an "Explain this" link that fills in a question here and waits for Ask.
 
+## Insights
+
+`/insights` (09 D-64) keeps answers as tiles on one shared board. On the server:
+
+- **Pin** (`POST /api/insights {audit_id, title?}`): the trace's last successful tool call (tool + checked input) is read from `ai_audit`, re-checked against today's tool rows and stored in the one `insights` table. A body with a tool, inputs or SQL is refused (400 `invalid_body`); an unknown trace is 404; a trace with no successful tool call, or with no AI call at all (a board run), is 409 `nothing_to_pin`; a call that no longer passes the gates is 400 `invalid_pin`; a result that lists individual readers is 400 `not_aggregate` (the board holds counts).
+- **Re-run** (`GET /api/insights`): one failing tile shows its own error and the board still answers 200. The tool calls are audited under a trace with no session, so viewing the board never counts toward the 100-questions-per-hour limit.
+- **Windows**: a tool input's dates are stored rolling when they equal a preset on TODAY ("last month" = 2026-08-01..31; "last 30 days" = 2026-08-29..09-28, 02's "last N days"; "this month" = 2026-09-01..28), else fixed, and resolved against TODAY on every run. For `query_sql` the one `BETWEEN 'date' AND 'date'` is stored as `:window_from`/`:window_to`; the SQL that runs still passes Gate 2 and Gate 3 in full. `PATCH` changes a window only after the same checks.
+- **Built-in tiles** run through the board-only `insight_panel` tool, which calls the same functions as `GET /api/insights/{panel}`; it is not an `assistant_tools` row and the AI never sees it. Built-ins can be renamed or moved, not removed (409 `built_in`); `migrations/0005_insights.sql` seeds them.
+- **PII**: title, question and stored inputs are scanned before insert (an email in a title is 400 `blocked_pii`); the executor scans every tool result and the whole tile is scanned again before it leaves. Segment tiles carry a count and filters, never rows.
+- `PATCH /api/insights/:id {title?, window?, chart?, sort_order?}` and `DELETE /api/insights/:id` need a session; `PATCH` must be JSON, like every POST.
+
 ## How each requirement is met
 
 Screens are the menu names, with paths. Test IDs are in the `describe` names under `test/`.
@@ -375,7 +386,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 28 files, 545 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 30 files, 568 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -396,6 +407,8 @@ Calls I made where the brief left room, each with the decision-log number it has
 | — | `describe-schema.test.ts` | `describe_schema` returns every `v_*` view's columns as read from `PRAGMA`, no rows and no PII column, and refuses a table name |
 | T-AI-3..5 | `assistant.test.ts` | typed results, audit rows per trace, no SQL in answer text |
 | T-INS-1..3 | `insights.test.ts` | the four Growth panels; `going_cold_risk` checked row by row on the seeded subscribers; each data-quality check made to count one gap by editing real rows (09 D-47), and the import/quarantine disagreement answering 500 |
+| T-INS-4..6, T-INS-8..9 | `insights-board.test.ts` | pins from real recorded traces: the last successful tool call, never a body's tool or SQL, 404/409/400; windows resolve on TODAY (went-cold last month = 46) and a `query_sql` window runs through both gates; the board re-runs every tile with no model call and equals each tool run directly; one broken tile leaves the board 200; built-ins seeded and not deletable; PATCH/DELETE/401; no email or raw id in any tile or stored row; a segment tile is a count (177) and filters only |
+| T-INS-7 | `pick-chart.test.ts` | the chart rule table of 06 §/insights on real results: one number, line, bar (also past 20 categories and with a null category), segment, empty, table, and the override |
 | — | `audit.test.ts`, `health.test.ts`, `overview.test.ts`, `pseudonym.test.ts` | the audit API and /audit's words for blocked steps, the D-58 screen of `filters_applied`, `/health`, Overview numbers, key derivation |
 | — | `events-poll.test.ts` | /events: the 5-second poll and what its screen-reader line says after each fetch, on real answers before and after webhook events |
 | — | `ui/assistant-result.test.ts` | "Ask a question" rendered: no model-written SQL in `filters_applied` reaches the page (typed by `tsconfig.ui-test.json`, DOM and JSX) |
