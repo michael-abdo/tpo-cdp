@@ -17,7 +17,7 @@ import { redactDetail } from '../worker/assistant/gates/pii-guard'
 import { respond } from '../worker/assistant/respond'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
-import { compileModelSegment, compileSegment, parseFilters, SEGMENT_COLUMNS } from '../worker/segments/compile'
+import { compileModelSegment, compileSegment, parseFilters, SEGMENT_COLUMNS, SEGMENT_SORT_COLUMN } from '../worker/segments/compile'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { realCsvs, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
@@ -196,6 +196,15 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect(activeRows.some((r) => r[1] === 'unsubscribed')).toBe(false)
     const [, ...allRows] = await exportRecords({ ...PRESET, status: ['active', 'unsubscribed'] })
     expect(allRows.filter((r) => r[1] === 'unsubscribed')).toHaveLength(independentCount(['unsubscribed']))
+  })
+
+  it("rows come back sorted by email, ascending (09 D-76): compileSegment's one sort column", async () => {
+    expect(SEGMENT_SORT_COLUMN).toBe('email')
+    const [, ...rows] = await exportRecords(PRESET)
+    const emails = rows.map((r) => r[EXPORT_HEADER.indexOf('email')])
+    // 177 real rows, not already in increasing order by construction (data/subscribers.csv's own
+    // row order): this fails if compileSegment's ORDER BY ever names a different column.
+    expect(emails).toEqual([...emails].sort())
   })
 
   it('a source value with a single quote is 400 invalid_filters (09 D-69 #6, 19 §0 F7): source is now a subset of CANONICAL_SOURCES, so it never reaches SQL at all', async () => {
