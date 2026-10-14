@@ -26,6 +26,18 @@ function coldRuleLiteral(line: string): boolean {
 /** The one line allowed to hold the number: its home in shared/derive.ts. */
 const COLD_HOME = /^export const COLD_DAYS = \d+$/
 
+/**
+ * The body of `export function <name>(…) {…}` in a source text: from its signature to the first
+ * closing brace at column 0. Fails loud if the function is missing, so a rename cannot empty a check.
+ */
+function functionBody(text: string, name: string): string {
+  const start = text.indexOf(`export function ${name}(`)
+  if (start < 0) throw new Error(`one-home: export function ${name} not found`)
+  const end = text.indexOf('\n}', start)
+  if (end < 0) throw new Error(`one-home: export function ${name} has no closing brace at column 0`)
+  return text.slice(start, end + 2)
+}
+
 describe('the cold window has one home (09 D-68)', () => {
   it('scans the real tree, not an empty glob', () => {
     for (const path of [
@@ -63,6 +75,36 @@ describe('the cold window has one home (09 D-68)', () => {
     }
     expect(offenders).toEqual([])
     expect(homes).toBe(1)
+  })
+
+  it('no addDays(…, 30) call anywhere, even one split over several lines', () => {
+    const offenders = Object.entries(code)
+      .filter(([, text]) => /addDays\([^)]*,\s*30\s*,?\s*\)/.test(text))
+      .map(([p]) => p)
+    expect(offenders).toEqual([])
+  })
+
+  it('coldSince and goingColdRisk write COLD_DAYS, never the number (their bodies, read as text)', () => {
+    // A runtime edge test cannot tell COLD_DAYS from a literal 30 while COLD_DAYS === 30, so the
+    // two named consumers (09 D-68) are checked as source text too.
+    const derive = code['../shared/derive.ts'] ?? ''
+    const cold = functionBody(derive, 'coldSince')
+    expect(cold).toContain('COLD_DAYS')
+    expect(cold).not.toMatch(/\b\d+\b/)
+    const risk = functionBody(derive, 'goingColdRisk')
+    expect(risk).toContain('lastNDays(COLD_DAYS)')
+    expect(risk).not.toMatch(/\b30\b/)
+  })
+
+  it('the body checks catch the old goingColdRisk outer window', () => {
+    const old = [
+      'export function goingColdRisk(lastOpenDate: string | null, coldSinceDate: string): boolean {',
+      '  const openedInLast30 = lastOpenDate !== null && inWindow(lastOpenDate, lastNDays(30))',
+      '  return openedInLast30',
+      '}',
+    ].join('\n')
+    expect(functionBody(old, 'goingColdRisk')).toMatch(/\b30\b/)
+    expect(functionBody(old, 'goingColdRisk')).not.toContain('lastNDays(COLD_DAYS)')
   })
 
   it('COLD_DAYS is 30 (02 §Derived; no number changes) and coldSince adds exactly it', () => {
@@ -112,9 +154,39 @@ describe('the duplicate band edges have one home (09 D-62, D-68)', () => {
     expect(valueImports).toEqual([])
   })
 
-  it('the Overview footer reads both edges from the GET /api/duplicates response', () => {
-    const overview = code['../src/pages/OverviewPage.tsx'] ?? ''
-    expect(overview).toContain('data.bands.auto_min')
-    expect(overview).toContain('data.bands.review_min')
+  /** The possible-duplicates band footer: from its first sentence to its closing words. */
+  function footer(overview: string): string {
+    const start = overview.indexOf('Score {')
+    const end = overview.indexOf('Nothing is deduped', start)
+    if (start < 0 || end < 0) throw new Error('one-home: Overview band footer not found')
+    return overview.slice(start, end)
+  }
+
+  it('the Overview footer reads both edges from the GET /api/duplicates response and writes no edge itself', () => {
+    const text = footer(code['../src/pages/OverviewPage.tsx'] ?? '')
+    expect(text).toContain('{data.bands.auto_min}')
+    expect(text).toContain('{data.bands.review_min}')
+    expect(text).toContain('{data.bands.auto_min - 1}')
+    expect(text).not.toMatch(/\b(?:90|89|50|49)\b/)
+  })
+
+  it('no browser file writes band text with a number in it ("Score 90 or more")', () => {
+    const offenders: string[] = []
+    for (const [path, text] of src)
+      text.split('\n').forEach((line, i) => {
+        if (/\bScore\s+\d/.test(line) || /\d\s*[–-]\s*\d+\s*:\s*worth a look/.test(line))
+          offenders.push(`${path}:${i + 1}: ${line.trim()}`)
+      })
+    expect(offenders).toEqual([])
+  })
+
+  it('the API sends the edges from worker/dedupe/score.ts, not a copy (09 D-62)', () => {
+    const route = code['../worker/routes/duplicates.ts'] ?? ''
+    expect(route).toContain('bands: { auto_min: AUTO_MIN_SCORE, review_min: REVIEW_MIN_SCORE }')
+    expect(route).toMatch(/import \{[^}]*\bAUTO_MIN_SCORE\b[^}]*\bREVIEW_MIN_SCORE\b[^}]*\} from '\.\.\/dedupe\/score'/)
+    const offenders = Object.entries(code)
+      .filter(([, text]) => /\b(?:auto_min|review_min)\s*:\s*\d/.test(text))
+      .map(([p]) => p)
+    expect(offenders).toEqual([])
   })
 })
