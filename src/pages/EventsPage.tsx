@@ -13,7 +13,11 @@
 // "unknown user u_…"; principle 2 moves the u_ id to Technical details), plus a "Linked after login"
 // tag (06's "stitched") when an anonymous event is attached through its device's login
 // (attached_via login_stitch). Level 2 (row Details): when it happened in the app and the link, in
-// words; Technical details: device id, second-precise UTC times, raw names, ids and pk_ keys. Events are sent from the terminal with `npm run webhook:send` (11 §Verify).
+// words; Technical details: device id, second-precise UTC times, raw names, ids and pk_ keys. Events
+// arrive from the app's real webhook, from the terminal (`npm run webhook:send`, 11 §Verify), or
+// from the "Send a test event" panel just below the header (09 D-73): either way the list picks
+// a new row up at once (events-poll.ts FetchKind 'sent' says nothing extra here, since the
+// panel's own result line already names the outcome, D-72).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
@@ -34,8 +38,9 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
-import { humanDateTime, utc } from '../format'
 import { eventsAnnouncement, type FetchKind, POLL_MS } from '../events-poll'
+import { TestEventPanel } from '../events-test-panel'
+import { humanDateTime, utc } from '../format'
 import type { RecentEvent, RecentEvents } from '../types'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -247,6 +252,7 @@ export default function EventsPage() {
           </Button>
         }
       />
+      <TestEventPanel onSent={() => void load('sent')} />
       <Disclosure label="How this list updates">
         <p className="text-sm text-gray-700">
           The list updates itself every {POLL_SECONDS} seconds while this tab is in view. These times are live, so they can be later than the date in the top bar.

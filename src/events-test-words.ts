@@ -1,0 +1,11 @@
+// What the "Send a test event" panel's result line says (06 §/events panel, 09 D-73; D-72: one
+// home for the sentence). Pure, so test/ui/events-test-panel.test.ts pins the exact words
+// without rendering; src/events-test-panel.tsx is the only other caller. Kept out of that file,
+// as src/events-poll.ts is kept out of src/pages/EventsPage.tsx, so the component file exports
+// only the component (react/only-export-components).
+
+import type { TestEventResult } from './types'
+
+export function resultText(outcome: TestEventResult['outcome']): string {
+  return outcome === 'duplicate' ? 'Already received: sent twice, stored once.' : "Received — it's the top row below."
+}

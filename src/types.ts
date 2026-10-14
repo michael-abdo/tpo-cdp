@@ -220,6 +220,13 @@ export interface RecentEvents {
   events: RecentEvent[]
 }
 
+/** POST /api/events/test (04, 09 D-73): the "Send a test event" panel's result. */
+export interface TestEventResult {
+  status: 202 | 200
+  outcome: 'received' | 'duplicate'
+  event: RecentEvent
+}
+
 /** The filters object of POST /api/segments/preview and export.csv. */
 export interface SegmentFilters {
   status: SubscriberStatus[]
