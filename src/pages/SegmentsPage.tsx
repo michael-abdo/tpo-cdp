@@ -18,7 +18,7 @@
 // Every 200 preview records the echoed filters in Previous searches (src/previous-searches.ts);
 // a click on one re-runs it, so every count shown is live (03 §No-restart).
 
-import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
+import { type FormEvent, type ReactNode, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
 import { APP_EVENTS } from '../../shared/app-events'
 import { TODAY } from '../../shared/config'
@@ -31,10 +31,12 @@ import { downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
   Button,
+  ComingSoonTag,
   type Column,
   Disclosure,
   ErrorLine,
   Field,
+  GatedNote,
   ICONS,
   Icon,
   InfoTip,
@@ -44,6 +46,7 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
+import { useGated } from '../use-gated'
 import { filtersAppliedView } from '../filters-applied'
 import { humanDate } from '../format'
 import { columnLabel, COLUMN_LABEL, DEFINITION_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
@@ -183,6 +186,192 @@ export function DaysBox({
 
 /** The id of the problem line under input `id`. */
 const errorId = (id: string) => `${id}-error`
+
+/**
+ * Five gated "More filters" (09 D-80, 22-pages/segments.md §3, 19 §5.7's parked filters): each its
+ * own flag under `group: 'more_filters'`, carrying no state (no Form field, no FILTER_KEYS entry),
+ * so none can reach the filters object, Previous searches, Export CSV or the assistant's segment
+ * tool. Placed after the working controls in the group they belong to (§B.0: working controls keep
+ * their place). Every control keeps its real shape — a date pair, a number box, a checkbox, a
+ * select — with a fixed, empty/unchecked value; a click, a key press or a change only reveals and
+ * announces its note. Enter never submits the form (`onKeyDown` calls `preventDefault`).
+ */
+export function GatedSignedUpBetween() {
+  const gated = useGated('filter_signed_up_between')
+  const from = useId()
+  const to = useId()
+  return (
+    <fieldset className="space-y-1">
+      <div className="flex items-center gap-1">
+        <legend className={labelClass}>{gated.feature.label}</legend>
+        <ComingSoonTag />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
+        <label htmlFor={from}>from</label>
+        <input
+          id={from}
+          type="date"
+          readOnly
+          value=""
+          {...gated.bind}
+          onClick={gated.activate}
+          onKeyDown={gated.onKeyDown}
+          onChange={gated.activate}
+          className={inputClass}
+        />
+        <label htmlFor={to}>to</label>
+        <input
+          id={to}
+          type="date"
+          readOnly
+          value=""
+          {...gated.bind}
+          onClick={gated.activate}
+          onKeyDown={gated.onKeyDown}
+          onChange={gated.activate}
+          className={inputClass}
+        />
+      </div>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </fieldset>
+  )
+}
+
+export function GatedOpenedWithinDays() {
+  const gated = useGated('filter_opened_within_days')
+  const id = useId()
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1">
+        <label htmlFor={id} className={labelClass}>
+          {gated.feature.label}
+        </label>
+        <ComingSoonTag />
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          readOnly
+          value=""
+          {...gated.bind}
+          onClick={gated.activate}
+          onKeyDown={gated.onKeyDown}
+          onChange={gated.activate}
+          className={numberClass}
+        />
+        <span className="text-sm text-gray-700">days</span>
+      </div>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
+  )
+}
+
+export function GatedSiteVisitsAtLeast() {
+  const gated = useGated('filter_site_visits_gte')
+  const id = useId()
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1">
+        <label htmlFor={id} className={labelClass}>
+          {gated.feature.label}
+        </label>
+        <ComingSoonTag />
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          readOnly
+          value=""
+          {...gated.bind}
+          onClick={gated.activate}
+          onKeyDown={gated.onKeyDown}
+          onChange={gated.activate}
+          className={numberClass}
+        />
+        <span className="text-sm text-gray-700">times</span>
+      </div>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
+  )
+}
+
+export function GatedGoingColdRisk() {
+  const gated = useGated('filter_going_cold_risk')
+  return (
+    <div className="space-y-1">
+      <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={false}
+          {...gated.bind}
+          onClick={gated.activate}
+          onKeyDown={gated.onKeyDown}
+          onChange={gated.activate}
+          className="size-4"
+        />
+        {gated.feature.label}
+        <ComingSoonTag />
+      </label>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
+  )
+}
+
+export function GatedEmailDomain() {
+  const gated = useGated('filter_email_domain')
+  const id = useId()
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1">
+        <label htmlFor={id} className={labelClass}>
+          {gated.feature.label}
+        </label>
+        <ComingSoonTag />
+      </div>
+      <select
+        id={id}
+        value=""
+        {...gated.bind}
+        onClick={gated.activate}
+        onKeyDown={gated.onKeyDown}
+        onChange={gated.activate}
+        className={inputClass}
+      >
+        <option value="">Any domain</option>
+      </select>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
+  )
+}
+
+/**
+ * The gated "Send to beehiiv" button (09 D-80, 22-pages/segments.md §2): the result action row,
+ * right after Export CSV, in the same group — secondary, never primary (Export CSV stays the
+ * page's one primary action). Shown on the same condition as Export CSV (count > 0). Activation
+ * only reveals and announces the note: no outward call, no confirm panel, no log.
+ */
+export function SendToBeehiiv() {
+  const gated = useGated('send_to_beehiiv')
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          {...gated.bind}
+          onClick={gated.activate}
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-subtle"
+        >
+          <Icon icon={ICONS.send} />
+          {gated.feature.label}
+        </button>
+        <ComingSoonTag />
+      </div>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
+  )
+}
 
 /** aria-describedby from the ids that are set; undefined when none is. */
 function describedBy(...ids: (string | undefined)[]): string | undefined {
@@ -737,6 +926,10 @@ export default function SegmentsPage() {
                 </select>
                 <FieldError id={FIELD_ID.wentCold} message={fieldError.wentCold} />
               </div>
+              <GatedSignedUpBetween />
+              <GatedGoingColdRisk />
+              <GatedOpenedWithinDays />
+              <GatedEmailDomain />
             </fieldset>
 
             <fieldset className="grid gap-4 sm:grid-cols-2">
@@ -776,6 +969,7 @@ export default function SegmentsPage() {
                   <ErrorLine id="site-page-options-error" message={options.message} next="Reload the page to try again." />
                 )}
               </div>
+              <GatedSiteVisitsAtLeast />
             </fieldset>
 
             <fieldset className="grid gap-4 sm:grid-cols-2" aria-describedby="app-hint">
@@ -838,15 +1032,18 @@ export default function SegmentsPage() {
               )}
             </div>
             {ok.data.count > 0 && (
-              <Button
-                variant="primary"
-                icon={ICONS.export}
-                onClick={() => void exportCsv(ok.filters)}
-                disabled={exporting}
-                className="w-full sm:w-auto"
-              >
-                {exporting ? 'Preparing download…' : 'Export CSV'}
-              </Button>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
+                <Button
+                  variant="primary"
+                  icon={ICONS.export}
+                  onClick={() => void exportCsv(ok.filters)}
+                  disabled={exporting}
+                  className="w-full sm:w-auto"
+                >
+                  {exporting ? 'Preparing download…' : 'Export CSV'}
+                </Button>
+                <SendToBeehiiv />
+              </div>
             )}
           </div>
           {ok.data.count > 0 && <ExportFileDetails filters={ok.filters} count={ok.data.count} />}
