@@ -132,6 +132,66 @@ describe('POST /api/events/test (09 D-73)', () => {
     expect(after).toBe(before)
   })
 
+  it('T-WH-PANEL-5b: a resend sends the inner webhook exactly the stored row, no more and no less (kills M14: a dropped properties spread; M15: user_id sent as null)', async () => {
+    // Spies on the inner POST /webhooks/app call the same way T-WH-PANEL-10's own runtime-proof
+    // test does, so this is a live assertion on what the route actually sent, not just on its
+    // response body.
+    const sent = await (await sendTest({ user_id: KNOWN_USER, event: 'read_story' })).json<TestEventResponse>()
+    const row = await env.DB.prepare('SELECT user_id, device_id, event_ts, properties FROM app_events WHERE event_id = ?')
+      .bind(sent.event.event_id)
+      .first<{ user_id: string | null; device_id: string; event_ts: string; properties: string | null }>()
+    expect(row).not.toBeNull()
+
+    const spy = vi.spyOn(webhookRoutes, 'request')
+    try {
+      const res = await sendTest({ resend: sent.event.event_id })
+      expect(res.status).toBe(200)
+      expect(spy).toHaveBeenCalledTimes(1)
+      const [, init] = spy.mock.calls[0] as [string, RequestInit]
+      const sentBody = JSON.parse(init.body as string) as Record<string, unknown>
+      expect(sentBody).toEqual({
+        event_id: sent.event.event_id,
+        event: sent.event.event,
+        user_id: row?.user_id,
+        device_id: row?.device_id,
+        timestamp: row?.event_ts,
+        // No properties key at all for this event: storedEventBody() omits it when null,
+        // never sends a literal `null` (M15-adjacent: that would still be a changed shape).
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('T-WH-PANEL-5c: a resend of an event with non-null properties sends them back unchanged (kills M14: a dropped properties spread)', async () => {
+    // A real app account (KNOWN_USER) sending a real-shaped read_story event with a properties
+    // story slug (09 D-11/D-47, 09 D-70 #2's own slug pattern), through the real webhook so the
+    // row is genuinely stored, not constructed by hand.
+    const eventId = 'evt_panel5c_props'
+    const sentOnce = await sendWebhook(
+      JSON.stringify({
+        event_id: eventId,
+        event: 'read_story',
+        user_id: KNOWN_USER,
+        device_id: 'd_panel5c',
+        timestamp: '2026-09-27T00:00:00Z',
+        properties: { story: 'supreme-court-ruling-explained' },
+      }),
+    )
+    expect(sentOnce.status).toBe(202)
+
+    const spy = vi.spyOn(webhookRoutes, 'request')
+    try {
+      const res = await sendTest({ resend: eventId })
+      expect(res.status).toBe(200)
+      const [, init] = spy.mock.calls[0] as [string, RequestInit]
+      const sentBody = JSON.parse(init.body as string) as { properties?: unknown }
+      expect(sentBody.properties).toEqual({ story: 'supreme-court-ruling-explained' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('T-WH-PANEL-5b: resend of an unknown event_id is 400, not a crash', async () => {
     const res = await sendTest({ resend: 'evt_not_a_real_one' })
     expect(res.status).toBe(400)
