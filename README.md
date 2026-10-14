@@ -25,7 +25,7 @@ npm install --legacy-peer-deps      # the flag installs package-lock.json exactl
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
 npm run db:migrate:local            # the four migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
-npm test                            # 29 files, 559 tests in workerd against a local D1; no network
+npm test                            # 29 files, 561 tests in workerd against a local D1; no network
 npm run dev                         # http://localhost:5173; sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
@@ -375,7 +375,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 29 files, 559 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 29 files, 561 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -385,7 +385,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 | T-API-1, T-API-3, T-API-4 | `lookup.test.ts`, `lookup-search.test.ts` | exact lookup by email, `u_`, `pk_`, `d_` and `v_`; partial lookup; "did you mean" suggestions and the distance helper |
 | T-SEG-1..3 | `segments.test.ts` | 177, 55 hidden, export columns and status rule |
 | T-OVR-1 | `quarantine.test.ts` | the set-aside rows as written (2 invalid emails, 8 blank rows), the reason and `file` filters and their 400s, and the "Needs review" sentence and fix on the real rows |
-| T-SRC-1..2 | `sources.test.ts` | the 4 sources in registry order (2,995 read / 2,900 kept / 85 merged / 10 rejected / 2 to review; 10,000 and 930 OK; App events live, counting real signed webhooks, "today" by event time), status `ok` when only blank rows are set aside, a 500 when `import_runs` and `quarantine` disagree, 401; every Overview term in the glossary or `DEFINITIONS`, and no source name, id, file or unit written in the Overview's code |
+| T-SRC-1..2 | `sources.test.ts` | the 4 sources in registry order (2,995 read / 2,900 kept / 85 merged / 10 rejected / 2 to review; 10,000 and 930 OK; App events live, counting real signed webhooks, "today" by event time), status, records and last sync from the newest run with runs newest first, `needs_review` counting every non-blank reason (bad_date and missing_field too), status `ok` when only blank rows are set aside, a 500 when `import_runs` and `quarantine` disagree, 401; every Overview term in the glossary or `DEFINITIONS`, and no source name, id, file or unit written in the Overview's code |
 | T-DUP-1..3 | `duplicates.test.ts` | 1,704 name-stem pairs; exactly the 16 three-way pairs to review, none auto, joy.hall's 3 below review; weights equal log2(m/u) and log2((1−m)/(1−u)) with u measured; band edges pinned at 90 and 50; a pair id ignores pkey order; a shared device from a signed login stitch scores 90+; a verdict is stored, replaced and shown, with 400/404/401 and no other row changed |
 | T-WH-1..8, T-WH-7b, T-WH-11..12 | `webhook.test.ts` | shape, events, null users, resolution, unknown users, order, duplicates, auth, caps |
 | T-WH-9a, T-WH-9b | `stitching.test.ts` | login stitching in both arrival orders |
