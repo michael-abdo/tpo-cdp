@@ -9,13 +9,13 @@ import { CANONICAL_SOURCES } from '../shared/normalize'
 import { PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
 import { pkeyForEmail, visitorHash } from '../shared/pseudonym'
 import { classifyAppRow, ingestApp, APP_COLUMNS } from '../worker/ingest/app'
-import { parseCsv } from '../worker/ingest/csv'
+import { parseCsv, type ParsedCsv } from '../worker/ingest/csv'
 import { buildSeed, type Seed } from '../worker/ingest/link'
 import { requireHeaders } from '../worker/ingest/quarantine'
 import { MAX_ROWS_PER_INSERT, MAX_STATEMENT_BYTES, seedSql, type SeedFile } from '../worker/ingest/sql'
 import { ingestSubscribers, toCsvRecord } from '../worker/ingest/subscribers'
 import { classifyWebRow, csvTimestampToIso, ingestWeb, WEB_COLUMNS } from '../worker/ingest/web'
-import { piiKeySecret, seedDatabase } from './helpers/seed'
+import { piiKeySecret, realCsvs, seedDatabase } from './helpers/seed'
 
 // 02 §Linking, §Derived, §Time, §Counts; 11 §Seed; 09 D-08, D-44, D-46. Tests 08 T-ING-1, -5, -6.
 // Input is the three real data/*.csv files and the PII_KEY_SECRET from .dev.vars. The pure
@@ -585,5 +585,171 @@ describe('T-ING-7 a row with no rule is quarantined, never fatal (09 D-78)', () 
     ])
     expect(result.events).toHaveLength(1)
     expect(result.visitors.get('v_c9e136fd6d')).toMatchObject({ email_norm: JOY })
+  })
+})
+
+// 09 D-78: the three slice tests above show each classify*/ingest* function in isolation. This
+// block instead runs buildSeed over the FULL real CSVs with exactly one row minimally edited
+// (09 D-47), the same pipeline scripts/csv2sql.ts runs, so "the seed completes" and "every other
+// 02 §Counts number is unchanged" are shown on the real data, not a 1-2 row slice. Each case
+// picks a row whose edit cannot cascade into an unrelated count (confirmed against data/*.csv
+// below), so the only numbers that move are the ones named in each assertion.
+describe('T-ING-8 the five D-78 cases on the full seed (09 D-47)', () => {
+  const subs = () => realCsvs().subscribers
+  const web = () => realCsvs().web_events
+  const app = () => realCsvs().app_users
+
+  function withRow(csv: ParsedCsv, lineNo: number, edit: (row: string[]) => string[]): ParsedCsv {
+    const idx = csv.lineNos.indexOf(lineNo)
+    if (idx === -1) throw new Error(`T-ING-8: line ${lineNo} not in this file`)
+    const rows = csv.rows.map((r) => [...r])
+    rows[idx] = edit(rows[idx])
+    return { header: csv.header, rows, lineNos: csv.lineNos }
+  }
+
+  it('unknown_status: subscribers.csv:4 (megan.walker638@hotmail.com, active, no app/web row of her own) truncated to "activ"', async () => {
+    const real = subs()
+    const line = real.rows[real.lineNos.indexOf(4)]
+    expect(line).toEqual(['megan.walker638@hotmail.com', '2026-09-07', 'active', 'Instagram', '2026-09-22'])
+    const edited = withRow(real, 4, (row) => [row[0], row[1], 'activ', row[3], row[4]])
+
+    const seed = await buildSeed({ subscribers: edited, web_events: web(), app_users: app() }, secret())
+
+    const run = seed.runs.find((r) => r.file === 'subscribers')!
+    expect(run).toMatchObject({ rows_in: 2995, rows_out: 2899, merged: 85 })
+    // The new unknown_status row (line 4) alongside the real baseline 10 (8 blank_row, 2
+    // invalid_email, 09 D-78): quarantining never drops a baseline row, it only adds one.
+    expect(run.quarantined).toEqual([
+      {
+        line_no: 4,
+        reason: 'unknown_status',
+        raw_row: 'megan.walker638@hotmail.com,2026-09-07,activ,Instagram,2026-09-22',
+      },
+      { line_no: 235, reason: 'blank_row', raw_row: ',,,,' },
+      { line_no: 630, reason: 'blank_row', raw_row: ',,,,' },
+      { line_no: 1587, reason: 'blank_row', raw_row: ',,,,' },
+      { line_no: 1750, reason: 'invalid_email', raw_row: 'not-an-email,2026-08-14,active,Instagram,' },
+      { line_no: 1788, reason: 'invalid_email', raw_row: '@gmail.com,2026-09-02,active,Google,' },
+      { line_no: 2391, reason: 'blank_row', raw_row: ',,,,' },
+      { line_no: 2402, reason: 'blank_row', raw_row: ',,,,' },
+      { line_no: 2674, reason: 'blank_row', raw_row: ',,,,' },
+      { line_no: 2722, reason: 'blank_row', raw_row: ',,,,' },
+      { line_no: 2864, reason: 'blank_row', raw_row: ',,,,' },
+    ])
+    // She has no app_users or web_events row of her own (checked against the real files above),
+    // so quarantining her cannot create a new app_only profile or move the web-linked count:
+    // only subscribers and this one profile move, by exactly 1.
+    expect(seed.subscribers).toHaveLength(2899)
+    expect(seed.profiles).toHaveLength(2929)
+    expect(seed.visitors).toHaveLength(2028)
+    expect(seed.events).toHaveLength(10000)
+    expect(seed.app_users).toHaveLength(930)
+    expect(seed.visitors.filter((v) => v.email_norm !== null)).toHaveLength(1400)
+    const baseline = { subscribers: 10, web_events: 0, app_users: 0 } as const
+    for (const other of seed.runs) if (other.file !== 'subscribers') expect(other.quarantined).toHaveLength(baseline[other.file])
+  })
+
+  it('duplicate_user_id: app_users.csv:3 (daniel.hill389@gmail.com) given line 2\'s real user_id', async () => {
+    const real = app()
+    const first = real.rows[real.lineNos.indexOf(2)]
+    const second = real.rows[real.lineNos.indexOf(3)]
+    expect(first).toEqual(['u_2b6447a3', 'julia.evans230@gmail.com', '2026-08-22'])
+    expect(second).toEqual(['u_baba14aa', 'daniel.hill389@gmail.com', '2026-09-20'])
+    const edited = withRow(real, 3, (row) => [first[0], row[1], row[2]])
+
+    const seed = await buildSeed({ subscribers: subs(), web_events: web(), app_users: edited }, secret())
+
+    const run = seed.runs.find((r) => r.file === 'app_users')!
+    expect(run).toMatchObject({ rows_in: 930, rows_out: 929, merged: 0 })
+    expect(run.quarantined).toEqual([
+      { line_no: 3, reason: 'duplicate_user_id', raw_row: 'u_2b6447a3,daniel.hill389@gmail.com,2026-09-20' },
+    ])
+    // daniel.hill389 is a real subscriber (data/subscribers.csv:2644), not app_only, so dropping
+    // his second app_users row changes no profile: it only drops one app_users row.
+    expect(seed.app_users).toHaveLength(929)
+    expect(seed.subscribers).toHaveLength(2900)
+    expect(seed.profiles).toHaveLength(2930)
+    expect(seed.visitors).toHaveLength(2028)
+    expect(seed.events).toHaveLength(10000)
+    const baseline = { subscribers: 10, web_events: 0, app_users: 0 } as const
+    for (const other of seed.runs) if (other.file !== 'app_users') expect(other.quarantined).toHaveLength(baseline[other.file])
+  })
+
+  it('misplaced_email: web_events.csv:5405 (joy\'s visitor, page /about, blank email) given a real email', async () => {
+    const real = web()
+    const line = real.rows[real.lineNos.indexOf(5405)]
+    expect(line).toEqual(['v_c9e136fd6d', '/about', '2026-09-02 16:52:04', '', ''])
+    const edited = withRow(real, 5405, (row) => [row[0], row[1], row[2], row[3], JULIA])
+
+    const seed = await buildSeed({ subscribers: subs(), web_events: edited, app_users: app() }, secret())
+
+    const run = seed.runs.find((r) => r.file === 'web_events')!
+    expect(run).toMatchObject({ rows_in: 10000, rows_out: 9999, merged: 0 })
+    expect(run.quarantined).toEqual([
+      {
+        line_no: 5405,
+        reason: 'misplaced_email',
+        raw_row: `v_c9e136fd6d,/about,2026-09-02 16:52:04,,${JULIA}`,
+      },
+    ])
+    expect(seed.events).toHaveLength(9999)
+    // The visitor keeps every other one of her events and her real, unchanged /subscribe email
+    // (joy's, from line 5421): the quarantined row never touches her emails or first_seen_ts.
+    const visitor = seed.visitors.find((v) => v.visitor_id === 'v_c9e136fd6d')!
+    expect(visitor).toMatchObject({ email_norm: JOY, first_page: '/' })
+    expect(seed.subscribers).toHaveLength(2900)
+    expect(seed.profiles).toHaveLength(2930)
+    expect(seed.visitors).toHaveLength(2028)
+    expect(seed.app_users).toHaveLength(930)
+    const baseline = { subscribers: 10, web_events: 0, app_users: 0 } as const
+    for (const other of seed.runs) if (other.file !== 'web_events') expect(other.quarantined).toHaveLength(baseline[other.file])
+  })
+
+  it('conflicting_email: web_events.csv:5442 (the same visitor\'s later /subscribe row, blank email) given a different real email', async () => {
+    const real = web()
+    const line = real.rows[real.lineNos.indexOf(5442)]
+    expect(line).toEqual(['v_c9e136fd6d', '/subscribe', '2026-09-03 00:51:44', '', ''])
+    const edited = withRow(real, 5442, (row) => [row[0], row[1], row[2], row[3], JULIA])
+
+    const seed = await buildSeed({ subscribers: subs(), web_events: edited, app_users: app() }, secret())
+
+    const run = seed.runs.find((r) => r.file === 'web_events')!
+    expect(run).toMatchObject({ rows_in: 10000, rows_out: 9999, merged: 0 })
+    expect(run.quarantined).toEqual([
+      {
+        line_no: 5442,
+        reason: 'conflicting_email',
+        raw_row: `v_c9e136fd6d,/subscribe,2026-09-03 00:51:44,,${JULIA}`,
+      },
+    ])
+    expect(seed.events).toHaveLength(9999)
+    const visitor = seed.visitors.find((v) => v.visitor_id === 'v_c9e136fd6d')!
+    expect(visitor.email_norm).toBe(JOY) // keeps her first (file-order) email, not julia's
+    expect(seed.subscribers).toHaveLength(2900)
+    expect(seed.profiles).toHaveLength(2930)
+    expect(seed.visitors).toHaveLength(2028)
+    expect(seed.app_users).toHaveLength(930)
+    const baseline = { subscribers: 10, web_events: 0, app_users: 0 } as const
+    for (const other of seed.runs) if (other.file !== 'web_events') expect(other.quarantined).toHaveLength(baseline[other.file])
+  })
+
+  it('the /subscribe match ignores letter case end to end: web_events.csv:5421 as "/Subscribe" still links, 0 quarantined', async () => {
+    const real = web()
+    const line = real.rows[real.lineNos.indexOf(5421)]
+    expect(line).toEqual(['v_c9e136fd6d', '/subscribe', '2026-09-02 20:40:04', '', JOY])
+    const edited = withRow(real, 5421, (row) => [row[0], '/Subscribe', row[2], row[3], row[4]])
+
+    const seed = await buildSeed({ subscribers: subs(), web_events: edited, app_users: app() }, secret())
+
+    const baseline = { subscribers: 10, web_events: 0, app_users: 0 } as const
+    for (const run of seed.runs) expect(run.quarantined).toHaveLength(baseline[run.file])
+    expect(seed.events).toHaveLength(10000)
+    const visitor = seed.visitors.find((v) => v.visitor_id === 'v_c9e136fd6d')!
+    expect(visitor).toMatchObject({ email_norm: JOY, signup_ts: '2026-09-02T20:40:04Z' })
+    expect(seed.subscribers).toHaveLength(2900)
+    expect(seed.profiles).toHaveLength(2930)
+    expect(seed.visitors).toHaveLength(2028)
+    expect(seed.visitors.filter((v) => v.email_norm !== null)).toHaveLength(1400)
+    expect(seed.app_users).toHaveLength(930)
   })
 })
