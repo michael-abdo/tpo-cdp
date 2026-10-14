@@ -232,7 +232,7 @@ export function SetAlertItem() {
   return (
     <li className="space-y-1">
       <button type="button" {...gated.bind} onClick={gated.activate} className={`${panelLink} text-ink-subtle`}>
-        <Icon icon={ICONS.notify} /> Set an alert
+        <Icon icon={ICONS.notify} /> {gated.feature.controls![1]}
         <ComingSoonTag />
       </button>
       <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />

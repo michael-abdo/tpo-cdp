@@ -1,9 +1,9 @@
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { FEATURES, featuresOn, type FeatureId } from '../../shared/features'
+import { FEATURES, featuresOn, type Feature, type FeatureId } from '../../shared/features'
 import { ComingSoonTag, GatedNote } from '../../src/components'
-import { useGated } from '../../src/use-gated'
+import { isActivatingKey, useGated } from '../../src/use-gated'
 
 // Shared gated-feature wiring (09 D-80): the scaffolding every page's gated controls share
 // (T-GATE-1..5, 22-pages/00-plan.md §4). A page's own gate test (test/ui/*-gated.test.ts) checks
@@ -38,6 +38,24 @@ describe('shared/features.ts', () => {
       expect(f.label.length).toBeGreaterThan(0)
       expect(f.note.length).toBeGreaterThan(0)
     }
+  })
+
+  // 00-plan.md §2 D-72 copy rule / §3 D1: the "Coming soon" chip (ComingSoonTag) is the only place
+  // that phrase appears; the note says only what the feature will do, and never retypes this
+  // entry's own `label` or any of its `controls` at its very start.
+  it('no note says "coming soon" (that is the chip\'s own, only, job)', () => {
+    for (const [key, f] of Object.entries(FEATURES)) expect(f.note.toLowerCase(), key).not.toMatch(/coming soon/i)
+  })
+
+  it('no note starts with its own label or control text', () => {
+    for (const [key, f] of Object.entries(FEATURES) as [string, Feature][])
+      for (const words of [f.label, ...(f.controls ?? [])]) expect(f.note.startsWith(words), `${key}: "${f.note}"`).toBe(false)
+  })
+
+  // D7 (00-plan.md §3): delete_person must say it needs per-person sign-in, not just name a blocker.
+  it("delete_person's note says it needs per-person sign-in first (D7)", () => {
+    expect(FEATURES.delete_person.note).toMatch(/sign(s|ed)? in|sign-in/i)
+    expect(FEATURES.delete_person.note).toMatch(/each|their own|per.person/i)
   })
 
   it('featuresOn groups by page', () => {
@@ -89,8 +107,8 @@ describe('useGated activation (T-GATE-3): shape, not DOM — the live check cove
 
 describe('GatedNote (T-GATE-2 continued)', () => {
   it('activation drops sr-only from the visible description; the separate live-announcer paragraph stays sr-only (announced, never shown)', () => {
-    const before = renderToString(createElement(GatedNote, { id: 'n', activated: false, text: 'X — coming soon.' }))
-    const after = renderToString(createElement(GatedNote, { id: 'n', activated: true, text: 'X — coming soon.' }))
+    const before = renderToString(createElement(GatedNote, { id: 'n', activated: false, text: 'X does the thing.' }))
+    const after = renderToString(createElement(GatedNote, { id: 'n', activated: true, text: 'X does the thing.' }))
     // Before: both paragraphs are sr-only (the description not yet revealed; the announcer has no
     // text to announce), so the sentence reads zero times visibly.
     expect(before).toMatch(/<p id="n" class="sr-only">/)
@@ -98,8 +116,47 @@ describe('GatedNote (T-GATE-2 continued)', () => {
     // (role="status") stays sr-only — the sentence is read twice (description + one announcement)
     // but shown on screen once.
     expect(after).toMatch(/<p id="n" class="flex items-start/)
-    expect(after).toMatch(/<p role="status"[^>]*class="sr-only">X — coming soon\.<\/p>/)
-    expect((after.match(/coming soon/g) ?? []).length).toBe(2)
+    expect(after).toMatch(/<p role="status"[^>]*class="sr-only">X does the thing\.<\/p>/)
+    expect((after.match(/X does the thing\./g) ?? []).length).toBe(2)
+  })
+})
+
+describe('isActivatingKey (the Tab-reveals-every-note regression)', () => {
+  it('activates on Enter, Space and a single printable character', () => {
+    for (const key of ['Enter', ' ', 'a', 'A', '1', '?']) expect(isActivatingKey(key), key).toBe(true)
+  })
+
+  it('never activates on Tab or the other navigation/modifier keys', () => {
+    for (const key of [
+      'Tab',
+      'Shift',
+      'Alt',
+      'Control',
+      'Meta',
+      'Escape',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+      'Home',
+      'End',
+      'PageUp',
+      'PageDown',
+    ])
+      expect(isActivatingKey(key), key).toBe(false)
+  })
+
+  it('never activates on a non-printable multi-character key outside that list (Backspace, F1…)', () => {
+    for (const key of ['Backspace', 'Delete', 'F1', 'Insert', 'CapsLock']) expect(isActivatingKey(key), key).toBe(false)
+  })
+
+  it("useGated's onKeyDown actually gates on isActivatingKey, not a hand-rolled copy (src read as text)", () => {
+    const [useGatedSource] = Object.values(
+      import.meta.glob<string>('../../src/use-gated.ts', { query: '?raw', import: 'default', eager: true }),
+    )
+    const start = useGatedSource.indexOf('function onKeyDown(')
+    const body = useGatedSource.slice(start, useGatedSource.indexOf('\n  }', start))
+    expect(body).toContain('isActivatingKey(e.key)')
   })
 })
 

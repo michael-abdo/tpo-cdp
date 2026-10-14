@@ -6,6 +6,7 @@ import { SetAlertItem, TileActions } from '../../src/insights/board'
 import { FollowUpField } from '../../src/insights/ask'
 import { SendTheBoardButton } from '../../src/pages/InsightsPage'
 import type { InsightTile } from '../../src/types'
+import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
 
 // Insights' gated future features (09 D-80, 22-pages/insights.md): Schedules and digests (the
 // board header's "Send the board" and a tile's "Set an alert", one shared flag) and Follow-up
@@ -42,40 +43,42 @@ function actionsHtml(tile: InsightTile): string {
 }
 
 describe('Insights: Send the board (schedules_and_digests)', () => {
-  it('renders aria-disabled="true", never disabled, with the note equal to shared/features.ts', () => {
+  it('renders aria-disabled="true", never disabled, its label from shared/features.ts, with a describedby that resolves to the exact note', () => {
     const html = renderToString(createElement(SendTheBoardButton)).replaceAll('<!-- -->', '')
     expect(html).toContain('aria-disabled="true"')
-    expect(html).not.toContain(' disabled')
-    expect(html).toContain(FEATURES.schedules_and_digests.note)
+    expect(hasDisabledAttribute(html)).toBe(false)
+    expect(html).toContain(FEATURES.schedules_and_digests.controls![0])
+    expect(describedByResolvesTo(html, FEATURES.schedules_and_digests.note)).toBe(true)
   })
 })
 
 describe('Insights: Set an alert (schedules_and_digests, single-number tiles only)', () => {
-  it('shows on a "number" chart tile, with the same note as Send the board', () => {
+  it('shows on a "number" chart tile, its label from shared/features.ts, with the same note as Send the board', () => {
     const html = actionsHtml(NUMBER_TILE)
-    expect(html).toContain('Set an alert')
-    expect(html).toContain(FEATURES.schedules_and_digests.note)
+    expect(html).toContain(FEATURES.schedules_and_digests.controls![1])
+    expect(describedByResolvesTo(html, FEATURES.schedules_and_digests.note)).toBe(true)
   })
 
   it('does not show on a "bar" chart tile (nothing a single alert line could cross)', () => {
-    expect(actionsHtml(BAR_TILE)).not.toContain('Set an alert')
+    expect(actionsHtml(BAR_TILE)).not.toContain(FEATURES.schedules_and_digests.controls![1])
   })
 
   it('renders aria-disabled="true" and never the disabled attribute (Tailwind\'s "disabled:" variant classes aside)', () => {
     const html = renderToString(createElement(SetAlertItem)).replaceAll('<!-- -->', '')
     expect(html).toContain('aria-disabled="true"')
-    expect(html).not.toMatch(/\sdisabled(="")?(?=[\s>])/)
+    expect(hasDisabledAttribute(html)).toBe(false)
   })
 })
 
 describe('Insights: Ask a follow-up (follow_up_questions)', () => {
-  it('both the input and the Ask button are aria-disabled, never disabled, sharing one describedby', () => {
+  it('both the input and the Ask button are aria-disabled, never disabled, sharing one describedby that resolves to the exact note', () => {
     const html = renderToString(createElement(FollowUpField)).replaceAll('<!-- -->', '')
     expect(html.match(/aria-disabled="true"/g)?.length).toBe(2)
-    expect(html).not.toContain(' disabled')
+    expect(hasDisabledAttribute(html)).toBe(false)
     const ids = [...html.matchAll(/aria-describedby="([^"]+)"/g)].map((m) => m[1])
     expect(new Set(ids).size).toBe(1)
-    expect(html).toContain(FEATURES.follow_up_questions.note.replaceAll('"', '&quot;'))
+    expect(describedByResolvesTo(html, FEATURES.follow_up_questions.note)).toBe(true)
+    expect(html).toContain(FEATURES.follow_up_questions.controls![0])
   })
 
   it('the input is readOnly and there is no <form> wrapper, so Enter can never submit', () => {

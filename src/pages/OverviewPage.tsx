@@ -305,11 +305,11 @@ export function LoadBar({ source }: { source: CsvSource }) {
         <div role="group" aria-label={upload.feature.label} className="flex flex-wrap items-center gap-2">
           <button type="button" {...upload.bind} onClick={upload.activate} className={muted}>
             <Icon icon={ICONS.upload} />
-            {upload.feature.label}
+            {upload.feature.controls![0]}
           </button>
           <button type="button" {...upload.bind} onClick={upload.activate} className={muted}>
             <Icon icon={ICONS.refresh} />
-            Run again
+            {upload.feature.controls![1]}
           </button>
           <ComingSoonTag />
         </div>

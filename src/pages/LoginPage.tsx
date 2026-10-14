@@ -98,7 +98,7 @@ export default function LoginPage() {
             className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-muted"
           >
             <Icon icon={ICONS.workSignIn} />
-            Sign in with your work account
+            {sso.feature.controls![0]}
           </button>
           <ComingSoonTag />
           <GatedNote id={sso.noteId} activated={sso.activated} text={sso.feature.note} />

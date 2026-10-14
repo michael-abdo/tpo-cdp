@@ -80,7 +80,7 @@ export function FollowUpField() {
     <div className="space-y-1.5 border-t border-line pt-3">
       <div className="flex items-center gap-1">
         <label htmlFor={id} className="block text-sm font-medium text-ink">
-          Ask a follow-up
+          {gated.feature.controls![0]}
         </label>
         <ComingSoonTag />
       </div>

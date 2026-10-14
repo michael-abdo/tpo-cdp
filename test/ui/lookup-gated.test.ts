@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 import { Profile } from '../../src/pages/LookupPage'
 import type { Lookup } from '../../src/types'
+import { hasDisabledAttribute } from '../helpers/gated-assertions'
 
 // Look up's gated future features (09 D-80, 22-pages/lookup.md §4): App revenue (a fourth column)
 // and Delete this person (a quiet row at the end). T-FEAT-LK-1..4.
@@ -38,7 +39,7 @@ describe('Look up: App revenue (profile_revenue) and Delete this person (delete_
   it('T-FEAT-LK-1: both controls render aria-disabled="true", never disabled, with a describedby that resolves', () => {
     const html = rendered()
     expect(html.match(/aria-disabled="true"/g)?.length).toBe(2)
-    expect(html).not.toContain(' disabled')
+    expect(hasDisabledAttribute(html)).toBe(false)
     for (const m of html.matchAll(/aria-describedby="([^"]+)"/g)) expect(html).toContain(`id="${m[1]}"`)
   })
 
@@ -46,6 +47,12 @@ describe('Look up: App revenue (profile_revenue) and Delete this person (delete_
     const html = rendered()
     expect(html).toContain(FEATURES.profile_revenue.note)
     expect(html).toContain(FEATURES.delete_person.note)
+  })
+
+  it('T-FEAT-LK-2b: App revenue\'s column title and toggle text both come from shared/features.ts', () => {
+    const html = rendered()
+    expect(html).toContain(FEATURES.profile_revenue.label)
+    expect(html).toContain(FEATURES.profile_revenue.controls![0])
   })
 
   it('T-FEAT-LK-3: the gated revenue column renders no digits and no currency sign, in its visible text', () => {

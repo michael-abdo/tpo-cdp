@@ -6,12 +6,22 @@
 // feature's `note`.
 
 import { useId, useState } from 'react'
-import { FEATURES, type FeatureId } from '../shared/features'
+import { FEATURES, type Feature, type FeatureId } from '../shared/features'
 
 /** What `useGated` hands a real-looking control: never the `disabled` attribute (09 D-80). */
 export interface GatedBind {
   'aria-disabled': true
   'aria-describedby': string
+}
+
+/**
+ * Whether a keydown activates a gated control: only Enter, Space or a single printable character.
+ * Exported (and used by `onKeyDown` below) so a test can check every key in isolation with no
+ * React rendering — Tab, the other navigation/modifier keys, and anything else multi-character
+ * (Backspace, F1, …) must all read `false` (09 D-80, the Tab-reveals-every-note regression).
+ */
+export function isActivatingKey(key: string): boolean {
+  return key === 'Enter' || key === ' ' || key.length === 1
 }
 
 /**
@@ -26,7 +36,7 @@ export interface GatedBind {
  * nothing new").
  */
 export function useGated(feature: FeatureId): {
-  readonly feature: (typeof FEATURES)[FeatureId]
+  readonly feature: Feature
   readonly activated: boolean
   readonly noteId: string
   readonly bind: GatedBind
@@ -39,8 +49,13 @@ export function useGated(feature: FeatureId): {
     if (!activated) setActivated(true)
   }
   function onKeyDown(e: { key: string; preventDefault: () => void }) {
-    // Enter must never submit an enclosing <form> (segments.md B.0, ask.tsx's follow-up); any other
-    // key (a gated text input) still counts as the first activation.
+    // Only Enter, Space or a printable character (one code unit: `e.key.length === 1`) counts as
+    // activation. Every other key — Tab, Shift, Alt, Control, Meta, Escape, the arrows, Home/End,
+    // PageUp/PageDown, function keys, Backspace… — passes through untouched: a sighted-free Tab
+    // sweep through a form (09 D-80's own "activating it does nothing but reveal…") must not
+    // activate every gated input it lands on, which would flood the polite live regions. Enter
+    // must also never submit an enclosing <form> (segments.md B.0, ask.tsx's follow-up).
+    if (!isActivatingKey(e.key)) return
     if (e.key === 'Enter') e.preventDefault()
     activate()
   }

@@ -10,7 +10,10 @@ import {
   GatedSiteVisitsAtLeast,
   SendToBeehiiv,
 } from '../../src/pages/SegmentsPage'
-import { FILTER_KEYS } from '../../shared/segment-filters'
+import { FILTER_KEYS, type SegmentFilters } from '../../shared/segment-filters'
+import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
+import { DEFAULT_FORM, toFilters } from '../../src/segment-form'
+import { recordSearch, type SearchStore } from '../../src/previous-searches'
 
 // Segments' gated future features (09 D-80, 22-pages/segments.md): Send to beehiiv, and the five
 // "More filters" (one flag each, group: 'more_filters'). None carries state: none has a key in
@@ -25,12 +28,12 @@ const MORE_FILTERS = [
 ]
 
 describe('Segments: the five gated "More filters"', () => {
-  it('each renders aria-disabled="true", never disabled, with a describedby that resolves to its own note', () => {
+  it('each renders aria-disabled="true", never disabled, with a describedby that resolves exactly to its own note', () => {
     for (const { Component, id } of MORE_FILTERS) {
       const html = renderToString(createElement(Component)).replaceAll('<!-- -->', '')
       expect(html).toContain('aria-disabled="true"')
-      expect(html).not.toContain(' disabled')
-      expect(html).toContain(FEATURES[id].note)
+      expect(hasDisabledAttribute(html)).toBe(false)
+      expect(describedByResolvesTo(html, FEATURES[id].note)).toBe(true)
     }
   })
 
@@ -58,11 +61,63 @@ describe('Segments: the five gated "More filters"', () => {
   })
 })
 
+/** An in-memory SearchStore (never the real localStorage), so a direct test can see exactly what
+ * recordSearch would persist, with no browser. */
+function memoryStore(): SearchStore {
+  const map = new Map<string, string>()
+  return {
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => void map.set(k, v),
+    removeItem: (k) => void map.delete(k),
+  }
+}
+
+describe('T-GATE-4 (direct): toFilters and recordSearch never carry a gated key', () => {
+  it('toFilters(DEFAULT_FORM) holds only real FILTER_KEYS entries', () => {
+    const filters = toFilters(DEFAULT_FORM)
+    for (const key of Object.keys(filters)) expect(FILTER_KEYS as readonly string[], key).toContain(key)
+  })
+
+  it('a fully-filled form still produces only real FILTER_KEYS entries (no gated key sneaks in with the rest set)', () => {
+    const filled = {
+      ...DEFAULT_FORM,
+      sources: ['instagram'],
+      days: '30',
+      includeNeverOpened: true,
+      hasApp: 'yes' as const,
+      signedUpDays: '14',
+      wentCold: '2026-09',
+      engagementFrom: '10',
+      engagementTo: '90',
+      siteDays: '7',
+      sitePage: '/pricing',
+      appDays: '3',
+      appEvent: 'app_open' as const,
+    }
+    const filters = toFilters(filled)
+    for (const key of Object.keys(filters)) expect(FILTER_KEYS as readonly string[], key).toContain(key)
+    for (const id of MORE_FILTERS.map((m) => m.id)) expect(Object.keys(filters)).not.toContain(id)
+  })
+
+  it("a filters object carrying a gated key is refused whole by recordSearch — it never reaches Previous searches", () => {
+    const store = memoryStore()
+    const withGatedKey = { status: ['active'], include_never_opened: false, has_app: null, filter_email_domain: 'gmail.com' } as unknown as SegmentFilters
+    expect(recordSearch(withGatedKey, store)).toEqual([])
+    expect(store.getItem('tpo-cdp-previous-searches')).toBeNull()
+  })
+
+  it('a clean filters object with the same real keys IS recorded (the refusal above is about the gated key, not the store)', () => {
+    const store = memoryStore()
+    const clean: SegmentFilters = { status: ['active'], include_never_opened: false, has_app: null }
+    expect(recordSearch(clean, store)).toEqual([clean])
+  })
+})
+
 describe('Segments: Send to beehiiv', () => {
-  it('renders aria-disabled="true", never disabled, with its note equal to shared/features.ts', () => {
+  it('renders aria-disabled="true", never disabled, with a describedby that resolves exactly to its note', () => {
     const html = renderToString(createElement(SendToBeehiiv)).replaceAll('<!-- -->', '')
     expect(html).toContain('aria-disabled="true"')
-    expect(html).not.toContain(' disabled')
-    expect(html).toContain(FEATURES.send_to_beehiiv.note)
+    expect(hasDisabledAttribute(html)).toBe(false)
+    expect(describedByResolvesTo(html, FEATURES.send_to_beehiiv.note)).toBe(true)
   })
 })

@@ -22,6 +22,7 @@ import { COLUMN_LABEL, FILTER_LABEL } from '../src/labels'
 import { FILES } from '../src/needs-review'
 import { VOCABULARY_SCAN } from './helpers/screen-text'
 import { navArrayText, retiredIn } from './helpers/vocabulary'
+import { FEATURES } from '../shared/features'
 
 function offences(files: Record<string, readonly string[]>): string[] {
   const out: string[] = []
@@ -125,9 +126,14 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(lookupSource).toContain(
       "'Finds anyone: newsletter info, site visits and app activity in one view.'",
     )
+    // App revenue's title is no longer a literal attribute (09 D-80: it reads shared/features.ts's
+    // own label, one home for every gated label and note), so it is pinned there instead of in the
+    // literal-attribute scan.
     expect(new Set(attributeValues(lookupSource, 'Column', 'title'))).toEqual(
-      new Set(['Newsletter info', 'Site visits', 'App activity', 'App revenue']),
+      new Set(['Newsletter info', 'Site visits', 'App activity']),
     )
+    expect(FEATURES.profile_revenue.label).toBe('App revenue')
+    expect(lookupSource).toContain('title={gated.feature.label}')
     // Field labels a person reads on the profile (06 §Vocabulary subscriber, web and app fields).
     const fields = new Set(attributeValues(lookupSource, 'Field', 'label'))
     for (const label of [

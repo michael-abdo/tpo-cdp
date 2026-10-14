@@ -185,7 +185,7 @@ export function AccountButton() {
       <span className="inline-flex items-center gap-1.5">
         <button type="button" {...gated.bind} onClick={gated.activate} className={quietButton}>
           <Icon icon={ICONS.account} />
-          Your account
+          {gated.feature.controls![1]}
           <Icon icon={ICONS.navCaret} className="size-3.5" />
         </button>
         <ComingSoonTag />

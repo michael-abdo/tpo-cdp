@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 import { LoadBar, SettingsButton } from '../../src/pages/OverviewPage'
 import type { CsvSource } from '../../src/types'
+import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
 
 // Overview's gated future features (09 D-80, 22-pages/overview.md): Upload a new file + Run
 // again (csv_upload), Automatic daily sync (daily_sync, beehiiv and App accounts only — 00-plan.md
@@ -30,14 +31,21 @@ describe('Overview: LoadBar (csv_upload, daily_sync)', () => {
   it('both buttons and, on beehiiv, the switch are aria-disabled, never disabled, and describedby resolves', () => {
     const html = renderToString(createElement(LoadBar, { source: csv('subscribers', 'beehiiv') })).replaceAll('<!-- -->', '')
     expect(html.match(/aria-disabled="true"/g)?.length).toBe(3) // Upload, Run again, the switch
-    expect(html).not.toContain(' disabled')
+    expect(hasDisabledAttribute(html)).toBe(false)
     for (const m of html.matchAll(/aria-describedby="([^"]+)"/g)) expect(html).toContain(`id="${m[1]}"`)
   })
 
-  it('the upload note equals shared/features.ts csv_upload.note; the sync note equals daily_sync.note', () => {
+  it('both controls show their label/controls text from shared/features.ts (never a retyped "Run again")', () => {
+    const html = renderToString(createElement(LoadBar, { source: csv('subscribers', 'beehiiv') }))
+    expect(html).toContain(FEATURES.csv_upload.controls![0])
+    expect(html).toContain(FEATURES.csv_upload.controls![1])
+  })
+
+  it('the upload note equals shared/features.ts csv_upload.note and its describedby resolves; the sync note equals daily_sync.note', () => {
     const html = renderToString(createElement(LoadBar, { source: csv('subscribers', 'beehiiv') }))
     expect(html).toContain(FEATURES.csv_upload.note)
     expect(html).toContain(FEATURES.daily_sync.note)
+    expect(describedByResolvesTo(html, FEATURES.csv_upload.note)).toBe(true)
   })
 
   it('the daily-sync switch shows on beehiiv and App accounts, never on Website', () => {
@@ -58,11 +66,11 @@ describe('Overview: LoadBar (csv_upload, daily_sync)', () => {
 })
 
 describe('Overview: SettingsButton (definition_settings)', () => {
-  it('renders aria-disabled, no disabled attribute, no href="/settings", and the describedby note', () => {
+  it('renders aria-disabled, no disabled attribute, no href="/settings", and a describedby that resolves exactly', () => {
     const html = renderToString(createElement(SettingsButton)).replaceAll('<!-- -->', '')
     expect(html).toContain('aria-disabled="true"')
-    expect(html).not.toContain(' disabled')
+    expect(hasDisabledAttribute(html)).toBe(false)
     expect(html).not.toContain('href="/settings"')
-    expect(html).toContain(FEATURES.definition_settings.note)
+    expect(describedByResolvesTo(html, FEATURES.definition_settings.note)).toBe(true)
   })
 })

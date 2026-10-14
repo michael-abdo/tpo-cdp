@@ -34,7 +34,7 @@ export function SendTheBoardButton() {
         className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-2.5 py-1.5 text-sm font-medium text-ink-subtle"
       >
         <Icon icon={ICONS.digest} />
-        Send the board
+        {gated.feature.controls![0]}
       </button>
       <ComingSoonTag />
       <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />

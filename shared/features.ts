@@ -20,63 +20,81 @@ export type FeaturePage = 'overview' | 'lookup' | 'segments' | 'insights' | 'log
 export interface Feature {
   readonly id: string
   readonly page: FeaturePage
-  /** The feature's plain name (22-pages §1's own words). */
+  /** The feature's plain name (22-pages §1's own words); used for README and tests. */
   readonly label: string
-  /** The whole sentence a page shows once the control is activated. */
+  /** The whole sentence a page shows once the control is activated. States what the feature will
+   * do (D-72's "the note says what it will do"); never repeats "coming soon" (the chip's own
+   * words) and never starts with this entry's own `label` or a `controls` entry. */
   readonly note: string
   /** Segments' five parked filters share one README line, each ungating alone (D-80, segments.md §4 Q4). */
   readonly group?: 'more_filters'
+  /**
+   * The exact visible text of each rendered control sharing this one flag, in placement order,
+   * for the rare cases where a control's own on-screen words are not simply `label` (D-72 "one
+   * home for every label and note": a page must render these, never retype them). Omit when the
+   * single rendered control's text is `label` itself.
+   */
+  readonly controls?: readonly string[]
   readonly comingSoon: true
 }
+
+// Written once, read twice (T-UI-ONE/09 D-72): csv_upload's first control's own text is this
+// entry's `label`, so the identifier is reused in `controls` below rather than the literal typed
+// a second time.
+const UPLOAD_LABEL = 'Upload a new file'
 
 export const FEATURES = {
   csv_upload: {
     id: 'csv_upload',
     page: 'overview',
-    label: 'Upload a new file',
-    note: 'Upload a new file — coming soon. Re-import rules for updates and unsubscribes come first.',
+    label: UPLOAD_LABEL,
+    note: 'Load a fresh beehiiv, site or app export as a new run.',
+    controls: [UPLOAD_LABEL, 'Run again'],
     comingSoon: true,
   },
   daily_sync: {
     id: 'daily_sync',
     page: 'overview',
     label: 'Automatic daily sync',
-    note: 'Automatic daily sync — coming soon. It needs the upload rules first.',
+    note: 'Sync beehiiv and App accounts automatically every day, once the upload rules exist.',
     comingSoon: true,
   },
   definition_settings: {
     id: 'definition_settings',
     page: 'overview',
     label: 'Settings for definitions',
-    note: 'Settings for definitions — coming soon. A change recomputes every stored score, so it must be reversible.',
+    note: 'Change how scores and windows are defined, recomputing every stored score so the change can be undone.',
     comingSoon: true,
   },
   profile_revenue: {
     id: 'profile_revenue',
     page: 'lookup',
     label: 'App revenue',
-    note: 'Revenue on the profile — coming soon: app trial → paid, from Stripe.',
+    note: 'Show this person’s revenue, from app trial through paid, pulled from Stripe.',
+    controls: ['Details'],
     comingSoon: true,
   },
+  // D7 (00-plan.md §3): a deletion under one shared password cannot be attributed to a person, so
+  // this stays gated until per-person sign-in exists — the note says so, not just that it is blocked.
   delete_person: {
     id: 'delete_person',
     page: 'lookup',
     label: 'Delete this person',
-    note: 'Delete this person — coming soon: handles a deletion request end to end, with an audit record.',
+    note: 'Handle a deletion request end to end, with an audit record, once each teammate signs in as themselves.',
     comingSoon: true,
   },
   send_to_beehiiv: {
     id: 'send_to_beehiiv',
     page: 'segments',
     label: 'Send to beehiiv',
-    note: 'Send to beehiiv — coming soon. It needs a beehiiv API key that can write.',
+    note: 'Push this segment to beehiiv as a new list, once a beehiiv API key that can write exists.',
     comingSoon: true,
   },
   filter_signed_up_between: {
     id: 'filter_signed_up_between',
     page: 'segments',
     label: 'Signed up between',
-    note: 'Signed up between — coming soon. For now, use Signed up in the last.',
+    note: 'Match everyone who signed up between two chosen dates; use Signed up in the last for now.',
     group: 'more_filters',
     comingSoon: true,
   },
@@ -84,7 +102,7 @@ export const FEATURES = {
     id: 'filter_opened_within_days',
     page: 'segments',
     label: 'Opened an email in the last',
-    note: 'Opened an email in the last — coming soon.',
+    note: 'Match everyone who opened an email within a chosen number of days.',
     group: 'more_filters',
     comingSoon: true,
   },
@@ -92,7 +110,7 @@ export const FEATURES = {
     id: 'filter_site_visits_gte',
     page: 'segments',
     label: 'Visited the site at least',
-    note: 'Visited the site at least — coming soon.',
+    note: 'Match everyone with at least a chosen number of site visits.',
     group: 'more_filters',
     comingSoon: true,
   },
@@ -100,7 +118,7 @@ export const FEATURES = {
     id: 'filter_going_cold_risk',
     page: 'segments',
     label: 'At risk of going cold',
-    note: 'At risk of going cold — coming soon. It needs an agreed definition first.',
+    note: 'Flag subscribers at risk of going cold, once an agreed definition exists.',
     group: 'more_filters',
     comingSoon: true,
   },
@@ -108,7 +126,7 @@ export const FEATURES = {
     id: 'filter_email_domain',
     page: 'segments',
     label: 'Email domain',
-    note: 'Email domain — coming soon. It needs a privacy review first.',
+    note: 'Match everyone whose email uses a chosen domain, once a privacy review clears it.',
     group: 'more_filters',
     comingSoon: true,
   },
@@ -116,14 +134,16 @@ export const FEATURES = {
     id: 'schedules_and_digests',
     page: 'insights',
     label: 'Schedules and digests',
-    note: 'Schedules and digests — coming soon: email or Slack tiles on a schedule; alert when a number crosses a line.',
+    note: 'Send this board by email or Slack on a schedule, or alert when a number crosses a line.',
+    controls: ['Send the board', 'Set an alert'],
     comingSoon: true,
   },
   follow_up_questions: {
     id: 'follow_up_questions',
     page: 'insights',
     label: 'Follow-up questions',
-    note: 'Follow-up questions — coming soon: ask "and last month?" without starting over.',
+    note: 'Answer a follow-up question, such as "and last month?", without starting the search over.',
+    controls: ['Ask a follow-up'],
     comingSoon: true,
   },
   // Shared by /login's button and the top bar's "Your account" (login.md §2): one flag, one
@@ -133,7 +153,8 @@ export const FEATURES = {
     id: 'work_sign_in',
     page: 'login',
     label: 'Your own sign-in',
-    note: 'Your own sign-in — coming soon.',
+    note: 'Sign in with your own work account instead of the shared team password.',
+    controls: ['Sign in with your work account', 'Your account'],
     comingSoon: true,
   },
 } as const satisfies Record<string, Feature>

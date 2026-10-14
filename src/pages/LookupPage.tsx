@@ -144,7 +144,7 @@ function Column({
 function AppRevenue() {
   const gated = useGated('profile_revenue')
   return (
-    <Column title="App revenue" icon={CreditCard} gated>
+    <Column title={gated.feature.label} icon={CreditCard} gated>
       <button
         type="button"
         {...gated.bind}
@@ -152,7 +152,7 @@ function AppRevenue() {
         className="inline-flex min-h-6 items-center gap-1 rounded-md py-0.5 text-sm font-medium text-ink-subtle"
       >
         <Icon icon={ICONS.navCaret} className="size-4 -rotate-90" />
-        Details
+        {gated.feature.controls![0]}
       </button>
       <ComingSoonTag />
       <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />

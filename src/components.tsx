@@ -205,7 +205,11 @@ export function PageHeader({
           {purpose !== undefined && <p className="max-w-prose text-sm text-ink-muted">{purpose}</p>}
         </div>
       </div>
-      {action !== undefined && <div className="shrink-0">{action}</div>}
+      {/* min-w-0 max-w-full: a gated action's revealed note is a long sentence with no width of
+          its own, so without a cap here the flex item's content-based width (shrink-0) stays as
+          wide as the note's one unwrapped line, pushing the page into sideways scroll on phone
+          widths (09 D-80, Overview's Settings for definitions). Capped, the note wraps instead. */}
+      {action !== undefined && <div className="min-w-0 max-w-full shrink-0">{action}</div>}
     </div>
   )
 }
