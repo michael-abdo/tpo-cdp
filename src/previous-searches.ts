@@ -11,6 +11,7 @@
 // whenever no stored item has its canonical key, so a new browser sees it first and Clear never
 // removes it.
 
+import { EMAIL_REGEX, RAW_ID_REGEX } from '../shared/pii'
 import { FILTER_KEYS, FILTER_SCHEMA, type FilterKey, type SegmentFilters } from '../shared/segment-filters'
 
 export const STORAGE_KEY = 'tpo-cdp-previous-searches'
@@ -73,9 +74,24 @@ function hasSchemaType(key: FilterKey, value: unknown): boolean {
 const ECHOED_KEYS = ['status', 'include_never_opened', 'has_app'] as const satisfies readonly FilterKey[]
 
 /**
+ * True when `filters`' JSON holds an email, a percent-encoded "@" or a raw `u_`/`d_`/`v_` id (09
+ * D-69 #6, defense in depth). Every string filter key but `source` is already limited by an enum
+ * or a pattern that bans these (shared/segment-filters.ts); this is the one check for `source`,
+ * the free-string exception, so a hand-edited localStorage copy or a future bad echo can never
+ * show a PII-shaped value in a previous-search label or have it resent as a filter. Mirrors
+ * worker/assistant/gates/pii-guard.ts `decodeAt`'s `%40` pattern without importing worker code
+ * into the browser bundle (03 §Module layout; the ai-log's zod-bundling mistake).
+ */
+function holdsPII(filters: SegmentFilters): boolean {
+  const json = JSON.stringify(filters)
+  return EMAIL_REGEX.test(json) || RAW_ID_REGEX.test(json) || /%40/i.test(json)
+}
+
+/**
  * A stored item this page can name and re-run: exactly `{filters}`, every key in FILTER_KEYS with
- * its schema type, and every key an echo always holds (ECHOED_KEYS). Anything else is dropped on
- * read, so a hand-edited copy (BRIEF_EXAMPLE without has_app, say) never shows as a near-duplicate.
+ * its schema type, every key an echo always holds (ECHOED_KEYS), and no PII-shaped value
+ * (`holdsPII`). Anything else is dropped on read, so a hand-edited copy (BRIEF_EXAMPLE without
+ * has_app, say) never shows as a near-duplicate.
  */
 function storedFilters(item: unknown): SegmentFilters | null {
   if (!isRecord(item) || Object.keys(item).length !== 1 || !isRecord(item.filters)) return null
@@ -84,7 +100,8 @@ function storedFilters(item: unknown): SegmentFilters | null {
     if (!isFilterKey(key) || !hasSchemaType(key, value)) return null
   }
   if (ECHOED_KEYS.some((key) => f[key] === undefined)) return null
-  return f as unknown as SegmentFilters
+  const filters = f as unknown as SegmentFilters
+  return holdsPII(filters) ? null : filters
 }
 
 /** The stored searches, newest first; [] when storage is missing, throws, or holds anything unexpected. */
@@ -127,10 +144,13 @@ function write(store: SearchStore, items: SegmentFilters[]): void {
 
 /**
  * Records the filters a 200 preview echoed: moves a repeat to the top, keeps the newest 5.
- * Returns the stored list as it now reads (unchanged when storage is unavailable).
+ * Returns the stored list as it now reads (unchanged when storage is unavailable or `filters`
+ * holds a PII-shaped `source` value, `holdsPII`, 09 D-69 #6 defense in depth: the server's own
+ * `source` enum check means a real echo never reaches here, but recordSearch takes a typed
+ * SegmentFilters directly and must not trust the type alone).
  */
 export function recordSearch(filters: SegmentFilters, store: SearchStore | null = browserStore()): SegmentFilters[] {
-  if (store === null) return []
+  if (store === null || holdsPII(filters)) return store === null ? [] : readSearches(store)
   const key = searchKey(filters)
   const items = [filters, ...readSearches(store).filter((f) => searchKey(f) !== key)].slice(0, MAX_PREVIOUS_SEARCHES)
   write(store, items)

@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { isNewSubscriber, noOpenInDays } from '../shared/derive'
-import { normalizeEmail } from '../shared/normalize'
+import { CANONICAL_SOURCES, normalizeEmail } from '../shared/normalize'
 import { JOY, OWN_ACCOUNT } from './helpers/shared-ids'
 import { toApiError } from '../src/api-error'
 import { BRIEF_EXAMPLE, readSearches, type SearchStore, searchKey, STORAGE_KEY } from '../src/previous-searches'
@@ -197,17 +197,37 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect(allRows.filter((r) => r[1] === 'unsubscribed')).toHaveLength(independentCount(['unsubscribed']))
   })
 
-  it('a source value containing a single quote returns 0 rows with no error', async () => {
-    const body = await preview({ source: [INJECTION_PROBE] })
-    expect(body.count).toBe(0)
-    expect(body.rows).toEqual([])
+  it('a source value with a single quote is 400 invalid_filters (09 D-69 #6, 19 §0 F7): source is now a subset of CANONICAL_SOURCES, so it never reaches SQL at all', async () => {
+    for (const path of ['preview', 'export.csv']) {
+      const res = await post(path, { filters: { source: [INJECTION_PROBE] } })
+      expect(res.status).toBe(400)
+      const body = await res.json<{ error: string; details: string[] }>()
+      expect(body.error).toBe('invalid_filters')
+      expect(body.details).toEqual([`source values must be one of ${CANONICAL_SOURCES.join(', ')}`])
+      expect(body.details.some((d) => d.includes(INJECTION_PROBE))).toBe(false)
+    }
+    // A canonical source stays bound, never inlined: the one remaining SQL-injection surface.
+    const body = await preview({ source: ['instagram'] })
     expect(body.sql_shape).toContain('s.source IN (?)')
-    expect(body.sql_shape).not.toContain("'a'='a")
-    // Inlined, the probe would match every active subscriber; that set is not empty.
-    expect((await preview({})).count).toBeGreaterThan(0)
-    const [header, ...rows] = await exportRecords({ source: [INJECTION_PROBE] })
-    expect(header).toEqual(EXPORT_HEADER)
-    expect(rows).toEqual([])
+    expect(body.count).toBeGreaterThan(0)
+  })
+
+  it('every canonical source together is exactly CANONICAL_SOURCES.length unique values and still passes', async () => {
+    const res = await post('preview', { filters: { source: [...CANONICAL_SOURCES] } })
+    expect(res.status).toBe(200)
+    expect((await res.json<{ filters: SegmentFilters }>()).filters.source).toEqual([...CANONICAL_SOURCES].sort())
+  })
+
+  it('a source array with more distinct values than CANONICAL_SOURCES.length is 400 invalid_filters before the membership check even runs (09 D-69 #6: caps the bound SQL variables)', async () => {
+    // Eight distinct, non-blank, non-canonical values (none of them INJECTION_PROBE, so this is a
+    // different code path from the single-value membership rejection above): the cap problem fires
+    // on their count alone, naming no value and never reaching the membership check's problem.
+    const tooMany = Array.from({ length: CANONICAL_SOURCES.length + 1 }, (_, i) => `probe-source-${i}`)
+    const res = await post('preview', { filters: { source: tooMany } })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; details: string[] }>()
+    expect(body.error).toBe('invalid_filters')
+    expect(body.details).toEqual([`source must name at most ${CANONICAL_SOURCES.length} sources`])
   })
 })
 

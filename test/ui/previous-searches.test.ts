@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SegmentFilters } from '../../shared/segment-filters'
+import { JOY, OWN_ACCOUNT } from '../helpers/shared-ids'
 import {
   BRIEF_EXAMPLE,
   browserStore,
@@ -155,6 +156,30 @@ describe('T-SEG-4 Previous searches', () => {
       }),
     )
     expect(readSearches(store)).toEqual([SEARCHES[3]])
+  })
+
+  it('drops a stored item whose source holds a PII-shaped value (email, %40-encoded email or a raw id), and recordSearch never writes one (09 D-69 #6 defense in depth)', () => {
+    const store = new MemoryStore()
+    const encodedJoy = JOY.replace('@', '%40')
+    store.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        v: 1,
+        items: [
+          { filters: { ...ACTIVE, source: [JOY] } },
+          { filters: { ...ACTIVE, source: [encodedJoy] } },
+          { filters: { ...ACTIVE, source: [OWN_ACCOUNT] } },
+          { filters: SEARCHES[3] },
+        ],
+      }),
+    )
+    expect(readSearches(store)).toEqual([SEARCHES[3]])
+
+    const writesBefore = store.writes
+    expect(recordSearch({ ...ACTIVE, source: [JOY] }, store)).toEqual([SEARCHES[3]])
+    expect(recordSearch({ ...ACTIVE, source: [encodedJoy] }, store)).toEqual([SEARCHES[3]])
+    expect(recordSearch({ ...ACTIVE, source: [OWN_ACCOUNT] }, store)).toEqual([SEARCHES[3]])
+    expect(store.writes).toBe(writesBefore)
   })
 
   it('drops bad JSON, another version, an unknown key, a wrong type or a missing echoed key, and the next write replaces them', () => {

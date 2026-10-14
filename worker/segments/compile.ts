@@ -16,7 +16,7 @@
 import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 import { TODAY } from '../../shared/config'
 import { DEFINITIONS, type DateWindow, lastNDays, wentColdWindow } from '../../shared/derive'
-import { canonicalSource } from '../../shared/normalize'
+import { CANONICAL_SOURCES, canonicalSource } from '../../shared/normalize'
 import {
   ENGAGEMENT_MAX,
   ENGAGEMENT_MIN,
@@ -207,7 +207,17 @@ export function parseFilters(input: unknown): SegmentFilters {
     if (list !== undefined) {
       const canonical = list.map(canonicalSource)
       if (canonical.some((s) => s === null)) problems.push('source values must not be blank')
-      else source = [...new Set(canonical as string[])].sort()
+      else {
+        const unique = [...new Set(canonical as string[])].sort()
+        // Capped before the membership check: many distinct values (canonical or not) would
+        // otherwise all reach the membership check and, if ever this list grows, bind that many
+        // SQL variables (19 §0 F7: today 7 canonical names, so 100 distinct values would try to
+        // bind as many as 100 of them before this cap, hitting SQLite's "too many SQL variables").
+        if (unique.length > CANONICAL_SOURCES.length) problems.push(`source must name at most ${CANONICAL_SOURCES.length} sources`)
+        else if (unique.some((s) => !(CANONICAL_SOURCES as readonly string[]).includes(s))) {
+          problems.push(`source values must be one of ${CANONICAL_SOURCES.join(', ')}`)
+        } else source = unique
+      }
     }
   }
 
