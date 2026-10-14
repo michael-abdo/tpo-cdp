@@ -9,11 +9,12 @@ import type { AuditRow } from '../../src/types'
 // pure blockReason on every error the worker writes; this renders the page's own Step, so it also
 // shows the page calls blockReason rather than printing the generic sentence. The rows have the
 // shape tool-executor.ts deny() writes for a Gate 2 and a Gate 3 refusal ("<gate>_denied: <problems>",
-// kind and status 'blocked', the tool's name). The problem texts are the gates' own messages, copied
+// kind and status 'blocked', the tool's name). The error strings are the ones deny() stores, built
 // from a run of the real gates: Gate 2's inputSchemaProblems (gate2-tool-authorizer.ts) on the
 // seeded segment schema (scripts/tool-seeds.ts) given status ["Instagram"], a value from
-// subscribers.csv's source column (09 D-47), and Gate 3's readOnlySelect (gate3-readonly-sql.ts) on
-// two SELECTs over v_profiles joined by ";".
+// subscribers.csv's source column (09 D-47), with the "input_schema: " prefix executeToolCall adds
+// to each Gate 2 problem (the form test/gate2.test.ts pins); and Gate 3's readOnlySelect
+// (gate3-readonly-sql.ts) on two SELECTs over v_profiles joined by ";", which deny() stores as is.
 
 function blocked(toolName: string, error: string): AuditRow {
   return {
@@ -45,7 +46,7 @@ function summary(row: AuditRow): string {
 describe('/audit names why a Gate 2 or Gate 3 step was blocked', () => {
   const sentence = new Map(BLOCK_REASON)
   const rows: Array<[string, AuditRow]> = [
-    ['gate2_denied', blocked('segment', 'gate2_denied: input.status[0] must be one of "active", "unsubscribed"')],
+    ['gate2_denied', blocked('segment', 'gate2_denied: input_schema: input.status[0] must be one of "active", "unsubscribed"')],
     ['gate3_denied', blocked('query_sql', 'gate3_denied: one statement only: ";" is not allowed outside a string')],
   ]
   for (const [code, row] of rows) {
