@@ -7,6 +7,18 @@
 // ONE_PLACE_FIXTURES prove the scan and the rules see what they must. A sentence that several
 // exclusive states need (a retry line under three errors) lives in one constant, so the file holds
 // it once; nothing is allow-listed.
+//
+// This is a heuristic guard, not a proof: it catches the shapes the fixtures above exercise, and it
+// does not catch everything "say one thing in one place" means. Known gaps (same list as the
+// README's Known gaps): a handler or alias declared inside a component's own body, rather than at
+// module scope or a prop, is not resolved as a sentence or identifier source; a literal `to`/`href`
+// value on a link is not read as the sentence it carries; an InfoTip-bearing component other than
+// `InfoTip`/`Chip`/`Metric` itself (the scan's own `TIP_TAGS`) — `OverviewPage.tsx`'s `RunFact`, for
+// one — is not checked for repeating its own term's glossary text; a sentence split between plain
+// JSX text and a template literal (rather than written whole in either) is read as two different,
+// shorter strings, not one match; and two sentences that say the same fact in different words
+// (paraphrase) never match at all, since the scan only ever compares normalized strings for
+// equality. The real check for all of these is the page-by-page review every round already does.
 
 import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
@@ -107,6 +119,12 @@ describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
     // Not just scanned on its own: merged into the page that imports it (09 D-72, m9), so a
     // sentence src/segments-days-field.ts holds is also /segments' sentence if /segments repeats it.
     expect(env.SCREEN_TEXTS.onePlace['src/pages/SegmentsPage.tsx'].texts).toContain(DAYS_INVALID_NEXT)
+    // Coverage pin: this is the flattened `texts` of every one of the 27 files above (every page,
+    // the Insights pieces, the shell, the components and the sentence modules), not any one file's
+    // own count — currently 3,806. 500 is a floor well under that, not a target: it exists so that
+    // if ONE_PLACE_SCAN or the merge above ever regressed to scanning a handful of files (or an
+    // empty AST walk), this fails loudly instead of the `offences` checks below silently passing
+    // over almost no text.
     expect(Object.values(env.SCREEN_TEXTS.onePlace).flatMap((f) => f.texts).length).toBeGreaterThan(500)
   })
 
