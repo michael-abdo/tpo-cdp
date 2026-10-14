@@ -120,13 +120,13 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     ])
   })
 
-  it("Look up: title, purpose and the three column titles are the brief's", () => {
+  it("Look up: title, purpose and the four column titles are the brief's (App revenue gated, 09 D-80)", () => {
     expect(lookupSource).toContain('title="Look up a subscriber"')
     expect(lookupSource).toContain(
       "'Finds anyone: newsletter info, site visits and app activity in one view.'",
     )
     expect(new Set(attributeValues(lookupSource, 'Column', 'title'))).toEqual(
-      new Set(['Newsletter info', 'Site visits', 'App activity']),
+      new Set(['Newsletter info', 'Site visits', 'App activity', 'App revenue']),
     )
     // Field labels a person reads on the profile (06 §Vocabulary subscriber, web and app fields).
     const fields = new Set(attributeValues(lookupSource, 'Field', 'label'))

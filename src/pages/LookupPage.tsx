@@ -33,16 +33,18 @@ import { Link, useSearchParams } from 'react-router'
 import { COLD_DAYS, DEFINITIONS, isCold } from '../../shared/derive'
 import { QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
 import { ApiError, errorMessage, getJson } from '../api'
-import { AppWindow, Globe, Mail } from 'lucide-react'
+import { AppWindow, CreditCard, Globe, Mail, Trash2 } from 'lucide-react'
 import { optionId, useListNav } from '../list-nav'
 import { ListboxOption } from '../listbox'
 import {
   Announcer,
   Button,
+  ComingSoonTag,
   Disclosure,
   ErrorLine,
   EventName,
   Field,
+  GatedNote,
   ICONS,
   Icon,
   type LucideIcon,
@@ -51,6 +53,7 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
+import { useGated } from '../use-gated'
 import { capitalized, humanDate, humanDateTime, utc } from '../format'
 import type { Lookup, LookupAppAccount, LookupSearch, LookupVisitor } from '../types'
 
@@ -96,27 +99,90 @@ function ScoreMeter({ score }: { score: number }) {
   )
 }
 
-/** A column of the profile: an h3, one or two summary lines, then its level-2 Disclosure. */
+/**
+ * A column of the profile: an h3, one or two summary lines, then its level-2 Disclosure. `gated`
+ * (09 D-80, 22-pages/lookup.md §2.1) mutes the card (`bg-surface-2`, no shadow, subtle title and
+ * icon) for a feature that is not built yet, with no summary lines (there is no fact to show).
+ */
 function Column({
   title,
   summary,
   children,
   icon,
+  gated = false,
 }: {
   title: string
-  summary: ReactNode
+  summary?: ReactNode
   children?: ReactNode
   icon?: LucideIcon
+  gated?: boolean
 }) {
   return (
-    <section className="space-y-2 rounded-xl border border-line bg-surface p-5 shadow-soft">
-      <h3 className="flex items-center gap-2 font-semibold text-ink">
-        {icon && <Icon icon={icon} className="size-4 text-accent" />}
+    <section
+      className={
+        gated
+          ? 'space-y-2 rounded-xl border border-line bg-surface-2 p-5'
+          : 'space-y-2 rounded-xl border border-line bg-surface p-5 shadow-soft'
+      }
+    >
+      <h3 className={`flex items-center gap-2 font-semibold ${gated ? 'text-ink-subtle' : 'text-ink'}`}>
+        {icon && <Icon icon={icon} className={`size-4 ${gated ? 'text-ink-subtle' : 'text-accent'}`} />}
         {title}
       </h3>
-      <div className="space-y-0.5 text-sm text-gray-700">{summary}</div>
+      {summary !== undefined && <div className="space-y-0.5 text-sm text-gray-700">{summary}</div>}
       {children}
     </section>
+  )
+}
+
+/**
+ * The gated "App revenue" column (09 D-80, 22-pages/lookup.md §2): a fourth column, last, right
+ * after App activity. Level 1 shows only the title and the gated "Details" toggle with its chip —
+ * no summary lines, no fake "$0" or sample plan (the CDP does not know this fact yet). Activating
+ * the toggle (it is not a <details>, so it cannot open) only reveals and announces the note.
+ */
+function AppRevenue() {
+  const gated = useGated('profile_revenue')
+  return (
+    <Column title="App revenue" icon={CreditCard} gated>
+      <button
+        type="button"
+        {...gated.bind}
+        onClick={gated.activate}
+        className="inline-flex min-h-6 items-center gap-1 rounded-md py-0.5 text-sm font-medium text-ink-subtle"
+      >
+        <Icon icon={ICONS.navCaret} className="size-4 -rotate-90" />
+        Details
+      </button>
+      <ComingSoonTag />
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </Column>
+  )
+}
+
+/**
+ * The gated "Delete this person" row (09 D-80, 22-pages/lookup.md §3): a quiet row at the very end
+ * of the profile, split off by a thin rule, away from everyday controls. Muted grey, never red — a
+ * gated button has no real consequence yet. Activation only reveals and announces the note.
+ */
+function DeletePerson() {
+  const gated = useGated('delete_person')
+  return (
+    <div className="space-y-2 border-t border-line pt-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          {...gated.bind}
+          onClick={gated.activate}
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-subtle"
+        >
+          <Icon icon={Trash2} />
+          {gated.feature.label}
+        </button>
+        <ComingSoonTag />
+      </div>
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+    </div>
   )
 }
 
@@ -440,12 +506,16 @@ function AppActivity({
   )
 }
 
-/** One looked-up profile: the header, then the three columns (exported for test/ui/lookup-profile.test.ts). */
+/**
+ * One looked-up profile: the header, then the four columns — newsletter, site, app, and the gated
+ * App revenue (09 D-80) — then the gated Delete this person row (exported for
+ * test/ui/lookup-profile.test.ts).
+ */
 export function Profile({ data }: { data: Lookup }) {
   return (
     <div className="space-y-4">
       <Header data={data} />
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Newsletter data={data.newsletter} coldSince={data.profile.cold_since} />
         <Website data={data.web} hasNewsletter={data.newsletter !== null} />
         <AppActivity
@@ -454,7 +524,9 @@ export function Profile({ data }: { data: Lookup }) {
           afterSignup={data.profile.app_after_signup}
           isStub={data.profile.kind === 'unknown_user_stub'}
         />
+        <AppRevenue />
       </div>
+      <DeletePerson />
     </div>
   )
 }
