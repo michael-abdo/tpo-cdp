@@ -567,6 +567,43 @@ describe('T-SEG-10 site visits', () => {
     expect((await SELF.fetch('http://cdp.test/api/segments/options', { headers: { cookie } })).status).toBe(200)
   })
 
+  it('GET /api/segments/options ranks by distinct subscribers: repeat visits by one subscriber move nothing', async () => {
+    // Copies of a real row (09 D-47): one linked visitor's own /our-staff visit (web_events.csv),
+    // repeated until /our-staff has more visit rows, and more rows with a pkey, than the page
+    // ranked just above it. Its distinct subscribers do not change, so neither may its rank; a
+    // ranking by count(*) or count(pkey) (mutant M15) would move it up.
+    const rank = async () => (await (await SELF.fetch('http://cdp.test/api/segments/options', { headers: { cookie } })).json<{ pages: string[] }>()).pages
+    const before = await rank()
+    const at = before.indexOf('/our-staff')
+    expect(at).toBeGreaterThan(0)
+    const above = before[at - 1]
+    const counts = (page: string) =>
+      env.DB.prepare('SELECT count(DISTINCT pkey) AS subscribers, count(pkey) AS linked, count(*) AS visits FROM v_web_events WHERE page = ?')
+        .bind(page)
+        .first<{ subscribers: number; linked: number; visits: number }>()
+    const [staff, upper] = [await counts('/our-staff'), await counts(above)]
+    if (staff === null || upper === null) throw new Error('v_web_events lost a page')
+    expect(staff.subscribers).toBeLessThan(upper.subscribers)
+    const real = await env.DB.prepare(
+      "SELECT we.visitor_id, we.event_ts FROM web_events we JOIN web_visitors wv ON wv.visitor_id = we.visitor_id JOIN profiles p ON p.email_norm = wv.email_norm WHERE we.page = '/our-staff' ORDER BY we.id LIMIT 1",
+    ).first<{ visitor_id: string; event_ts: string }>()
+    if (real === null) throw new Error('no linked /our-staff visit in web_events')
+    const copies = Math.max(upper.visits - staff.visits, upper.linked - staff.linked) + 1
+    const insert = env.DB.prepare('INSERT INTO web_events (visitor_id, page, event_ts) VALUES (?, ?, ?)')
+    const inserted = await env.DB.batch(Array.from({ length: copies }, () => insert.bind(real.visitor_id, '/our-staff', real.event_ts)))
+    try {
+      const after = await counts('/our-staff')
+      expect(after?.subscribers).toBe(staff.subscribers)
+      // The data now ranks /our-staff above `above` by visits and by linked visits, not by subscribers.
+      expect(after?.visits).toBeGreaterThan(upper.visits)
+      expect(after?.linked).toBeGreaterThan(upper.linked)
+      expect(await rank()).toEqual(before)
+    } finally {
+      for (const r of inserted) await env.DB.prepare('DELETE FROM web_events WHERE id = ?').bind(r.meta.last_row_id).run()
+    }
+    expect(await rank()).toEqual(before)
+  })
+
   it('GET /api/segments/options without a session is 401', async () => {
     const res = await SELF.fetch('http://cdp.test/api/segments/options')
     expect(res.status).toBe(401)
