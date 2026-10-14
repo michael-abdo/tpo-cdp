@@ -98,6 +98,20 @@ function pairOut(pair: ScoredPair, decision: Decision | null): DuplicatePairOut 
   }
 }
 
+/** 06's "N to review": shown pairs (review or auto band) with no decision yet, over all of them, not just the first 50. */
+function undecided(shown: readonly ScoredPair[], decided: ReadonlyMap<string, Decision>): number {
+  return shown.filter((p) => !decided.has(p.pair_id)).length
+}
+
+/**
+ * The possible_duplicates check of GET /api/sources (09 D-65): the same count GET /api/duplicates
+ * returns as `to_review`, from the same scorer and decisions (no second scorer).
+ */
+export async function duplicatesToReview(db: D1Database): Promise<number> {
+  const [result, decided] = await Promise.all([scoreAll(db), decisions(db)])
+  return undecided(result.pairs.filter((p) => p.score >= REVIEW_MIN_SCORE), decided)
+}
+
 /** Mounted at /api by worker/index.ts, behind requireSession. */
 export const duplicateRoutes = new Hono<AppEnv>()
 
@@ -106,8 +120,7 @@ duplicateRoutes.get('/duplicates', async (c) => {
   const shown = result.pairs.filter((p) => p.score >= REVIEW_MIN_SCORE)
   return c.json({
     candidates: result.candidates,
-    // 06's "N to review": shown pairs (review or auto band) with no decision yet, over all of them, not just the first 50.
-    to_review: shown.filter((p) => !decided.has(p.pair_id)).length,
+    to_review: undecided(shown, decided),
     review: shown.slice(0, DUPLICATES_MAX_ROWS).map((p) => pairOut(p, decided.get(p.pair_id) ?? null)),
     hidden_below_review: result.pairs.length - shown.length,
     weights: result.weights,

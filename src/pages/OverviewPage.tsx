@@ -1,28 +1,30 @@
-// / Overview (06 §Overview, 09 D-63): where reader data comes from, how each load went, and what
-// needs a person. Every number is the API's; nothing is computed here but sums for the header line.
+// / Overview (06 §Overview, 09 D-63, D-65): where reader data comes from, how each load went, and
+// what needs a person. Every number is the API's; nothing is computed here but sums for the header line.
 // Level 1, top to bottom: four headline Metrics (GET /api/overview), each with an InfoTip; the
-// Sources table (GET /api/sources) with its one-line header. Level 2: each source's history (CSV:
-// its runs, read · kept · merged · rejected, and "View rejected rows" → GET /api/quarantine?file=;
-// webhook: events received), then "Needs review" (09 D-61) and "Possible duplicates" (09 D-62),
-// collapsed. Level 3: Technical details (raw ids, reason codes, CSV lines, UTC to the second).
-// Source names, kinds and units come only from the API, which reads shared/sources.ts; term words
-// and explanations only from shared/glossary.ts (or DEFINITIONS). No per-file sentence lives here
-// (08 T-SRC-2 scans this file). Read-only: no edit or delete here (09 D-13).
-// "Possible duplicates" (09 D-62): each scored pair side by side with its score bar, reason chips,
-// one-line suggestion and two buttons that record a decision (GET/POST /api/duplicates). Nothing
-// merges; the m/u weights sit in Technical details. Scores, reasons and suggestions are the API's.
+// Sources table (GET /api/sources) with its one-line header. Each source's Status cell is chips
+// from its checks (09 D-65), problems first ("2 rows to fix", "16 possible duplicates"), else OK,
+// Live or Not loaded yet, each with an InfoTip; a chip is a button that opens the row on its tab.
+// Level 2: an open row is a tab set (WAI-ARIA tabs) — History (CSV: its runs, read · kept · merged
+// · rejected, and "View rejected rows" → GET /api/quarantine?file=; webhook: events received),
+// then one tab per check the source declares: Rows to fix (09 D-61, the rows as written and the
+// fix) and Possible duplicates (09 D-62, each scored pair side by side with its score bar, reason
+// chips, suggestion and two buttons that record a decision via GET/POST /api/duplicates; a decision
+// re-reads GET /api/sources so the chip count follows). Nothing merges. Level 3: Technical details
+// (raw ids, reason codes, CSV lines, UTC to the second, the m/u weights).
+// Source names, kinds, units and checks come only from the API, which reads shared/sources.ts; term
+// words and explanations only from shared/glossary.ts (or DEFINITIONS). No per-file sentence lives
+// here (08 T-SRC-2 scans this file). Read-only: no edit or delete here (09 D-13).
 
-import { Check, Smartphone, UserCheck, Users, UsersRound, X } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { Check, Copy, Smartphone, UserCheck, Users, X } from 'lucide-react'
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { TODAY } from '../../shared/config'
-import { LOADS_BY_LABEL } from '../../shared/sources'
+import { CHECK_KINDS, type CheckKind, LOADS_BY_LABEL } from '../../shared/sources'
 import { countOf, GLOSSARY, type GlossaryKey } from '../../shared/glossary'
-import { errorMessage, postJson } from '../api'
+import { errorMessage, getJson, postJson } from '../api'
 import {
   Announcer,
   Button,
-  Disclosure,
   EmptyState,
   ErrorLine,
   Field,
@@ -39,7 +41,7 @@ import {
   TechnicalDetails,
   type LucideIcon,
 } from '../components'
-import { humanDate, humanDateTime, utc } from '../format'
+import { capitalized, humanDate, humanDateTime, utc } from '../format'
 import { sourceLabel } from '../labels'
 import { asWritten, csvName, needsReview, type QuarantinedRow, reviewGroups } from '../needs-review'
 import type {
@@ -76,9 +78,30 @@ const HEADLINE: { term: GlossaryKey; icon: LucideIcon; value: (o: Overview) => n
 
 type AnySource = Sources['sources'][number]
 
-/** Rows a person can fix in each CSV source's latest run (09 D-61): the Sources header and "Needs review" count. */
-function toReview(sources: readonly AnySource[]): number {
-  return sources.reduce((t, s) => t + (s.kind === 'csv' ? (s.runs[0]?.needs_review ?? 0) : 0), 0)
+/** Each check kind some source declares, with its count summed over the sources (the header line, 06 §Overview 2). */
+function checkTotals(sources: readonly AnySource[]): { kind: CheckKind; count: number }[] {
+  return CHECK_KINDS.flatMap((kind) => {
+    const found = sources.flatMap((s) => s.checks.filter((c) => c.kind === kind))
+    return found.length === 0 ? [] : [{ kind, count: found.reduce((t, c) => t + c.count, 0) }]
+  })
+}
+
+/** An open row's tabs: History, then one per check the source declares (09 D-65). */
+type TabKey = 'history' | CheckKind
+
+function tabsOf(source: AnySource): TabKey[] {
+  return ['history', ...source.checks.map((c) => c.kind)]
+}
+
+/** "History" / "Rows to fix" / "Possible duplicates": a check's tab says its glossary words. */
+function tabLabel(tab: TabKey): string {
+  return tab === 'history' ? 'History' : capitalized(GLOSSARY[tab].many)
+}
+
+/** How each check's chip looks when it counts something (problems first, 06 §Overview 2). */
+const CHECK_CHIP: Record<CheckKind, { icon: LucideIcon; tone: 'danger' | 'neutral' }> = {
+  rows_to_fix: { icon: ICONS.warning, tone: 'danger' },
+  possible_duplicates: { icon: Copy, tone: 'neutral' },
 }
 
 /** Newest last_sync over the CSV sources; null when nothing was loaded. */
@@ -106,30 +129,55 @@ function FactLine({ items, label }: { items: ReactNode[]; label: string }) {
   )
 }
 
-function StatusTag({ source }: { source: AnySource }) {
-  if (source.kind === 'webhook') {
-    return (
-      <span className="inline-flex items-center gap-0.5">
-        <Tag tone="accent" icon={ICONS.live}>
-          {GLOSSARY.live.term}
-        </Tag>
-        <InfoTip term="live" />
-      </span>
-    )
-  }
-  if (source.status === 'not_loaded') return <Tag icon={ICONS.empty}>Not loaded yet</Tag>
-  if (source.status === 'ok') {
-    return (
-      <Tag tone="success" icon={ICONS.success}>
-        OK
-      </Tag>
-    )
-  }
+/** One status chip and its InfoTip; the chip is a button that opens the row on `tab`. */
+function Chip({
+  term,
+  tone,
+  icon,
+  onOpen,
+  children,
+}: {
+  term: GlossaryKey
+  tone: 'neutral' | 'accent' | 'success' | 'danger'
+  icon: LucideIcon
+  onOpen: () => void
+  children: ReactNode
+}) {
   return (
-    <span className="inline-flex items-center gap-0.5">
-      <Tag icon={ICONS.warning}>{n(source.runs[0]?.needs_review ?? 0)} to review</Tag>
-      <InfoTip term="needs_review" />
-    </span>
+    <li className="inline-flex items-center gap-0.5">
+      <Tag tone={tone} icon={icon} onClick={onOpen}>
+        {children}
+      </Tag>
+      <InfoTip term={term} />
+    </li>
+  )
+}
+
+/** The Status cell (09 D-65): a chip per check that counts something, problems first; else OK / Live / Not loaded yet. */
+function StatusChips({ source, onOpen }: { source: AnySource; onOpen: (tab: TabKey) => void }) {
+  const problems = source.checks.filter((c) => c.count > 0)
+  return (
+    <ul aria-label={`Status of ${source.name}`} className="flex flex-wrap items-center gap-1">
+      {source.kind === 'webhook' ? (
+        <Chip term="live" tone="accent" icon={ICONS.live} onOpen={() => onOpen('history')}>
+          {GLOSSARY.live.term}
+        </Chip>
+      ) : source.status === 'not_loaded' ? (
+        <Chip term="not_loaded" tone="neutral" icon={ICONS.empty} onOpen={() => onOpen('history')}>
+          {GLOSSARY.not_loaded.term}
+        </Chip>
+      ) : problems.length === 0 ? (
+        <Chip term="ok" tone="success" icon={ICONS.success} onOpen={() => onOpen('history')}>
+          {GLOSSARY.ok.term}
+        </Chip>
+      ) : (
+        problems.map((c) => (
+          <Chip key={c.kind} term={c.kind} {...CHECK_CHIP[c.kind]} onOpen={() => onOpen(c.kind)}>
+            {countOf(c.kind, c.count)}
+          </Chip>
+        ))
+      )}
+    </ul>
   )
 }
 
@@ -308,10 +356,159 @@ function WebhookHistory({ source }: { source: WebhookSource }) {
   )
 }
 
+/** The rows a person can fix in one source's file, each as written, and what to do (09 D-61). */
+function RowsToFix({ source }: { source: AnySource }) {
+  const state = useGet<QuarantineList>(`/api/quarantine?file=${encodeURIComponent(source.id)}`)
+  if (state === null || state.status === 'loading') return <Loading label="Loading the rows to fix…" />
+  if (state.status === 'error') return <ErrorLine message={state.message} next="Try again." />
+  const fixable = state.data.rows.filter((row) => needsReview(row.reason))
+  if (fixable.length === 0) return <EmptyState icon={ICONS.success}>Nothing to fix.</EmptyState>
+  return (
+    <div className="space-y-3">
+      <FixableGroups list={fixable} />
+      <RowLines list={fixable} />
+    </div>
+  )
+}
+
+/**
+ * An open row (level 2): the tabs History · Rows to fix · Possible duplicates, only those the
+ * source has, as the WAI-ARIA tabs pattern (arrow keys, Home and End move and select; one tab in
+ * the Tab order). Only the selected panel's content is mounted. `takeFocus` moves focus to the
+ * selected tab once, after a status chip opened the row.
+ */
+function SourceTabs({
+  source,
+  tab,
+  onSelect,
+  takeFocus,
+  onFocusTaken,
+  onReviewed,
+}: {
+  source: AnySource
+  tab: TabKey
+  onSelect: (tab: TabKey) => void
+  takeFocus: boolean
+  onFocusTaken: () => void
+  onReviewed: () => void
+}) {
+  const base = useId()
+  const tabs = tabsOf(source)
+  const selected = tabs.includes(tab) ? tab : 'history'
+  const refs = useRef(new Map<TabKey, HTMLButtonElement>())
+
+  useEffect(() => {
+    if (!takeFocus) return
+    refs.current.get(selected)?.focus()
+    onFocusTaken()
+  }, [takeFocus, selected, onFocusTaken])
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const i = tabs.indexOf(selected)
+    const next =
+      e.key === 'ArrowRight'
+        ? tabs[(i + 1) % tabs.length]
+        : e.key === 'ArrowLeft'
+          ? tabs[(i - 1 + tabs.length) % tabs.length]
+          : e.key === 'Home'
+            ? tabs[0]
+            : e.key === 'End'
+              ? tabs[tabs.length - 1]
+              : undefined
+    if (next === undefined) return
+    e.preventDefault()
+    onSelect(next)
+    refs.current.get(next)?.focus()
+  }
+
+  return (
+    <div className="space-y-3">
+      <div
+        role="tablist"
+        aria-label={`${source.name}: details`}
+        onKeyDown={onKeyDown}
+        className="flex flex-wrap border-b border-line sm:gap-1"
+      >
+        {tabs.map((t) => {
+          const isSelected = t === selected
+          return (
+            <button
+              key={t}
+              ref={(el) => {
+                if (el === null) refs.current.delete(t)
+                else refs.current.set(t, el)
+              }}
+              type="button"
+              role="tab"
+              id={`${base}-tab-${t}`}
+              aria-selected={isSelected}
+              aria-controls={`${base}-panel-${t}`}
+              tabIndex={isSelected ? 0 : -1}
+              onClick={() => onSelect(t)}
+              className={`-mb-px inline-flex min-h-9 items-center border-b-2 px-2 py-1.5 text-sm whitespace-nowrap sm:px-3 font-medium transition-colors duration-150 motion-reduce:transition-none ${
+                isSelected
+                  ? 'border-accent text-accent-strong'
+                  : 'border-transparent text-ink-muted hover:border-line-strong hover:text-ink'
+              }`}
+            >
+              {tabLabel(t)}
+            </button>
+          )
+        })}
+      </div>
+      {tabs.map((t) => (
+        <div
+          key={t}
+          role="tabpanel"
+          id={`${base}-panel-${t}`}
+          aria-labelledby={`${base}-tab-${t}`}
+          tabIndex={0}
+          hidden={t !== selected}
+          className="rounded-md"
+        >
+          {t !== selected ? null : t === 'history' ? (
+            <SourceHistory source={source} />
+          ) : t === 'rows_to_fix' ? (
+            <RowsToFix source={source} />
+          ) : (
+            <PossibleDuplicates onReviewed={onReviewed} />
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** The Sources table (06 §Overview 2), rendered only from GET /api/sources. */
-function SourcesTable({ sources, children }: { sources: AnySource[]; children?: ReactNode }) {
+function SourcesTable({
+  sources,
+  onReviewed,
+  refreshError,
+}: {
+  sources: AnySource[]
+  onReviewed: () => void
+  refreshError: string | null
+}) {
+  // Open rows and the tab each shows; a chip opens its row on its own tab (09 D-65).
+  const [openTabs, setOpenTabs] = useState<ReadonlyMap<string, TabKey>>(new Map())
+  const [focusRow, setFocusRow] = useState<string | null>(null)
+  const openKeys = useMemo(() => new Set(openTabs.keys()), [openTabs])
   const latest = lastSync(sources)
-  const review = toReview(sources)
+
+  function show(id: string, tab: TabKey | null) {
+    setOpenTabs((prev) => {
+      const next = new Map(prev)
+      if (tab === null) next.delete(id)
+      else next.set(id, tab)
+      return next
+    })
+  }
+  function openOn(id: string, tab: TabKey) {
+    show(id, tab)
+    setFocusRow(id)
+  }
+  const focusTaken = () => setFocusRow(null)
+
   return (
     <Section
       title="Sources"
@@ -328,7 +525,7 @@ function SourcesTable({ sources, children }: { sources: AnySource[]; children?: 
               {latest === null ? 'no sync yet' : `last sync ${humanDate(latest)}`}
               <InfoTip term="sync" />
             </>,
-            review === 0 ? 'nothing to review' : `${rowCount(review)} ${review === 1 ? 'needs' : 'need'} review`,
+            ...checkTotals(sources).map((t) => countOf(t.kind, t.count)),
           ]}
         />
       }
@@ -353,7 +550,10 @@ function SourcesTable({ sources, children }: { sources: AnySource[]; children?: 
               return at === null ? 'None yet' : humanDate(at)
             },
           },
-          { header: 'Status', cell: (s: AnySource) => <StatusTag source={s} /> },
+          {
+            header: 'Status',
+            cell: (s: AnySource) => <StatusChips source={s} onOpen={(tab) => openOn(s.id, tab)} />,
+          },
           {
             header: 'Records',
             numeric: true,
@@ -366,37 +566,23 @@ function SourcesTable({ sources, children }: { sources: AnySource[]; children?: 
         ]}
         rows={sources}
         rowKey={(s) => s.id}
-        details={(s) => <SourceHistory source={s} />}
-        detailsLabel="History"
+        open={openKeys}
+        onOpenChange={(id, isOpen) => show(id, isOpen ? 'history' : null)}
+        details={(s) => (
+          <SourceTabs
+            source={s}
+            tab={openTabs.get(s.id) ?? 'history'}
+            onSelect={(tab) => show(s.id, tab)}
+            takeFocus={focusRow === s.id}
+            onFocusTaken={focusTaken}
+            onReviewed={onReviewed}
+          />
+        )}
       />
-      {children}
-    </Section>
-  )
-}
-
-/** The set-aside rows a person can fix, each as written in its file, and what to do (09 D-61). */
-function NeedsReview({ count }: { count: number }) {
-  const state = useGet<QuarantineList>('/api/quarantine')
-  return (
-    <Disclosure
-      label={
-        <span className="inline-flex items-center gap-1.5">
-          <Icon icon={ICONS.warning} />
-          Needs review — {rowCount(count)}
-        </span>
-      }
-    >
-      {state === null || state.status === 'loading' ? (
-        <Loading label="Loading the rows to review…" />
-      ) : state.status === 'error' ? (
-        <ErrorLine message={state.message} next="Refresh the page to try again." />
-      ) : (
-        <>
-          <FixableGroups list={state.data.rows} />
-          <RowLines list={state.data.rows.filter((row) => needsReview(row.reason))} />
-        </>
+      {refreshError !== null && (
+        <ErrorLine message={refreshError} next="The counts above may be out of date; refresh the page." />
       )}
-    </Disclosure>
+    </Section>
   )
 }
 
@@ -548,8 +734,11 @@ function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: D
   )
 }
 
-/** Scored possible duplicates for a person to judge (09 D-62); a decision is recorded, never merged. */
-function PossibleDuplicates() {
+/**
+ * Scored possible duplicates for a person to judge (09 D-62); a decision is recorded, never merged.
+ * After each one, `onReviewed` re-reads the sources so the chip's count follows (09 D-65).
+ */
+function PossibleDuplicates({ onReviewed }: { onReviewed: () => void }) {
   const state = useGet<Duplicates>('/api/duplicates')
   const [decided, setDecided] = useState<Readonly<Record<string, DuplicateDecision>>>({})
   const [saving, setSaving] = useState<string | null>(null)
@@ -561,10 +750,6 @@ function PossibleDuplicates() {
   if (state.status === 'error')
     return <ErrorLine message={state.message} next="Refresh the page to try again." />
   const data = state.data
-  const newlyDecided = data.review.filter(
-    (p) => p.decision === null && decided[p.pair_id] !== undefined,
-  ).length
-  const toReview = data.to_review - newlyDecided
 
   async function decide(pairId: string, verdict: DuplicateDecision['verdict']) {
     setSaving(pairId)
@@ -578,6 +763,7 @@ function PossibleDuplicates() {
         [pairId]: { verdict: stored.verdict, decided_at: stored.decided_at },
       }))
       setAnnouncement(`Recorded: ${VERDICT_WORDS[stored.verdict]}.`)
+      onReviewed()
     } catch (err) {
       setFailed({ pairId, message: errorMessage(err) })
     } finally {
@@ -586,14 +772,7 @@ function PossibleDuplicates() {
   }
 
   return (
-    <Disclosure
-      label={
-        <span className="inline-flex items-center gap-1.5">
-          <Icon icon={UsersRound} />
-          Possible duplicates — {n(toReview)} to review
-        </span>
-      }
-    >
+    <div className="space-y-3">
       {data.review.length === 0 ? (
         <EmptyState>
           No likely duplicates — {n(data.candidates)} name matches checked, none share more than chance
@@ -620,27 +799,33 @@ function PossibleDuplicates() {
       </p>
       <DuplicateTechnicalDetails data={data} pairs={data.review} />
       <Announcer message={announcement} />
-    </Disclosure>
+    </div>
   )
 }
 
-/** Sources, with the two collapsed review sections inside the same card, under the table (06 §Overview 2–3). */
-function SourcesAndReview() {
+/**
+ * The Sources table from GET /api/sources. A duplicate decision re-reads it in place (the table
+ * stays mounted, so open rows and tabs stay open) and the chip and header counts follow.
+ */
+function SourcesSection() {
   const state = useGet<Sources>('/api/sources')
+  const [fresh, setFresh] = useState<Sources | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   if (state === null || state.status === 'loading') return <Loading label="Loading the sources…" />
   if (state.status === 'error')
     return <ErrorLine message={state.message} next="Refresh the page to try again." />
-  const review = toReview(state.data.sources)
-  return (
-    <>
-      <SourcesTable sources={state.data.sources}>
-        <div className="space-y-1">
-          {review > 0 && <NeedsReview count={review} />}
-          <PossibleDuplicates />
-        </div>
-      </SourcesTable>
-    </>
-  )
+
+  function refresh() {
+    getJson<Sources>('/api/sources').then(
+      (data) => {
+        setFresh(data)
+        setRefreshError(null)
+      },
+      (err: unknown) => setRefreshError(errorMessage(err)),
+    )
+  }
+
+  return <SourcesTable sources={(fresh ?? state.data).sources} onReviewed={refresh} refreshError={refreshError} />
 }
 
 export default function OverviewPage() {
@@ -699,7 +884,7 @@ export default function OverviewPage() {
         ))}
       </StatGrid>
 
-      <SourcesAndReview />
+      <SourcesSection />
 
       <p className="text-sm">
         <Link

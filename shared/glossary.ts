@@ -1,6 +1,6 @@
 // The glossary (09 D-63, 06 §Overview InfoTip): the only home of the plain words for pipeline terms
-// (source, sync, rows read, kept, merged, rejected, needs review, possible duplicate, webhook, the
-// quarantine reasons and Overview's headline numbers), each with one or two sentences a
+// (source, sync, rows read, kept, merged, rejected, the source statuses, the two source checks of
+// 09 D-65, webhook, the quarantine reasons and Overview's headline numbers), each with one or two sentences a
 // non-technical reader can follow (06 §UI principles 4). Derived metrics keep their text in
 // DEFINITIONS (shared/derive.ts, 02 §Derived); explain() reads either, so an InfoTip has one lookup.
 // test/sources.test.ts (T-SRC-2) checks every term the Overview names exists here or there.
@@ -57,12 +57,24 @@ export const GLOSSARY = {
     term: 'Rejected',
     text: "Rows that couldn't become a record, such as a blank row or an invalid email. They are set aside for review, never deleted, and not counted.",
   },
-  needs_review: {
-    term: 'Needs review',
+  // A source's status chips (06 §/ Overview 2, 09 D-65). The two check kinds are the keys of
+  // shared/sources.ts CHECK_KINDS, so a check from the API finds its words.
+  ok: {
+    term: 'OK',
+    text: 'The last sync went through and nothing from this source needs a person.',
+  },
+  not_loaded: {
+    term: 'Not loaded yet',
+    text: 'The setup script has not loaded this file yet, so it holds no records.',
+  },
+  rows_to_fix: {
+    term: 'row to fix',
+    many: 'rows to fix',
     text: 'Rejected rows a person can fix in the source file, such as an invalid email. Blank rows have nothing to fix.',
   },
-  possible_duplicate: {
-    term: 'Possible duplicate',
+  possible_duplicates: {
+    term: 'possible duplicate',
+    many: 'possible duplicates',
     text: 'Two readers with different emails whose names match. Nothing merges on its own; a person decides whether they are the same reader.',
   },
   // Quarantine reasons (02 §Quarantine): the codes are the keys, so a reason from the API finds its words.

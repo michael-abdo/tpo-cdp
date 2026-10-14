@@ -1,7 +1,7 @@
 // Response shapes the UI reads, as 04 §Endpoints defines them (the worker routes are the producers).
 
 import type { DefinitionKey } from '../shared/derive'
-import type { CsvSourceId, SourceId } from '../shared/sources'
+import type { CheckKind, CsvSourceId, SourceId } from '../shared/sources'
 import type { FieldWeight, Reason, ScoredField } from '../worker/dedupe/score'
 import type { QuarantineReason, SubscriberStatus } from '../worker/ingest/quarantine'
 
@@ -31,12 +31,21 @@ interface SourceCommon {
   unit: string
   /** The registry's record unit, singular. */
   unit_one: string
+  /** The checks the registry declares for this source, with their counts (09 D-65); [] when none. */
+  checks: SourceCheck[]
   records: number
+}
+
+/** One source check (09 D-65): rows a person can fix, or possible duplicates without a decision. */
+export interface SourceCheck {
+  kind: CheckKind
+  count: number
 }
 
 export interface CsvSource extends SourceCommon {
   kind: 'csv'
   loads_by: 'seed'
+  /** needs_review when any check counts more than 0. */
   status: 'ok' | 'needs_review' | 'not_loaded'
   /** UTC `YYYY-MM-DDTHH:MM:SSZ`; null before the first seed. */
   last_sync: string | null
@@ -48,6 +57,7 @@ export interface WebhookSource extends SourceCommon {
   kind: 'webhook'
   loads_by: 'webhook'
   status: 'live'
+  checks: []
   /** Events whose event time falls on TODAY. */
   today: number
   last_received: string | null

@@ -2,6 +2,17 @@
 // source's id, plain name, kind, record unit and how it loads. GET /api/sources, the quarantine
 // `file` filter and every screen that names a source read it; nothing else spells a source's name.
 // The numbers about a source never live here: they come from import_runs, quarantine and app_events.
+// Each entry also declares its checks (09 D-65): what GET /api/sources counts for it and Overview
+// shows as Status chips and tabs. The check kinds are glossary keys, so each chip finds its words.
+
+/**
+ * The checks a source can declare (09 D-65), in the order chips and tabs list them:
+ * - rows_to_fix: rows the newest sync set aside that a person can fix (quarantine, every reason but
+ *   blank_row; 09 D-61);
+ * - possible_duplicates: scored pairs in the review or auto band with no decision yet (09 D-62).
+ */
+export const CHECK_KINDS = ['rows_to_fix', 'possible_duplicates'] as const
+export type CheckKind = (typeof CHECK_KINDS)[number]
 
 export interface SourceEntry {
   /** The stored id: import_runs.file / quarantine.file for a CSV, the table name for the webhook. */
@@ -16,6 +27,8 @@ export interface SourceEntry {
   readonly loads_by: 'seed' | 'webhook'
   /** The file in data/ for a CSV source; null for the webhook. */
   readonly file: string | null
+  /** The checks GET /api/sources counts for this source, in CHECK_KINDS order (09 D-65). */
+  readonly checks: readonly CheckKind[]
 }
 
 /** Registry order is the order every screen and GET /api/sources lists them in (08 T-SRC-1). */
@@ -27,6 +40,7 @@ export const SOURCES = [
     unit: ['subscriber', 'subscribers'],
     loads_by: 'seed',
     file: 'subscribers.csv',
+    checks: ['rows_to_fix', 'possible_duplicates'],
   },
   {
     id: 'web_events',
@@ -35,6 +49,7 @@ export const SOURCES = [
     unit: ['page view', 'page views'],
     loads_by: 'seed',
     file: 'web_events.csv',
+    checks: [],
   },
   {
     id: 'app_users',
@@ -43,6 +58,7 @@ export const SOURCES = [
     unit: ['app user', 'app users'],
     loads_by: 'seed',
     file: 'app_users.csv',
+    checks: [],
   },
   {
     id: 'app_events',
@@ -51,6 +67,7 @@ export const SOURCES = [
     unit: ['event', 'events'],
     loads_by: 'webhook',
     file: null,
+    checks: [],
   },
 ] as const satisfies readonly SourceEntry[]
 

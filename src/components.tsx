@@ -42,6 +42,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { explain, type TipKey } from '../shared/glossary'
@@ -182,15 +183,24 @@ export function Disclosure({
   label,
   children,
   defaultOpen = false,
+  open,
+  onOpenChange,
   className = '',
 }: {
   label: ReactNode
   children: ReactNode
   defaultOpen?: boolean
+  /** Controlled: whether it is open; pair with onOpenChange (the native toggle reports each change). */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   className?: string
 }) {
   return (
-    <details className={className || undefined} open={defaultOpen}>
+    <details
+      className={className || undefined}
+      open={open ?? defaultOpen}
+      onToggle={onOpenChange && ((e) => onOpenChange(e.currentTarget.open))}
+    >
       <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded-md py-0.5 text-sm font-medium text-accent hover:text-accent-strong hover:underline hover:underline-offset-4">
         <Chevron />
         {label}
@@ -509,16 +519,21 @@ export function Metric({
   return <StatTile label={label} value={value} icon={icon} tip={<InfoTip term={term} />} />
 }
 
-/** A small badge that carries its meaning in words, never colour alone (principle 7). */
+/**
+ * A small badge that carries its meaning in words, never colour alone (principle 7). With
+ * `onClick` it is a button (a status chip that opens what it counts), 24 px tall (principle 7).
+ */
 export function Tag({
   children,
   tone = 'neutral',
   icon,
+  onClick,
 }: {
   children: ReactNode
   /** Colour only reinforces the words; never the only signal. */
   tone?: 'neutral' | 'accent' | 'success' | 'danger'
   icon?: LucideIcon
+  onClick?: () => void
 }) {
   const look = {
     neutral: 'border-line-strong bg-surface-2 text-gray-800',
@@ -526,13 +541,22 @@ export function Tag({
     success: 'border-transparent bg-success-soft text-success',
     danger: 'border-danger-line bg-danger-soft text-danger',
   }[tone]
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${look}`}
-    >
+  const shape = `inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${look}`
+  const content = (
+    <>
       {icon && <Icon icon={icon} className="size-3.5" />}
       {children}
-    </span>
+    </>
+  )
+  if (onClick === undefined) return <span className={shape}>{content}</span>
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${shape} min-h-6 cursor-pointer text-left hover:underline hover:underline-offset-2`}
+    >
+      {content}
+    </button>
   )
 }
 
@@ -546,9 +570,30 @@ export interface Column<T> {
   hideLabel?: boolean
 }
 
+/** Below Tailwind's `sm` (640 px), where ResponsiveTable shows stacked cards. */
+const NARROW_QUERY = '(max-width: 639.98px)'
+
+function subscribeNarrow(onChange: () => void): () => void {
+  const query = window.matchMedia(NARROW_QUERY)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+
+/** True on a phone-width viewport; false when rendered outside a browser. */
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  )
+}
+
 /**
  * A table from 640 px up; stacked label:value cards below (principle 9), so the page never scrolls
  * sideways. `details` adds a per-row toggle ("Details" by default) for level-2 fields (principle 2).
+ * Both layouts share one set of open rows, and an open row's details mount only in the layout on
+ * screen, so a panel that fetches or holds state exists once. Pass `open` and `onOpenChange` to
+ * control which rows are open from outside (a control elsewhere on the row that opens it).
  */
 export function ResponsiveTable<T>({
   caption,
@@ -557,6 +602,8 @@ export function ResponsiveTable<T>({
   rowKey,
   details,
   detailsLabel = 'Details',
+  open: openRows,
+  onOpenChange,
 }: {
   caption: string
   columns: Column<T>[]
@@ -564,15 +611,24 @@ export function ResponsiveTable<T>({
   rowKey: (row: T) => string
   details?: (row: T) => ReactNode
   detailsLabel?: string
+  /** Controlled: the keys of the open rows; pair with onOpenChange. */
+  open?: ReadonlySet<string>
+  onOpenChange?: (key: string, open: boolean) => void
 }) {
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
-  function toggle(key: string) {
-    setOpen((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
+  const [ownOpen, setOwnOpen] = useState<ReadonlySet<string>>(new Set())
+  const open = openRows ?? ownOpen
+  const narrow = useNarrow()
+  function setRow(key: string, isOpen: boolean) {
+    if (open.has(key) === isOpen) return
+    if (onOpenChange) onOpenChange(key, isOpen)
+    if (openRows === undefined) {
+      setOwnOpen((prev) => {
+        const next = new Set(prev)
+        if (isOpen) next.add(key)
+        else next.delete(key)
+        return next
+      })
+    }
   }
   const span = columns.length + (details ? 1 : 0)
   return (
@@ -620,7 +676,7 @@ export function ResponsiveTable<T>({
                           type="button"
                           aria-expanded={isOpen}
                           aria-controls={panelId}
-                          onClick={() => toggle(key)}
+                          onClick={() => setRow(key, !isOpen)}
                           className="inline-flex min-h-6 items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium text-accent hover:text-accent-strong hover:underline hover:underline-offset-4"
                         >
                           <Chevron open={isOpen} />
@@ -629,7 +685,7 @@ export function ResponsiveTable<T>({
                       </td>
                     )}
                   </tr>
-                  {details && isOpen && (
+                  {details && isOpen && !narrow && (
                     <tr id={panelId} className="border-b border-line bg-surface-2">
                       <td colSpan={span} className="px-4 py-3">
                         {details(row)}
@@ -661,8 +717,13 @@ export function ResponsiveTable<T>({
               )}
             </dl>
             {details && (
-              <Disclosure label={detailsLabel} className="mt-2">
-                {details(row)}
+              <Disclosure
+                label={detailsLabel}
+                className="mt-2"
+                open={open.has(rowKey(row))}
+                onOpenChange={(isOpen) => setRow(rowKey(row), isOpen)}
+              >
+                {open.has(rowKey(row)) && narrow && details(row)}
               </Disclosure>
             )}
           </li>

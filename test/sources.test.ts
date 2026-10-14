@@ -6,8 +6,8 @@ import overviewSource from '../src/pages/OverviewPage.tsx?raw'
 import { TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
 import { explain, GLOSSARY, isGlossaryKey } from '../shared/glossary'
-import { LOADS_BY_LABEL, SOURCES } from '../shared/sources'
-import type { Sources } from '../src/types'
+import { CHECK_KINDS, LOADS_BY_LABEL, SOURCES } from '../shared/sources'
+import type { Duplicates, DuplicateReview, Sources } from '../src/types'
 import { parseCsv } from '../worker/ingest/csv'
 import { QUARANTINE_REASONS } from '../worker/ingest/quarantine'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
@@ -16,8 +16,8 @@ import { seedDatabase } from './helpers/seed'
 import { SCAN_FIXTURES, type ScanFixture } from './helpers/screen-text'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// GET /api/sources (04 §GET /api/sources, 09 D-63; 08 T-SRC-1) and the Overview's glossary and
-// registry discipline (08 T-SRC-2). The test D1 holds the real seed of data/*.csv
+// GET /api/sources (04 §GET /api/sources, 09 D-63, D-65; 08 T-SRC-1, T-SRC-3) and the Overview's
+// glossary and registry discipline (08 T-SRC-2). The test D1 holds the real seed of data/*.csv
 // (test/helpers/seed.ts); every expected number is 02 §Counts'. Webhook inputs (09 D-11): the user
 // is app_users.csv line 2 (u_2b6447a3, julia.evans230, the PDF's sample), the brief's sample device
 // d_4b21e8, event ids from eventIdPool(); event times are the brief's 2026-09-28T14:22:05Z (on
@@ -55,6 +55,12 @@ async function postEvent(timestamp: string): Promise<void> {
   expect((await sendWebhook(JSON.stringify(body))).status).toBe(202)
 }
 
+/** The subscribers source's checks (09 D-65), in its registry order. */
+const subscriberChecks = (rows_to_fix: number, possible_duplicates: number) => [
+  { kind: 'rows_to_fix', count: rows_to_fix },
+  { kind: 'possible_duplicates', count: possible_duplicates },
+]
+
 const csvRun = (rows_in: number, rows_out: number, merged: number, rejected: number, needs_review: number) => ({
   id: expect.any(Number),
   ran_at: ranAt,
@@ -69,11 +75,11 @@ const csvRun = (rows_in: number, rows_out: number, merged: number, rejected: num
 describe('GET /api/sources before the first seed', () => {
   it('each CSV source is not_loaded with 0 records, no last sync and no runs; the webhook is live with 0', async () => {
     const list = await sources()
-    expect(list.map((s) => [s.id, s.status, s.records, s.runs])).toEqual([
-      ['subscribers', 'not_loaded', 0, []],
-      ['web_events', 'not_loaded', 0, []],
-      ['app_users', 'not_loaded', 0, []],
-      ['app_events', 'live', 0, []],
+    expect(list.map((s) => [s.id, s.status, s.records, s.runs, s.checks])).toEqual([
+      ['subscribers', 'not_loaded', 0, [], subscriberChecks(0, 0)],
+      ['web_events', 'not_loaded', 0, [], []],
+      ['app_users', 'not_loaded', 0, [], []],
+      ['app_events', 'live', 0, [], []],
     ])
     for (const s of list) expect(s.kind === 'csv' ? s.last_sync : s.last_received).toBeNull()
   })
@@ -101,15 +107,16 @@ describe('GET /api/sources (T-SRC-1)', () => {
       unit_one: 'subscriber',
       loads_by: 'seed',
       status: 'needs_review',
+      checks: subscriberChecks(2, 16),
       records: 2900,
       last_sync: ranAt,
       runs: [csvRun(2995, 2900, 85, 10, 2)],
     })
-    expect(web).toMatchObject({ status: 'ok', records: 10000, last_sync: ranAt, runs: [csvRun(10000, 10000, 0, 0, 0)] })
-    expect(app).toMatchObject({ status: 'ok', records: 930, last_sync: ranAt, runs: [csvRun(930, 930, 0, 0, 0)] })
+    expect(web).toMatchObject({ status: 'ok', checks: [], records: 10000, last_sync: ranAt, runs: [csvRun(10000, 10000, 0, 0, 0)] })
+    expect(app).toMatchObject({ status: 'ok', checks: [], records: 930, last_sync: ranAt, runs: [csvRun(930, 930, 0, 0, 0)] })
     // 04's key order, for each kind.
     expect(Object.keys(subscribers)).toEqual([
-      'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'records', 'last_sync', 'runs',
+      'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'checks', 'records', 'last_sync', 'runs',
     ])
     expect(Object.keys(subscribers.runs[0] ?? {})).toEqual([
       'id', 'ran_at', 'rows_in', 'rows_out', 'merged', 'rejected', 'needs_review',
@@ -127,6 +134,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
       unit_one: 'event',
       loads_by: 'webhook',
       status: 'live',
+      checks: [],
       records: 0,
       today: 0,
       last_received: null,
@@ -134,7 +142,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     })
     // 04's key order for the webhook entry (toEqual above ignores order).
     expect(Object.keys(before ?? {})).toEqual([
-      'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'records', 'today', 'last_received', 'runs',
+      'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'checks', 'records', 'today', 'last_received', 'runs',
     ])
 
     await postEvent(BRIEF_TS)
@@ -150,7 +158,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     expect(TODAY).toBe(BRIEF_TS.slice(0, 10))
   })
 
-  it('a run whose set-aside rows are all blank is ok, with 0 to review (09 D-47: the 2 real invalid-email rows relabelled)', async () => {
+  it('a run whose set-aside rows are all blank has 0 rows to fix; the 16 possible duplicates keep it needs_review (09 D-47: the 2 real invalid-email rows relabelled)', async () => {
     const relabel = (from: string, to: string) =>
       env.DB.prepare('UPDATE quarantine SET reason = ?2 WHERE reason = ?1').bind(from, to).run()
     const ids = await env.DB.prepare("SELECT id FROM quarantine WHERE reason = 'invalid_email'").all<{ id: number }>()
@@ -158,7 +166,11 @@ describe('GET /api/sources (T-SRC-1)', () => {
     await relabel('invalid_email', 'blank_row')
     try {
       const [subscribers] = await sources()
-      expect(subscribers).toMatchObject({ status: 'ok', runs: [csvRun(2995, 2900, 85, 10, 0)] })
+      expect(subscribers).toMatchObject({
+        status: 'needs_review',
+        checks: subscriberChecks(0, 16),
+        runs: [csvRun(2995, 2900, 85, 10, 0)],
+      })
     } finally {
       for (const { id } of ids.results)
         await env.DB.prepare("UPDATE quarantine SET reason = 'invalid_email' WHERE id = ?").bind(id).run()
@@ -186,18 +198,18 @@ describe('GET /api/sources (T-SRC-1)', () => {
       await setReason(second.id, 'bad_date')
       await setReason(firstBlank.id, 'missing_field')
       const [three] = await sources()
-      expect(three).toMatchObject({ status: 'needs_review', runs: [csvRun(2995, 2900, 85, 10, 3)] })
+      expect(three).toMatchObject({ status: 'needs_review', checks: subscriberChecks(3, 16), runs: [csvRun(2995, 2900, 85, 10, 3)] })
 
       // The only non-blank reject is bad_date: still 1 to review, still needs_review.
       await setReason(first.id, 'blank_row')
       await setReason(firstBlank.id, 'blank_row')
       const [onlyBadDate] = await sources()
-      expect(onlyBadDate).toMatchObject({ status: 'needs_review', runs: [csvRun(2995, 2900, 85, 10, 1)] })
+      expect(onlyBadDate).toMatchObject({ status: 'needs_review', checks: subscriberChecks(1, 16), runs: [csvRun(2995, 2900, 85, 10, 1)] })
 
       // The only non-blank reject is missing_field.
       await setReason(second.id, 'missing_field')
       const [onlyMissing] = await sources()
-      expect(onlyMissing).toMatchObject({ status: 'needs_review', runs: [csvRun(2995, 2900, 85, 10, 1)] })
+      expect(onlyMissing).toMatchObject({ status: 'needs_review', checks: subscriberChecks(1, 16), runs: [csvRun(2995, 2900, 85, 10, 1)] })
     } finally {
       for (const r of rows.results) await setReason(r.id, r.reason)
     }
@@ -237,8 +249,14 @@ describe('GET /api/sources (T-SRC-1)', () => {
       .bind(newId, rowsIn, rowsOut, merged, laterRanAt)
       .run()
     try {
+      // The later run set nothing aside, so 0 rows to fix; the possible duplicates still count.
       const [subscribers] = await sources()
-      expect(subscribers).toMatchObject({ status: 'ok', records: rowsOut, last_sync: laterRanAt })
+      expect(subscribers).toMatchObject({
+        status: 'needs_review',
+        checks: subscriberChecks(0, 16),
+        records: rowsOut,
+        last_sync: laterRanAt,
+      })
       expect(subscribers?.runs).toEqual([
         { id: newId, ran_at: laterRanAt, rows_in: rowsIn, rows_out: rowsOut, merged, rejected: 0, needs_review: 0 },
         { ...csvRun(2995, 2900, 85, 10, 2), id: seedRun.id },
@@ -273,6 +291,133 @@ describe('GET /api/sources (T-SRC-1)', () => {
     const res = await fetchSources({})
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ error: 'unauthorized', message: 'Sign in to continue.' })
+  })
+})
+
+const getDuplicates = async (): Promise<Duplicates> => {
+  const res = await SELF.fetch('http://cdp.test/api/duplicates', { headers: { cookie } })
+  expect(res.status).toBe(200)
+  return res.json<Duplicates>()
+}
+
+async function review(pairId: string): Promise<void> {
+  const res = await SELF.fetch(`http://cdp.test/api/duplicates/${pairId}/review`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ verdict: 'different_people' }),
+  })
+  expect(res.status).toBe(200)
+  expect((await res.json<DuplicateReview>()).pair_id).toBe(pairId)
+}
+
+// Runs after T-SRC-1 on the same seeded D1. Each test puts back what it changed (reviews, reasons,
+// run counts), so the file's later tests see the plain seed.
+describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
+  it('subscribers = [rows_to_fix 2, possible_duplicates 16] and needs_review; the other sources declare none', async () => {
+    const list = await sources()
+    expect(list.map((s) => [s.id, s.checks])).toEqual([
+      ['subscribers', subscriberChecks(2, 16)],
+      ['web_events', []],
+      ['app_users', []],
+      ['app_events', []],
+    ])
+    expect(list[0]?.status).toBe('needs_review')
+  })
+
+  it('check kinds come from the registry, in its order, and each kind has glossary words', async () => {
+    const list = await sources()
+    for (const [i, s] of list.entries()) expect(s.checks.map((c) => c.kind)).toEqual(SOURCES[i]?.checks)
+    for (const kind of CHECK_KINDS) expect(isGlossaryKey(kind)).toBe(true)
+    // Every declared check is a known kind, listed in CHECK_KINDS order.
+    for (const entry of SOURCES) {
+      const declared: readonly string[] = entry.checks
+      expect(declared).toEqual(CHECK_KINDS.filter((k) => declared.includes(k)))
+    }
+  })
+
+  it('possible_duplicates is GET /api/duplicates to_review; after one review it is 15, and back to 16 once the review is gone', async () => {
+    const before = await getDuplicates()
+    expect(before.to_review).toBe(16)
+    const first = before.review[0]
+    if (first === undefined) throw new Error('the seed has no pair to review')
+    await review(first.pair_id)
+    try {
+      const [subscribers] = await sources()
+      expect(subscribers?.checks).toEqual(subscriberChecks(2, 15))
+      expect(subscribers?.status).toBe('needs_review')
+      expect((await getDuplicates()).to_review).toBe(15)
+      // Re-posting replaces the decision: still one pair decided.
+      await review(first.pair_id)
+      expect((await sources())[0]?.checks).toEqual(subscriberChecks(2, 15))
+    } finally {
+      await env.DB.prepare('DELETE FROM duplicate_reviews').run()
+    }
+    expect((await sources())[0]?.checks).toEqual(subscriberChecks(2, 16))
+  })
+
+  it('status is ok only when every check counts 0: all 16 pairs reviewed and the 2 invalid emails relabelled blank (09 D-47)', async () => {
+    const pairs = (await getDuplicates()).review
+    expect(pairs).toHaveLength(16)
+    const ids = await env.DB.prepare("SELECT id FROM quarantine WHERE reason = 'invalid_email'").all<{ id: number }>()
+    expect(ids.results).toHaveLength(2)
+    try {
+      for (const p of pairs) await review(p.pair_id)
+      const [reviewed] = await sources()
+      expect(reviewed).toMatchObject({ status: 'needs_review', checks: subscriberChecks(2, 0) })
+
+      await env.DB.prepare("UPDATE quarantine SET reason = 'blank_row' WHERE reason = 'invalid_email'").run()
+      const [clean] = await sources()
+      expect(clean).toMatchObject({ status: 'ok', checks: subscriberChecks(0, 0) })
+    } finally {
+      await env.DB.prepare('DELETE FROM duplicate_reviews').run()
+      for (const { id } of ids.results)
+        await env.DB.prepare("UPDATE quarantine SET reason = 'invalid_email' WHERE id = ?").bind(id).run()
+    }
+    expect((await sources())[0]).toMatchObject({ status: 'needs_review', checks: subscriberChecks(2, 16) })
+  })
+
+  it('fails loud with a 500 when a source that declares no rows_to_fix check holds a row a person can fix', async () => {
+    // 09 D-47: one of the seed's real invalid-email rows moved to the Website visits run, with both
+    // runs' set-aside counts moved with it so import_runs and quarantine still agree.
+    const runOf = (file: string) =>
+      env.DB.prepare('SELECT id FROM import_runs WHERE file = ?').bind(file).first<{ id: number }>()
+    const [subRun, webRun] = [await runOf('subscribers'), await runOf('web_events')]
+    const row = await env.DB.prepare("SELECT id FROM quarantine WHERE reason = 'invalid_email' ORDER BY line_no").first<{
+      id: number
+    }>()
+    if (subRun === null || webRun === null || row === null) throw new Error('seed changed')
+    const move = (file: string, from: number, to: number) =>
+      env.DB.batch([
+        env.DB.prepare('UPDATE quarantine SET file = ?1, run_id = ?2 WHERE id = ?3').bind(file, to, row.id),
+        env.DB.prepare('UPDATE import_runs SET quarantined = quarantined - 1 WHERE id = ?').bind(from),
+        env.DB.prepare('UPDATE import_runs SET quarantined = quarantined + 1 WHERE id = ?').bind(to),
+      ])
+    await move('web_events', subRun.id, webRun.id)
+    try {
+      const res = await fetchSources()
+      expect(res.status).toBe(500)
+      expect(await res.json()).toEqual({
+        error: 'internal_error',
+        message: 'Something went wrong on the server. The error has been logged.',
+      })
+    } finally {
+      await move('subscribers', webRun.id, subRun.id)
+    }
+    expect((await sources())[0]).toMatchObject({ status: 'needs_review', checks: subscriberChecks(2, 16) })
+  })
+
+  it('the Overview has no standalone Needs review or Possible duplicates section: both open only as tabs of a source row', () => {
+    for (const gone of ['Needs review', 'NeedsReview', 'Possible duplicates —', ' to review', '<Disclosure'])
+      expect(overviewCode).not.toContain(gone)
+    // The two panels are mounted once each, inside SourceTabs' tab panels.
+    expect(overviewCode.match(/<PossibleDuplicates\b/g)?.length).toBe(1)
+    expect(overviewCode.match(/<RowsToFix\b/g)?.length).toBe(1)
+    const tabs = overviewCode.slice(overviewCode.indexOf('function SourceTabs('), overviewCode.indexOf('function SourcesTable('))
+    expect(tabs).toContain('<PossibleDuplicates')
+    expect(tabs).toContain('<RowsToFix')
+    // The WAI-ARIA tabs pattern.
+    for (const attr of ['role="tablist"', 'role="tab"', 'role="tabpanel"', 'aria-selected=', 'aria-controls=', 'aria-labelledby=', "'ArrowRight'", "'ArrowLeft'", "'Home'", "'End'"])
+      expect(tabs).toContain(attr)
   })
 })
 
@@ -312,7 +457,8 @@ describe('Overview terms and source text (T-SRC-2)', () => {
         'app_accounts',
         'events_received',
         'live',
-        'needs_review',
+        'ok',
+        'not_loaded',
         'rows_read',
         'kept',
         'merged',
@@ -322,8 +468,9 @@ describe('Overview terms and source text (T-SRC-2)', () => {
       ]),
     )
     for (const key of named) expect(() => explain(key)).not.toThrow()
-    // Terms the page passes through from data: each source's kind and each quarantine reason.
+    // Terms the page passes through from data: each source's kind, each check kind (09 D-65) and each quarantine reason.
     for (const s of SOURCES) expect(isGlossaryKey(s.kind)).toBe(true)
+    for (const kind of CHECK_KINDS) expect(isGlossaryKey(kind)).toBe(true)
     for (const reason of QUARANTINE_REASONS) expect(isGlossaryKey(reason)).toBe(true)
     // The page reads glossary entries by key too (GLOSSARY.x); each must exist.
     for (const m of overviewCode.matchAll(/\bGLOSSARY\.([a-z_]+)/g)) expect(isGlossaryKey(m[1])).toBe(true)
@@ -366,8 +513,8 @@ describe('Overview terms and source text (T-SRC-2)', () => {
   it('the Overview spells no source name, id, file or unit: they come from the registry through the API', () => {
     const texts = env.SCREEN_TEXTS.overview
     expect(texts.length).toBeGreaterThan(50)
-    // Runs beside an interpolation are in the scan (StatusTag's "{n} to review").
-    expect(texts).toContain(' to review')
+    // Runs beside an interpolation are in the scan (StatusChips' "Status of {name}").
+    expect(texts).toContain('Status of ')
     expect(texts).toContain('View rejected rows')
     expect(sourceTextOffences(texts)).toEqual([])
     expect(overviewCode).not.toMatch(/\b(?:\d+|three) files?\b/i)
