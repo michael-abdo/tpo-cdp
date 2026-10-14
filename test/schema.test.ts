@@ -201,7 +201,7 @@ describe('migration 0007 creates the profiles(email_norm) index', () => {
   })
 })
 
-// 0008_ai_audit_cache.sql (09 D-73; design 20 §3 R2): the two usage-meter columns R1's prompt
+// 0008_ai_audit_cache.sql (09 D-74; design 20 §3 R2): the two usage-meter columns R1's prompt
 // caching is proven from. A no-op migration would pass every other test silently, so pin the
 // columns themselves on ai_audit, nullable (rows written before this migration carry NULL).
 describe('migration 0008 adds the cache usage meters to ai_audit', () => {

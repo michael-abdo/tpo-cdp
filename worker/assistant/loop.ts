@@ -115,7 +115,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     }
 
     await guardPayload(input.trace, response.content, 'model_output')
-    // 09 D-73 (design 20 §3 R2): cache_read_input_tokens / cache_creation_input_tokens are prompt
+    // 09 D-74 (design 20 §3 R2): cache_read_input_tokens / cache_creation_input_tokens are prompt
     // tokens too (R1 put a cache breakpoint in the system block), so tokens_in keeps meaning "the
     // total prompt tokens sent" — unchanged on a cold call, where both meters are 0 or absent.
     const cacheRead = response.usage.cache_read_input_tokens ?? 0
@@ -137,7 +137,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
         at: 'loop',
         trace_id: input.trace.traceId,
         call,
-        tokens_in: response.usage.input_tokens,
+        input_tokens: response.usage.input_tokens,
         cache_read_tokens: cacheRead,
         cache_write_tokens: cacheWrite,
         tokens_out: response.usage.output_tokens,

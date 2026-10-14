@@ -194,7 +194,7 @@ describe('T-PII-1: a request built from a real profile question carries no PII',
     expect(MAX_TOKENS).toBe(8192) // 09 D-57, pinned as a literal; no temperature/top_p/top_k key (above)
     expect(first.tools).toEqual(TOOLS)
     expect(first.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user'])
-    // 09 D-73 / design 20 §3 R1: the system prompt is one text block with an ephemeral cache
+    // 09 D-74 / design 20 §3 R1: the system prompt is one text block with an ephemeral cache
     // breakpoint, and nothing else about the rendered prompt changes.
     expect(first.system).toEqual([{ type: 'text', text: renderSystemPrompt(views), cache_control: { type: 'ephemeral' } }])
   })

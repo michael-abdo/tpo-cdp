@@ -19,7 +19,7 @@ export interface AuditEntry {
   model?: string | null
   tokens_in?: number | null
   tokens_out?: number | null
-  /** 09 D-73 (migration 0008): the usage meters a prompt-cached call reports; 0 or NULL on a cold call. */
+  /** 09 D-74 (migration 0008): the usage meters a prompt-cached call reports; 0 or NULL on a cold call. */
   cache_read_tokens?: number | null
   cache_write_tokens?: number | null
   /** model_request: the exact payload sent, after `assertNoPII`. */

@@ -1,4 +1,4 @@
--- ai_audit stores the two extra usage meters prompt caching adds (09 D-73; design 20-token-usage-spec.md
+-- ai_audit stores the two extra usage meters prompt caching adds (09 D-74; design 20-token-usage-spec.md
 -- §3 R2): how many of a model_request's prompt tokens were an ephemeral cache write vs. a cache
 -- read. tokens_in keeps meaning "prompt tokens sent" (input + cache read + cache write, loop.ts);
 -- these two columns are this lever's proof surface — 0 (or NULL, for rows written before this
