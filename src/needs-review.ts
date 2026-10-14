@@ -1,4 +1,4 @@
-// Overview's "Needs review" card (06 §Overview, 09 D-61): which set-aside rows a person can fix, the
+// Overview's "Rows to fix" tab (06 §Overview, 09 D-61, D-65): which set-aside rows a person can fix, the
 // one plain sentence that says why, the fields to show as written, and what to do. Pure, so
 // test/quarantine.test.ts runs it on the real GET /api/quarantine answer; src/pages/OverviewPage.tsx
 // is the only other reader.

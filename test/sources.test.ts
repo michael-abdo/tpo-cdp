@@ -527,3 +527,56 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     expect(overviewCode.match(/Loads by: \{LOADS_BY_LABEL\[source\.loads_by\]\}/g)?.length).toBe(2)
   })
 })
+
+// Last in the file: it sends webhooks, and the stored events stay for the rest of the file. The seed
+// has no auto-band pair, so this is the only place an auto pair reaches GET /api/sources (09 D-65:
+// "undecided review/auto pairs"). Inputs are T-DUP-2's (test/duplicates.test.ts header): real
+// app_users.csv rows u_a6ac1f6c (line 113, mark.mitchell424@gmail.com) and u_b9e9a984 (line 432,
+// mark.mitchell662@outlook.com) log in on one device, `d_` + the hex of the first user id, through
+// the real signed POST /webhooks/app (09 D-11); event ids from eventIdPool(); times on TODAY.
+describe('GET /api/sources checks count auto-band pairs too (T-SRC-3, 09 D-65)', () => {
+  const MARK_A = { user: 'u_a6ac1f6c', email: 'mark.mitchell424@gmail.com' }
+  const MARK_B = { user: 'u_b9e9a984', email: 'mark.mitchell662@outlook.com' }
+  const SHARED_DEVICE = 'd_a6ac1f6c'
+
+  it('a real shared-device login stitch adds one auto pair: 17 in both routes, 16 once it is reviewed', async () => {
+    const before = await getDuplicates()
+    expect(before.review.map((p) => p.band)).not.toContain('auto')
+    expect(before.to_review).toBe(16)
+    expect((await sources())[0]?.checks).toEqual(subscriberChecks(2, 16))
+
+    const events = [
+      { event: 'app_open', user_id: null, timestamp: `${TODAY}T09:00:00Z` },
+      { event: 'login', user_id: MARK_A.user, timestamp: `${TODAY}T09:05:00Z` },
+      { event: 'login', user_id: MARK_B.user, timestamp: `${TODAY}T09:10:00Z` },
+    ]
+    for (const e of events) {
+      const body = {
+        event_id: nextEventId(),
+        event: e.event,
+        user_id: e.user_id,
+        device_id: SHARED_DEVICE,
+        timestamp: e.timestamp,
+      }
+      const res = await sendWebhook(JSON.stringify(body))
+      expect(res.status, await res.clone().text()).toBe(202)
+    }
+
+    const after = await getDuplicates()
+    const auto = after.review.filter((p) => p.band === 'auto')
+    expect(auto.map((p) => [p.a.email, p.b.email].sort())).toEqual([[MARK_A.email, MARK_B.email].sort()])
+    expect(after.to_review).toBe(17)
+    expect((await sources())[0]).toMatchObject({ status: 'needs_review', checks: subscriberChecks(2, 17) })
+
+    const pair = auto[0]
+    if (pair === undefined) throw new Error('no auto pair after the shared-device logins')
+    await review(pair.pair_id)
+    try {
+      expect((await sources())[0]?.checks).toEqual(subscriberChecks(2, 16))
+      expect((await getDuplicates()).to_review).toBe(16)
+    } finally {
+      await env.DB.prepare('DELETE FROM duplicate_reviews').run()
+    }
+    expect((await sources())[0]?.checks).toEqual(subscriberChecks(2, 17))
+  })
+})

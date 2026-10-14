@@ -80,7 +80,8 @@ export const sourceRoutes = new Hono<AppEnv>()
 
 sourceRoutes.get('/sources', async (c) => {
   const db = c.env.DB
-  // One batch: D1 runs it as a single transaction, so every number comes from one snapshot.
+  // One batch: D1 runs it as a single transaction, so the run, set-aside and event numbers come from
+  // one snapshot. The possible_duplicates count is read after it, in its own queries (below).
   const [runs, rejects, events] = await db.batch([
     db.prepare('SELECT id, file, rows_in, rows_out, merged, quarantined, ran_at FROM import_runs ORDER BY id DESC'),
     db.prepare(

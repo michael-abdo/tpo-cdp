@@ -11,9 +11,9 @@ import { FILE_HEADERS, quarantineFields } from '../worker/routes/quarantine'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// GET /api/quarantine?reason=&file= (04 §/api/quarantine, 09 D-61, D-63) and the Overview "Needs review"
-// section's pure logic (src/needs-review.ts, 06 §Overview). T-OVR-1: the test D1 holds the real seed of
-// data/*.csv; the counts (8 blank rows, the 2 invalid emails `not-an-email` and `@gmail.com`) are
+// GET /api/quarantine?reason=&file= (04 §/api/quarantine, 09 D-61, D-63) and the pure logic of the
+// Overview's "Rows to fix" tab (src/needs-review.ts, 06 §Overview, 09 D-65). T-OVR-1: the test D1
+// holds the real seed of data/*.csv; the counts (8 blank rows, the 2 invalid emails `not-an-email` and `@gmail.com`) are
 // 02 §Counts, the line numbers 1750 and 1788 are 08 T-OVR-1's.
 
 let cookie: string
@@ -169,7 +169,7 @@ describe('quarantineFields', () => {
   })
 })
 
-describe('Needs review section (src/needs-review.ts) on the real answers', () => {
+describe('Rows to fix tab logic (src/needs-review.ts) on the real answers', () => {
   it('shows only when Overview reports a reason other than blank_row', async () => {
     const overview = await (
       await SELF.fetch('http://cdp.test/api/overview', { headers: { cookie } })

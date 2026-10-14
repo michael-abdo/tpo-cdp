@@ -98,29 +98,41 @@ function pairOut(pair: ScoredPair, decision: Decision | null): DuplicatePairOut 
   }
 }
 
-/** 06's "N to review": shown pairs (review or auto band) with no decision yet, over all of them, not just the first 50. */
-function undecided(shown: readonly ScoredPair[], decided: ReadonlyMap<string, Decision>): number {
-  return shown.filter((p) => !decided.has(p.pair_id)).length
+interface Shown {
+  result: DedupeResult
+  /** The pairs a person sees: the review and auto bands (score ≥ REVIEW_MIN_SCORE), best first. */
+  shown: ScoredPair[]
+  decided: Map<string, Decision>
+  /** Shown pairs with no decision yet, over all of them, not just the first 50 (09 D-62, D-65). */
+  toReview: number
 }
 
 /**
- * The possible_duplicates check of GET /api/sources (09 D-65): the same count GET /api/duplicates
- * returns as `to_review`, from the same scorer and decisions (no second scorer).
+ * The one home of which pairs are shown and how many still need a decision. GET /api/duplicates and
+ * the possible_duplicates check of GET /api/sources both read it, so the band filter exists once.
+ */
+async function loadShown(db: D1Database): Promise<Shown> {
+  const [result, decided] = await Promise.all([scoreAll(db), decisions(db)])
+  const shown = result.pairs.filter((p) => p.score >= REVIEW_MIN_SCORE)
+  return { result, shown, decided, toReview: shown.filter((p) => !decided.has(p.pair_id)).length }
+}
+
+/**
+ * The possible_duplicates check of GET /api/sources (09 D-65): GET /api/duplicates' `to_review`,
+ * from the same loadShown() (no second scorer, no second band filter).
  */
 export async function duplicatesToReview(db: D1Database): Promise<number> {
-  const [result, decided] = await Promise.all([scoreAll(db), decisions(db)])
-  return undecided(result.pairs.filter((p) => p.score >= REVIEW_MIN_SCORE), decided)
+  return (await loadShown(db)).toReview
 }
 
 /** Mounted at /api by worker/index.ts, behind requireSession. */
 export const duplicateRoutes = new Hono<AppEnv>()
 
 duplicateRoutes.get('/duplicates', async (c) => {
-  const [result, decided] = await Promise.all([scoreAll(c.env.DB), decisions(c.env.DB)])
-  const shown = result.pairs.filter((p) => p.score >= REVIEW_MIN_SCORE)
+  const { result, shown, decided, toReview } = await loadShown(c.env.DB)
   return c.json({
     candidates: result.candidates,
-    to_review: undecided(shown, decided),
+    to_review: toReview,
     review: shown.slice(0, DUPLICATES_MAX_ROWS).map((p) => pairOut(p, decided.get(p.pair_id) ?? null)),
     hidden_below_review: result.pairs.length - shown.length,
     weights: result.weights,
