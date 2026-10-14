@@ -1,10 +1,210 @@
+/* DIRECTION (09 D-60, 06 §UI principles) — "refined calm"
+ * Tone: a quiet daily desk for non-technical Growth editors; restraint over noise, one thing per glance.
+ * Type: Fraunces (soft optical serif) for page/section titles; Figtree (warm geometric sans) for everything else.
+ * Palette: warm paper neutrals, low-glare charcoal at night; ONE accent, deep ink-teal; red only for errors.
+ * Depth: page sits one tone below white cards; hairline borders + a soft two-layer shadow, no hard edges.
+ * Motion: one page-enter stagger (fade + 6px rise) per route; nothing else moves; off under reduced motion. */
+
 @import "tailwindcss";
 
-/* 06 §UI principles 7–8 (09 D-45): Tailwind defaults, one neutral palette + one blue accent. */
+/* ── Tokens ────────────────────────────────────────────────────────────────────────────────────
+ * Semantic tokens (use these in new code): --page --surface --surface-2 --line --line-strong --ink
+ * --ink-muted --ink-subtle --accent --accent-strong --accent-soft --on-accent --danger --danger-soft
+ * --danger-line --success --success-soft --shadow --radius. Tailwind classes: bg-page bg-surface
+ * bg-surface-2 border-line border-line-strong text-ink text-ink-muted text-ink-subtle text-accent
+ * bg-accent bg-accent-soft text-on-accent text-danger bg-danger-soft text-success bg-success-soft,
+ * font-display, shadow-soft.
+ * The legacy Tailwind gray / blue / red / white scales the pages already use are remapped onto the
+ * same palette below, so every existing class follows the theme (light and dark) with no page edit. */
+
+@theme inline {
+  --font-sans: "Figtree Variable", ui-sans-serif, sans-serif;
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
+
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-line: var(--danger-line);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+
+  --shadow-soft: var(--shadow);
+}
+
+:root {
+  color-scheme: light;
+  --radius: 0.75rem;
+
+  /* warm paper neutrals */
+  --n-0: #fffefb;
+  --n-50: #f7f5f0;
+  --n-100: #efece5;
+  --n-200: #e3dfd6;
+  --n-300: #cfc9be;
+  --n-400: #a59f93;
+  --n-500: #6f6a61;
+  --n-600: #5a564e;
+  --n-700: #46423c;
+  --n-800: #33302b;
+  --n-900: #22201c;
+  /* ink-teal accent */
+  --a-50: #e7f2ee;
+  --a-600: #0e6b5b;
+  --a-700: #0b5a4c;
+  --a-900: #073b32;
+  /* error red */
+  --r-50: #fbefeb;
+  --r-300: #e5b2a6;
+  --r-400: #cf8676;
+  --r-800: #8c2b1b;
+
+  --page: #f3f1eb;
+  --surface: var(--n-0);
+  --surface-2: var(--n-50);
+  --line: var(--n-200);
+  --line-strong: var(--n-300);
+  --ink: var(--n-900);
+  --ink-muted: var(--n-600);
+  --ink-subtle: var(--n-500);
+  --accent: var(--a-600);
+  --accent-strong: var(--a-700);
+  --accent-soft: var(--a-50);
+  --on-accent: #ffffff;
+  --danger: var(--r-800);
+  --danger-soft: var(--r-50);
+  --danger-line: var(--r-300);
+  --success: #1f6b3a;
+  --success-soft: #e8f3eb;
+  --shadow: 0 1px 2px rgb(34 32 28 / 0.04), 0 6px 20px -8px rgb(34 32 28 / 0.1);
+
+  /* Legacy scale remap: the classes pages already use now read the theme. */
+  --color-white: var(--n-0);
+  --color-gray-50: var(--n-50);
+  --color-gray-100: var(--n-100);
+  --color-gray-200: var(--n-200);
+  --color-gray-300: var(--n-300);
+  --color-gray-400: var(--n-400);
+  --color-gray-500: var(--n-500);
+  --color-gray-600: var(--n-600);
+  --color-gray-700: var(--n-700);
+  --color-gray-800: var(--n-800);
+  --color-gray-900: var(--n-900);
+  --color-blue-50: var(--a-50);
+  --color-blue-600: var(--a-600);
+  --color-blue-700: var(--a-700);
+  --color-blue-900: var(--a-900);
+  --color-red-50: var(--r-50);
+  --color-red-300: var(--r-300);
+  --color-red-400: var(--r-400);
+  --color-red-800: var(--r-800);
+}
+
+/* Dark: low-glare charcoal, never pure black; text never pure white. Same names, new values.
+ * Kept in sync by hand: the OS preference block and the [data-theme="dark"] block hold the same values. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --n-0: #1b1e21;
+    --n-50: #202427;
+    --n-100: #272b2f;
+    --n-200: #31363b;
+    --n-300: #434950;
+    --n-400: #6a7077;
+    --n-500: #979ca1;
+    --n-600: #aeb2b5;
+    --n-700: #c6c8ca;
+    --n-800: #dadbdb;
+    --n-900: #ebe8e2;
+    --a-50: #15302b;
+    --a-600: #5fc3ad;
+    --a-700: #84d4c2;
+    --a-900: #b9ebdf;
+    --r-50: #361e1a;
+    --r-300: #7b3a30;
+    --r-400: #a6594c;
+    --r-800: #f1b6a9;
+    --page: #15181a;
+    --on-accent: #10201c;
+    --success: #8fd3a5;
+    --success-soft: #17291e;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -10px rgb(0 0 0 / 0.5);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --n-0: #1b1e21;
+  --n-50: #202427;
+  --n-100: #272b2f;
+  --n-200: #31363b;
+  --n-300: #434950;
+  --n-400: #6a7077;
+  --n-500: #979ca1;
+  --n-600: #aeb2b5;
+  --n-700: #c6c8ca;
+  --n-800: #dadbdb;
+  --n-900: #ebe8e2;
+  --a-50: #15302b;
+  --a-600: #5fc3ad;
+  --a-700: #84d4c2;
+  --a-900: #b9ebdf;
+  --r-50: #361e1a;
+  --r-300: #7b3a30;
+  --r-400: #a6594c;
+  --r-800: #f1b6a9;
+  --page: #15181a;
+  --on-accent: #10201c;
+  --success: #8fd3a5;
+  --success-soft: #17291e;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -10px rgb(0 0 0 / 0.5);
+}
 
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    font-family: var(--font-sans);
+    background: var(--page);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background: var(--page);
+    color: var(--ink);
+  }
+
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+
+  input,
+  select,
+  textarea {
+    background-color: var(--surface);
+    color: var(--ink);
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--accent);
   }
 
   /* One clear, consistent focus ring for every interactive element (principle 7). */
@@ -15,7 +215,7 @@
   textarea:focus-visible,
   summary:focus-visible,
   [tabindex]:focus-visible {
-    outline: 2px solid var(--color-blue-600);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 
@@ -33,8 +233,41 @@
   }
 }
 
-/* Respect reduced motion (principle 7). */
+/* The one orchestrated motion (D-60): each page's top-level blocks rise in, 60 ms apart. */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.page-enter > * {
+  animation: page-enter 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.page-enter > :nth-child(2) {
+  animation-delay: 60ms;
+}
+.page-enter > :nth-child(3) {
+  animation-delay: 120ms;
+}
+.page-enter > :nth-child(4) {
+  animation-delay: 180ms;
+}
+.page-enter > :nth-child(5) {
+  animation-delay: 240ms;
+}
+.page-enter > :nth-child(n + 6) {
+  animation-delay: 300ms;
+}
+
+/* Respect reduced motion (principle 7): the stagger is off and nothing else animates. */
 @media (prefers-reduced-motion: reduce) {
+  .page-enter > * {
+    animation: none;
+  }
   *,
   *::before,
   *::after {

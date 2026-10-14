@@ -1,27 +1,103 @@
 // Shared UI pieces every page uses (06 §UI principles, 09 D-55; 06 §Empty and error states).
-// One calm visual system: gray neutrals, one blue accent, Tailwind defaults (09 D-45).
+// One calm visual system (09 D-60, amends D-45): theme tokens from index.css, one ink-teal accent,
+// lucide-react icons always beside a visible text label (icons are aria-hidden).
 // Disclosure depth is fixed at two levels: Disclosure (level 2) may hold one TechnicalDetails
 // (level 3); nothing nests deeper (principle 2).
 
+import {
+  Activity,
+  ArrowRight,
+  CalendarDays,
+  ChevronRight,
+  CircleAlert,
+  CircleCheck,
+  Download,
+  Eye,
+  Inbox,
+  LayoutDashboard,
+  ListFilter,
+  LoaderCircle,
+  LogOut,
+  type LucideIcon,
+  Menu,
+  MessageCircleQuestion,
+  Moon,
+  ScrollText,
+  Search,
+  ShieldBan,
+  Sun,
+  TrendingUp,
+  UserSearch,
+} from 'lucide-react'
 import { type ButtonHTMLAttributes, Fragment, type ReactNode, useState } from 'react'
+
+export type { LucideIcon }
+
+/**
+ * One icon per meaning (09 D-60). Always render an icon next to its words, with aria-hidden — never
+ * as the only carrier of meaning. Nav keys match the route; status keys match the outcome.
+ */
+export const ICONS = {
+  // nav destinations
+  overview: LayoutDashboard,
+  lookup: UserSearch,
+  segments: ListFilter,
+  events: Activity,
+  assistant: MessageCircleQuestion,
+  growth: TrendingUp,
+  audit: ScrollText,
+  // primary actions
+  search: Search,
+  preview: Eye,
+  export: Download,
+  next: ArrowRight,
+  logout: LogOut,
+  menu: Menu,
+  themeLight: Sun,
+  themeDark: Moon,
+  today: CalendarDays,
+  // status
+  success: CircleCheck,
+  blocked: ShieldBan,
+  error: CircleAlert,
+  empty: Inbox,
+  loading: LoaderCircle,
+} satisfies Record<string, LucideIcon>
+
+/** Renders an ICONS entry (or any lucide icon) decoratively, sized to sit beside text. */
+export function Icon({ icon: I, className = 'size-4' }: { icon: LucideIcon; className?: string }) {
+  return <I aria-hidden="true" focusable="false" strokeWidth={1.75} className={`shrink-0 ${className}`} />
+}
 
 /** Primary = the one main action of a screen (principle 1); secondary = everything else. */
 export function Button({
   variant = 'secondary',
   type = 'button',
   className = '',
+  icon,
+  children,
   ...rest
-}: { variant?: 'primary' | 'secondary'; className?: string } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'>) {
+}: {
+  variant?: 'primary' | 'secondary' | 'quiet'
+  className?: string
+  /** Optional lucide icon shown before the label (the label stays visible). */
+  icon?: LucideIcon
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'>) {
   const look =
     variant === 'primary'
-      ? 'bg-gray-900 text-white hover:bg-gray-700'
-      : 'border border-gray-300 bg-white text-gray-900 hover:bg-gray-50'
+      ? 'bg-accent text-on-accent shadow-soft hover:bg-accent-strong'
+      : variant === 'quiet'
+        ? 'text-ink-muted hover:bg-surface-2 hover:text-ink'
+        : 'border border-line-strong bg-surface text-ink hover:border-ink-subtle hover:bg-surface-2'
   return (
     <button
       type={type}
-      className={`inline-flex min-h-9 items-center justify-center gap-1 rounded px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${look} ${className}`}
+      className={`inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50 ${look} ${className}`}
       {...rest}
-    />
+    >
+      {icon && <Icon icon={icon} />}
+      {children}
+    </button>
   )
 }
 
@@ -30,14 +106,35 @@ export function Button({
  * action. Render it in every state (loading, error, result) so the heading never disappears.
  * The h1 takes focus after a route change (App.tsx Shell).
  */
-export function PageHeader({ title, purpose, action }: { title: string; purpose?: ReactNode; action?: ReactNode }) {
+export function PageHeader({
+  title,
+  purpose,
+  action,
+  icon,
+}: {
+  title: string
+  purpose?: ReactNode
+  action?: ReactNode
+  /** Optional icon in a soft tile before the title (use the page's ICONS nav entry). */
+  icon?: LucideIcon
+}) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="space-y-1">
-        <h1 tabIndex={-1} className="text-xl font-semibold text-gray-900 focus:outline-none">
-          {title}
-        </h1>
-        {purpose !== undefined && <p className="text-sm text-gray-600">{purpose}</p>}
+    <div className="flex flex-wrap items-start justify-between gap-3 pt-2">
+      <div className="flex min-w-0 items-start gap-3">
+        {icon && (
+          <span className="mt-0.5 hidden size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent sm:inline-flex">
+            <Icon icon={icon} className="size-5" />
+          </span>
+        )}
+        <div className="min-w-0 space-y-1">
+          <h1
+            tabIndex={-1}
+            className="font-display text-2xl font-medium text-ink focus:outline-none sm:text-[1.75rem] sm:leading-tight"
+          >
+            {title}
+          </h1>
+          {purpose !== undefined && <p className="max-w-prose text-sm text-ink-muted">{purpose}</p>}
+        </div>
       </div>
       {action !== undefined && <div className="shrink-0">{action}</div>}
     </div>
@@ -49,9 +146,11 @@ function Chevron({ open }: { open?: boolean }) {
   // inner toggle never shows an open chevron when its outer one is open; a button passes `open`.
   const turn = open === undefined ? '[details[open]>summary>&]:rotate-90' : open ? 'rotate-90' : ''
   return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" className={`size-4 shrink-0 transition-transform motion-reduce:transition-none ${turn}`}>
-      <path d="M7 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <ChevronRight
+      aria-hidden="true"
+      strokeWidth={2}
+      className={`size-4 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${turn}`}
+    />
   )
 }
 
@@ -73,7 +172,7 @@ export function Disclosure({
 }) {
   return (
     <details className={className || undefined} open={defaultOpen}>
-      <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded py-0.5 text-sm font-medium text-blue-700 hover:underline">
+      <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded-md py-0.5 text-sm font-medium text-accent hover:text-accent-strong hover:underline hover:underline-offset-4">
         <Chevron />
         {label}
       </summary>
@@ -90,11 +189,13 @@ export function Disclosure({
 export function TechnicalDetails({ children }: { children: ReactNode }) {
   return (
     <details>
-      <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded py-0.5 text-xs text-gray-600 hover:underline">
+      <summary className="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded-md py-0.5 text-xs font-medium text-ink-muted hover:text-ink hover:underline hover:underline-offset-4">
         <Chevron />
         Technical details
       </summary>
-      <div className="mt-2 space-y-1 rounded bg-gray-50 p-3 text-xs text-gray-700">{children}</div>
+      <div className="mt-2 space-y-1 rounded-lg border border-line bg-surface-2 p-3 font-mono text-xs break-words text-gray-700">
+        {children}
+      </div>
     </details>
   )
 }
@@ -105,7 +206,7 @@ export function TechnicalDetails({ children }: { children: ReactNode }) {
  */
 export function Announcer({ message, visible = false }: { message: string; visible?: boolean }) {
   return (
-    <p role="status" aria-live="polite" className={visible ? 'text-sm text-gray-600' : 'sr-only'}>
+    <p role="status" aria-live="polite" className={visible ? 'text-sm text-ink-muted' : 'sr-only'}>
       {message}
     </p>
   )
@@ -114,7 +215,8 @@ export function Announcer({ message, visible = false }: { message: string; visib
 /** A short text loading state, announced politely (principles 7, 8). */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   return (
-    <p role="status" aria-live="polite" className="text-sm text-gray-600">
+    <p role="status" aria-live="polite" className="inline-flex items-center gap-2 text-sm text-ink-muted">
+      <Icon icon={ICONS.loading} className="size-4 animate-spin motion-reduce:animate-none" />
       {label}
     </p>
   )
@@ -139,15 +241,20 @@ export function ErrorLine({
   id?: string
   compact?: boolean
 }) {
-  const shown = NETWORK_FAILURE.test(message) ? "Couldn't reach the server. Check your connection, then try again." : message
+  const shown = NETWORK_FAILURE.test(message)
+    ? "Couldn't reach the server. Check your connection, then try again."
+    : message
   return (
     <p
       role="alert"
       id={id}
-      className={compact ? 'text-sm text-red-800' : 'rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800'}
+      className={`flex items-start gap-2 text-sm text-danger ${compact ? '' : 'rounded-lg border border-danger-line bg-danger-soft px-3 py-2.5'}`}
     >
-      {shown}
-      {next !== undefined && <> {next}</>}
+      <Icon icon={ICONS.error} className="mt-0.5 size-4" />
+      <span>
+        {shown}
+        {next !== undefined && <> {next}</>}
+      </span>
     </p>
   )
 }
@@ -156,11 +263,26 @@ export function ErrorLine({
  * An explicit empty state (06 §Empty and error states) that says what to do next and may offer a
  * one-click example (principle 6). `children` = the message; keep test-locked texts verbatim.
  */
-export function EmptyState({ children, action }: { children: ReactNode; action?: ReactNode }) {
+export function EmptyState({
+  children,
+  action,
+  icon = ICONS.empty,
+}: {
+  children: ReactNode
+  action?: ReactNode
+  icon?: LucideIcon | null
+}) {
   return (
-    <div className="space-y-3 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
-      <div>{children}</div>
-      {action !== undefined && <div className="flex flex-wrap gap-2">{action}</div>}
+    <div className="flex gap-3 rounded-xl border border-dashed border-line-strong bg-surface-2 p-4 text-sm text-gray-700 sm:p-5">
+      {icon && (
+        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface text-ink-subtle shadow-soft">
+          <Icon icon={icon} className="size-4" />
+        </span>
+      )}
+      <div className="min-w-0 flex-1 space-y-3 self-center">
+        <div>{children}</div>
+        {action !== undefined && <div className="flex flex-wrap gap-2">{action}</div>}
+      </div>
     </div>
   )
 }
@@ -171,12 +293,26 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 /** A titled box with an optional one-line summary under the title. */
-export function Section({ title, summary, children }: { title: string; summary?: ReactNode; children: ReactNode }) {
+export function Section({
+  title,
+  summary,
+  children,
+  icon,
+}: {
+  title: string
+  summary?: ReactNode
+  children: ReactNode
+  /** Optional icon before the title. */
+  icon?: LucideIcon
+}) {
   return (
-    <section className="space-y-3 rounded border border-gray-200 p-4">
+    <section className="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-soft sm:p-5">
       <div className="space-y-1">
-        <h2 className="font-semibold text-gray-900">{title}</h2>
-        {summary !== undefined && <p className="text-sm text-gray-600">{summary}</p>}
+        <h2 className="flex items-center gap-2 font-display text-lg font-medium text-ink">
+          {icon && <Icon icon={icon} className="size-4 text-accent" />}
+          {title}
+        </h2>
+        {summary !== undefined && <p className="text-sm text-ink-muted">{summary}</p>}
       </div>
       {children}
     </section>
@@ -187,7 +323,7 @@ export function Section({ title, summary, children }: { title: string; summary?:
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex gap-2 text-sm">
-      <dt className="w-28 shrink-0 text-gray-600">{label}</dt>
+      <dt className="w-28 shrink-0 text-ink-muted">{label}</dt>
       <dd className="break-all">{children}</dd>
     </div>
   )
@@ -203,20 +339,53 @@ export function StatGrid({ label, children }: { label?: string; children: ReactN
 }
 
 /** One headline number. Screen readers hear the label first (dt, then dd); `note` = optional next step. */
-export function StatTile({ label, value, note }: { label: string; value: number; note?: ReactNode }) {
+export function StatTile({
+  label,
+  value,
+  note,
+  icon,
+}: {
+  label: string
+  value: number
+  note?: ReactNode
+  icon?: LucideIcon
+}) {
   return (
-    <div className="flex flex-col rounded border border-gray-200 p-4">
-      <dt className="order-2 text-sm text-gray-600">{label}</dt>
-      <dd className="order-1 text-2xl font-semibold tabular-nums text-gray-900">{value.toLocaleString('en-US')}</dd>
-      {note !== undefined && <dd className="order-3 mt-1 text-sm">{note}</dd>}
+    <div className="flex flex-col rounded-xl border border-line bg-surface p-4 shadow-soft sm:p-5">
+      <dt className="order-2 mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
+        {icon && <Icon icon={icon} className="size-4 text-accent" />}
+        {label}
+      </dt>
+      <dd className="order-1 font-display text-3xl font-medium tabular-nums text-ink">
+        {value.toLocaleString('en-US')}
+      </dd>
+      {note !== undefined && <dd className="order-3 mt-2 text-sm">{note}</dd>}
     </div>
   )
 }
 
 /** A small badge that carries its meaning in words, never colour alone (principle 7). */
-export function Tag({ children }: { children: ReactNode }) {
+export function Tag({
+  children,
+  tone = 'neutral',
+  icon,
+}: {
+  children: ReactNode
+  /** Colour only reinforces the words; never the only signal. */
+  tone?: 'neutral' | 'accent' | 'success' | 'danger'
+  icon?: LucideIcon
+}) {
+  const look = {
+    neutral: 'border-line-strong bg-surface-2 text-gray-800',
+    accent: 'border-transparent bg-accent-soft text-accent-strong',
+    success: 'border-transparent bg-success-soft text-success',
+    danger: 'border-danger-line bg-danger-soft text-danger',
+  }[tone]
   return (
-    <span className="inline-flex items-center rounded border border-gray-300 bg-gray-50 px-1.5 py-0.5 text-xs font-medium text-gray-800">
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${look}`}
+    >
+      {icon && <Icon icon={icon} className="size-3.5" />}
       {children}
     </span>
   )
@@ -261,69 +430,78 @@ export function ResponsiveTable<T>({
   const span = columns.length + (details ? 1 : 0)
   return (
     <>
-      <table className="hidden w-full border-collapse text-sm sm:table">
-        <caption className="sr-only">{caption}</caption>
-        <thead>
-          <tr className="border-b border-gray-200 text-left text-gray-600">
-            {columns.map((c) => (
-              <th key={c.header} scope="col" className={`px-2 py-2 font-medium ${c.numeric ? 'text-right' : ''}`}>
-                {c.header}
-              </th>
-            ))}
-            {details && (
-              <th scope="col" className="px-2 py-2">
-                <span className="sr-only">{detailsLabel}</span>
-              </th>
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const key = rowKey(row)
-            const isOpen = open.has(key)
-            const panelId = `row-details-${key}`
-            return (
-              <Fragment key={key}>
-                <tr className="border-b border-gray-100 align-top">
-                  {columns.map((c) => (
-                    <td key={c.header} className={`px-2 py-2 ${c.numeric ? 'text-right tabular-nums' : ''}`}>
-                      {c.cell(row)}
-                    </td>
-                  ))}
-                  {details && (
-                    <td className="px-2 py-1 text-right">
-                      <button
-                        type="button"
-                        aria-expanded={isOpen}
-                        aria-controls={panelId}
-                        onClick={() => toggle(key)}
-                        className="inline-flex min-h-6 items-center gap-1 rounded px-1 py-0.5 text-sm font-medium text-blue-700 hover:underline"
+      <div className="hidden overflow-hidden rounded-xl border border-line bg-surface shadow-soft sm:block">
+        <table className="w-full border-collapse text-sm">
+          <caption className="sr-only">{caption}</caption>
+          <thead>
+            <tr className="border-b border-line bg-surface-2 text-left text-xs tracking-wide text-ink-muted uppercase">
+              {columns.map((c) => (
+                <th
+                  key={c.header}
+                  scope="col"
+                  className={`px-3 py-2.5 font-semibold ${c.numeric ? 'text-right' : ''}`}
+                >
+                  {c.header}
+                </th>
+              ))}
+              {details && (
+                <th scope="col" className="px-3 py-2.5">
+                  <span className="sr-only">{detailsLabel}</span>
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const key = rowKey(row)
+              const isOpen = open.has(key)
+              const panelId = `row-details-${key}`
+              return (
+                <Fragment key={key}>
+                  <tr className="border-b border-line align-top transition-colors duration-150 last:border-b-0 hover:bg-surface-2">
+                    {columns.map((c) => (
+                      <td
+                        key={c.header}
+                        className={`px-3 py-2.5 ${c.numeric ? 'text-right tabular-nums' : ''}`}
                       >
-                        <Chevron open={isOpen} />
-                        {detailsLabel}
-                      </button>
-                    </td>
-                  )}
-                </tr>
-                {details && isOpen && (
-                  <tr id={panelId} className="border-b border-gray-100 bg-gray-50">
-                    <td colSpan={span} className="px-3 py-3">
-                      {details(row)}
-                    </td>
+                        {c.cell(row)}
+                      </td>
+                    ))}
+                    {details && (
+                      <td className="px-3 py-1.5 text-right">
+                        <button
+                          type="button"
+                          aria-expanded={isOpen}
+                          aria-controls={panelId}
+                          onClick={() => toggle(key)}
+                          className="inline-flex min-h-6 items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium text-accent hover:text-accent-strong hover:underline hover:underline-offset-4"
+                        >
+                          <Chevron open={isOpen} />
+                          {detailsLabel}
+                        </button>
+                      </td>
+                    )}
                   </tr>
-                )}
-              </Fragment>
-            )
-          })}
-        </tbody>
-      </table>
+                  {details && isOpen && (
+                    <tr id={panelId} className="border-b border-line bg-surface-2">
+                      <td colSpan={span} className="px-4 py-3">
+                        {details(row)}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
       <ul className="space-y-3 sm:hidden" aria-label={caption}>
         {rows.map((row) => (
-          <li key={rowKey(row)} className="rounded border border-gray-200 p-3">
+          <li key={rowKey(row)} className="rounded-xl border border-line bg-surface p-4 shadow-soft">
             <dl className="space-y-1">
               {columns.map((c) => (
                 <div key={c.header} className="flex gap-2 text-sm">
-                  <dt className="w-28 shrink-0 text-gray-600">{c.header}</dt>
+                  <dt className="w-28 shrink-0 text-ink-muted">{c.header}</dt>
                   <dd className="min-w-0 break-words">{c.cell(row)}</dd>
                 </div>
               ))}

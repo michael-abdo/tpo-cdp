@@ -10,7 +10,8 @@ import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigat
 import { TODAY } from '../shared/config'
 import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
-import { ErrorLine } from './components'
+import { ErrorLine, Icon, ICONS, type LucideIcon } from './components'
+import { effectiveTheme, setTheme, type Theme } from './theme'
 import AssistantPage from './pages/AssistantPage'
 import AuditPage from './pages/AuditPage'
 import EventsPage from './pages/EventsPage'
@@ -21,22 +22,48 @@ import OverviewPage from './pages/OverviewPage'
 import SegmentsPage from './pages/SegmentsPage'
 
 /** Nav labels say what each screen does, in plain words (principles 1, 4). */
-const NAV = [
-  { to: '/', label: 'Overview' },
-  { to: '/lookup', label: 'Find a reader' },
-  { to: '/segments', label: 'Build a list' },
-  { to: '/events', label: 'App events' },
-  { to: '/assistant', label: 'Ask a question' },
-  { to: '/growth', label: 'Growth' },
-  { to: '/audit', label: 'AI audit log' },
-] as const
+const NAV: ReadonlyArray<{ to: string; label: string; icon: LucideIcon }> = [
+  { to: '/', label: 'Overview', icon: ICONS.overview },
+  { to: '/lookup', label: 'Find a reader', icon: ICONS.lookup },
+  { to: '/segments', label: 'Build a list', icon: ICONS.segments },
+  { to: '/events', label: 'App events', icon: ICONS.events },
+  { to: '/assistant', label: 'Ask a question', icon: ICONS.assistant },
+  { to: '/growth', label: 'Growth', icon: ICONS.growth },
+  { to: '/audit', label: 'AI audit log', icon: ICONS.audit },
+]
 
 const APP_NAME = 'TPO Mini CDP'
 
 function navClass({ isActive }: { isActive: boolean }): string {
-  return `inline-flex min-h-6 items-center rounded px-2 py-1 text-sm ${
-    isActive ? 'font-semibold text-gray-900 underline underline-offset-4' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+  // The current page reads by weight + a soft fill, not colour alone (principle 7).
+  return `inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150 ${
+    isActive
+      ? 'bg-accent-soft font-semibold text-accent-strong'
+      : 'text-ink-muted hover:bg-surface-2 hover:text-ink'
   }`
+}
+
+const quietButton =
+  'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap text-ink-muted transition-colors duration-150 hover:bg-surface-2 hover:text-ink'
+
+/** Light/dark switch (09 D-60): says the theme it switches TO, remembered per browser. */
+function ThemeToggle() {
+  const [theme, setLocal] = useState<Theme>(() => effectiveTheme())
+  const next: Theme = theme === 'dark' ? 'light' : 'dark'
+  return (
+    <button
+      type="button"
+      className={quietButton}
+      onClick={() => {
+        setTheme(next)
+        setLocal(next)
+      }}
+    >
+      <Icon icon={next === 'dark' ? ICONS.themeDark : ICONS.themeLight} />
+      {next === 'dark' ? 'Dark' : 'Light'}
+      <span className="sr-only"> theme</span>
+    </button>
+  )
 }
 
 function TopBar() {
@@ -61,48 +88,62 @@ function TopBar() {
   // Only Overview needs `end`: on /audit/:traceId, "AI audit log" stays marked as the current page.
   const links = NAV.map((item) => (
     <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
+      <Icon icon={item.icon} />
       {item.label}
     </NavLink>
   ))
   const logoutButton = (
-    <button
-      type="button"
-      onClick={logout}
-      className="inline-flex min-h-6 items-center rounded px-2 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900"
-    >
+    <button type="button" onClick={logout} className={quietButton}>
+      <Icon icon={ICONS.logout} />
       Log out
     </button>
   )
 
   return (
-    <header className="border-b border-gray-200 bg-white">
-      <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2 sm:gap-4 sm:px-6">
-        <Link to="/" className="mr-2 inline-flex min-h-6 items-center rounded py-1 font-semibold text-gray-900">
-          {APP_NAME}
+    <header className="sticky top-0 z-20 border-b border-line bg-surface/85 backdrop-blur-md">
+      <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2.5 sm:px-6">
+        <Link to="/" className="inline-flex min-h-9 items-center gap-2 rounded-lg py-1 text-ink sm:mr-2">
+          <span
+            aria-hidden="true"
+            className="hidden size-7 items-center justify-center rounded-lg bg-accent sm:inline-flex font-display text-sm font-semibold text-on-accent"
+          >
+            T
+          </span>
+          <span className="font-display text-base font-medium whitespace-nowrap sm:text-lg">{APP_NAME}</span>
         </Link>
-        <nav aria-label="Main" className="hidden flex-wrap gap-1 sm:flex">
-          {links}
-        </nav>
-        <span className="ml-auto rounded bg-gray-100 px-2 py-1 text-xs whitespace-nowrap text-gray-700">Today: {humanDate(TODAY)}</span>
-        <span className="hidden sm:inline-flex">{logoutButton}</span>
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2.5 py-1 text-xs whitespace-nowrap text-gray-700">
+          <Icon icon={ICONS.today} className="hidden size-3.5 sm:block" />
+          Today: {humanDate(TODAY)}
+        </span>
+        <span className="hidden lg:inline-flex">
+          <ThemeToggle />
+        </span>
+        <span className="hidden lg:inline-flex">{logoutButton}</span>
         <button
           ref={menuButton}
           type="button"
           aria-expanded={menuOpen}
           aria-controls="phone-menu"
           onClick={() => setMenuFor(menuOpen ? null : pathname)}
-          className="inline-flex min-h-9 items-center gap-1 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 sm:hidden"
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-2.5 py-1 text-sm text-ink sm:hidden"
         >
+          <Icon icon={ICONS.menu} />
           Menu
-          <svg aria-hidden="true" viewBox="0 0 20 20" className={`size-4 transition-transform motion-reduce:transition-none ${menuOpen ? 'rotate-180' : ''}`}>
-            <path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
         </button>
+      </div>
+      <div className="mx-auto hidden max-w-6xl items-center gap-2 px-4 pb-2 sm:flex sm:px-6">
+        <nav aria-label="Main" className="flex flex-wrap gap-1">
+          {links}
+        </nav>
+        <span className="ml-auto inline-flex gap-1 lg:hidden">
+          <ThemeToggle />
+          {logoutButton}
+        </span>
       </div>
       {menuOpen && (
         <div
           id="phone-menu"
-          className="border-t border-gray-200 px-4 py-2 sm:hidden"
+          className="border-t border-line px-4 py-3 sm:hidden"
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               setMenuFor(null)
@@ -113,7 +154,10 @@ function TopBar() {
           <nav aria-label="Main" className="flex flex-col gap-1">
             {links}
           </nav>
-          <div className="mt-1 border-t border-gray-100 pt-1">{logoutButton}</div>
+          <div className="mt-2 flex gap-1 border-t border-line pt-2">
+            <ThemeToggle />
+            {logoutButton}
+          </div>
         </div>
       )}
       {logoutError !== null && (
@@ -132,7 +176,9 @@ function Shell() {
   const focusedFor = useRef(pathname)
 
   useEffect(() => {
-    const page = NAV.find((item) => item.to === pathname || (item.to !== '/' && pathname.startsWith(`${item.to}/`)))
+    const page = NAV.find(
+      (item) => item.to === pathname || (item.to !== '/' && pathname.startsWith(`${item.to}/`)),
+    )
     document.title = page ? `${page.label} · ${APP_NAME}` : APP_NAME
     if (focusedFor.current === pathname) return
     focusedFor.current = pathname
@@ -147,16 +193,24 @@ function Shell() {
   }, [pathname])
 
   return (
-    <div className="min-h-dvh bg-white text-gray-900">
+    <div className="min-h-dvh bg-page text-ink">
       <a
         href="#main"
-        className="sr-only rounded bg-gray-900 px-3 py-2 text-sm text-white focus:not-sr-only focus:absolute focus:px-3 focus:py-2 focus:top-2 focus:left-2 focus:z-10"
+        className="sr-only z-30 rounded-lg bg-accent px-3 py-2 text-sm text-on-accent focus:not-sr-only focus:absolute focus:px-3 focus:py-2 focus:top-2 focus:left-2 focus:z-30"
       >
         Skip to content
       </a>
       <TopBar />
-      <main id="main" ref={main} tabIndex={-1} className="mx-auto max-w-6xl space-y-6 px-4 py-6 focus:outline-none sm:px-6">
-        <Outlet />
+      <main
+        id="main"
+        ref={main}
+        tabIndex={-1}
+        className="mx-auto max-w-6xl px-4 py-6 focus:outline-none sm:px-6 sm:py-8"
+      >
+        {/* key = route, so the one page-enter stagger replays on each navigation (index.css). */}
+        <div key={pathname} className="page-enter space-y-6">
+          <Outlet />
+        </div>
       </main>
     </div>
   )
