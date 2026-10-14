@@ -11,13 +11,18 @@
 //     re-validates it through Gate 2 against today's enabled assistant_tools rows (loadTools,
 //     never the board's own insight_panel), and stores it. The body never carries a tool, params
 //     or SQL.
-//   - pinnable (09 D-64a): only fixed-SQL lookups, i.e. the `segment` and `aggregate` builtins and
-//     enabled `query`-type rows. `query_sql` (SQL the model wrote) and `insight_panel` (board
-//     only) are 400 `not_pinnable` with D-64a's sentence; any other builtin (describe_schema) with
-//     a plain sentence of its own; the answer card learns this from pinPeriod (`pin_refusal`) and
-//     offers no Pin. This removes the free-form-SQL leak class instead of chasing it with an
-//     output denylist. A board run allows exactly what a pin allows, plus insight_panel on a
-//     built-in tile, so a stored row that drifted to another tool never runs (runTile).
+//   - pinnable (09 D-64a, amended D-64b): the `segment` and `aggregate` builtins and enabled
+//     `query`-type rows pin outright. A free-form `query_sql` answer pins only when its SQL
+//     matches the D-64b positive grammar (a totals query or a plain person list,
+//     worker/insights/pin-grammar.ts); anything else is refused outright with the grammar's own
+//     reasons — no approval queue, no second password, no "Request approval" button (09 D-77
+//     reverses D-64b (C): one real request in its lifetime, a required secret whose absence took
+//     every page down). `insight_panel` (board only) and any other builtin (describe_schema) are
+//     400 `not_pinnable` with a plain sentence of their own; the answer card learns this from
+//     pinPeriod (`pin_refusal`) and offers no Pin. This removes the free-form-SQL leak class
+//     instead of chasing it with an output denylist. A board run allows exactly what a pin allows,
+//     plus insight_panel on a built-in tile, so a stored row that drifted to another tool never
+//     runs (runTile).
 //   - windows: an aggregate input's window_from/window_to is stored as a window
 //     (shared/insight-window.ts): rolling when it equals a preset on TODAY, else fixed. At run time
 //     the window is resolved against TODAY (02 §Time) and written back as window_from/window_to,
@@ -57,9 +62,8 @@ import { pickChart, type ChartKind, CHART_OVERRIDES, type ChartOverride } from '
 import {
   NOT_PINNABLE_MESSAGE,
   NOT_PINNABLE_OTHER_MESSAGE,
+  NOT_PINNABLE_SHAPE_MESSAGE,
   PIN_FAILED_MESSAGE,
-  REQUEST_APPROVAL_MESSAGE,
-  REQUEST_APPROVAL_OFFER_MESSAGE,
   TILE_RUN_FAILED_MESSAGE,
 } from '../../shared/insight-messages'
 import { TODAY } from '../../shared/config'
@@ -73,7 +77,6 @@ import type { BuiltinHandler, ResultRow, ToolOutput } from '../assistant/tools/b
 import { executeToolCall } from '../assistant/tools/tool-executor'
 import { type LoadedTool, type LoadedTools, loadTools } from '../assistant/tools/tool-loader'
 import { loadEmailsByPkey } from '../assistant/rehydrate'
-import { constantTimeStringEq } from '../auth/constant-time'
 import { ApiError } from '../auth/middleware'
 import { dataQuality } from './data-quality'
 import { funnel } from './funnel'
@@ -98,7 +101,7 @@ export const SORT_ORDER_MAX = 1_000_000_000
 
 // The level-1 sentences of the board (09 D-64a) live in shared/insight-messages.ts, so the UI tests
 // read the same home; re-exported here for the server's callers and tests.
-export { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_OTHER_MESSAGE, PIN_FAILED_MESSAGE, REQUEST_APPROVAL_MESSAGE, REQUEST_APPROVAL_OFFER_MESSAGE, TILE_RUN_FAILED_MESSAGE }
+export { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_OTHER_MESSAGE, NOT_PINNABLE_SHAPE_MESSAGE, PIN_FAILED_MESSAGE, TILE_RUN_FAILED_MESSAGE }
 /** A person-list tile's level-1 row cap (09 D-64b); the full list stays available via Segments/export. */
 export const PERSON_LIST_CAP = 10
 /** The builtin handlers whose lookups can be pinned; every `query` row can be too (09 D-64a). */
@@ -273,23 +276,23 @@ async function boardTools(db: D1Database): Promise<BoardTools> {
 }
 
 /**
- * Why an answer's tool can never be pinned (09 D-64a, amended by D-64b), or null when it can be. A
- * tool whose row is not loaded (turned off or gone) is null here: re-validation reports it.
+ * Why an answer's tool can never be pinned (09 D-64a, amended by D-64b; D-77 drops the approval
+ * queue D-64b (C) added), or null when it can be. A tool whose row is not loaded (turned off or
+ * gone) is null here: re-validation reports it.
  *
  * The literal `query_sql` tool is handled on its own (09 D-64b): `sql`, when given, is classified
  * by the positive grammar, so a totals or a person-list query refuses with null (pinnable) and
- * anything else with REQUEST_APPROVAL_OFFER_MESSAGE — the preview form, since this is pinPeriod's
- * read-only check (POST /api/assistant's `pin_refusal`): nothing has been queued yet, so the
- * card's own "Request approval" action is what actually calls pin() and queues it. Callers that
- * already know they are past that step (pin() after wrapping the SQL as its own tool row, or a
- * stored board row, which is never literally `query_sql`) call with no `sql` and get the old hard
- * refusal, same as a builtin row that merely aliases query_sql's handler under another name
- * (handled below, unaffected).
+ * anything else with NOT_PINNABLE_SHAPE_MESSAGE — the one refusal, at preview (pinPeriod's
+ * `pin_refusal`) and at the actual pin, since there is nothing to queue either time (09 D-77).
+ * Callers that already know they are past that step (pin() after wrapping the SQL as its own tool
+ * row, or a stored board row, which is never literally `query_sql`) call with no `sql` and get the
+ * old hard refusal, same as a builtin row that merely aliases query_sql's handler under another
+ * name (handled below, unaffected).
  */
 function pinRefusal(tools: BoardTools, tool: string, sql: string | null = null): string | null {
   if (tool === 'query_sql') {
     if (sql === null) return NOT_PINNABLE_MESSAGE
-    return classifyPinnableSql(sql).ok ? null : REQUEST_APPROVAL_OFFER_MESSAGE
+    return classifyPinnableSql(sql).ok ? null : NOT_PINNABLE_SHAPE_MESSAGE
   }
   if (NEVER_PINNED.has(tool)) return NOT_PINNABLE_MESSAGE
   const loaded = tools.tools.byName.get(tool)
@@ -628,7 +631,7 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     const params: unknown = JSON.parse(row.params)
     if (!isObject(params)) throw new Error(`insights-board: params of tile ${row.id} is not a JSON object`)
     tile.params = params
-    // D-64b pin-shape bookkeeping (board.ts `pin`, `approveInsightTool`), never a tool input field
+    // D-64b pin-shape bookkeeping (board.ts `pin`), never a tool input field
     // (callInput strips it out below): which runtime treatment, if any, this tile's result needs.
     // Only `pinShape` itself (which branch to take) comes from the stored params; the count and
     // dimension columns a "totals" tile masks by come from the fresh classification below, never
@@ -854,14 +857,9 @@ async function tracePrompt(db: D1Database, traceId: string): Promise<string | nu
     .first<string | null>('q')
 }
 
-// ── D-64b: query_sql pins and human approval ────────────────────────────────────────────
+// ── D-64b: query_sql pins (09 D-77: no approval queue) ──────────────────────────────────
 
 /** A fresh assistant_tools name: letters/digits only (TOOL_NAME, tool-loader.ts), so a uuid's dashes are stripped. */
-/** An approved question type's name (09 D-64b): the model calls the tool by it. */
-const APPROVED_TOOL_NAME = /^[a-z][a-z0-9_]{2,47}$/
-/** The one sentence the model reads about an approved question type. */
-const APPROVED_DESCRIPTION_MAX = 300
-
 const freshToolName = (prefix: string) => `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`
 
 /**
@@ -904,160 +902,6 @@ async function wrapQuerySql(db: D1Database, traceId: string, sql: string): Promi
     )
     .run()
   return { id, name, created: true }
-}
-
-/**
- * "Request approval" (09 D-64b (C)): stores `sql` as a new, disabled `query`-type assistant_tools
- * row flagged `requested_from_trace`, so it appears on the approval list (listApprovals) instead
- * of being discarded. Idempotent per trace: pinning the same answer twice never queues it twice.
- */
-async function requestApproval(db: D1Database, traceId: string, sql: string): Promise<void> {
-  const existing = await db.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(traceId).first<{ id: string }>()
-  if (existing !== null) return
-  const name = freshToolName('pending')
-  await db
-    .prepare(
-      `INSERT INTO assistant_tools (id, name, description, input_schema, handler_type, execution_config, enabled, sort_order, requested_from_trace, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'query', ?, 0, (SELECT coalesce(max(sort_order), 0) + 10 FROM assistant_tools), ?,
-               strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-    )
-    .bind(
-      crypto.randomUUID(),
-      name,
-      'A free-form query a teammate asked to pin; its shape needs Growth team approval (09 D-64b) before it can run.',
-      JSON.stringify({ type: 'object', properties: {} }),
-      JSON.stringify({ sql, param_mapping: {} }),
-      traceId,
-    )
-    .run()
-}
-
-/** One row of the approval list (GET /api/insights/approvals, 09 D-64b). */
-export interface PendingApproval {
-  id: string
-  name: string
-  sql: string
-  requested_from_trace: string
-  created_at: string
-}
-
-/** Every disabled query row still waiting on a human (09 D-64b), oldest first. */
-export async function listApprovals(db: D1Database): Promise<PendingApproval[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT id, name, execution_config, requested_from_trace, created_at FROM assistant_tools
-       WHERE handler_type = 'query' AND enabled = 0 AND requested_from_trace IS NOT NULL ORDER BY created_at, rowid`,
-    )
-    .all<{ id: string; name: string; execution_config: string; requested_from_trace: string; created_at: string }>()
-  return results.map((r) => ({
-    id: r.id,
-    name: r.name,
-    sql: (JSON.parse(r.execution_config) as { sql: string }).sql,
-    requested_from_trace: r.requested_from_trace,
-    created_at: r.created_at,
-  }))
-}
-
-/**
- * POST /api/insights/approvals/:id/approve {password, name, note, tool_name, description} (09 D-64b):
- * the approver also names the question type and says in one sentence what it answers, because an
- * approved row becomes an ordinary model-visible tool and the model reads exactly that name and
- * description (the queued row's `pending_<uuid>` and "needs approval" text are placeholders). Enables the pending
- * row (checked against the one shared TOOL_APPROVAL password — a wrong one is 403, logged with no
- * password value) and records who/why in its `metadata` JSON column (no new table or column for
- * that), then pins it like any other saved question type: run once, store only if it succeeds.
- * Unlike a grammar-approved query_sql pin, an approved row carries no pin_shape (it is exactly
- * what a human vouched for, not a shape this file verified itself), so it keeps only the standing
- * protections every query row has: Gate 2/3 and the executor's own PII and key scans.
- */
-export async function approveInsightTool(db: D1Database, id: string, rawBody: unknown, correctPassword: string): Promise<Tile> {
-  const body = bodyObject(rawBody, ['password', 'name', 'note', 'tool_name', 'description'])
-  for (const field of ['password', 'name', 'note', 'tool_name', 'description'] as const) {
-    if (typeof body[field] !== 'string' || (body[field] as string).trim() === '') throw invalidBody([`${field} is required`])
-  }
-  const { password, name, note } = body as { password: string; name: string; note: string }
-  const toolName = (body.tool_name as string).trim()
-  const description = (body.description as string).trim()
-  if (!APPROVED_TOOL_NAME.test(toolName) || /^(pending|pinned)_/.test(toolName)) {
-    throw invalidBody(['tool_name must be 3 to 48 lower-case letters, digits or underscores, start with a letter, and not start with pending_ or pinned_'])
-  }
-  if (description.length > APPROVED_DESCRIPTION_MAX) throw invalidBody([`description must be at most ${APPROVED_DESCRIPTION_MAX} characters`])
-  // Constant-time, like SITE_PASSWORD at login (worker/auth/login.ts): a `!==` compare here would
-  // let a timing attack find TOOL_APPROVAL one byte at a time (09 D-64b finding).
-  if (!constantTimeStringEq(password, correctPassword)) {
-    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'wrong_approval_password', tool: id }))
-    throw new ApiError(403, 'wrong_password', 'That password is not correct.')
-  }
-  const row = await db
-    .prepare('SELECT id, name, description, requested_from_trace, enabled FROM assistant_tools WHERE id = ?')
-    .bind(id)
-    .first<{ id: string; name: string; description: string; requested_from_trace: string | null; enabled: number }>()
-  if (row === null || row.requested_from_trace === null || row.enabled === 1) {
-    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'approval_not_found', id }))
-    throw new ApiError(404, 'not_found', 'There is no pending approval with this id.')
-  }
-
-  const taken = await db.prepare('SELECT 1 AS hit FROM assistant_tools WHERE name = ? AND id <> ?').bind(toolName, id).first<number>('hit')
-  if (taken !== null) throw invalidBody(['tool_name is already used by another question type'])
-
-  const prompt = await tracePrompt(db, row.requested_from_trace)
-  const title = prompt !== null ? defaultTitle(prompt) : toolName
-  await assertStorable(db, { title, question: prompt, tool_name: toolName, description })
-  const max = await db.prepare('SELECT coalesce(max(sort_order), 0) AS m FROM insights').first<number>('m')
-  const newRow: InsightRow = {
-    id: crypto.randomUUID(),
-    title,
-    prompt,
-    tool: toolName,
-    tool_version: INSIGHT_PARAMS_VERSION,
-    params: '{}',
-    chart: null,
-    sort_order: Math.min((max ?? 0) + 10, SORT_ORDER_MAX),
-    built_in: 0,
-    created_at: new Date().toISOString(),
-  }
-
-  // Run the tile FIRST, while the row stays disabled on every other reader (listApprovals,
-  // loadTools' model-facing set): runTile only finds a tool through the enabled rows loadTools
-  // selects, so this flips `enabled` just long enough to try it, and reverts on any failure
-  // before this function returns — never leaving an approved-but-untested row enabled with no
-  // tile to show for it (09 D-64b finding: a 400 not_aggregate first run still left enabled=1).
-  await db
-    .prepare("UPDATE assistant_tools SET enabled = 1, name = ?, description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
-    .bind(toolName, description, id)
-    .run()
-  let stored = false
-  try {
-    const ctx = await openContext(db)
-    const { tile, code, details } = await runTile(ctx, newRow)
-    if (code === 'not_aggregate') throw new ApiError(400, 'not_aggregate', tile.error ?? 'The board shows counts only.')
-    if (code === 'blocked_pii') throw new ApiError(400, 'blocked_pii', 'This answer cannot be pinned: its result failed the personal-data check.')
-    if (code === 'tile_failed' || code === 'query_failed') throw new ApiError(500, 'internal_error', PIN_FAILED_MESSAGE)
-    if (code !== null) {
-      console.warn(JSON.stringify({ at: 'insights-board', outcome: 'approved_first_run_refused', code }))
-      throw new ApiError(400, 'invalid_pin', 'This query was approved but does not run today.', details.length > 0 ? [...details] : undefined)
-    }
-    // Only now, with a tile to show for it, does the row become a standing enabled tool and the
-    // approval get recorded: metadata and the stored insight go together, in the same success path.
-    const metadata = JSON.stringify({ approval: { by: name, note, approved_at: new Date().toISOString() } })
-    await db.prepare("UPDATE assistant_tools SET metadata = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").bind(metadata, id).run()
-    await db
-      .prepare(
-        `INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(newRow.id, newRow.title, newRow.prompt, newRow.tool, newRow.tool_version, newRow.params, newRow.chart, newRow.sort_order, newRow.built_in, newRow.created_at)
-      .run()
-    stored = true
-    // Audited (09 D-64b "name + note required, audited"): who approved which row and why, never the password.
-    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'tool_approved', tool: toolName, queued_as: row.name, by: name, note }))
-    return tile
-  } finally {
-    if (!stored) {
-      // Back to the queued placeholder, so the row is listed as pending exactly as before.
-      await db.prepare('UPDATE assistant_tools SET enabled = 0, name = ?, description = ? WHERE id = ?').bind(row.name, row.description, id).run()
-    }
-  }
 }
 
 /**
@@ -1105,12 +949,13 @@ async function pin(db: D1Database, rawBody: unknown): Promise<Tile> {
     // SQL is wrapped as its own new `query`-type assistant_tools row (wrapQuerySql), the same
     // shape the Growth team's own rows take (09 D-41), so every later run goes through the
     // ordinary query-row path with no query_sql special case anywhere else in this file.
+    // Anything the grammar does not recognise is refused outright, nothing stored (09 D-77: no
+    // approval queue; D-64b's human-approval path (C) is gone).
     const sql = call.sql
     const classified = sql === null ? null : classifyPinnableSql(sql)
     if (classified === null || !classified.ok) {
-      await requestApproval(db, traceId, sql ?? '')
-      console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'not_pinnable', tool_name: toolName, request_approval: true }))
-      throw new ApiError(400, 'not_pinnable', REQUEST_APPROVAL_MESSAGE, classified === null ? undefined : classified.problems)
+      console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'not_pinnable', tool_name: toolName }))
+      throw new ApiError(400, 'not_pinnable', classified === null ? NOT_PINNABLE_MESSAGE : NOT_PINNABLE_SHAPE_MESSAGE, classified === null ? undefined : classified.problems)
     }
     pinShape = classified
     const wrapped = await wrapQuerySql(db, traceId, sql!)
@@ -1173,7 +1018,7 @@ async function pin(db: D1Database, rawBody: unknown): Promise<Tile> {
   }
 }
 
-/** The outcome of a tile's first run (`pin`, `approveInsightTool`): stored only on success, fail safe otherwise (04). */
+/** The outcome of a tile's first run (`pin`): stored only on success, fail safe otherwise (04). */
 async function finishPin(db: D1Database, row: InsightRow, tile: Tile, code: RunOutcome['code'], details: RunOutcome['details']): Promise<Tile> {
   if (code === 'not_aggregate') throw new ApiError(400, 'not_aggregate', tile.error ?? 'The board shows counts only.')
   if (code === 'blocked_pii') throw new ApiError(400, 'blocked_pii', 'This answer cannot be pinned: its result failed the personal-data check.')
@@ -1230,8 +1075,9 @@ export async function pinPeriod(
 ): Promise<{ window: ResolvedWindow | null; own_dates: { from: string; to: string } | null; refusal: string | null }> {
   const call = await pinnableCall(db, traceId)
   if (call === null) return { window: null, own_dates: null, refusal: null }
-  // The same refusal POST /api/insights gives (09 D-64a, D-64b): the card then offers no Pin (or,
-  // for a free-form query that fails the grammar, a Request-approval refusal) and says why.
+  // The same refusal POST /api/insights gives (09 D-64a, D-64b): the card then offers no Pin and
+  // says why, with no distinction between this preview and the actual pin (09 D-77: nothing is
+  // ever queued, so there is nothing a preview would be previewing).
   const refusal = pinRefusal(await assistantTools(db), call.tool_name, call.sql)
   if (refusal !== null) return { window: null, own_dates: null, refusal }
   if (Object.hasOwn(call.input, 'window')) return { window: null, own_dates: null, refusal: null }
