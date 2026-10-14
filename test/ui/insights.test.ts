@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import webCsv from '../../data/web_events.csv?raw'
 import { BAR_TOP_CATEGORIES, type ChartKind, pickChart } from '../../shared/pick-chart'
 import { AnswerCard } from '../../src/insights/ask'
-import { pinNext } from '../../src/insights/pin-words'
+import { pinBody, pinNext } from '../../src/insights/pin-words'
 import { BoardGrid, TileActions } from '../../src/insights/board'
 import { cellText } from '../../src/insights/cells'
 import { ownDatesText } from '../../src/insights/windows'
@@ -444,5 +444,18 @@ describe('an empty first page reads in words (06 §UI principles 4)', () => {
   it('a null first_page is "No tracked visit"; "/" is the home page', () => {
     expect(cellText('first_page', null)).toBe('No tracked visit')
     expect(cellText('first_page', '/')).toBe('Home page (/)')
+  })
+})
+
+describe('the pin dialog sends the trace id, and the title only when the person changed it (04 POST /api/insights)', () => {
+  const ID = 'a3c1d2e4-5b6f-4a7b-8c9d-0e1f2a3b4c5d'
+
+  it('an unchanged title is left to the server: the body holds only audit_id', () => {
+    expect(pinBody(ID, BRIEF_Q1, BRIEF_Q1)).toEqual({ audit_id: ID })
+    expect('title' in pinBody(ID, BRIEF_Q1, BRIEF_Q1)).toBe(false)
+  })
+
+  it('an edited title is sent with the trace id', () => {
+    expect(pinBody(ID, 'Cold Instagram signups', BRIEF_Q1)).toEqual({ audit_id: ID, title: 'Cold Instagram signups' })
   })
 })

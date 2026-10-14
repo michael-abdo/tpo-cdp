@@ -21,7 +21,7 @@ import { humanRange } from '../format'
 import type { InsightWindow } from '../../shared/insight-window'
 import type { InsightPatch, InsightTile } from '../types'
 import { matchingPreset, ownDatesText, PRESET_LABEL } from './windows'
-import { pinNext, SEGMENT_PIN_NOTE } from './pin-words'
+import { pinBody, pinNext, SEGMENT_PIN_NOTE } from './pin-words'
 
 type Choice = 'rolling' | 'fixed'
 
@@ -69,7 +69,7 @@ export function PinDialog({
     setError(null)
     let tile: InsightTile
     try {
-      tile = await postJson<InsightTile>('/api/insights', title === question ? { audit_id: auditId } : { audit_id: auditId, title })
+      tile = await postJson<InsightTile>('/api/insights', pinBody(auditId, title, question))
     } catch (err) {
       console.error('insights: pin failed', err)
       setError({ message: errorMessage(err), code: err instanceof ApiError ? err.code : null })

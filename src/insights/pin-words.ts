@@ -24,3 +24,12 @@ export function pinNext(code: string | null): string | undefined {
       return undefined
   }
 }
+
+/**
+ * The body of POST /api/insights (04): the trace id and, only when the person changed the title, the
+ * title. An unchanged title is left to the server, which names the tile after the Gate 1-redacted
+ * question, so a question that held an email or a known local part still pins.
+ */
+export function pinBody(auditId: string, title: string, question: string): { audit_id: string; title?: string } {
+  return title === question ? { audit_id: auditId } : { audit_id: auditId, title }
+}
