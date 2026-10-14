@@ -30,6 +30,7 @@ import {
 } from '../components'
 import { humanDate } from '../format'
 import { COLUMN_LABEL, sourceLabel, statusLabel } from '../labels'
+import { DAYS_ERROR_ID, DAYS_HINT_ID, daysFieldState } from '../segments-days-field'
 import type { SegmentFilters, SegmentPreview, SegmentRow } from '../types'
 
 /** Rows a preview asks for; the full segment is what Export CSV is for. */
@@ -53,8 +54,10 @@ const DEFAULT_FORM: Form = { status: 'active', sources: [], days: '', includeNev
 /** The brief's R3 example (02 §Counts): Instagram, active, no open in 30 days including never-opened. */
 const BRIEF_PRESET: Form = { status: 'active', sources: ['instagram'], days: '30', includeNeverOpened: true, hasApp: 'any' }
 
-/** The definitions behind the recency filter; only their raw names and formulas show, in Technical details. */
-const FILTER_DEFINITIONS = [DEFINITIONS.days_since_open, DEFINITIONS.no_open_in_days]
+/** The definitions behind the recency filter; only their raw names and formulas show, in
+ * Technical details. `cold` is listed too, so a reviewer can reconcile it against this filter's
+ * count (09 D-30). */
+const FILTER_DEFINITIONS = [DEFINITIONS.days_since_open, DEFINITIONS.no_open_in_days, DEFINITIONS.cold]
 
 /** The CSV's columns as the export writes them (04 §Segments). */
 const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
@@ -183,6 +186,7 @@ export default function SegmentsPage() {
   }
 
   const daysBlank = form.days.trim() === ''
+  const daysField = daysFieldState(result)
   const ok = result?.status === 'ok' ? result : null
   const hidden = ok !== null && !ok.filters.status.includes('unsubscribed') ? ok.data.hidden_unsubscribed : 0
   const countSentence = ok === null ? '' : ok.data.count === 0 ? 'No readers match' : `${plural(ok.data.count, 'reader matches', 'readers match')}`
@@ -282,13 +286,14 @@ export default function SegmentsPage() {
               inputMode="numeric"
               value={form.days}
               onChange={(e) => setForm({ ...form, days: e.target.value })}
-              aria-describedby="days-hint"
+              aria-invalid={daysField.ariaInvalid}
+              aria-describedby={daysField.ariaDescribedBy}
               className={`${inputClass.replace("w-full", "")} w-24`}
             />
             <span className="text-sm text-gray-700">days</span>
           </div>
-          <p id="days-hint" className={hintClass}>
-            Leave blank for anyone. Otherwise enter a whole number, 1 or more.
+          <p id={DAYS_HINT_ID} className={hintClass}>
+            {DEFINITIONS.days_since_open.doc} Leave blank for anyone. Otherwise enter a whole number, 1 or more.
           </p>
           <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm has-disabled:cursor-not-allowed has-disabled:text-gray-500">
             <input
@@ -296,14 +301,18 @@ export default function SegmentsPage() {
               className="size-4"
               checked={form.includeNeverOpened}
               disabled={daysBlank}
-              aria-describedby={daysBlank ? 'never-hint' : undefined}
+              aria-describedby={daysBlank ? 'never-hint' : 'never-opened-meaning'}
               onChange={(e) => setForm({ ...form, includeNeverOpened: e.target.checked })}
             />
             Also include people who never opened
           </label>
-          {daysBlank && (
+          {daysBlank ? (
             <p id="never-hint" className={hintClass}>
               Enter a number of days first.
+            </p>
+          ) : (
+            <p id="never-opened-meaning" className={hintClass}>
+              {DEFINITIONS.no_open_in_days.doc} "Cold" differs: {DEFINITIONS.cold.doc}
             </p>
           )}
         </div>
@@ -316,12 +325,7 @@ export default function SegmentsPage() {
       </form>
 
       {result?.status === 'loading' && <Loading label="Counting matching readers…" />}
-      {result?.status === 'error' && (
-        <ErrorLine
-          message={result.message}
-          next={result.invalidFilters ? "Check the “Haven't opened an email in at least” box." : undefined}
-        />
-      )}
+      {result?.status === 'error' && <ErrorLine id={DAYS_ERROR_ID} message={result.message} next={daysField.next} />}
       {ok !== null && (
         <section aria-labelledby="result-heading" className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">

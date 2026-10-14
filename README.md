@@ -411,7 +411,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the screen text of the Overview, of every file the vocabulary test scans and of every screen file the one-place test scans from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 40 files, 755 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the screen text of the Overview, of every file the vocabulary test scans and of every screen file the one-place test scans from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 41 files, 761 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
