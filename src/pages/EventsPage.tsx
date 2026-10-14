@@ -34,15 +34,8 @@ import {
 } from '../components'
 import { humanDateTime, utc } from '../format'
 import { eventsAnnouncement, type FetchKind, POLL_MS } from '../events-poll'
+import { eventLabel } from '../labels'
 import type { RecentEvent, RecentEvents } from '../types'
-
-/** Plain words for the app's event names (worker/webhooks/schema.ts APP_EVENTS); others show as sent. */
-const EVENT_LABEL: Record<string, string> = {
-  app_open: 'Opened the app',
-  read_story: 'Read a story',
-  link_click: 'Clicked a link',
-  login: 'Logged in',
-}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const STORED_UTC = /^\d{4}-(\d{2})-(\d{2})T(\d{2}:\d{2})/
@@ -145,7 +138,7 @@ function columns(now: number): Column<RecentEvent>[] {
         )
       },
     },
-    { header: 'What happened', cell: (e) => EVENT_LABEL[e.event] ?? e.event },
+    { header: 'What happened', cell: (e) => eventLabel(e.event) },
     { header: 'Reader', cell: (e) => <Reader e={e} /> },
   ]
 }

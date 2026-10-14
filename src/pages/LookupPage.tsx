@@ -43,6 +43,7 @@ import {
   TechnicalDetails,
 } from '../components'
 import { capitalized, humanDate, humanDateTime, utc } from '../format'
+import { eventLabel } from '../labels'
 import type { Lookup, LookupSearch } from '../types'
 
 /** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
@@ -66,11 +67,6 @@ function plural(n: number, one: string, many: string): string {
 /** The newest stored timestamp of a list (ISO strings sort by time), or null for an empty list. */
 function latest(timestamps: string[]): string | null {
   return timestamps.reduce<string | null>((max, ts) => (max === null || ts > max ? ts : max), null)
-}
-
-/** `app_open` → `App open`: an event name in words; the raw name stays in Technical details. */
-function eventLabel(event: string): string {
-  return capitalized(event.split('_').join(' '))
 }
 
 /** The bar is decoration; the words carry the number (principle 7: never colour alone). */

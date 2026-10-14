@@ -115,6 +115,11 @@ export const GLOSSARY = {
     term: 'Events received',
     text: 'App events received through the webhook since launch. The same event sent twice counts once.',
   },
+  // /segments (19-segments-spec §2, 09 D-69).
+  previous_searches: {
+    term: 'Previous searches',
+    text: 'The last 5 segments you previewed in this browser, newest first; only the filters are kept, never the subscribers. To share one with the Growth team, ask the AI assistant for it and pin it to Insights, or export the CSV.',
+  },
 } as const satisfies Record<string, GlossaryEntry>
 
 export type GlossaryKey = keyof typeof GLOSSARY
