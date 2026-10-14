@@ -33,6 +33,8 @@ export class KnownEmails {
   private readonly shapes: ReadonlyMap<number, readonly number[]>
   /** The local part of every known email with at least LOCAL_PART_MIN_CHARS characters (09 D-70 #1). */
   private readonly localParts: ReadonlySet<string>
+  /** The longest known local part: bounds the search in redactKnownLocalParts. */
+  readonly maxLocalPartLength: number
 
   constructor(emails: Iterable<string>) {
     const set = new Set<string>()
@@ -54,6 +56,7 @@ export class KnownEmails {
     this.size = set.size
     this.shapes = new Map([...shapes].map(([local, lengths]) => [local, [...lengths]]))
     this.localParts = localParts
+    this.maxLocalPartLength = Math.max(0, ...[...localParts].map((l) => l.length))
   }
 
   /** True when `token`, folded as a lookup fragment is, is the local part of a known email (09 D-70 #1). */
@@ -104,7 +107,9 @@ function serialize(payload: unknown): string {
 
 /** The first check `payload` fails, or null when it is clean. Pure. */
 export function findPII(payload: unknown, known: KnownEmails): PiiCheck | null {
-  const text = serialize(payload)
+  const raw = serialize(payload)
+  // A percent-encoded "@" (%40, as URLs and unsubscribe links carry it) counts as "@" (09 D-70 #1).
+  const text = decodeAt(raw)
   if (known.occursIn(text)) return 'known_email'
   if (EMAIL_REGEX.test(text)) return 'email_pattern'
   if (RAW_ID_REGEX.test(text)) return 'raw_id'
@@ -187,13 +192,40 @@ export function redactEmails(text: string): { text: string; count: number } {
 export function redactKnownLocalParts(text: string, known: KnownEmails): { text: string; count: number } {
   let count = 0
   const redacted = text.replace(new RegExp(LOCAL_PART_TOKEN.source, 'gi'), (token) => {
-    // The token as typed, or failing that, the token less its edge punctuation ("joy.hall830-").
-    const whole = known.isLocalPart(token)
-    const start = whole ? 0 : token.length - token.replace(/^[._%+-]+/, '').length
-    const core = whole ? token : token.slice(start).replace(/[._%+-]+$/, '')
-    if (core.length < LOCAL_PART_MIN_CHARS || !known.isLocalPart(core)) return token
-    count += 1
-    return token.slice(0, start) + '[email]' + token.slice(start + core.length)
+    // A known local part counts wherever it starts and ends on a non-alphanumeric boundary inside the
+    // token, so "joy.hall830+x", "joy.hall830.protonmail" and "-joy.hall830" are caught, while
+    // "xjoy.hall830" and "joy.hall8301" (a different word) are not. Longest match first.
+    let out = ''
+    let i = 0
+    while (i < token.length) {
+      let end = -1
+      if (ALNUM.test(token[i]) && (i === 0 || !ALNUM.test(token[i - 1]))) {
+        const last = Math.min(token.length, i + known.maxLocalPartLength)
+        for (let e = last; e >= i + LOCAL_PART_MIN_CHARS; e--) {
+          if (e < token.length && ALNUM.test(token[e])) continue
+          if (known.isLocalPart(token.slice(i, e))) {
+            end = e
+            break
+          }
+        }
+      }
+      if (end > 0) {
+        out += '[email]'
+        count += 1
+        i = end
+      } else {
+        out += token[i]
+        i += 1
+      }
+    }
+    return out
   })
   return { text: redacted, count }
 }
+
+/** Decodes a percent-encoded "@" (%40, any case), the only escape that can hide an email from the checks. */
+export function decodeAt(text: string): string {
+  return text.replace(/%40/gi, '@')
+}
+
+const ALNUM = /[a-z0-9]/i

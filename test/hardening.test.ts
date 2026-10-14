@@ -8,6 +8,7 @@ import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { ASSISTANT_CALLS_PER_HOUR } from '../worker/assistant/route'
 import { SESSION_COOKIE, verifySession } from '../worker/auth/session'
 import { enforceGate1 } from '../worker/assistant/gates/gate1-input-sanitizer'
+import { findPII, loadKnownEmails } from '../worker/assistant/gates/pii-guard'
 import type { SegmentRow } from '../worker/segments/compile'
 import { segmentCsv } from '../worker/segments/export'
 import { MAX_FUTURE_MS, parseWebhookEvent } from '../worker/webhooks/schema'
@@ -25,7 +26,7 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 //   (subscribers.csv:373); the loop reads every local part from the seeded profiles. The
 //   near-misses are one-character edits of a real local part (removals joy.hall83, oy.hall830;
 //   additions joy.hall8301, xjoy.hall830; 09 D-47) and a real local part joined to the label of
-//   its own domain (joy.hall830.protonmail), which is one token that is not a local part. The
+//   its own domain (joy.hall830.protonmail) — a known local part glued on a punctuation boundary, now redacted. The
 //   edge-punctuation cases put the local-part characters - + _ % next to joy.hall830.
 // - Webhook bodies (T-HARD-2) are brief-shaped with real ids (09 D-11): event ids from
 //   eventIdPool() (`evt_` + a real visitor_id's hex), user u_ceed5f12 (app_users.csv:303,
@@ -116,13 +117,32 @@ describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own (09
     const known = await column<string>('SELECT email_norm FROM profiles WHERE email_norm IS NOT NULL', 'email_norm')
     const locals = new Set(known.map((e) => e.slice(0, e.indexOf('@'))))
     const trace = await startTrace(env.DB)
-    for (const token of ['joy.hall83', 'oy.hall830', 'joy.hall8301', 'xjoy.hall830', 'joy.hall830.protonmail']) {
+    for (const token of ['joy.hall83', 'oy.hall830', 'joy.hall8301', 'xjoy.hall830']) {
       expect(locals.has(token)).toBe(false)
       const question = await enforceGate1(trace, `how engaged is ${token}?`)
       expect(question.text).toBe(`how engaged is ${token}?`)
       expect(question.emailsRedacted).toBe(0)
     }
     expect(LOCAL_PART_MIN_CHARS).toBe(6) // 09 D-70 #1
+  })
+
+  it('a known local part glued to more text on a punctuation boundary, or a %40-encoded address, is still redacted', async () => {
+    const trace = await startTrace(env.DB)
+    for (const [typed, expected] of [
+      ['joy.hall830%40protonmail.com', '[email]'],
+      ['JOY.HALL830%40PROTONMAIL.COM', '[email]'],
+      ['joy.hall830+x', '[email]+x'],
+      ['joy.hall830.protonmail', '[email].protonmail'],
+      ['joy.hall830.protonmail.com', '[email].protonmail.com'],
+      ['see/joy.hall830_x', 'see/[email]_x'],
+    ]) {
+      const question = await enforceGate1(trace, `how engaged is ${typed}?`)
+      expect(question.text, typed).toBe(`how engaged is ${expected}?`)
+      expect(question.text).not.toMatch(/joy\.hall830/i)
+    }
+    // The outbound scan reads %40 as "@" too, so an encoded known address never leaves in a payload.
+    const known = await loadKnownEmails(env.DB)
+    expect(findPII({ messages: [{ role: 'user', content: 'joy.hall830%40protonmail.com' }] }, known)).toBe('known_email')
   })
 
   it('local-part punctuation at a token edge is trimmed like a sentence dot', async () => {

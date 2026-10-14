@@ -19,7 +19,7 @@
 
 import type { AuditTrace } from '../audit/ai-audit'
 import { ApiError } from '../../auth/middleware'
-import { type KnownEmails, redactEmails, redactKnownLocalParts } from './pii-guard'
+import { decodeAt, type KnownEmails, redactEmails, redactKnownLocalParts } from './pii-guard'
 
 /** The origin's cap (14 §3.4 "length > 2000 → length_exceeded"). */
 export const QUESTION_MAX_CHARS = 2000
@@ -86,7 +86,8 @@ export function sanitizeQuestion(raw: string, known: KnownEmails): Gate1Result {
   for (const pattern of GATE1_PATTERNS) {
     if (pattern.regex.test(raw)) return { ok: false, reason: pattern.category, pattern: pattern.id }
   }
-  const emails = redactEmails(raw)
+  // %40 is decoded first, so a URL-encoded address is redacted as an email (09 D-70 #1).
+  const emails = redactEmails(decodeAt(raw))
   const locals = redactKnownLocalParts(emails.text, known)
   return { ok: true, question: { text: locals.text, emailsRedacted: emails.count + locals.count } as SanitizedQuestion }
 }
