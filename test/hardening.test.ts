@@ -35,6 +35,11 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 //   real row's email by hand); `=`, `+` and `-` are the other D-70 #5 formula characters put in
 //   front of a real address, as injection probes (not business data), one also followed by a
 //   comma and the row's real source to show the RFC 4180 quoting is kept.
+// - T-HARD-7: users u_38e852b0 (app_users.csv:11, sarah.edwards657@gmail.com) and u_f2411d1c
+//   (app_users.csv:9, john.turner61@gmail.com) on sarah's device `d_38e852b0`, at the brief's
+//   event time and that time plus 5 and 10 minutes. The failed recompute is a D1 trigger that
+//   aborts score updates, the way a D1 outage would fail them (as gate1.test.ts takes ai_audit
+//   offline); it is dropped before the retry.
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -267,5 +272,60 @@ describe('T-HARD-5: the segment CSV export neutralizes formula cells (09 D-70 #5
       `'-${real.email}${rest}`,
       `"'=${real.email},${real.source}"${rest}`,
     ])
+  })
+})
+
+/** Runs `fn` while D1 refuses every engagement_score update (a trigger that aborts), then drops it. */
+async function withScoresFailing<T>(fn: () => Promise<T>): Promise<T> {
+  await env.DB.prepare(
+    "CREATE TRIGGER scores_offline BEFORE UPDATE OF engagement_score ON profiles BEGIN SELECT RAISE(ABORT, 'scores offline'); END",
+  ).run()
+  try {
+    return await fn()
+  } finally {
+    await env.DB.prepare('DROP TRIGGER scores_offline').run()
+  }
+}
+
+describe('T-HARD-7: a duplicate delivery re-runs the score recompute, so a failed one heals (09 D-70 #7)', () => {
+  const SARAH = { user_id: 'u_38e852b0', email: 'sarah.edwards657@gmail.com' }
+  const JOHN = { user_id: 'u_f2411d1c', email: 'john.turner61@gmail.com' }
+  const DEVICE = 'd_38e852b0'
+  const at = (minutes: number) => new Date(Date.parse(BRIEF_TS) + minutes * 60_000).toISOString().replace('.000Z', 'Z')
+
+  it('a login whose recompute failed (500) is fixed for both owners by the 200 duplicate retry', async () => {
+    // Sarah logs in on her device, then an anonymous app_open on it is hers (device stitching).
+    const login = { event_id: nextEventId(), event: 'login', user_id: SARAH.user_id, device_id: DEVICE, timestamp: BRIEF_TS }
+    const open = { event_id: nextEventId(), event: 'app_open', user_id: null, device_id: DEVICE, timestamp: at(5) }
+    expect((await post(login)).status).toBe(202)
+    expect((await post(open)).status).toBe(202)
+    const sarahBefore = await scoreOf(SARAH.email)
+    const johnBefore = await scoreOf(JOHN.email)
+
+    // John logs in on the same device later: the device and its anonymous app_open move to him.
+    // The event commits, then the recompute fails, so the sender sees a 500 and must retry.
+    const takeover = { event_id: nextEventId(), event: 'login', user_id: JOHN.user_id, device_id: DEVICE, timestamp: at(10) }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const failed = await withScoresFailing(() => post(takeover))
+    expect(failed.status).toBe(500)
+    expect(await storedCount(takeover.event_id)).toBe(1)
+    expect(await deviceOwner(DEVICE)).toEqual({ user_id: JOHN.user_id, last_seen_ts: at(10) })
+    expect(await scoreOf(SARAH.email)).toBe(sarahBefore) // stale: still counts the moved app_open
+    expect(await scoreOf(JOHN.email)).toBe(johnBefore) // stale: his login and the app_open missing
+
+    // The retry is a duplicate (first write wins) and heals both scores.
+    const retry = await post(takeover)
+    expect(retry.status).toBe(200)
+    expect(JSON.parse(retry.text)).toEqual({ accepted: true, duplicate: true })
+    expect(await storedCount(takeover.event_id)).toBe(1)
+    // Sarah loses one app event (2.5 points before rounding), John gains two (5 points).
+    expect(sarahBefore - (await scoreOf(SARAH.email))).toBeGreaterThanOrEqual(2)
+    expect(sarahBefore - (await scoreOf(SARAH.email))).toBeLessThanOrEqual(3)
+    expect((await scoreOf(JOHN.email)) - johnBefore).toBe(5)
+
+    // A further duplicate on a healthy store rewrites the same scores.
+    const [sarahHealed, johnHealed] = [await scoreOf(SARAH.email), await scoreOf(JOHN.email)]
+    expect((await post(takeover)).status).toBe(200)
+    expect([await scoreOf(SARAH.email), await scoreOf(JOHN.email)]).toEqual([sarahHealed, johnHealed])
   })
 })
