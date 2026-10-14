@@ -182,6 +182,35 @@ describe('T-SEG-4 Previous searches', () => {
     expect(store.writes).toBe(writesBefore)
   })
 
+  it(
+    'drops a stored item whose source is non-canonical, whatever shape it spells (a double-%40 email, an id glued ' +
+      "to a word char, a bare known local part, or just an ordinary non-canonical word), and recordSearch never " +
+      'writes one (09 D-69 #6: the shared CANONICAL_SOURCES membership check in hasCanonicalSource, not pattern ' +
+      "matching each PII shape, is what closes this)",
+    () => {
+      const store = new MemoryStore()
+      const doubleEncodedJoy = JOY.replace('@', '%2540')
+      const gluedId = `x${OWN_ACCOUNT}` // xu_ceed5f12: RAW_ID_REGEX's \b never fires mid-word
+      const bareLocalPart = 'joy.hall830' // a known local part, no "@" at all
+      const nonCanonicalWord = 'tiktok'
+      const badSources = [doubleEncodedJoy, gluedId, bareLocalPart, nonCanonicalWord]
+      store.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          v: 1,
+          items: [...badSources.map((source) => ({ filters: { ...ACTIVE, source: [source] } })), { filters: SEARCHES[3] }],
+        }),
+      )
+      expect(readSearches(store)).toEqual([SEARCHES[3]])
+
+      const writesBefore = store.writes
+      for (const source of badSources) {
+        expect(recordSearch({ ...ACTIVE, source: [source] }, store)).toEqual([SEARCHES[3]])
+      }
+      expect(store.writes).toBe(writesBefore)
+    },
+  )
+
   it('drops bad JSON, another version, an unknown key, a wrong type or a missing echoed key, and the next write replaces them', () => {
     const store = new MemoryStore()
     for (const raw of ['{', '"x"', JSON.stringify({ v: 2, items: [{ filters: SEARCHES[0] }] }), JSON.stringify({ v: 1 })]) {
