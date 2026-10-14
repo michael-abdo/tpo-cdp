@@ -247,33 +247,21 @@ export function reasonLabel(field: ScoredField, agrees: boolean, gap: number): s
   }
 }
 
-/** What each agreeing field adds to "the name … match" in the suggestion. */
-const MATCH_WORDS: Record<ScoredField, string> = {
-  domain: 'email domain',
-  signup_gap: 'signup week',
-  source: 'acquisition source',
-  shared_device: 'app device',
-}
-
-function joined(words: readonly string[]): string {
-  if (words.length <= 1) return words.join('')
-  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
-}
-
 function leadFor(band: Band): string {
+  if (band === 'hidden') return 'Probably different people'
   return band === 'auto' ? 'Very likely the same person' : 'Could be the same person'
 }
 
-/** The one-line plain suggestion (06 §Overview); the default is "Probably different people — only the name matches". */
+/**
+ * The one-line plain suggestion (06 §Overview); the default is "Probably different people — only the
+ * name matches". It is the verdict only: the reason chips beside it already say which fields match
+ * (09 D-72, one thing in one place), so the sentence names only the name, which has no chip, and
+ * only when nothing else matches.
+ */
 export function suggestionFor(band: Band, agreement: Agreement): string {
-  const matched = SCORED_FIELDS.filter((f) => agreement[f]).map((f) => MATCH_WORDS[f])
-  if (matched.length === 0) {
-    return band === 'hidden'
-      ? 'Probably different people — only the name matches'
-      : `${leadFor(band)} — the name matches`
-  }
-  const what = `${joined(['the name', ...matched])} match`
-  return band === 'hidden' ? `Probably different people — only ${what}` : `${leadFor(band)} — ${what}`
+  const lead = leadFor(band)
+  if (SCORED_FIELDS.some((f) => agreement[f])) return lead
+  return band === 'hidden' ? `${lead} — only the name matches` : `${lead} — the name matches`
 }
 
 /** `dp_` + the first 16 hex characters of SHA-256 over the two pkeys in sorted order. */

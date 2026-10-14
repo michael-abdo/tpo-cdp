@@ -1,9 +1,12 @@
 // / Overview (06 §Overview, 09 D-63, D-65): where the data comes from, how each load went, and
-// what needs a person. Every number is the API's; nothing is computed here but sums for the header line.
+// what needs a person. Every number is the API's; nothing is computed here.
 // Level 1, top to bottom: four headline Metrics (GET /api/overview), each with an InfoTip; the
-// Sources table (GET /api/sources) with its one-line header. Each source's Status cell is chips
-// from its checks (09 D-65), problems first ("2 rows to fix", "16 possible duplicates"), else OK,
-// Live or Not loaded yet, each with an InfoTip; a chip is a button that opens the row on its tab.
+// Sources table (GET /api/sources) with its one-line header (the source count and the newest
+// sync). Each source's Status cell is chips from its checks (09 D-65), problems first ("2 rows to
+// fix", "16 possible duplicates"), else OK, Live or Not loaded yet, each with an InfoTip; a chip is
+// a button that opens the row on its tab. One thing in one place (09 D-72): the chips are the one
+// home of each check's count (no totals in the header), a row's cells the one home of the webhook's
+// count and last sync, and a run's Rejected number the one home of its rejected total.
 // Level 2: an open row is a tab set (WAI-ARIA tabs) — History (CSV: its runs, read · kept · merged
 // · rejected, and "View rejected rows" → GET /api/quarantine?file=; webhook: events received),
 // then one tab per check the source declares: Rows to fix (09 D-61, the rows as written and the
@@ -19,7 +22,7 @@ import { Check, Copy, Smartphone, UserCheck, Users, X } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { TODAY } from '../../shared/config'
-import { CHECK_KINDS, type CheckKind, LOADS_BY_LABEL } from '../../shared/sources'
+import { type CheckKind, LOADS_BY_LABEL } from '../../shared/sources'
 import { countOf, GLOSSARY, type GlossaryKey } from '../../shared/glossary'
 import { errorMessage, getJson, postJson } from '../api'
 import {
@@ -59,13 +62,12 @@ import { useGet } from '../useGet'
 
 const TITLE = 'Overview'
 const PURPOSE = 'Where the data comes from, how each load went, and what needs a person.'
+/** The next step under a failed load, written once for the page, the sources and the duplicates (09 D-72). */
+const RETRY = 'Refresh the page to try again.'
 
 function n(value: number): string {
   return value.toLocaleString('en-US')
 }
-
-/** "1 row" / "2 rows". */
-const rowCount = (count: number) => `${n(count)} ${count === 1 ? 'row' : 'rows'}`
 
 /** The four headline numbers (06 §Overview 1): the glossary names and explains each. */
 const HEADLINE: { term: GlossaryKey; icon: LucideIcon; value: (o: Overview) => number }[] = [
@@ -76,14 +78,6 @@ const HEADLINE: { term: GlossaryKey; icon: LucideIcon; value: (o: Overview) => n
 ]
 
 type AnySource = Sources['sources'][number]
-
-/** Each check kind some source declares, with its count summed over the sources (the header line, 06 §Overview 2). */
-function checkTotals(sources: readonly AnySource[]): { kind: CheckKind; count: number }[] {
-  return CHECK_KINDS.flatMap((kind) => {
-    const found = sources.flatMap((s) => s.checks.filter((c) => c.kind === kind))
-    return found.length === 0 ? [] : [{ kind, count: found.reduce((t, c) => t + c.count, 0) }]
-  })
-}
 
 /** An open row's tabs: History, then one per check the source declares (09 D-65). */
 type TabKey = 'history' | CheckKind
@@ -198,8 +192,9 @@ function FixableGroups({ list }: { list: readonly QuarantinedRow[] }) {
   return reviewGroups(list).map((group) => (
     <div key={group.key} className="space-y-2">
       <p className="text-sm font-medium text-ink">{group.sentence}</p>
+      {/* The table's name for screen readers; the sentence above is read once (09 D-72). */}
       <ResponsiveTable
-        caption={group.sentence}
+        caption="The rows as written in the file"
         columns={group.columns.map((col) => ({
           header: col.label,
           cell: (row: QuarantinedRow) => (
@@ -232,20 +227,18 @@ function RowLines({ list }: { list: readonly QuarantinedRow[] }) {
   )
 }
 
-/** A run's rejected rows (06 §Overview): the count per reason in glossary words, fixable rows as written. */
+/**
+ * A run's rejected rows (06 §Overview): the blank rows as a count with why they need nothing, and
+ * the fixable rows as written. The total is the run's Rejected number above (09 D-72: said once).
+ */
 function RejectedRows({ sourceId, id }: { sourceId: string; id: string }) {
   const state = useGet<QuarantineList>(`/api/quarantine?file=${encodeURIComponent(sourceId)}`)
   if (state === null || state.status === 'loading') return <Loading label="Loading the rejected rows…" />
   if (state.status === 'error') return <ErrorLine message={state.message} next="Try again." />
   const list = state.data.rows
-  const perReason = new Map<QuarantinedRow['reason'], number>()
-  for (const row of list) perReason.set(row.reason, (perReason.get(row.reason) ?? 0) + 1)
-  const blank = perReason.get('blank_row') ?? 0
+  const blank = list.filter((row) => row.reason === 'blank_row').length
   return (
     <div id={id} className="space-y-3 rounded-lg border border-line bg-surface p-3">
-      <p className="text-sm text-ink">
-        {rowCount(list.length)}: {[...perReason].map(([reason, count]) => countOf(reason, count)).join(', ')}.
-      </p>
       {blank > 0 && (
         <p className="flex items-start gap-2 text-sm text-ink-muted">
           <Icon icon={ICONS.empty} className="mt-0.5 size-4" />
@@ -305,7 +298,7 @@ function SourceHistory({ source }: { source: AnySource }) {
       )}
       <TechnicalDetails>
         <p>
-          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id} · loads_by: {source.loads_by}
+          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id}
         </p>
         {source.runs.map((run) => (
           <p key={run.id}>
@@ -317,23 +310,14 @@ function SourceHistory({ source }: { source: AnySource }) {
   )
 }
 
+/** The webhook's level 2: what its row does not say (09 D-72): the row holds the count and the last sync. */
 function WebhookHistory({ source }: { source: WebhookSource }) {
   return (
     <div className="space-y-2">
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div>
-          <dt className="text-xs text-ink-muted">Received</dt>
-          <dd className="font-medium tabular-nums text-ink">{n(source.records)}</dd>
-        </div>
+      <dl>
         <div>
           <dt className="text-xs text-ink-muted">Dated today ({humanDate(TODAY)})</dt>
           <dd className="font-medium tabular-nums text-ink">{n(source.today)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-ink-muted">Last received</dt>
-          <dd className="font-medium text-ink">
-            {source.last_received === null ? 'None yet' : humanDateTime(source.last_received)}
-          </dd>
         </div>
       </dl>
       <p className="text-sm">
@@ -347,7 +331,7 @@ function WebhookHistory({ source }: { source: WebhookSource }) {
       </p>
       <TechnicalDetails>
         <p>
-          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id} · loads_by: {source.loads_by} · endpoint: POST /webhooks/app
+          Loads by: {LOADS_BY_LABEL[source.loads_by]} · id: {source.id} · endpoint: POST /webhooks/app
           {source.last_received !== null && <> · last received_at {utc(source.last_received)}</>}
         </p>
       </TechnicalDetails>
@@ -524,7 +508,6 @@ function SourcesTable({
               {latest === null ? 'no sync yet' : `last sync ${humanDate(latest)}`}
               <InfoTip term="sync" />
             </>,
-            ...checkTotals(sources).map((t) => countOf(t.kind, t.count)),
           ]}
         />
       }
@@ -747,7 +730,7 @@ function PossibleDuplicates({ onReviewed }: { onReviewed: () => void }) {
   if (state === null || state.status === 'loading')
     return <Loading label="Checking for possible duplicates…" />
   if (state.status === 'error')
-    return <ErrorLine message={state.message} next="Refresh the page to try again." />
+    return <ErrorLine message={state.message} next={RETRY} />
   const data = state.data
 
   async function decide(pairId: string, verdict: DuplicateDecision['verdict']) {
@@ -812,7 +795,7 @@ function SourcesSection() {
   const [refreshError, setRefreshError] = useState<string | null>(null)
   if (state === null || state.status === 'loading') return <Loading label="Loading the sources…" />
   if (state.status === 'error')
-    return <ErrorLine message={state.message} next="Refresh the page to try again." />
+    return <ErrorLine message={state.message} next={RETRY} />
 
   function refresh() {
     getJson<Sources>('/api/sources').then(
@@ -843,7 +826,7 @@ export default function OverviewPage() {
     return (
       <>
         {header}
-        <ErrorLine message={state.message} next="Refresh the page to try again." />
+        <ErrorLine message={state.message} next={RETRY} />
       </>
     )
   }

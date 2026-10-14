@@ -58,12 +58,15 @@ const WHY: Record<Exclude<QuarantinedRow['reason'], 'blank_row'>, string> = {
   bad_date: "a date isn't written the way the file writes dates",
 }
 
+/** How every fix ends, written once (09 D-72). */
+const THEN_REIMPORT = ', then re-import the file.'
+
 function fixText(file: SetAsideFile, reason: keyof typeof WHY): string {
   const csv = csvName(file)
   const { dateFormat } = FILES[file]
-  if (reason === 'invalid_email') return `Correct the email in ${csv}, then re-import the file.`
-  if (reason === 'missing_field') return `Fill in the empty field in ${csv}, then re-import the file.`
-  return `Write the date as ${dateFormat} in ${csv}, then re-import the file.`
+  if (reason === 'invalid_email') return `Correct the email in ${csv}${THEN_REIMPORT}`
+  if (reason === 'missing_field') return `Fill in the empty field in ${csv}${THEN_REIMPORT}`
+  return `Write the date as ${dateFormat} in ${csv}${THEN_REIMPORT}`
 }
 
 export interface ReviewGroup {
