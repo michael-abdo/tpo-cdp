@@ -8,7 +8,9 @@
 // and, when the person changed it, the title (04: never a tool, params or SQL; an unchanged title is
 // left to the server, which names the tile after the Gate 1-redacted question, so a question that
 // held an email still pins). The server stores the window rolling when it equals a preset, else
-// fixed. When the person chose the other kind, one PATCH sets it.
+// fixed. When the person chose the other kind, one PATCH sets it. A segment answer says what its
+// tile keeps (the count and a link to the segment) and what it does not (order, names), since the
+// answer card showed both (09 D-64: segment tiles show a count, never emails).
 // The native <dialog> gives the focus trap, Esc to close and the backdrop; focus goes back to the
 // button that opened it (06 §UI principles 7).
 
@@ -19,20 +21,9 @@ import { humanRange } from '../format'
 import type { InsightWindow } from '../../shared/insight-window'
 import type { InsightPatch, InsightTile } from '../types'
 import { matchingPreset, ownDatesText, PRESET_LABEL } from './windows'
+import { pinNext, SEGMENT_PIN_NOTE } from './pin-words'
 
 type Choice = 'rolling' | 'fixed'
-
-/** Next steps for the 04 POST /api/insights errors that have one; the message is the envelope's. */
-function pinNext(code: string | null): string | undefined {
-  switch (code) {
-    case 'nothing_to_pin':
-      return 'This answer did not come from a data lookup, so there is nothing to re-run. Ask a question about numbers or readers.'
-    case 'not_found':
-      return 'Ask the question again, then pin the new answer.'
-    default:
-      return undefined
-  }
-}
 
 export function PinDialog({
   open,
@@ -41,6 +32,7 @@ export function PinDialog({
   question,
   ownDates,
   pinWindow,
+  segment,
   onPinned,
 }: {
   open: boolean
@@ -51,6 +43,8 @@ export function PinDialog({
   ownDates: { from: string; to: string } | null
   /** The time period the pin stores, or null when its lookup has none (AssistantResponse.pin_window). */
   pinWindow: { from: string; to: string } | null
+  /** The answer is a segment: the dialog says what its tile keeps (SEGMENT_PIN_NOTE). */
+  segment: boolean
   onPinned: (tile: InsightTile, note: string | null) => void
 }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -128,6 +122,7 @@ export function PinDialog({
             className="min-h-11 w-full rounded-lg border border-line-strong bg-page px-3 py-2 text-base text-ink"
           />
         </div>
+        {segment && <p className="text-sm text-ink">{SEGMENT_PIN_NOTE}</p>}
         {pinWindow === null && ownDates !== null && (
           <p className="text-sm text-ink">
             <span className="font-medium">Time period:</span> {ownDatesText(ownDates)}

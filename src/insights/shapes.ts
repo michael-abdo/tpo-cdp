@@ -140,5 +140,5 @@ export const CHART_LABEL: Record<ChartKind, string> = {
   bar: 'Bar chart',
   line: 'Line chart',
   table: 'Table',
-  segment: 'List size',
+  segment: 'Segment size',
 }

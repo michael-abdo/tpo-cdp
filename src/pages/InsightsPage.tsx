@@ -103,7 +103,7 @@ export default function InsightsPage() {
       <PageHeader
         title="Insights"
         icon={ICONS.insights}
-        purpose="Ask about readers in plain words, then pin the answers you want to keep. Pinned tiles update each time you open this page."
+        purpose="Ask in plain English about subscribers, site visits and app activity, then pin the answers you want to keep. Pinned tiles update each time you open this page."
       />
       <AskSection question={question} setQuestion={setQuestion} filled={filled} inputRef={input} onPinned={pinned} />
 

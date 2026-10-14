@@ -11,6 +11,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { ChartKind } from '../../shared/pick-chart'
 import { Button, type Column, ICONS, ResponsiveTable } from '../components'
+import { filtersAppliedView } from '../filters-applied'
 import { humanDate, humanMonth } from '../format'
 import { columnLabel } from '../labels'
 import { cellText, fmt, isRateColumn } from './cells'
@@ -258,17 +259,32 @@ export function TableTile({ result, caption }: { result: ChartResult; caption: s
   )
 }
 
-/** A list's size and the way to it; never its rows (09 D-64). "Open list" loads the filters on /segments. */
+/**
+ * A segment's size, who it holds in words, and the way to it; never its rows (09 D-64). The filters
+ * read as on the answer card's footer, through the one filters-to-words helper (src/filters-applied.ts);
+ * a filter left open (null, "any") is not listed. "Open segment" loads the filters on /segments.
+ */
 export function SegmentTile({ segment, children }: { segment: ChartSegment; children?: ReactNode }) {
   const navigate = useNavigate()
+  const set = Object.fromEntries(Object.entries(segment.filters).filter(([, value]) => value !== null && value !== undefined))
+  const filters = filtersAppliedView(set)
   return (
     <div className="space-y-3">
-      <p className="font-display text-3xl font-medium tabular-nums text-ink">
-        {segment.count === 1 ? '1 reader matches' : `${fmt(segment.count)} readers match`}
-      </p>
+      <div className="space-y-1">
+        <p className="font-display text-3xl font-medium tabular-nums text-ink">
+          {segment.count === 1 ? '1 subscriber matches' : `${fmt(segment.count)} subscribers match`}
+        </p>
+        <p className="text-sm text-ink-muted">
+          {filters.status === 'hidden'
+            ? filters.message
+            : filters.fields.length === 0
+              ? 'No filters set.'
+              : filters.fields.map(({ label, value }) => `${label}: ${value}`).join(' · ')}
+        </p>
+      </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="primary" icon={ICONS.openList} onClick={() => navigate('/segments', { state: { filters: segment.filters } })}>
-          Open list
+        <Button variant="primary" icon={ICONS.openSegment} onClick={() => navigate('/segments', { state: { filters: segment.filters } })}>
+          Open segment
         </Button>
         {children}
       </div>

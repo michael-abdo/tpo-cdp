@@ -79,7 +79,7 @@ export const ICONS = {
   remove: Trash2,
   window: CalendarRange,
   chart: ChartColumn,
-  openList: Users,
+  openSegment: Users,
   close: X,
   done: Check,
   // status

@@ -6,7 +6,7 @@
 // (02 §Derived "one runtime source"), raw names and the placeholders-only SQL shape. Status
 // defaults to active; the response's hidden_unsubscribed is shown in words when it is above 0.
 // The form sends what the inputs hold (02 §Normalization): labels below are display maps only.
-// A segment answer or tile on /insights arrives as router state {filters} ("Open list", 06
+// A segment answer or tile on /insights arrives as router state {filters} ("Open segment", 06
 // §/insights): the form takes those filters and previews them once, so the count is the builder's.
 
 import { type FormEvent, useEffect, useRef, useState } from 'react'
@@ -75,7 +75,7 @@ function toForm(f: SegmentFilters): Form {
   }
 }
 
-/** Router state set by "Open list" on /insights. */
+/** Router state set by "Open segment" on /insights. */
 function openedFilters(state: unknown): SegmentFilters | null {
   if (typeof state !== 'object' || state === null || !('filters' in state)) return null
   return (state as { filters: SegmentFilters }).filters

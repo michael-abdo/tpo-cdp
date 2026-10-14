@@ -195,6 +195,8 @@ export interface AssistantResponse {
   pin_window: { from: string; to: string } | null
   /** The dates the pinned lookup sets itself when it takes no time period; the tile's footer shows them too. */
   pin_own_dates: { from: string; to: string } | null
+  /** Why this answer cannot be pinned, one plain sentence (09 D-64a), or null; the card then offers no Pin. */
+  pin_refusal: string | null
 }
 
 export type AuditStatus = 'success' | 'error' | 'blocked'
@@ -273,7 +275,10 @@ export interface InsightTile {
   /** A segment tile's count and filters, never its rows. */
   segment: { count: number; filters: SegmentFilters } | null
   status: 'ok' | 'error'
+  /** Why the tile did not run, in plain words; null when ok. */
   error: string | null
+  /** Technical details of a failed run (the gates' or the database's problems); never shown at level 1 (09 D-64a). */
+  error_details: string | null
   /** UTC, when this request re-ran the tile. */
   ran_at: string
   /** The question "Explain this" puts in the Ask bar. */

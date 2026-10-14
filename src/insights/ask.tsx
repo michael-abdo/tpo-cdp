@@ -2,8 +2,9 @@
 // 09 D-64). One question box, the brief's three questions (R5.2) as one-click examples (06 §UI
 // principles 6), and one typed result from POST /api/assistant (04): the answer text (announced
 // politely, principle 7), the auto chart (shared/pick-chart.ts pickChart on the result's shape) or
-// the segment's count with "Open list", which loads its filters on /segments, plus Export CSV. A
-// partial result says so. "Pin to board" opens the pin dialog (pin-dialog.tsx).
+// the segment's count with "Open segment", which loads its filters on /segments, plus Export CSV. A
+// partial result says so. "Pin to board" opens the pin dialog (pin-dialog.tsx); an answer the server
+// says can never be pinned (`pin_refusal`, 09 D-64a: free-form SQL) shows that sentence instead.
 // Level 2 "Time period · Filters · Definitions": the window, the filters and the definitions used,
 // in words, with the definitions' plain text from DEFINITIONS (02 §Derived "one runtime source");
 // Technical details: the raw names, the result type and the trace id. The filters are the model's
@@ -144,7 +145,7 @@ export function AnswerCard({
             Incomplete answer
           </Tag>
         )}
-        {pinnedId !== null ? (
+        {data.pin_refusal !== null ? null : pinnedId !== null ? (
           <>
             <Tag tone="success" icon={ICONS.done}>
               Pinned to the board
@@ -164,6 +165,12 @@ export function AnswerCard({
           </Button>
         )}
       </div>
+      {data.pin_refusal !== null && (
+        <p className="flex items-start gap-1.5 text-sm text-ink-muted">
+          <Icon icon={ICONS.pin} className="mt-0.5 size-4" />
+          {data.pin_refusal}
+        </p>
+      )}
       <p className="whitespace-pre-wrap text-base leading-relaxed text-ink">{data.text}</p>
       {data.partial && (
         <p className="text-sm text-ink-muted">
@@ -180,8 +187,8 @@ export function AnswerCard({
           </SegmentTile>
           {exportError !== null && <ErrorLine message={exportError} next="Press Export CSV to try again." />}
           {data.table !== null && data.table.rows.length > 0 && (
-            <Disclosure label={`Show the first ${data.table.rows.length.toLocaleString('en-US')} readers`}>
-              <TableTile result={data.table} caption="The first readers on the list" />
+            <Disclosure label={`Show the first ${data.table.rows.length.toLocaleString('en-US')} subscribers`}>
+              <TableTile result={data.table} caption="The first subscribers in the segment" />
             </Disclosure>
           )}
         </div>
@@ -267,19 +274,22 @@ export function AnswerCard({
         </TechnicalDetails>
       </Disclosure>
 
-      <PinDialog
-        open={pinOpen}
-        onClose={closePin}
-        auditId={data.audit_id}
-        question={question}
-        ownDates={data.pin_own_dates}
-        pinWindow={data.pin_window}
-        onPinned={(tile, note) => {
-          setPinOpen(false)
-          setPinnedId(tile.id)
-          onPinned(tile, note)
-        }}
-      />
+      {data.pin_refusal === null && (
+        <PinDialog
+          open={pinOpen}
+          onClose={closePin}
+          auditId={data.audit_id}
+          question={question}
+          ownDates={data.pin_own_dates}
+          pinWindow={data.pin_window}
+          segment={data.type === 'segment' && data.segment !== null}
+          onPinned={(tile, note) => {
+            setPinOpen(false)
+            setPinnedId(tile.id)
+            onPinned(tile, note)
+          }}
+        />
+      )}
     </section>
   )
 }
@@ -361,7 +371,7 @@ export function AskSection({
         <p id="question-hint" className="text-sm text-ink-muted">
           {filled !== null && question === filled && state?.question !== filled
             ? 'This question is filled in for you. Press Ask to send it, or change it first.'
-            : 'One question at a time; each answer starts fresh. No reader’s email is sent to the AI.'}
+            : 'One question at a time; each answer starts fresh. No subscriber’s email is sent to the AI.'}
         </p>
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
           <span className="text-sm text-ink-muted">Try:</span>

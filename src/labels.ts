@@ -60,9 +60,9 @@ export const COLUMN_LABEL = {
 export const CHECK_LABEL: Record<DataQualityCheckKey, string> = {
   subscribers_without_source: 'Subscribers with no signup source',
   subscribers_unexpected_source: 'Subscribers with a signup source we don’t recognise',
-  page_views_without_utm: 'Website page views with no campaign source',
-  page_views_unexpected_utm: 'Website page views with a campaign source we don’t recognise',
-  app_users_not_on_list: 'App users whose email is not on the newsletter list',
+  page_views_without_utm: 'Site visits with no UTM source',
+  page_views_unexpected_utm: 'Site visits with a UTM source we don’t recognise',
+  app_users_not_on_list: 'App accounts whose email is not a subscriber',
 }
 
 export const checkLabel = (key: string) => (CHECK_LABEL as Record<string, string | undefined>)[key] ?? words(key)

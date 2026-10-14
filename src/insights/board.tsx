@@ -5,7 +5,8 @@
 // time is in Technical details, so the page reads no wall clock, 02 §Time). The time period is
 // itself a button that opens "Change time period" directly (three clicks: period → choice → Save);
 // a lookup that sets its own dates names them ("Set by this question · Aug 29 – Sep 28, 2026", the
-// same words as the pin dialog); a tile with neither says "As of <TODAY>". One tile's error shows on that tile only. Level 2 =
+// same words as the pin dialog); a tile with neither says "As of <TODAY>". One tile's error shows on
+// that tile only, in the server's plain sentence; its raw problems only in Technical details. Level 2 =
 // the tile's "Options" panel: Change time period · Change chart · Rename · Move up/down · Remove
 // (not on built-in tiles, which the server refuses with 409) · Explain this (fills the Ask bar) ·
 // Technical details. Focus never drops to the page: a form takes focus when it opens, and Cancel
@@ -373,6 +374,7 @@ export function TileActions({
           <p className="break-all">Params: {JSON.stringify(tile.params)}</p>
           {tile.sql !== null && <p className="break-all">SQL: {tile.sql}</p>}
           {tile.result !== null && <p>Columns: {tile.result.columns.join(', ')}</p>}
+          {tile.error_details !== null && <p className="break-all">Why it did not run: {tile.error_details}</p>}
           <p>Ran at: {utc(tile.ran_at)}</p>
           <p className="break-all">Tile id: {tile.id}</p>
         </TechnicalDetails>
@@ -460,7 +462,8 @@ function Tile({
       )}
       <div className="min-w-0 flex-1">
         {tile.status === 'error' ? (
-          <ErrorLine message={tile.error ?? 'This tile could not be run.'} next="Press Refresh to try again." />
+          // The server's sentence carries its own next step; raw problems sit in Technical details (09 D-64a).
+          <ErrorLine message={tile.error ?? 'This tile could not run right now. Press Refresh to try again.'} />
         ) : (
           <InsightChart kind={tile.chart} result={tile.result ?? { columns: [], rows: [] }} segment={tile.segment} caption={tile.title} />
         )}

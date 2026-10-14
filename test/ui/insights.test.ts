@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import webCsv from '../../data/web_events.csv?raw'
 import { BAR_TOP_CATEGORIES, type ChartKind, pickChart } from '../../shared/pick-chart'
 import { AnswerCard } from '../../src/insights/ask'
+import { pinNext } from '../../src/insights/pin-words'
 import { BoardGrid, TileActions } from '../../src/insights/board'
 import { cellText } from '../../src/insights/cells'
 import { ownDatesText } from '../../src/insights/windows'
@@ -25,8 +26,8 @@ import { parseCsv } from '../../worker/ingest/csv'
 //   - page views by page and campaign source over data/web_events.csv, counted here from the real
 //     rows (104 pairs: more than BAR_TOP_CATEGORIES, so the "Other" bar is drawn);
 //   - the two demo subjects' newsletter fields, without their emails (table);
-//   - the brief's R3 preset, 177 readers (segment).
-// The built-in tile is the seeded "Readers at risk of going cold" row (migrations/0005_insights.sql);
+//   - the brief's R3 preset, 177 subscribers (segment).
+// The built-in tile is the seeded "Subscribers at risk of going cold" row (migrations/0005_insights.sql);
 // its result is given no rows, since the board's numbers for it are not stated in 02 §Counts.
 
 const BRIEF_Q1 = 'how many Instagram signups went cold last month?'
@@ -138,10 +139,14 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
     expect(text).toContain('Sep 2, 2026')
   })
 
-  it('segment: the count and "Open list" are text; no row is drawn', () => {
+  it('segment: the count, its filters in words and "Open segment" are text; no row is drawn', () => {
     const { html, text } = chart('segment', { columns: [], rows: [] }, PRESET)
-    expect(text).toContain('177 readers match')
-    expect(text).toContain('Open list')
+    expect(text).toContain('177 subscribers match')
+    // The filters in the words of src/filters-applied.ts (one home); has_app null ("any") is not listed.
+    expect(text).toContain("Status: Active · Signed up from: Instagram · Haven't opened an email in at least: 30 days · Also includes people who never opened: Yes")
+    expect(text).not.toContain('Uses the app')
+    expect(text).toContain('Open segment')
+    expect(text).not.toMatch(/reader|Open list/i)
     expect(html).not.toContain('<table')
   })
 })
@@ -196,6 +201,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       audit_id: crypto.randomUUID(),
       pin_window: { from: '2026-08-01', to: '2026-08-31' },
       pin_own_dates: null,
+      pin_refusal: null,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
     expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>[\s\S]*?Pin to board/)
@@ -220,8 +226,11 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       audit_id: crypto.randomUUID(),
       pin_window: null,
       pin_own_dates: null,
+      pin_refusal: null,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: 'build me a list of our most engaged readers', onPinned: () => {} }))
+    // The dialog says what the tile keeps of a segment, and what it does not (06 §/insights, 09 D-64).
+    expect(text).toContain('The tile keeps how many subscribers match these filters and a link to the segment. It does not keep their order or names.')
     expect(html).not.toContain('type="radio"')
     expect(html).not.toContain('<fieldset')
     expect(text).not.toContain('Time period:')
@@ -244,6 +253,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       audit_id: crypto.randomUUID(),
       pin_window: null,
       pin_own_dates: dates,
+      pin_refusal: null,
     }
     const words = ownDatesText(dates)
     expect(words).toBe('Set by this question · Aug 29 – Sep 28, 2026')
@@ -269,6 +279,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       audit_id: crypto.randomUUID(),
       pin_window: { from: '2026-08-01', to: '2026-08-31' },
       pin_own_dates: null,
+      pin_refusal: null,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {}, stale: true }))
     const section = /<section[^>]*>/.exec(html)?.[0] ?? ''
@@ -279,6 +290,59 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
     expect(text).toContain(`This answer is for your earlier question: “${BRIEF_Q1}”.`)
     const fresh = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
     expect(/<section[^>]*>/.exec(fresh.html)?.[0]).not.toContain('data-stale')
+  })
+})
+
+describe('answers and tiles that cannot be pinned or run say so in plain words (09 D-64a)', () => {
+  it('an answer from free-form SQL has no Pin button; the card says why in the D-64a sentence', () => {
+    const sentence = "Answers written as free-form queries can't be pinned. Ask the Growth team to add this as a saved question type."
+    const data: AssistantResponse = {
+      type: 'answer',
+      text: '46 active Instagram signups went cold in Aug 1–31, 2026.',
+      table: null,
+      segment: null,
+      window: { from: '2026-08-01', to: '2026-08-31' },
+      filters_applied: {},
+      definitions_used: ['went_cold_in'],
+      partial: false,
+      audit_id: crypto.randomUUID(),
+      pin_window: null,
+      pin_own_dates: null,
+      pin_refusal: sentence,
+    }
+    const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
+    expect(text).toContain(sentence)
+    expect(html).not.toContain('aria-haspopup="dialog"')
+    expect(html).not.toContain('<dialog')
+    expect(text).not.toContain('Pin to board')
+  })
+
+  it('a pin error has a next step for invalid_pin, not_pinnable and internal_error', () => {
+    for (const code of ['invalid_pin', 'not_pinnable', 'internal_error', 'nothing_to_pin', 'not_found']) {
+      expect(pinNext(code), code).toMatch(/\S/)
+      expect(pinNext(code), code).not.toMatch(/reader/i)
+    }
+    expect(pinNext('blocked_pii')).toBeUndefined()
+  })
+
+  it('a tile whose query failed shows the plain sentence at level 1; the raw text only in Technical details', () => {
+    const failed: InsightTile = {
+      ...pinned,
+      tool: 'pages_new_subscribers_hit_first',
+      window: null,
+      status: 'error',
+      result: null,
+      error: 'This tile could not run right now. Press Refresh to try again.',
+      error_details: 'integer overflow',
+      params: {},
+    }
+    const level1 = render(createElement(BoardGrid, { tiles: [failed], onChanged: () => {}, onRemoved: () => {}, onExplain: () => {} }))
+    expect(level1.text).toContain('This tile could not run right now. Press Refresh to try again.')
+    // Said once: the sentence carries its own next step.
+    expect(level1.text.split('Press Refresh to try again.')).toHaveLength(2)
+    expect(level1.text).not.toContain('integer overflow')
+    const options = actions(failed)
+    expect(options.text).toMatch(/Technical details.*Why it did not run: integer overflow/)
   })
 })
 
@@ -297,6 +361,7 @@ const pinned: InsightTile = {
   segment: null,
   status: 'ok',
   error: null,
+  error_details: null,
   ran_at: '2026-10-14T12:00:00.000Z',
   explain: BRIEF_Q1,
   params: { metric: 'went_cold', status: ['active'], source: ['instagram'], window: { rolling: 'last_month' } },
@@ -306,7 +371,7 @@ const pinned: InsightTile = {
 const builtIn: InsightTile = {
   ...pinned,
   id: 'builtin-going-cold',
-  title: 'Readers at risk of going cold',
+  title: 'Subscribers at risk of going cold',
   prompt: null,
   tool: 'insight_panel',
   built_in: true,
@@ -367,7 +432,7 @@ describe('tile options (06 §/insights tile menu)', () => {
     expect(text).toContain('Updated just now')
     expect(text).toContain('46')
     // sort_order 30 before 50.
-    expect(text.indexOf('Readers at risk of going cold')).toBeLessThan(text.indexOf(BRIEF_Q1))
+    expect(text.indexOf('Subscribers at risk of going cold')).toBeLessThan(text.indexOf(BRIEF_Q1))
   })
 })
 
