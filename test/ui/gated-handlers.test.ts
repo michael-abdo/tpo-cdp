@@ -99,19 +99,60 @@ function gatedComponentNames(text: string): string[] {
 
 const BANNED_CALLS = [/\bfetch\(/, /\bpostJson\(/, /\brequest\(/, /\bnavigate\(/, /window\.location/]
 
-/** Every `{...VAR.bind}`-carrying JSX tag's own activation attribute(s), read without a real JSX
- * parser: from the bind spread, walk back to the nearest `<` and forward to the nearest `>` not
- * itself inside an attribute's `{...}` (the tags in this codebase never nest a `>` inside an
- * attribute value, so the first unescaped `>` after the spread always closes this tag). */
+/** The index of the `>` that closes a JSX opening/self-closing tag starting at or after `from`,
+ * ignoring any `>` inside an attribute's `{…}` (an arrow function's `=>`, a `n > 5` comparison) or
+ * inside a string/template literal — both counted by depth, the same way `exportedFunctionBody`
+ * bounds a function body. A mutation that wraps a handler in `() => { … }` must not truncate the
+ * tag at that arrow's own `>`, which would hide the attribute from every check below it. */
+function tagEnd(body: string, from: number): number {
+  let depth = 0
+  for (let i = from; i < body.length; i++) {
+    const c = body[i]
+    if (c === '"' || c === "'" || c === '`') {
+      i = skipLiteral(body, i) - 1
+      continue
+    }
+    if (c === '{') depth++
+    else if (c === '}') depth--
+    else if (c === '>' && depth === 0) return i
+  }
+  throw new Error('gated-handlers: tag never closes')
+}
+
+/** `attr={ … }`'s own `{ … }` content, by depth (so a nested `{}`/string inside — an arrow
+ * function's body, a template literal — is captured whole, never cut short the way a
+ * non-brace-aware regex would). `attrStart` is the index of the attribute name's first character. */
+function attributeBraceValue(body: string, attrStart: number): string {
+  const open = body.indexOf('{', attrStart)
+  let depth = 0
+  for (let i = open; i < body.length; i++) {
+    const c = body[i]
+    if (c === '"' || c === "'" || c === '`') {
+      i = skipLiteral(body, i) - 1
+      continue
+    }
+    if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) return body.slice(open + 1, i)
+    }
+  }
+  throw new Error('gated-handlers: attribute value never closes')
+}
+
+/** Every `{...VAR.bind}`-carrying JSX tag's own activation attribute(s): from the bind spread,
+ * walk back to the nearest `<` and forward to this tag's real closing `>` (`tagEnd`, brace-depth
+ * aware), then read every `on[A-Z]\w*={…}` inside it with `attributeBraceValue`. */
 function bindTagActivationAttrs(body: string): { tag: string; attr: string; value: string }[] {
   const out: { tag: string; attr: string; value: string }[] = []
   for (const m of body.matchAll(/\{\.\.\.(\w+)\.bind\}/g)) {
     const v = m[1]
     const tagStart = body.lastIndexOf('<', m.index)
-    const tagEnd = body.indexOf('>', m.index)
-    if (tagStart < 0 || tagEnd < 0) throw new Error(`gated-handlers: unterminated tag around ${v}.bind`)
-    const tag = body.slice(tagStart, tagEnd + 1)
-    for (const am of tag.matchAll(/\s(on[A-Z]\w*)=\{([^{}]*)\}/g)) out.push({ tag, attr: am[1], value: am[2].trim() })
+    if (tagStart < 0) throw new Error(`gated-handlers: unterminated tag around ${v}.bind`)
+    const end = tagEnd(body, m.index)
+    const tag = body.slice(tagStart, end + 1)
+    for (const am of tag.matchAll(/\son(Click|Change|KeyDown)=/g))
+      out.push({ tag, attr: `on${am[1]}`, value: attributeBraceValue(tag, am.index + 1).trim() })
   }
   return out
 }
@@ -145,8 +186,8 @@ describe('T-GATE-3: every gated handler does nothing but activate (source scan, 
     for (const [path, text] of files) {
       for (const m of text.matchAll(/\{\.\.\.(\w+)\.bind\}/g)) {
         const tagStart = text.lastIndexOf('<', m.index)
-        const tagEnd = text.indexOf('>', m.index)
-        const tag = text.slice(tagStart, tagEnd + 1)
+        const end = tagEnd(text, m.index)
+        const tag = text.slice(tagStart, end + 1)
         if (!/\son(Click|Change|KeyDown)=/.test(tag)) offenders.push(`${path}: tag with ${m[1]}.bind has no onClick/onChange/onKeyDown: ${tag}`)
       }
     }
