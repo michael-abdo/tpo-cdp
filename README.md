@@ -15,6 +15,22 @@ Code layout: `worker/` (the Hono API: `auth/`, `webhooks/`, `identity/`, `lookup
 
 Open the app and sign in on its login page with the site password. The password and the webhook signing secret come in the submission email; neither is in this repo. A session lasts 12 hours; "Log out" ends it sooner. More than ten sign-in attempts a minute from one address get a "wait a minute" message.
 
+## Start here (5 minutes)
+
+Sign in, then follow the brief's five requirements in order:
+
+| # | Brief | Where | What to look for |
+|---|---|---|---|
+| 1 | Pulls it together | **Overview** | Sources: 2,995 rows → 2,900 subscribers, 85 deduped, 10 set aside (8 blank, 2 invalid emails, listed under "rows to fix") |
+| 2 | Finds anyone | **Look up** | `joy.hall830@protonmail.com`: newsletter info, site visits and app activity in one view; try `joy.hall` (partial) or `joy.hal830` (typo) |
+| 3 | Builds a segment | **Segments** | the brief's example (Instagram, haven't opened in 30 days) → 177, then Export CSV |
+| 4 | Never sleeps | **App events** | send one signed event ([Webhook](#webhook)) → it appears here and in Look up, with no restart |
+| 5 | Talks back | **AI assistant** | ask the brief's three questions; open **AI audit log** to see exactly what the model received (no emails) |
+
+Then the extras: a Possible duplicates review instead of risky fuzzy merging, and each source's own health chips, both on Overview.
+
+**Waited on purpose:** CSV upload and scheduled syncs, a Settings page for definitions, per-person logins and permissions. See [What I'd do next](#what-id-do-next).
+
 ## Run locally
 
 Needs Node 20 or newer and npm. No Cloudflare account: `wrangler` runs workerd and a local D1 file under `.wrangler/`.
@@ -74,7 +90,7 @@ Screens are the menu names, with paths. Every label on them uses the brief's own
 | Brief | Where to see it | How | Tests |
 |---|---|---|---|
 | R1 Pulls it together: load the three files, link visits and app accounts by email, dedupe | Overview (`/`): the four headline numbers (Subscribers, Active subscribers, App accounts, App events), each with an ⓘ that explains it; a **Sources** table ("4 sources · last sync … · 2 rows to fix · 16 possible duplicates") with one row per source in the brief's words: beehiiv, Website and App accounts (CSV files) and App events (webhook), each with records (subscribers, website visits, app accounts, events) and a Status cell of chips from the source's checks, problems first (beehiiv: "⚠ 2 rows to fix" and "⧉ 16 possible duplicates"; the others "✓ OK" or "● Live"), each with an ⓘ (D-65). A chip is a button that opens its row on the matching tab; an open row is a tab set (arrow keys, Home, End): **History** shows the syncs (rows read, kept, deduped, rejected, each with an ⓘ) and "View rejected rows" lists that file's set-aside rows as written; **Rows to fix** lists the 2 subscribers set aside for an invalid email, each as written in subscribers.csv, with the fix (read-only); **Possible duplicates** lists subscriber pairs that share a name but not an email, each with a 0–100 score, reasons and a suggestion, and records "Same person" / "Different people" without deduping, after which the chip's count drops (`GET /api/sources` with `checks`, `GET /api/quarantine?file=`, `GET /api/duplicates`, `POST /api/duplicates/:pair_id/review`) | `scripts/csv2sql.ts` builds the seed with `worker/ingest/` and `shared/normalize.ts`; rules under [Data rules](#data-rules-and-known-edge-cases); duplicate scoring in `worker/dedupe/score.ts`, decisions in `duplicate_reviews`; source names, kinds, units and checks only in `shared/sources.ts`, term explanations only in `shared/glossary.ts` (derived metrics stay in `DEFINITIONS`) | T-ING-1..6, T-NORM-1..3, T-OVR-1, T-SRC-1..3, T-DUP-1..3 |
-| R2 Finds anyone | Look up (`/lookup`, "Look up a subscriber"): type an email or an app account's user ID (`u_…`) and press Find, or pick from the matches listed as you type; a near miss offers "Did you mean …?" links; Find also takes a `pk_` key, device `d_` ID or visitor `v_` ID (under "More ways to look someone up"); one view with three columns, Newsletter info, Site visits (pre-signup ones tagged "Before signing up") and App activity, and "No website history" when there is none | `GET /api/lookup` (exact email, `u_`, `pk_`, `d_` or `v_`), `GET /api/lookup/search` (3+ characters, up to 20 matches; with none, up to 5 `did_you_mean` within 2 edits) | T-API-1, T-API-3, T-API-4 |
+| R2 Finds anyone | Look up (`/lookup`, "Look up a subscriber"): type an email or an app account's user ID (`u_…`) and press Find, or pick from the matches listed as you type; a near miss offers "Did you mean …?" links; Find also takes a `pk_` key, device `d_` ID or visitor `v_` ID (under "More ways to look someone up"); one view with three columns, Newsletter info, Site visits (pre-signup ones tagged "Before signing up") and App activity, "No website history" when there is none, and a profile with several app accounts or website visitors shows every one, earliest first, each under its own heading | `GET /api/lookup` (exact email, `u_`, `pk_`, `d_` or `v_`; several app accounts or visitors on one profile answer 200 with all of them, never an error), `GET /api/lookup/search` (3+ characters, up to 20 matches; with none, up to 5 `did_you_mean` within 2 edits) | T-API-1, T-API-3, T-API-4, T-HARD-4 |
 | R3 Builds a segment | Segments (`/segments`): the button "haven't opened in 30 days (the brief's example)" gives 177 subscribers and says the 55 unsubscribed ones are not shown; preview and Export CSV | `worker/segments/compile.ts` turns the filters into bound SQL; the export carries a `status` column | T-SEG-1..3 |
 | R4 Never sleeps | `POST /webhooks/app`; App events (`/events`, the last 20, newest first, fetched again every 5 seconds while the tab is in view, with a Refresh button; a screen-reader line says how many new events arrived; event names as the brief writes them, `app_open`, `read_story`, `link_click`, `login`, each with an ⓘ in plain words); Look up shows new events at once | header HMAC, `event_id` idempotency, identity resolved at read time ([Webhook](#webhook)) | T-WH-1..8, T-WH-7b, T-WH-9a, T-WH-9b, T-WH-10..12, `test/events-poll.test.ts` |
 | R5 Talks back, never sees PII, shows how | AI assistant (`/assistant`); AI audit log (`/audit`) | Gate 1 → tools loaded from `assistant_tools` rows (five ship: `segment`, `aggregate`, `query_sql`, `pages_new_subscribers_hit_first`, `describe_schema`) → pure request builder → PII scanner → Claude → Gate 2/3 on tool calls → scanned output → emails re-attached for the UI only; every step written to `ai_audit` ([PII design](#pii-design)) | T-AI-1..5, T-AI-8, T-PII-1..4, T-GATE-1..2, `test/audit.test.ts`, `test/describe-schema.test.ts` |
@@ -162,7 +178,7 @@ A row that cannot become a record goes to the `quarantine` table with one reason
 - `missing_field`: a required column is empty.
 - `bad_date`: subscriber and app dates must be `YYYY-MM-DD`, and web timestamps must be `YYYY-MM-DD HH:MM:SS`. These are the CSVs' own formats, and nothing looser is accepted.
 
-A missing header column stops the seed and names the file and the column. A value that has no rule stops the seed with its file line instead of being guessed: an unknown status, a repeated `user_id`, an email on a web row other than `/subscribe`, or two different emails for one visitor.
+A missing header column stops the seed and names the file and the column. A value that has no rule stops the seed with its file line instead of being guessed: an unknown status, a repeated `user_id`, an email on a web row whose page is not `/subscribe` (a query string or one trailing slash still counts as `/subscribe`; `/subscribe/about` and `/subscrib` do not), or two different emails for one visitor.
 
 **Dedupe** (subscribers)
 
@@ -171,7 +187,7 @@ Identity is the normalized email. When rows merge:
 - `signup_date` is the earliest.
 - `last_open_date` is the latest non-empty one.
 - `status` is `unsubscribed` if any row says so.
-- `source` comes from the earliest-signup row.
+- `source` comes from the row with the earliest non-blank source (the earlier-seen row on a tie).
 - `email_raw` is the first spelling seen.
 - `merged_count` records how many rows were collapsed.
 
@@ -331,7 +347,7 @@ teammate ─▶ Worker ─▶ Gate 1 (emails in the question → [email]) ─▶
 
 - **Pseudonymous key** (`shared/pseudonym.ts`): `pk_` + the first 16 hex characters of HMAC-SHA256(`PII_KEY_SECRET`, `email_norm`). A webhook stub hashes `user:` + its id, and `visitor_hash` hashes `visitor:` + the visitor id. Keyed, so it cannot be reversed without the Worker secret.
 - **What the model receives** (`worker/assistant/build-request.ts`, a pure function and the only request builder): a fixed system prompt with the view column names and types, the definitions from `shared/derive.ts` and `TODAY`; the question after Gate 1; the enabled `assistant_tools` rows (name, description, input schema); and this request's tool results. Tools read only the views `v_profiles`, `v_web_events`, `v_app_events`, `v_funnel` and `v_source_app_conversion` (`migrations/0002_views.sql`), and no view selects a column in `PII_COLUMNS`. App events reach the model as event type, time and the `story` / `link` slug, never the raw `properties`. `describe_schema` returns only the `v_*` view names and their column names and types, read from the database, never rows, and refuses any other name.
-- **Can an email, a name or a raw subscriber row reach a model request or response? No.** The views hold no PII column; the scanner checks every request, every tool result and every model output; and T-PII-1..4 test it.
+- **Can an email reach the model? No** (known addresses and patterns are redacted, blocked or scanned at every step). **Can a name? Yes if a teammate types one: names are not detected.** The views hold no PII column; the scanner checks every request, every tool result and every model output for an email or a raw id; and T-PII-1..4 test it.
 - **Scanner** (`worker/assistant/gates/pii-guard.ts`, `assertNoPII`): the serialized payload is checked against every `email_norm` in the database (loaded per request), a case-insensitive email pattern and raw `u_` / `d_` / `v_` id patterns. A hit stops the request with 500 `blocked_pii` and a `blocked` audit row. It never redacts and retries.
 - **Re-attachment** (`worker/assistant/rehydrate.ts`): after the model has finished and its output passed the scanner, the server swaps each `pk_` key for its email, only in the HTTP response to the signed-in UI. Nothing re-hydrated is written to `ai_audit` or sent back to the model.
 - **Proof** (R5.5): "AI audit log" (`/audit`) shows, for every question, each stored model request and response, tool call and SQL exactly as stored. The stored question is the redacted one. Searching a trace for `@` finds nothing.
@@ -375,7 +391,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the screen text of the Overview and of every file the vocabulary test scans from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 33 files, 618 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the screen text of the Overview and of every file the vocabulary test scans from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 33 files, 619 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -424,10 +440,29 @@ Also: no Content Security Policy beyond the defaults; no retention policy on `ai
 
 The other concern I would address next: **prompt injection through event data.** A compromised app client can send `properties.story = "ignore prior instructions and …"`; that string is stored and can reach the model as a tool result. Shipped: the webhook's caps and refusals, tool results framed as untrusted data, read-only tools and the output scan. Next: an allowlist per field (a `story` must match the published slug list), DLP scanning in AI Gateway, and an alert on the rate of refused payloads.
 
-## AI usage
+## How this was built
 
-Built in Claude Code throughout. [`docs/ai-log.md`](docs/ai-log.md) records, by date, where the AI was wrong: what was asked, what it got wrong, how it was caught (a failing test, the typecheck, a review, a live run) and the fix. Commits are small and never squashed, and their bodies name the design sections they implement, so `git log` shows what was built when. `CLAUDE.md` holds the working rules the AI followed.
+**Short version:** the code is AI-written; the product decisions are mine. I directed Claude Code, set every requirement and trade-off, and accepted or rejected each change after an automated adversarial review. I wrote no application code by hand.
 
-## Next
+**The build loop.** Each unit of work went through the same harness: one AI agent implemented it from the design docs, then three AI reviewers tried to break it (spec, process rules, tests), and a fixer closed what they found, up to two rounds. A unit still blocked after two rounds went to the orchestrating Claude session, which either fixed it with a mutation-checked test or brought me a design call (logged as a decision). That is why about half the commits are `fix:` commits: each one closes a defect a reviewer proved with a probe or a code mutation.
 
-A Settings page for the business definitions (D-68; spec kept with the design docs as 18-settings-spec): the Growth team edits the cold window and the engagement score's weights and windows, sees the effect on the real counts before saving (the brief's preset keeps its own 30-day filter, D-30), and every save is a new version with a name and note, history and one-click restore, recomputing the stored `cold_since` and `engagement_score` in one batch (D-46 kept). The groundwork is in: the cold window is one constant, `COLD_DAYS` in `shared/derive.ts`, and the duplicate bands reach the page only through `/api/duplicates`. Later the new-subscriber window, the going-cold 14/7 days and the duplicate settings. CSV upload and scheduled syncs (D-63): `POST /api/sources/:id/upload` running the same ingest in the Worker as a new `import_runs` row, with "Run again" on Overview, once the re-import rules are written for updated rows, unsubscribes and PII keys (that is where data bugs hide, so loading stays the seed script and the webhook for now). Push segments to beehiiv; a nightly beehiiv and GA4 sync so the CSVs stop being the source; an app-revenue join against Stripe, so the Growth team can follow subscriber → trial → paid; per-user auth through Cloudflare Access; a retention policy for `ai_audit` and handling for deletion requests.
+**Where it was wrong.** [`docs/ai-log.md`](docs/ai-log.md) records every AI mistake that was caught: what was asked, what was wrong, how it was caught, and the fix. The ones worth reading first:
+- The SQL-in-answers filter: three stripping rules in a row were bypassed (line breaks, lower case, a keyword per line). The fix replaced stripping with rejection (the whole text is discarded and replaced by a server sentence).
+- Pinning free-form SQL to the shared board: a reviewer showed a query could cut a profile's key into pieces that the output check could not see. Pins were first restricted to fixed-SQL answers; the follow-up allows free-form pins only in shapes the server can check (totals, small groups hidden, whole-key lists) plus human approval for the rest.
+- Agent deploys were blocked by the permission system, so every deploy went through the orchestrating session after an independent check of tests, build, a secret scan and the live site.
+
+**A note on the history.** Four early UI commits (`ee55b54`, `7e95597`, `fb03a8d`, `d9dfbb9`) lack the `Co-Authored-By: Claude` trailer; they are AI-written like the rest. Some trailers name a model version; newer commits use a plain `Co-Authored-By: Claude` line. The history was not rewritten.
+
+**Design references.** Comments and commits cite decision IDs (`D-xx`) and design sections (`02 §Counts`, `06 §UI principles`). Those design documents are kept in a private workspace; the decisions that shape behaviour are summarized under [Assumptions](#assumptions) in this README.
+
+## What I'd do next
+
+**Waited on purpose:**
+
+- **CSV upload and scheduled syncs.** Re-import is where data bugs hide: updates vs new rows, unsubscribes, pseudonymous keys. Overview already shows loads as recurring runs (D-63), so upload slots in later: `POST /api/sources/:id/upload` running the same ingest in the Worker as a new `import_runs` row, with "Run again" on Overview, once those re-import rules are written.
+- **A Settings page for definitions.** Changing a definition recomputes stored scores for every profile; it needs preview, history and one-click restore to be safe (18-settings-spec.md). Every save would be a new version with a name and note, recomputing the stored `cold_since` and `engagement_score` in one batch (D-46 kept), starting with the cold window and the engagement score, then the new-subscriber window, the going-cold 14/7 days and the duplicate bands. The groundwork is in: the cold window is one constant, `COLD_DAYS` in `shared/derive.ts` (D-68), and the duplicate bands reach the UI only through `/api/duplicates`.
+- **Per-person logins and permissions.** The brief allows one shared password; real roles need per-person login (SSO, e.g. Cloudflare Access), an audit trail and an editor role.
+
+Then, in no particular order: tile schedules with email/Slack digests and alerts; a "Describe your segment" box on Segments that fills the builder in plain English; saved segments; a test-event panel in the UI (events are sent from the terminal for now); a multi-turn assistant (one question per request today); streamed answers; Cloudflare AI Gateway as a second, independent audit trail; and CI on GitHub Actions (the pre-deploy gate is `npm run typecheck && npm test` by hand today).
+
+Further out: push segments to beehiiv; a nightly beehiiv and GA4 sync so the CSVs stop being the source of truth; an app-revenue join against Stripe, so the Growth team can follow subscriber → trial → paid; a retention policy for `ai_audit`; and handling for deletion requests.
