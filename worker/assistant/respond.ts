@@ -100,15 +100,13 @@ function lastJsonBlock(text: string): string | null {
   return last
 }
 
-/** Filters compared as sets: the order the model lists statuses or sources in does not matter. */
+/**
+ * Filters compared by their canonical form: parseFilters returns lists sorted and deduped, every
+ * key in FILTER_KEYS order and no-op values dropped (worker/segments/compile.ts), so the order the
+ * model lists statuses or sources in does not matter and every filter key counts (09 D-69).
+ */
 function filterKey(filters: SegmentFilters): string {
-  return JSON.stringify({
-    status: [...filters.status].sort(),
-    source: filters.source === undefined ? null : [...filters.source].sort(),
-    days_since_open_gte: filters.days_since_open_gte ?? null,
-    include_never_opened: filters.include_never_opened,
-    has_app: filters.has_app,
-  })
+  return JSON.stringify(filters)
 }
 
 function tableOf(output: ToolOutput | undefined): AssistantTable | null {

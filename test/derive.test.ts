@@ -221,13 +221,16 @@ describe('time windows and the DEFINITIONS object (02 §Derived "One runtime sou
     }
   })
 
-  it('the SQL fragments compare the stored column against a bound :today, never a formula (D-46)', () => {
+  it('the SQL fragments compare the stored column against bound dates, never a formula (D-46)', () => {
     expect(DEFINITIONS.cold.sql).toBe('cold_since <= :today')
     expect(DEFINITIONS.days_since_open.sql).toBe('julianday(:today) - julianday(last_open_date)')
+    // 09 D-69: the went-cold month and "signed up in the last N days" bind a window derive.ts computes.
+    expect(DEFINITIONS.went_cold_in.sql).toBe('cold_since BETWEEN :from AND :to')
+    expect(DEFINITIONS.new_subscriber.sql).toBe('signup_date BETWEEN :from AND :to')
     for (const entry of Object.values(DEFINITIONS)) {
       if (!('sql' in entry)) continue
-      expect(entry.sql).toContain(':today')
-      expect(entry.sql).not.toMatch(/\+\s*30|'-30 days'/)
+      expect(entry.sql).toMatch(/:today|:from AND :to/)
+      expect(entry.sql).not.toMatch(/\+\s*30|'-30 days'|'now'|date\(/)
     }
   })
 

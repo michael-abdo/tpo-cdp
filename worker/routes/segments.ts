@@ -1,10 +1,14 @@
-// POST /api/segments/preview and POST /api/segments/export.csv (04 §/api/segments/preview,
-// §/api/segments/export.csv; R3, 09 D-07). Mounted at /api behind requireJson and requireSession.
-// The filters are validated and compiled by worker/segments/compile.ts to one bound SELECT over
-// tables (the UI may see emails, 03 §Request flows); every query here runs that SQL with its
-// parameters, wrapped only in count(*) or LIMIT ?. Nothing is cached (03 §No-restart).
+// POST /api/segments/preview, POST /api/segments/export.csv and GET /api/segments/options (04
+// §/api/segments/preview, §/api/segments/export.csv; 19 §5.2–5.3; R3, 09 D-07, D-69). Mounted at
+// /api behind requireJson and requireSession. The filters are validated and compiled by
+// worker/segments/compile.ts to one bound SELECT (the UI may see emails, 03 §Request flows); every
+// query here runs that SQL with its parameters, wrapped only in count(*) or LIMIT ?. The preview
+// echoes the canonical filters that parseFilters returned, so the browser keys Previous searches
+// on the server's form and never normalizes a value itself (19 §2). Nothing is cached (03
+// §No-restart).
 
 import { Hono } from 'hono'
+import { SITE_PAGE_PATTERN } from '../../shared/segment-filters'
 import { ApiError } from '../auth/middleware'
 import type { AppEnv } from '../env'
 import {
@@ -114,7 +118,7 @@ segmentRoutes.post('/segments/preview', async (c) => {
     hiddenUnsubscribed(db, filters),
     segmentRows(db, segment, limit),
   ])
-  return c.json({ count, hidden_unsubscribed, rows, sql_shape: segment.sql_shape })
+  return c.json({ count, hidden_unsubscribed, rows, sql_shape: segment.sql_shape, filters })
 })
 
 segmentRoutes.post('/segments/export.csv', async (c) => {
@@ -125,4 +129,25 @@ segmentRoutes.post('/segments/export.csv', async (c) => {
     'content-type': 'text/csv; charset=utf-8',
     'content-disposition': 'attachment; filename="segment.csv"',
   })
+})
+
+/**
+ * Every page in the site visits, ordered by how many subscribers visited it (most first), then
+ * alphabetically: the choices of the site_visit_page filter (19 §5.3). Reads v_web_events, whose
+ * pkey is NULL for an anonymous visitor, so count(DISTINCT pkey) counts linked subscribers only.
+ * A stored page the filter's pattern would refuse fails loud: offering it would only produce a
+ * 400 on the next preview.
+ */
+export async function segmentPageOptions(db: D1Database): Promise<string[]> {
+  const { results } = await db
+    .prepare('SELECT page, count(DISTINCT pkey) AS subscribers FROM v_web_events GROUP BY page ORDER BY subscribers DESC, page')
+    .all<{ page: string; subscribers: number }>()
+  const pattern = new RegExp(SITE_PAGE_PATTERN)
+  const refused = results.filter((r) => !pattern.test(r.page)).length
+  if (refused > 0) throw new Error(`segments/options: ${refused} stored page(s) do not match the site_visit_page pattern`)
+  return results.map((r) => r.page)
+}
+
+segmentRoutes.get('/segments/options', async (c) => {
+  return c.json({ pages: await segmentPageOptions(c.env.DB) })
 })
