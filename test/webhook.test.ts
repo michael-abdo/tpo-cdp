@@ -2,6 +2,7 @@ import { env, SELF } from 'cloudflare:test'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { HOSTED_URL, TODAY } from '../shared/config'
 import { pkeyForEmail, pkeyForUnknownUser } from '../shared/pseudonym'
+import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import {
@@ -380,6 +381,27 @@ describe('T-WH-6 an unknown user_id', () => {
       .all<{ event: string }>()
     expect(viewRows.map((r) => r.event)).toEqual(['read_story', 'app_open'])
 
+    // 09 D-78(b): v_profiles has the identical email-only join gap as v_app_events did; migrations/
+    // 0011 recreates it too, so has_app/app_created_at agree with Look up's has_app: true for this
+    // stub (worker/routes/lookup.ts:233), never has_app: 0 / app_created_at: NULL.
+    const profileRow = await env.DB.prepare('SELECT has_app, app_created_at FROM v_profiles WHERE pkey = ?')
+      .bind(stubKey)
+      .first<{ has_app: number; app_created_at: string }>()
+    expect(profileRow).toEqual({ has_app: 1, app_created_at: receivedAt })
+
+    // 09 D-78(b): the model's own read-only SQL tool (worker/assistant/tools/builtin-handlers.ts,
+    // the handler query_sql actually calls) must count the stub's events too, agreeing with
+    // v_app_events, /events and Look up — not just a raw SELECT against the view run by the test
+    // itself. A mutant that reverts v_app_events' pkey back to `pe.pkey AS pkey` (dropping the
+    // unknown_user_stub fallback) fails this assertion: the stub's row disappears from the
+    // GROUP BY entirely instead of showing count 2.
+    const toolResult = await BUILTIN_HANDLERS.query_sql.run(env.DB, {
+      sql: 'SELECT pkey, count(*) AS n FROM v_app_events WHERE pkey IS NOT NULL GROUP BY pkey',
+      explanation: 'app events per person',
+    })
+    const stubRow = (toolResult.rows as { pkey: string; n: number }[]).find((r) => r.pkey === stubKey)
+    expect(stubRow).toEqual({ pkey: stubKey, n: 2 })
+
     const { status: found, body } = await lookup(unknown)
     expect(found).toBe(200)
     expect(body.profile).toMatchObject({ pkey: stubKey, kind: 'unknown_user_stub', email: null })
@@ -390,6 +412,40 @@ describe('T-WH-6 an unknown user_id', () => {
       ['read_story', BRIEF_TS, 'direct'],
       ['app_open', BRIEF_TS, 'direct'],
     ])
+  })
+
+  it('heals a stub created before migration 0011 (user_id still NULL) on its next event, never IGNOREd', async () => {
+    // u_c0d06d1: data/app_users.csv's real u_c0d06d19 (line 7) with its last character removed
+    // (09 D-47), unused as either a known or an unknown id anywhere else in this file.
+    const unknown = 'u_c0d06d1'
+    const stubKey = await pkeyForUnknownUser(piiKeySecret(), unknown)
+    const first = await post(event({ user_id: unknown, device_id: 'd_c0d06d1' }))
+    expect(first.status).toBe(202)
+
+    // Simulate a database migrated to 0011 after this stub already existed: profiles.user_id
+    // came back NULL for it (ALTER TABLE ADD COLUMN sets every existing row to NULL).
+    await env.DB.prepare("UPDATE profiles SET user_id = NULL WHERE pkey = ? AND kind = 'unknown_user_stub'")
+      .bind(stubKey)
+      .run()
+    expect(await count('profiles WHERE pkey = ? AND user_id IS NULL', stubKey)).toBe(1)
+    const beforeViewRows = await env.DB.prepare('SELECT count(*) AS n FROM v_app_events WHERE pkey = ?')
+      .bind(stubKey)
+      .first<{ n: number }>()
+    expect(beforeViewRows?.n).toBe(0) // vanished, the exact D-78(b) bug, until the next event
+
+    const second = await post(
+      event({ event: 'app_open', user_id: unknown, device_id: 'd_c0d06d1', timestamp: '2026-09-28T09:22:05-05:00' }),
+    )
+    expect(second.status).toBe(202)
+
+    // INSERT ... ON CONFLICT DO UPDATE (worker/webhooks/ingest.ts), not INSERT OR IGNORE: the
+    // next event heals user_id on the EXISTING row rather than leaving it NULL forever.
+    expect(await count('profiles WHERE pkey = ? AND user_id = ?', stubKey, unknown)).toBe(1)
+    expect(await count('profiles WHERE pkey = ?', stubKey)).toBe(1) // never duplicated
+    const { results: healed } = await env.DB.prepare('SELECT event FROM v_app_events WHERE pkey = ? ORDER BY event_ts')
+      .bind(stubKey)
+      .all<{ event: string }>()
+    expect(healed.map((r) => r.event)).toEqual(['read_story', 'app_open'])
   })
 })
 

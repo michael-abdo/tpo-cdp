@@ -112,12 +112,20 @@ export async function ingestEvent(
            SELECT user_id, NULL, received_at, 0 FROM app_events WHERE event_id = ?1 AND user_id = ?2`,
         )
         .bind(event.event_id, event.user_id),
+      // INSERT ... ON CONFLICT, not INSERT OR IGNORE (09 D-78(b)): a stub created on a database
+      // that took webhooks before migration 0011 added profiles.user_id has that column NULL, so
+      // IGNORE would leave it unhealed forever (its events would keep vanishing from v_app_events
+      // at pkey NULL, with no error). The next event for the same user_id now heals it. The
+      // WHERE on the DO UPDATE only ever matches that pre-0011 row: a healthy stub already has
+      // user_id = excluded.user_id (a no-op write) and a non-stub profile cannot share this pkey.
       db
         .prepare(
-          `INSERT OR IGNORE INTO profiles (pkey, email_norm, user_id, kind, engagement_score, created_at)
+          `INSERT INTO profiles (pkey, email_norm, user_id, kind, engagement_score, created_at)
            SELECT ?3, NULL, ?2, 'unknown_user_stub', ?4, e.received_at
              FROM app_events e JOIN app_users u ON u.user_id = e.user_id
-            WHERE e.event_id = ?1 AND e.user_id = ?2 AND u.from_csv = 0 AND u.email_norm IS NULL`,
+            WHERE e.event_id = ?1 AND e.user_id = ?2 AND u.from_csv = 0 AND u.email_norm IS NULL
+           ON CONFLICT (pkey) DO UPDATE SET user_id = excluded.user_id
+            WHERE profiles.kind = 'unknown_user_stub' AND profiles.user_id IS NULL`,
         )
         .bind(
           event.event_id,
