@@ -10,6 +10,7 @@ import { ApiError } from '../auth/middleware'
 import type { AppEnv } from '../env'
 import type { SubscriberStatus } from '../ingest/quarantine'
 import {
+  AUTO_MIN_SCORE,
   type DedupeReader,
   type DedupeResult,
   REVIEW_MIN_SCORE,
@@ -135,6 +136,9 @@ duplicateRoutes.get('/duplicates', async (c) => {
     to_review: toReview,
     review: shown.slice(0, DUPLICATES_MAX_ROWS).map((p) => pairOut(p, decided.get(p.pair_id) ?? null)),
     hidden_below_review: result.pairs.length - shown.length,
+    // The band edges the Overview footer explains (09 D-62, D-68): sent with the pairs so the page
+    // never bundles its own copy of the numbers that decided which pairs it shows.
+    bands: { auto_min: AUTO_MIN_SCORE, review_min: REVIEW_MIN_SCORE },
     weights: result.weights,
     chance: result.chance,
   })

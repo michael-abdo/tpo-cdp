@@ -24,7 +24,7 @@ import {
   useState,
 } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { DEFINITIONS, isCold } from '../../shared/derive'
+import { COLD_DAYS, DEFINITIONS, isCold } from '../../shared/derive'
 import { QUERY_FRAGMENT_MIN_LENGTH } from '../../shared/normalize'
 import { ApiError, errorMessage, getJson } from '../api'
 import { AppWindow, Globe, Mail } from 'lucide-react'
@@ -157,7 +157,7 @@ function Header({ data }: { data: Lookup }) {
 
 function coldLine(coldSince: string, neverOpened: boolean): string {
   if (!isCold(coldSince)) return `Goes cold ${humanDate(coldSince)} if no opens`
-  return `Gone cold since ${humanDate(coldSince)} (${neverOpened ? 'never opened' : 'no opens for 30 days'})`
+  return `Gone cold since ${humanDate(coldSince)} (${neverOpened ? 'never opened' : `no opens for ${COLD_DAYS} days`})`
 }
 
 function Newsletter({ data, coldSince }: { data: Lookup['newsletter']; coldSince: string | null }) {

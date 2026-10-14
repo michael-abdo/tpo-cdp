@@ -102,9 +102,9 @@ export interface DuplicateDecision {
 export interface Duplicates {
   /** Candidate pairs checked (subscribers sharing a name stem). */
   candidates: number
-  /** Shown pairs (score 50+) with no decision yet, over all of them. */
+  /** Shown pairs (score bands.review_min or more) with no decision yet, over all of them. */
   to_review: number
-  /** Score 50+, highest first, at most 50. */
+  /** Score bands.review_min or more, highest first, at most 50. */
   review: {
     pair_id: string
     a: DuplicateReader
@@ -116,6 +116,8 @@ export interface Duplicates {
     decision: DuplicateDecision | null
   }[]
   hidden_below_review: number
+  /** The D-62 band edges from worker/dedupe/score.ts: auto_min and up = auto, review_min..auto_min − 1 = review. */
+  bands: { auto_min: number; review_min: number }
   /** m, u and the two log2 weights per scored field; null when there are no candidates. */
   weights: Record<ScoredField, FieldWeight> | null
   /** Pairs agreeing on domain, signup within 7 days and source, observed vs expected by chance. */

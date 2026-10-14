@@ -8,7 +8,7 @@
 /**
  * The checks a source can declare (09 D-65), in the order chips and tabs list them:
  * - rows_to_fix: rows the newest sync set aside that a person can fix (quarantine, every reason but
- *   blank_row; 09 D-61);
+ *   blank_row; 09 D-61). Every CSV source declares it, so a fixable row in any file reaches a screen;
  * - possible_duplicates: scored pairs in the review or auto band with no decision yet (09 D-62).
  */
 export const CHECK_KINDS = ['rows_to_fix', 'possible_duplicates'] as const
@@ -49,7 +49,7 @@ export const SOURCES = [
     unit: ['website visit', 'website visits'],
     loads_by: 'seed',
     file: 'web_events.csv',
-    checks: [],
+    checks: ['rows_to_fix'],
   },
   {
     id: 'app_users',
@@ -58,7 +58,7 @@ export const SOURCES = [
     unit: ['app account', 'app accounts'],
     loads_by: 'seed',
     file: 'app_users.csv',
-    checks: [],
+    checks: ['rows_to_fix'],
   },
   {
     id: 'app_events',

@@ -56,7 +56,6 @@ import type {
   WebhookSource,
 } from '../types'
 import { useGet } from '../useGet'
-import { AUTO_MIN_SCORE, REVIEW_MIN_SCORE } from '../../worker/dedupe/score'
 
 const TITLE = 'Overview'
 const PURPOSE = 'Where the data comes from, how each load went, and what needs a person.'
@@ -792,8 +791,8 @@ function PossibleDuplicates({ onReviewed }: { onReviewed: () => void }) {
         </ul>
       )}
       <p className="text-sm text-ink-muted">
-        Score {AUTO_MIN_SCORE} or more: very likely the same person. {REVIEW_MIN_SCORE}–{AUTO_MIN_SCORE - 1}:
-        worth a look. Under {REVIEW_MIN_SCORE}: not shown ({n(data.hidden_below_review)}{' '}
+        Score {data.bands.auto_min} or more: very likely the same person. {data.bands.review_min}–
+        {data.bands.auto_min - 1}: worth a look. Under {data.bands.review_min}: not shown ({n(data.hidden_below_review)}{' '}
         {data.hidden_below_review === 1 ? 'pair' : 'pairs'}). Nothing is deduped automatically — your answer is
         only recorded.
       </p>

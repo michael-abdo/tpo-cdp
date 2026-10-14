@@ -151,14 +151,12 @@ sourceRoutes.get('/sources', async (c) => {
     }
     const history = runsOf(s.id)
     const last = history[0]
-    const fixable = last?.needs_review ?? 0
-    // Rows a person can fix must reach a screen: a source without the check would show them as OK.
-    if (fixable > 0 && !declared.includes('rows_to_fix')) {
-      throw new Error(
-        `sources: ${s.id}'s newest run set aside ${fixable} rows a person can fix, but its registry entry declares no rows_to_fix check`,
-      )
+    // Every CSV source declares rows_to_fix (shared/sources.ts, 09 D-65), so a fixable row in any
+    // file shows as a chip and a tab (08 T-SRC-3 pins the declarations).
+    const counts: Record<CheckKind, number> = {
+      rows_to_fix: last?.needs_review ?? 0,
+      possible_duplicates: possibleDuplicates,
     }
-    const counts: Record<CheckKind, number> = { rows_to_fix: fixable, possible_duplicates: possibleDuplicates }
     const checks = declared.map((kind) => ({ kind, count: counts[kind] }))
     return {
       id: s.id,
