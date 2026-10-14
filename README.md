@@ -490,7 +490,7 @@ The other concern I would address next: **prompt injection through event data.**
 | 2026-10-14 | Segments stays its own page (requirement 3 must work when the model is down) (built on main); previous searches and five more filters (built; not yet merged into main) |
 | 2026-10-14 | Settings: one home per definition now; a Settings page for the cold window and engagement score later |
 
-**A note on the history.** Four early UI commits (`ee55b54`, `7e95597`, `fb03a8d`, `d9dfbb9`) lack the `Co-Authored-By: Claude` trailer; they are AI-written like the rest. Some trailers name a model version; newer commits use a plain `Co-Authored-By: Claude` line. The history was not rewritten.
+**A note on the history.** Thirteen commits lack the `Co-Authored-By: Claude` trailer: four early UI commits (`ee55b54`, `7e95597`, `fb03a8d`, `d9dfbb9`) and nine Insights review-round commits (`b429335` through `aaad21f`). They are AI-written like the rest. Some trailers name a model version; newer commits use a plain `Co-Authored-By: Claude` line. The history was not rewritten.
 
 **Design references.** Comments and commits cite decision IDs (`D-xx`) and design sections (`02 §Counts`, `06 §UI principles`). Those design documents are kept in a private workspace; the decisions that shape behaviour are summarized under [Assumptions](#assumptions) in this README.
 
