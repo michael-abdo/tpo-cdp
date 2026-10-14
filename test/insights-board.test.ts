@@ -1247,6 +1247,68 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       for (const id of [...drifted, queryTile.id]) await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(id).run()
     }
   })
+
+  it('a stored tile whose params hold an email JSON-escaped (\\u0040) is that tile’s error, not the board’s: the input scan after JSON.parse catches it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const aggregate = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    const queryTile = await pin({ audit_id: await askRecorded('which pages do new subscribers hit first?', [{ name: QUERY_ROW, input: {} }]) })
+    const aggregateParams = JSON.parse((await stored(aggregate.id))!.params) as Record<string, unknown>
+    // The raw params string has no '@' (the row scan, which reads it as a string, passes it); JSON.parse turns it back into one.
+    const escaped = (params: Record<string, unknown>) => JSON.stringify(params).replace('@', '\\u0040')
+    const copies = [
+      await insertCopy(aggregate.id, {}, 'Escaped aggregate params'),
+      await insertCopy(queryTile.id, {}, 'Escaped query input'),
+    ]
+    await env.DB.prepare('UPDATE insights SET params = ? WHERE id = ?').bind(escaped({ ...aggregateParams, source: [JOY] }), copies[0]).run()
+    await env.DB.prepare('UPDATE insights SET params = ? WHERE id = ?').bind(escaped({ include_unsubscribed: JOY }), copies[1]).run()
+    try {
+      for (const id of copies) {
+        const raw = (await stored(id))!.params
+        expect(raw).not.toContain('@')
+        expect(raw).toContain('\\u0040')
+      }
+      const res = await api('')
+      expect(res.status).toBe(200)
+      const text = await res.text()
+      expect(text).not.toContain(JOY)
+      const { tiles } = JSON.parse(text) as { tiles: Tile[] }
+      for (const id of copies) {
+        const tile = tiles.find((t) => t.id === id)!
+        expect(tile, id).toMatchObject({ status: 'error', title: BLOCKED_TILE_TITLE })
+      }
+      expect(tiles.filter((t) => !copies.includes(t.id)).every((t) => t.status === 'ok')).toBe(true)
+      // The email reached no audit row: the executor never saw the input.
+      const runTrace = await env.DB.prepare("SELECT trace_id FROM ai_audit WHERE tool_name = 'insight_panel' ORDER BY rowid DESC LIMIT 1").first<string>('trace_id')
+      const leaked = await env.DB.prepare("SELECT kind, tool_name FROM ai_audit WHERE trace_id = ? AND (request_json LIKE '%joy.hall830@%' OR error LIKE '%joy.hall830@%')").bind(runTrace).all()
+      expect(leaked.results).toEqual([])
+    } finally {
+      for (const id of [...copies, queryTile.id, aggregate.id]) await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(id).run()
+    }
+  })
+
+  it('a traced question holding a known local part or email is refused at pin: field "question", nothing stored', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const LOCAL = JOY.slice(0, JOY.indexOf('@'))
+    const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
+    for (const word of [LOCAL, JOY]) {
+      // An edited copy of a real trace (D-47): the question the model received now names the subscriber.
+      const res = await env.DB.prepare("UPDATE ai_audit SET request_json = json_set(request_json, '$.messages[0].content', ?) WHERE rowid = (SELECT rowid FROM ai_audit WHERE trace_id = ? AND kind = 'model_request' ORDER BY created_at, rowid LIMIT 1)")
+        .bind(`how many signups like ${word} went cold last month?`, auditId)
+        .run()
+      expect(res.meta.changes).toBe(1)
+      const before = await tileCount()
+      // A valid title, so only the question can be what blocks the pin.
+      const refused = await api('', { method: 'POST', body: { audit_id: auditId, title: 'Went cold last month' } })
+      expect(refused.status, word).toBe(400)
+      const text = await refused.text()
+      expect(text).not.toContain(LOCAL)
+      const body = JSON.parse(text) as { error: string; details: Array<{ field: string }> }
+      expect(body.error).toBe('blocked_pii')
+      expect(body.details[0].field).toBe('question')
+      expect(await tileCount(), word).toBe(before)
+    }
+  })
 })
 
 describe('board runs in the audit log (05 §Proof surfaces, R5.5)', () => {

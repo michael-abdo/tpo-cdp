@@ -48,8 +48,8 @@
 //     audit write is not a tile error: it fails the request loud (03 row 11).
 //
 // Audit: each board request opens one trace with no session_sub, so its tool_call rows sit in
-// ai_audit like any other tool run but never count toward the assistant's per-session limit
-// (09 D-40 counts traces per session_sub); /api/audit lists such a trace as a `board_run`
+// ai_audit like any other tool run but never count toward the assistant's limits
+// (09 D-40 counts traces per session_sub, D-70 #6 per client_key; both stay NULL here); /api/audit lists such a trace as a `board_run`
 // (worker/routes/audit.ts). ran_at and created_at read the wall clock under 02 §Time's allow-list
 // (`insights.created_at`, a tile's `ran_at`; 09 D-64); no date rule reads them.
 
@@ -648,7 +648,7 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
 }
 
 async function openContext(db: D1Database): Promise<RunContext> {
-  // No session_sub: board runs never count toward the assistant's per-session limit (09 D-40).
+  // No session_sub: board runs never count toward the assistant's per-session or per-client limit (09 D-40, D-70 #6).
   return { db, trace: await startTrace(db, null), board: await boardTools(db), keys: await loadKnownKeys(db) }
 }
 
