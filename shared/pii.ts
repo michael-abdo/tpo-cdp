@@ -223,7 +223,7 @@ function applyAtShape(disguiseTokens: readonly DisguiseToken[]): ScanToken[] {
     let disguised = false
     for (let i = domainStart; i < domainEnd; i += 1) if (disguiseTokens[i]!.disguisedDot) { disguised = true; break }
     // A spelled "dot" in the name part marks it as a disguised address too ("new dot person at
-    // gmail.com"); a plain word before "at" ("signed up at instagram.com") never does.
+    // example.com"); a plain word before "at" ("signed up at instagram.com") never does.
     for (let i = localRange[0]; i < localRange[1] && !disguised; i += 1) if (disguiseTokens[i]!.disguisedDot) disguised = true
     const domain = midText.slice(domainStart, domainEnd)
     const tld = domain.slice(domain.lastIndexOf('.') + 1)

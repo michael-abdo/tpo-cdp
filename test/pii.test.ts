@@ -665,7 +665,7 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
       // the one home for this set; it covers U+2060 WORD JOINER, which the old five-character
       // list (U+200B-200D/FEFF/00AD) did not.
       expect(normalizeForScan(`${JOY_LOCAL}⁠@protonmail.com`).text).toBe(JOY)
-      expect(normalizeForScan(`new.person⁠@gmail.com`).text).toBe('new.person@gmail.com')
+      expect(normalizeForScan(`new.person⁠@example.com`).text).toBe('new.person@example.com')
     })
 
     it('dropping known_local_part from findPII would let the webhook-link scenario above through null, not a check', async () => {
@@ -700,7 +700,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
 
   it('a spelled address with any two-letter or common generic TLD is caught, and a spelled dot in the name part counts too (09 D-79 closure)', () => {
     const known = new KnownEmails([])
-    for (const text of ['press at example dot de', 'press at example dot ai', 'new.person at gmail dot ca', 'new dot person at gmail.com', 'sales at shop dot store']) {
+    for (const text of ['press at example dot de', 'press at example dot ai', 'new.person at example dot ca', 'new dot person at example.com', 'sales at shop dot store']) {
       expect(findPII(text, known), text).toBe('email_pattern')
     }
     for (const text of ['signed up at instagram.com', 'Look at the dot plot below.', 'meet at noon', 'data dot com']) {
@@ -784,8 +784,8 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
   it('item 5: a real disguised address with a real TLD still blocks (the TLD check is not a new false negative)', async () => {
     const known = await loadKnownEmails(env.DB)
     expect(findPII('joy.hall830 at protonmail dot com', known)).toBe('known_email')
-    expect(findPII('new.person at gmail dot com', known)).toBe('email_pattern')
-    expect(findPII('new.person at gmail dot co dot uk', known)).toBe('email_pattern')
+    expect(findPII('new.person at example dot com', known)).toBe('email_pattern')
+    expect(findPII('new.person at example dot co dot uk', known)).toBe('email_pattern')
   })
 
   it('mutation check: accepting any word as the spelled shape\'s TLD would turn "the dot plot" into an email again', () => {
