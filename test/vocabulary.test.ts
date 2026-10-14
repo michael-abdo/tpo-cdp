@@ -1,14 +1,19 @@
 // T-VOC-1 (08, 09 D-66): every user-facing word is the brief's own, per the table in 06 §Vocabulary.
 // The scan reads screen text from the TypeScript AST (JSX text, string literals, template chunks;
 // comments are not nodes), handed over by vitest.config.ts as SCREEN_TEXTS.vocabulary for each file
-// test/helpers/screen-text.ts VOCABULARY_SCAN names, plus the README as written. No database or
-// network: the inputs are the repo's own files.
+// test/helpers/screen-text.ts VOCABULARY_SCAN names, plus the README as written, plus the system
+// prompt as rendered (its Definitions section comes from shared/derive.ts at runtime; its view list
+// from the migrated local D1's v_* views, no seed rows). No network.
 
 import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import readme from '../README.md?raw'
 import appSource from '../src/App.tsx?raw'
+import eventsSource from '../src/pages/EventsPage.tsx?raw'
 import lookupSource from '../src/pages/LookupPage.tsx?raw'
+import { discoverViewSchemas } from '../worker/assistant/schema-context'
+import { renderSystemPrompt } from '../worker/assistant/system-prompt'
+import { DEFINITIONS } from '../shared/derive'
 import { GLOSSARY } from '../shared/glossary'
 import { SOURCES } from '../shared/sources'
 import { COLUMN_LABEL, FILTER_LABEL } from '../src/labels'
@@ -46,9 +51,10 @@ const attributeValues = (code: string, tag: string, attribute: string) =>
   [...code.matchAll(new RegExp(`<${tag}\\s+${attribute}="([^"]+)"`, 'g'))].map((m) => m[1])
 
 describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () => {
-  it('scans every file it names: all of src/ but the Segments page, the glossary, the registry and the server sentences', () => {
+  it('scans every file it names: all of src/ but the Segments page, the glossary, the registry, the definitions and the server sentences', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
     for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
+    expect(scanned).toContain('shared/derive.ts')
     for (const page of ['src/App.tsx', 'src/pages/OverviewPage.tsx', 'src/pages/LookupPage.tsx', 'src/labels.ts'])
       expect(scanned).toContain(page)
     expect(scanned).not.toContain('src/pages/SegmentsPage.tsx')
@@ -70,6 +76,14 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(offences(texts)).toEqual([])
   })
 
+  it('the system prompt the model reads, Definitions section included, holds no retired term', async () => {
+    const prompt = renderSystemPrompt(await discoverViewSchemas(env.DB))
+    // The Definitions section is built at runtime from shared/derive.ts, so the source scan of
+    // system-prompt.ts alone never sees it; read the rendered text as the model does.
+    for (const def of Object.values(DEFINITIONS)) expect(prompt).toContain(def.doc)
+    expect(offences({ 'renderSystemPrompt()': prompt.split('\n') })).toEqual([])
+  })
+
   it('no README line holds a retired term outside the brief\'s own question', () => {
     expect(offences({ 'README.md': readme.split('\n') })).toEqual([])
   })
@@ -88,7 +102,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     )
     // Field labels a person reads on the profile (06 §Vocabulary subscriber, web and app fields).
     const fields = new Set(attributeValues(lookupSource, 'Field', 'label'))
-    for (const label of ['Acquisition source', 'Signup date', 'Last open date', 'Visitor ID', 'User ID', 'Created date'])
+    for (const label of ['Status', 'Acquisition source', 'Signup date', 'Last open date', 'Visitor ID', 'First UTM source', 'User ID', 'Created date'])
       expect(fields).toContain(label)
   })
 
@@ -133,5 +147,8 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
       expect(GLOSSARY[event].term).toBe(event)
       expect(GLOSSARY[event].text.length).toBeGreaterThan(10)
     }
+    // Both pages that list events render the name through EventName (name + its gloss InfoTip).
+    expect(eventsSource).toContain('<EventName event={e.event} />')
+    expect(lookupSource).toContain('<EventName event={e.event} />')
   })
 })

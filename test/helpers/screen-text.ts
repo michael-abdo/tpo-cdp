@@ -26,8 +26,10 @@ export type ScanFixture = keyof typeof SCAN_FIXTURES
 /**
  * Where user-facing words live, for the vocabulary guard (08 T-VOC-1, 09 D-66): every .ts/.tsx file
  * under `src/` except the Segments page (owned by the segments work, which already uses the D-66
- * words), the glossary, the source registry and the server-written sentences (dedupe suggestions,
- * assistant fallback sentences, the system prompt, and the Growth panels' "Explain this" questions).
+ * words), the glossary, the source registry, the metric definitions (shared/derive.ts DEFINITIONS:
+ * the system prompt renders its Definitions section from them at runtime, and the UI footers and
+ * Look up show them) and the server-written sentences (dedupe suggestions, assistant fallback
+ * sentences, the system prompt, and the Growth panels' "Explain this" questions).
  */
 export const VOCABULARY_SCAN = {
   dirs: ['src'],
@@ -35,6 +37,7 @@ export const VOCABULARY_SCAN = {
   files: [
     'shared/glossary.ts',
     'shared/sources.ts',
+    'shared/derive.ts',
     'worker/dedupe/score.ts',
     'worker/assistant/respond.ts',
     'worker/assistant/system-prompt.ts',
