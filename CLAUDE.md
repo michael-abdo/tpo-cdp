@@ -15,7 +15,7 @@ Decided in 09 D-02..D-06, D-23 (Claude only, confirmed), D-24 (mirror the consul
 - Definitions are written once and rendered everywhere: 02 §Derived "One runtime source".
 - Unsubscribed default and export rule: 02 §Defaults.
 - Webhook auth is header-only over raw bytes; idempotency, ordering, stitching, stub profiles: 04 §Webhook, 01 §Identity resolution, 02 §Linking.
-- Events for demos are sent with `scripts/send-webhook.ts` through the real endpoint (11 §Verify); if the parked test-event panel is ever built it must do the same (04).
+- Events for demos are sent with `scripts/send-webhook.ts` through the real endpoint (11 §Verify), or through the "Send a test event" panel on /events (09 D-73), which does the same: no second copy of verify or ingest (04).
 - The model never sees PII; the only request builder is pure; the scanner blocks, never degrades; audit is awaited: 05, enforcement layers 03 §Gateway layers.
 - Tools are data (09 D-41): every tool is an `assistant_tools` row; the loader validates every enabled row at load and fails loud (03 layer 3). Never register a tool only in code.
 - What is and isn't cached: 03 §No-restart guarantee.
