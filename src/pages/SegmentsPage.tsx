@@ -202,10 +202,12 @@ export function GatedSignedUpBetween() {
   const to = useId()
   return (
     <fieldset className="space-y-1">
-      <div className="flex items-center gap-1">
-        <legend className={labelClass}>{gated.feature.label}</legend>
+      {/* legend must be the fieldset's first child (not wrapped in a layout div) or the fieldset
+          gets no accessible name; the chip sits inside it instead. */}
+      <legend className={`${labelClass} flex items-center gap-1`}>
+        {gated.feature.label}
         <ComingSoonTag />
-      </div>
+      </legend>
       <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
         <label htmlFor={from}>from</label>
         <input
