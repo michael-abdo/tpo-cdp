@@ -20,12 +20,12 @@
 
 import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
-import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
+import { APP_EVENTS } from '../../shared/app-events'
 import { TODAY } from '../../shared/config'
 import { DEFINITIONS, type DefinitionKey, NEW_SUBSCRIBER_DAYS } from '../../shared/derive'
 import { GLOSSARY } from '../../shared/glossary'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
-import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../worker/ingest/quarantine'
+import { SUBSCRIBER_STATUSES } from '../../worker/ingest/quarantine'
 import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
@@ -47,6 +47,7 @@ import {
 import { humanDate } from '../format'
 import { COLUMN_LABEL, DEFINITION_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
 import { clearSearches, type PreviousSearch, readSearches, recordSearch, visibleSearches } from '../previous-searches'
+import { DEFAULT_FORM, type Form, moreFiltersOn, toFilters, toForm } from '../segment-form'
 import type { SegmentFilters, SegmentOptions, SegmentPreview, SegmentRow } from '../types'
 import { useGet } from '../useGet'
 
@@ -55,114 +56,16 @@ const PREVIEW_LIMIT = 100
 /** Rows shown before "Show all … in preview" (principle 2: the rest is one click away). */
 const FIRST_ROWS = 10
 
-/** The form's state: strings and flags as the inputs hold them, turned into 04 filters on submit. */
-interface Form {
-  /** One status, or 'all' for every status. */
-  status: SubscriberStatus | 'all'
-  sources: string[]
-  /** Blank = no recency filter. */
-  days: string
-  includeNeverOpened: boolean
-  hasApp: 'any' | 'yes' | 'no'
-  // More filters: blank = not set.
-  signedUpDays: string
-  /** '', 'any' or a `YYYY-MM` month. */
-  wentCold: string
-  engagementFrom: string
-  engagementTo: string
-  siteDays: string
-  sitePage: string
-  appDays: string
-  appEvent: AppEventName | ''
-}
-
-const DEFAULT_FORM: Form = {
-  status: 'active',
-  sources: [],
-  days: '',
-  includeNeverOpened: false,
-  hasApp: 'any',
-  signedUpDays: '',
-  wentCold: '',
-  engagementFrom: '',
-  engagementTo: '',
-  siteDays: '',
-  sitePage: '',
-  appDays: '',
-  appEvent: '',
-}
-
 /** The footer definitions, each under its plain heading (DEFINITION_LABEL); the raw name shows only in Technical details. */
 const FOOTER_DEFINITIONS: readonly DefinitionKey[] = ['days_since_open', 'no_open_in_days', 'cold', 'went_cold_in', 'new_subscriber', 'engagement_score']
 
 /** The CSV's columns as the export writes them (04 §Segments). */
 const CSV_COLUMNS = 'email, status, source, signup_date, last_open_date, engagement_score, has_app'
 
-const text = (n: number | undefined) => (n === undefined ? '' : String(n))
-
-/** 04 filters as the form holds them; toFilters(toForm(f)) previews the same subscribers as f. */
-function toForm(f: SegmentFilters): Form {
-  return {
-    status: f.status.length === 1 ? f.status[0] : 'all',
-    sources: f.source ?? [],
-    days: text(f.days_since_open_gte),
-    includeNeverOpened: f.days_since_open_gte !== undefined && f.include_never_opened,
-    hasApp: f.has_app === null || f.has_app === undefined ? 'any' : f.has_app ? 'yes' : 'no',
-    signedUpDays: text(f.signed_up_within_days),
-    wentCold: f.went_cold ?? '',
-    engagementFrom: text(f.engagement_gte),
-    engagementTo: text(f.engagement_lte),
-    siteDays: text(f.site_visit_within_days),
-    sitePage: f.site_visit_page ?? '',
-    appDays: text(f.app_active_within_days),
-    appEvent: f.app_event ?? '',
-  }
-}
-
 /** Router state set by "Open segment" on /insights (a tile or an AI answer). */
 function openedFilters(state: unknown): SegmentFilters | null {
   if (typeof state !== 'object' || state === null || !('filters' in state)) return null
   return (state as { filters: SegmentFilters }).filters
-}
-
-/** A number box as sent: blank = absent; anything else is sent as typed, so the server's 400 shows. */
-function num(value: string): number | undefined {
-  const v = value.trim()
-  return v === '' ? undefined : Number(v)
-}
-
-/** The 04 filters object; only set keys are sent, so an empty More filters adds nothing. */
-function toFilters(form: Form): SegmentFilters {
-  const days = num(form.days)
-  const more: Partial<SegmentFilters> = {
-    signed_up_within_days: num(form.signedUpDays),
-    went_cold: form.wentCold === '' ? undefined : form.wentCold,
-    engagement_gte: num(form.engagementFrom),
-    engagement_lte: num(form.engagementTo),
-    site_visit_within_days: num(form.siteDays),
-    site_visit_page: form.sitePage === '' ? undefined : form.sitePage,
-    app_active_within_days: num(form.appDays),
-    app_event: form.appEvent === '' ? undefined : form.appEvent,
-  }
-  return {
-    status: form.status === 'all' ? [...SUBSCRIBER_STATUSES] : [form.status],
-    ...(form.sources.length === 0 ? {} : { source: form.sources }),
-    ...(days === undefined ? {} : { days_since_open_gte: days }),
-    include_never_opened: days !== undefined && form.includeNeverOpened,
-    has_app: form.hasApp === 'any' ? null : form.hasApp === 'yes',
-    ...Object.fromEntries(Object.entries(more).filter(([, v]) => v !== undefined)),
-  }
-}
-
-/** How many of the five More filters are set: engagement, signed up, went cold, site visits, app activity. */
-function moreFiltersOn(f: Form): number {
-  return [
-    f.engagementFrom.trim() !== '' || f.engagementTo.trim() !== '',
-    f.signedUpDays.trim() !== '',
-    f.wentCold !== '',
-    f.siteDays.trim() !== '' || f.sitePage !== '',
-    f.appDays.trim() !== '' || f.appEvent !== '',
-  ].filter(Boolean).length
 }
 
 /** Went cold months built from TODAY: this month and the two before it (19-segments-spec §3). */
