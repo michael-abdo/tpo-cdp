@@ -65,6 +65,10 @@ export const ONE_PLACE_SCAN = {
     'src/components.tsx',
     'src/needs-review.ts',
     'src/block-reason.ts',
+    'src/labels.ts',
+    'src/events-poll.ts',
+    'src/filters-applied.ts',
+    'src/segments-days-field.ts',
     'shared/glossary.ts',
     'shared/insight-messages.ts',
     'worker/dedupe/score.ts',
@@ -78,8 +82,25 @@ export const ONE_PLACE_SCAN = {
  * their own source holds each entry's text once no matter how many pages read it, so merging them
  * in would over-count a page that reads one entry exactly once; `screenFacts`'s `resolve` already
  * credits that page with it, precisely once per property access (09 D-72, m3b/m6d vs m11).
+ * `src/events-poll.ts`/`filters-applied.ts`/`segments-days-field.ts` are the opposite case (09
+ * D-72, m9): a page reads their sentence constants (`DAYS_INVALID_NEXT`, `FILTERS_HIDDEN_MESSAGE`,
+ * …) through a return value, never a `MODULE.CONST` property access `resolve` could credit, so
+ * without merging them in, a page could retype one of their sentences with nothing to catch it.
+ * `src/labels.ts` is scanned (ONE_PLACE_SCAN.files) but left out of the merge, like GLOSSARY and
+ * DEFINITIONS: its whole purpose is one word per field, read the same way by every screen that
+ * shows that field ("/segments and /insights read the same maps", its own header comment), so
+ * /segments showing the same heading /insights' DEFINITION_LABEL already names is by design, not a
+ * second home for it.
  */
-const MERGEABLE_SCREEN_FILES = new Set(['src/App.tsx', 'src/components.tsx', 'src/needs-review.ts', 'src/block-reason.ts'])
+const MERGEABLE_SCREEN_FILES = new Set([
+  'src/App.tsx',
+  'src/components.tsx',
+  'src/needs-review.ts',
+  'src/block-reason.ts',
+  'src/events-poll.ts',
+  'src/filters-applied.ts',
+  'src/segments-days-field.ts',
+])
 
 export interface ScreenTexts {
   overview: string[]

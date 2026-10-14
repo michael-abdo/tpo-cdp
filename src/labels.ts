@@ -21,6 +21,24 @@ export const STATUS_LABEL: Readonly<Record<string, string>> = { active: 'Active'
 export const sourceLabel = (s: string | null) => (s === null ? 'Unknown' : (SOURCE_LABEL[s] ?? s))
 export const statusLabel = (s: string) => STATUS_LABEL[s] ?? s
 
+/** Plain headings for the definitions (02 §Derived), on /insights and /segments; the raw names
+ * show only in Technical details. The one source for each: COLUMN_LABEL's app_after_signup column
+ * reads `app_after_signup` from here rather than retyping it (09 D-72). */
+export const DEFINITION_LABEL: Record<DefinitionKey, string> = {
+  days_since_open: 'Days since last open',
+  cold_since: 'Cold date',
+  cold: 'Cold',
+  went_cold_in: 'Went cold in a month',
+  no_open_in_days: "Haven't opened in N days",
+  new_subscriber: 'New subscriber',
+  going_cold_risk: 'At risk of going cold',
+  engagement_score: 'Engagement',
+  has_app: 'Uses the app',
+  app_after_signup: 'Got the app after signing up',
+  last_month: 'Last month',
+  last_n_days: 'Last N days',
+}
+
 /**
  * Result columns the assistant's tools can return: the segment tool's rows (MODEL_SEGMENT_COLUMNS,
  * `pkey` renamed `email` after re-hydration; a stub profile keeps its key) and the aggregate
@@ -43,7 +61,7 @@ export const COLUMN_LABEL = {
   subscribers: 'Subscribers',
   cold: 'Cold subscribers',
   went_cold: 'Went cold',
-  with_app_after_signup: 'Got the app after signing up',
+  with_app_after_signup: DEFINITION_LABEL.app_after_signup,
   rate: 'Rate',
   visitors: 'Visitors',
   subscribed: 'Subscribed',
@@ -89,19 +107,3 @@ export function words(name: string): string {
 
 export const columnLabel = (name: string) => (COLUMN_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 export const filterLabel = (name: string) => (FILTER_LABEL as Record<string, string | undefined>)[name] ?? words(name)
-
-/** Plain headings for the definitions (02 §Derived), on /insights; the raw names show only in Technical details. */
-export const DEFINITION_LABEL: Record<DefinitionKey, string> = {
-  days_since_open: 'Days since last open',
-  cold_since: 'Cold date',
-  cold: 'Cold',
-  went_cold_in: 'Went cold in a month',
-  no_open_in_days: "Haven't opened in N days",
-  new_subscriber: 'New subscriber',
-  going_cold_risk: 'At risk of going cold',
-  engagement_score: 'Engagement',
-  has_app: 'Uses the app',
-  app_after_signup: 'Got the app after signing up',
-  last_month: 'Last month',
-  last_n_days: 'Last N days',
-}

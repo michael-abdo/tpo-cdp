@@ -32,7 +32,7 @@ import {
   TechnicalDetails,
 } from '../components'
 import { humanDate } from '../format'
-import { COLUMN_LABEL, sourceLabel, statusLabel } from '../labels'
+import { COLUMN_LABEL, DEFINITION_LABEL, sourceLabel, statusLabel } from '../labels'
 import { DAYS_ERROR_ID, DAYS_HINT_ID, daysFieldState } from '../segments-days-field'
 import type { SegmentFilters, SegmentPreview, SegmentRow } from '../types'
 
@@ -57,13 +57,14 @@ const DEFAULT_FORM: Form = { status: 'active', sources: [], days: '', includeNev
 /** The brief's R3 example (02 §Counts): Instagram, active, no open in 30 days including never-opened. */
 const BRIEF_PRESET: Form = { status: 'active', sources: ['instagram'], days: '30', includeNeverOpened: true, hasApp: 'any' }
 
-/** The footer definitions, each with a plain heading; the raw name and formula show only in
- * Technical details. `cold` is listed too, so a reviewer can reconcile it against this filter's
- * count (09 D-30). */
+/** The footer definitions, each with a plain heading from DEFINITION_LABEL (the one source /insights
+ * already reads for the same definitions, so the heading is never retyped here); the raw name and
+ * formula show only in Technical details. `cold` is listed too, so a reviewer can reconcile it
+ * against this filter's count (09 D-30). */
 const FOOTER_DEFINITIONS = [
-  { label: 'Days since last open', def: DEFINITIONS.days_since_open },
-  { label: "Haven't opened in N days", def: DEFINITIONS.no_open_in_days },
-  { label: 'Cold', def: DEFINITIONS.cold },
+  { label: DEFINITION_LABEL.days_since_open, def: DEFINITIONS.days_since_open },
+  { label: DEFINITION_LABEL.no_open_in_days, def: DEFINITIONS.no_open_in_days },
+  { label: DEFINITION_LABEL.cold, def: DEFINITIONS.cold },
 ]
 
 /** The CSV's columns as the export writes them (04 §Segments). */
