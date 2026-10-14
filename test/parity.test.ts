@@ -13,6 +13,7 @@ import {
   addDays,
   buildExpected,
   canonicalSource,
+  damerauLevenshtein,
   type ExpectedPairInput,
   engagementScore,
   normalizeEmail,
@@ -692,6 +693,13 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(rawMatches).toBe(1190)
   })
 
+  it("web_events.csv: the /subscribe date equals signup_date for all 1,400 linked visitors (02 §Counts line 60)", () => {
+    const linked = [...oracle.subscribers.values()].filter((s) => s.web.signup_ts !== null)
+    expect(linked.length).toBe(1400)
+    const sameDay = linked.filter((s) => (s.web.signup_ts as string).slice(0, 10) === s.signup_date)
+    expect(sameDay.length).toBe(1400)
+  })
+
   it('web_events.csv: 1,144 linked visitors have pre-signup views (1,930 events); 628 anonymous visitors (1,559 events)', () => {
     const linked = [...oracle.subscribers.values()].filter((s) => s.web.visitor_hashes.length > 0)
     const withPreSignup = linked.filter((s) => s.web.pre_signup_events > 0)
@@ -805,6 +813,16 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
       s.source === 'instagram' && s.cold_since.startsWith('2026-08') && s.cold
     expect(subs.filter((s) => wentColdAug(s) && s.status === 'active').length).toBe(46)
     expect(subs.filter((s) => wentColdAug(s) && s.status === 'unsubscribed').length).toBe(20)
+  })
+
+  it('02 §Counts line 62: 93 is all unsubscribed Instagram subscribers regardless of the 30-day rule; went_cold_in(2026-08) is 66 across all statuses (D-51)', () => {
+    const subs = [...oracle.subscribers.values()]
+    const igUnsub = subs.filter((s) => s.source === 'instagram' && s.status === 'unsubscribed').length
+    expect(igUnsub).toBe(93)
+    const wentColdAugAnyStatus = subs.filter(
+      (s) => s.source === 'instagram' && s.cold && s.cold_since.startsWith('2026-08'),
+    ).length
+    expect(wentColdAugAnyStatus).toBe(66) // = the 46 active + 20 unsubscribed asserted just above
   })
 
   // Read-time derived values, checked against the real segment endpoints, not only recomputed
@@ -927,6 +945,76 @@ describe('T-PAR-6b absent-today guards (21 §3 #17)', () => {
 })
 
 // -------------------------------------------------------------------------------------------
+// T-PAR-6c: 21 §3 hardest cases #9 (never opened) and #10 (TODAY boundaries), each a named
+// assertion of every count the spec lists for that case, from the oracle alone.
+// -------------------------------------------------------------------------------------------
+describe('T-PAR-6c hardest cases #9 and #10 (21 §3)', () => {
+  it('#9 never opened: 470 (155 unsubscribed; 325 cold now; 145 not cold yet); 152 still score > 0 from site visits', () => {
+    const neverOpened = [...oracle.subscribers.values()].filter((s) => s.last_open_date === null)
+    expect(neverOpened.length).toBe(470)
+    expect(neverOpened.filter((s) => s.status === 'unsubscribed').length).toBe(155)
+    expect(neverOpened.filter((s) => s.cold).length).toBe(325)
+    expect(neverOpened.filter((s) => !s.cold).length).toBe(145)
+    expect(neverOpened.filter((s) => s.profile.engagement_score > 0).length).toBe(152)
+  })
+
+  it('#10 TODAY boundaries: cold_since = TODAY 15 (cold), = TODAY+1 46 (not); 30 days since open 7; opened TODAY 151; signed up TODAY 41 (9 never opened); new_subscriber edge 2026-08-29 in 37 / 2026-08-28 out 39', () => {
+    const subs = [...oracle.subscribers.values()]
+    expect(subs.filter((s) => s.cold_since === TODAY).length).toBe(15)
+    expect(subs.filter((s) => s.cold_since === addDays(TODAY, 1)).length).toBe(46)
+    expect(subs.filter((s) => s.days_since_open === 30).length).toBe(7)
+    expect(subs.filter((s) => s.last_open_date === TODAY).length).toBe(151)
+    const signedUpToday = subs.filter((s) => s.signup_date === TODAY)
+    expect(signedUpToday.length).toBe(41)
+    expect(signedUpToday.filter((s) => s.last_open_date === null).length).toBe(9)
+    expect(subs.filter((s) => s.signup_date === '2026-08-29').length).toBe(37)
+    expect(subs.filter((s) => s.signup_date === '2026-08-28').length).toBe(39)
+  })
+})
+
+// -------------------------------------------------------------------------------------------
+// T-PAR-6d: partial/fuzzy lookup fixtures (02 §Counts lines 64/66, D-52/D-59). The oracle never
+// imports worker/lookup/fuzzy.ts (21 §2.1) — "partial" is its own substring match over every
+// profile email (subscriber + app_only, the same set GET /api/lookup/search's grp 0/1 reads) and
+// a matching app_users.user_id prefix (grp 2); "fuzzy" is its own damerauLevenshtein, the same
+// metric the session scratchpad's counts.py used to reproduce these fixtures originally.
+// -------------------------------------------------------------------------------------------
+describe('T-PAR-6d partial/fuzzy lookup fixtures (21 §4.1 item 3)', () => {
+  function profileEmails(): string[] {
+    const subscriberEmails = [...oracle.subscribers.values()].map((s) => s.email_norm)
+    const appOnlyEmails = [...oracle.appOnlyProfiles.values()].map((p) => p.email_norm)
+    return [...subscriberEmails, ...appOnlyEmails]
+  }
+
+  it("joy.hall -> 3 profiles; hall -> 52 profiles (09 D-52)", () => {
+    const emails = profileEmails()
+    expect(emails.filter((e) => e.includes('joy.hall')).length).toBe(3)
+    expect(emails.filter((e) => e.includes('hall')).length).toBe(52)
+  })
+
+  it('u_2b64 -> 1 app account (u_2b6447a3, julia.evans230; 09 D-52)', () => {
+    const matches = oracle.appUsers.filter((u) => u.user_id.startsWith('u_2b64'))
+    expect(matches.length).toBe(1)
+  })
+
+  it('appser17 -> 13 profiles within Damerau-Levenshtein distance 2 (09 D-59)', () => {
+    const emails = profileEmails()
+    const query = 'appser17'
+    const within2 = emails.filter((e) => {
+      const local = e.slice(0, e.indexOf('@'))
+      return Math.min(damerauLevenshtein(query, e), damerauLevenshtein(query, local)) <= 2
+    })
+    expect(within2.length).toBe(13)
+  })
+
+  it('appuser1 -> 11 partial matches, no suggestions needed (09 D-59)', () => {
+    const emails = profileEmails()
+    const matches = emails.filter((e) => e.includes('appuser1'))
+    expect(matches.length).toBe(11) // appuser1, appuser10..appuser19
+  })
+})
+
+// -------------------------------------------------------------------------------------------
 // T-PAR-7: D-62 table equals GET /api/duplicates
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-7 D-62 possible duplicates', () => {
@@ -1020,8 +1108,13 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
     const target = listBody.review[0]
     if (target === undefined) throw new Error('parity: no review-band pair available to submit a decision on')
 
-    const subscribersBefore = await env.DB.prepare('SELECT count(*) AS n FROM subscribers').first<number>('n')
-    const profilesBefore = await env.DB.prepare('SELECT count(*) AS n FROM profiles').first<number>('n')
+    // 21 §2.5 "a review changes no other table": every table a review could plausibly touch,
+    // not only subscribers/profiles.
+    const countsBefore = await Promise.all(
+      ['subscribers', 'profiles', 'web_visitors', 'web_events', 'app_users', 'import_runs', 'quarantine'].map(
+        (table) => env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<number>('n'),
+      ),
+    )
 
     const reviewRes = await SELF.fetch(`http://cdp.test/api/duplicates/${target.pair_id}/review`, {
       method: 'POST',
@@ -1039,10 +1132,12 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
     expect(knownPkeys.has(row.pkey_a)).toBe(true)
     expect(knownPkeys.has(row.pkey_b)).toBe(true)
 
-    const subscribersAfter = await env.DB.prepare('SELECT count(*) AS n FROM subscribers').first<number>('n')
-    const profilesAfter = await env.DB.prepare('SELECT count(*) AS n FROM profiles').first<number>('n')
-    expect(subscribersAfter).toBe(subscribersBefore)
-    expect(profilesAfter).toBe(profilesBefore)
+    const countsAfter = await Promise.all(
+      ['subscribers', 'profiles', 'web_visitors', 'web_events', 'app_users', 'import_runs', 'quarantine'].map(
+        (table) => env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first<number>('n'),
+      ),
+    )
+    expect(countsAfter).toEqual(countsBefore)
   })
 })
 
@@ -1071,6 +1166,15 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       .first<{ engagement_score: number }>()
     expect(before?.engagement_score).toBe(subscriber.profile.engagement_score)
     expect(before?.engagement_score).toBe(28) // 02 §Counts, 09 D-53
+
+    // 02 §Counts line 63: "used the app in the last 7 days: 0 on the seed (no app events)" —
+    // asserted here, before any webhook in this file sends one, not only the =1 check after.
+    const activeLast7Before = await env.DB.prepare(
+      'SELECT count(DISTINCT user_id) AS n FROM app_events WHERE user_id IS NOT NULL AND event_ts >= ?',
+    )
+      .bind(`${addDays(TODAY, -6)}T00:00:00Z`)
+      .first<number>('n')
+    expect(activeLast7Before).toBe(0)
 
     const res = await sendWebhook(
       JSON.stringify({
