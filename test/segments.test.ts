@@ -4,8 +4,9 @@ import { TOOL_SEEDS } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { isNewSubscriber, noOpenInDays } from '../shared/derive'
 import { normalizeEmail } from '../shared/normalize'
+import { BRIEF_EXAMPLE, searchKey } from '../src/previous-searches'
 import { EMAIL_REGEX, RAW_ID_REGEX } from '../shared/pii'
-import { FILTER_KEYS, FILTER_SCHEMA } from '../shared/segment-filters'
+import { FILTER_KEYS, FILTER_SCHEMA, type SegmentFilters } from '../shared/segment-filters'
 import { inputSchemaProblems } from '../worker/assistant/gates/gate2-tool-authorizer'
 import { respond } from '../worker/assistant/respond'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
@@ -307,9 +308,9 @@ function visitedBy(keep: (v: { page: string; date: string }) => boolean): Set<st
 const coldSinceOf = (s: CsvSubscriber) => minusDays(s.last_open_date ?? s.signup_date, -30)
 
 /** 02 §Derived engagement_score, by hand, at seed (no app events): recency 50 + site visits 25. */
-function engagementOf(s: CsvSubscriber, visitsLast30: Map<string, number>): number {
+function engagementOf(s: CsvSubscriber, visitsLast30: Map<string, number>, appEventsLast30 = 0): number {
   const recency = s.last_open_date === null ? 0 : 50 * Math.max(0, 1 - Math.max(0, daysFrom(s.last_open_date, TODAY)) / 30)
-  return Math.round(recency + 25 * Math.min(1, (visitsLast30.get(s.email) ?? 0) / 5))
+  return Math.round(recency + 25 * Math.min(1, appEventsLast30 / 10) + 25 * Math.min(1, (visitsLast30.get(s.email) ?? 0) / 5))
 }
 
 function visitsLast30d(): Map<string, number> {
@@ -358,6 +359,14 @@ describe('T-SEG-6 the preview echoes the canonical filters', () => {
     expect(Object.keys(a.filters)).toEqual(FILTER_KEYS.filter((k) => k in a.filters))
     // The echo is itself canonical: sending it back returns it unchanged.
     expect((await preview(a.filters)).filters).toEqual(a.filters)
+  })
+
+  it('the brief\'s preset echoes as BRIEF_EXAMPLE, so Previous searches never shows the example twice (19 §2)', async () => {
+    // visibleSearches adds the example row unless a stored echo has BRIEF_EXAMPLE's key; the page
+    // stores the server's echo, so the echo of the preset, sent bare or as the row sends it, must be it.
+    for (const sent of [PRESET, BRIEF_EXAMPLE, { ...PRESET, source: ['Instagram'], status: ['active'] }]) {
+      expect(searchKey((await preview(sent)).filters as unknown as SegmentFilters), JSON.stringify(sent)).toBe(searchKey(BRIEF_EXAMPLE))
+    }
   })
 
   it('include_never_opened without days is false; engagement 0 and 100 are dropped as no filter', async () => {
@@ -717,13 +726,20 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
   })
 
   it('julia\'s read_story at TODAY: app activity 0 → 1, engagement ≥ 31 rises by exactly 1 (28 → 31)', async () => {
-    const before = await counts({ engagement_gte: 31 })
-    const julia = async () => (await preview({ source: ['instagram'], signed_up_within_days: 30, engagement_gte: 28, engagement_lte: 31 }, 1000)).rows.find((r) => r.email === JULIA)
-    expect((await julia())?.engagement_score).toBe(28)
+    // 28 and 31 by the 02 §Derived formula on her CSV row and visits, with 0 and then 1 app event.
+    const csvJulia = csvSubscribers().find((s) => s.email === JULIA)
+    if (csvJulia === undefined) throw new Error(`${JULIA} is not in subscribers.csv`)
+    const scoreBefore = engagementOf(csvJulia, visitsLast30d())
+    const scoreAfter = engagementOf(csvJulia, visitsLast30d(), 1)
+    expect([scoreBefore, scoreAfter]).toEqual([28, 31])
+    const before = await counts({ engagement_gte: scoreAfter })
+    const julia = async () =>
+      (await preview({ source: ['instagram'], signed_up_within_days: 30, engagement_gte: scoreBefore, engagement_lte: scoreAfter }, 1000)).rows.find((r) => r.email === JULIA)
+    expect((await julia())?.engagement_score).toBe(scoreBefore)
     const res = await send({ event: 'read_story', user_id: 'u_2b6447a3', device_id: 'd_2b6447a3', properties: { story: 'supreme-court-ruling-explained' } })
     expect(res.status).toBe(202)
-    expect((await julia())?.engagement_score).toBe(31)
-    expect(await counts({ engagement_gte: 31 })).toEqual({ active: before.active + 1, hidden: before.hidden })
+    expect((await julia())?.engagement_score).toBe(scoreAfter)
+    expect(await counts({ engagement_gte: scoreAfter })).toEqual({ active: before.active + 1, hidden: before.hidden })
     expect(await counts({ app_active_within_days: 7 })).toEqual({ active: 1, hidden: 0 })
     expect(await counts({ app_active_within_days: 7, app_event: 'read_story' })).toEqual({ active: 1, hidden: 0 })
     expect(await counts({ app_active_within_days: 7, app_event: 'login' })).toEqual({ active: 0, hidden: 0 })

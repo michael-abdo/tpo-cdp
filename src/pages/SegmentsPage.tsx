@@ -22,7 +22,7 @@ import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useS
 import { useLocation } from 'react-router'
 import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 import { TODAY } from '../../shared/config'
-import { DEFINITIONS, type DefinitionKey } from '../../shared/derive'
+import { DEFINITIONS, type DefinitionKey, NEW_SUBSCRIBER_DAYS } from '../../shared/derive'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../../worker/ingest/quarantine'
 import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
@@ -204,6 +204,70 @@ function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
 }
 
 /** The matching subscribers as a table (cards on phones), each row with its Details. */
+const labelClass = 'block text-sm font-medium text-gray-900'
+const groupClass = 'text-sm font-semibold text-ink'
+const hintClass = 'text-sm text-gray-600'
+const inputClass = 'block w-full min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
+const numberClass = 'block min-h-9 w-24 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
+
+/**
+ * The level-1 words under "Signed up in the last" (19 §3 row 2, "30 = new subscribers"; 06
+ * §Vocabulary): the brief's "new subscribers" is a number of days here, so the page names it
+ * without the InfoTip. The 30 is DEFINITIONS.new_subscriber's window (NEW_SUBSCRIBER_DAYS).
+ */
+export const NEW_SUBSCRIBERS_HINT = `${NEW_SUBSCRIBER_DAYS} days = new subscribers.`
+
+/**
+ * A "… in the last N days" number box. `tip` is an InfoTip beside its label; `hint` is a line of
+ * level-1 words under the box, tied to the input by aria-describedby.
+ */
+export function DaysBox({
+  id,
+  label,
+  value,
+  onChange,
+  tip,
+  hint,
+}: {
+  id: string
+  label: string
+  value: string
+  onChange: (v: string) => void
+  tip?: ReactNode
+  hint?: string
+}) {
+  const hintId = `${id}-hint`
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1">
+        <label htmlFor={id} className={labelClass}>
+          {label}
+        </label>
+        {tip}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          aria-describedby={hint === undefined ? undefined : hintId}
+          className={numberClass}
+        />
+        <span className="text-sm text-gray-700">days</span>
+      </div>
+      {hint !== undefined && (
+        <p id={hintId} className={hintClass}>
+          {hint}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export function MatchingRows({ filters, rows }: { filters: SegmentFilters; rows: SegmentRow[] }) {
   return (
     <ResponsiveTable
@@ -431,7 +495,8 @@ export default function SegmentsPage() {
   const hidden = ok !== null && !ok.filters.status.includes('unsubscribed') ? ok.data.hidden_unsubscribed : 0
   const heading = ok === null ? '' : countSentence(ok.data.count)
   const outcome: Outcome | null =
-    result === null || origin === 'form'
+    // Hidden after Clear: the list it sat under changed, and the result below still shows the count.
+    result === null || origin === 'form' || cleared
       ? null
       : result.status === 'ok'
         ? { status: 'ok', count: result.data.count }
@@ -440,15 +505,10 @@ export default function SegmentsPage() {
   const shownRows = ok === null ? 0 : showAll ? ok.data.rows.length : Math.min(FIRST_ROWS, ok.data.rows.length)
 
   let announcement = heading
-  if (result?.status === 'loading') announcement = 'Counting matching subscribers…'
+  // While loading, <Loading> is the one live region that says so; the Announcer stays quiet.
+  if (result?.status === 'loading') announcement = ''
   if (exporting) announcement = 'Preparing download…'
   if (cleared) announcement = 'Previous searches cleared.'
-
-  const labelClass = 'block text-sm font-medium text-gray-900'
-  const groupClass = 'text-sm font-semibold text-ink'
-  const hintClass = 'text-sm text-gray-600'
-  const inputClass = 'block w-full min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
-  const numberClass = 'block min-h-9 w-24 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
 
   // A value loaded from a previous search or a pin stays choosable even when it is not in today's list.
   const pages = options?.status === 'ok' ? options.data.pages : []
@@ -456,33 +516,6 @@ export default function SegmentsPage() {
   const monthChoices = coldMonthOptions()
   if (form.wentCold !== '' && form.wentCold !== 'any' && !monthChoices.some((c) => c.value === form.wentCold)) {
     monthChoices.push({ value: form.wentCold, label: monthLabel(form.wentCold, 'short') })
-  }
-
-  /** A "… in the last N days" number box; `tip` is an InfoTip beside its label. */
-  function daysBox(id: string, label: string, value: string, set: (v: string) => void, tip?: ReactNode) {
-    return (
-      <div className="space-y-1">
-        <div className="flex items-center gap-1">
-          <label htmlFor={id} className={labelClass}>
-            {label}
-          </label>
-          {tip}
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            id={id}
-            type="number"
-            min={1}
-            step={1}
-            inputMode="numeric"
-            value={value}
-            onChange={(e) => set(e.target.value)}
-            className={numberClass}
-          />
-          <span className="text-sm text-gray-700">days</span>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -649,7 +682,14 @@ export default function SegmentsPage() {
 
             <fieldset className="grid gap-4 sm:grid-cols-2">
               <legend className={`${groupClass} mb-2`}>Newsletter info</legend>
-              {daysBox('signed-up-days', 'Signed up in the last', form.signedUpDays, (v) => setForm({ ...form, signedUpDays: v }), <InfoTip term="new_subscriber" />)}
+              <DaysBox
+                id="signed-up-days"
+                label="Signed up in the last"
+                value={form.signedUpDays}
+                onChange={(v) => setForm({ ...form, signedUpDays: v })}
+                tip={<InfoTip term="new_subscriber" />}
+                hint={NEW_SUBSCRIBERS_HINT}
+              />
               <div className="space-y-1">
                 <div className="flex items-center gap-1">
                   <label htmlFor="went-cold" className={labelClass}>
@@ -663,7 +703,7 @@ export default function SegmentsPage() {
                   onChange={(e) => setForm({ ...form, wentCold: e.target.value })}
                   className={inputClass}
                 >
-                  <option value="">Any subscriber</option>
+                  <option value="">Don't filter</option>
                   <option value="any">Any time (cold now)</option>
                   {monthChoices.map((c) => (
                     <option key={c.value} value={c.value}>
@@ -676,7 +716,7 @@ export default function SegmentsPage() {
 
             <fieldset className="grid gap-4 sm:grid-cols-2">
               <legend className={`${groupClass} mb-2`}>Site visits</legend>
-              {daysBox('site-days', 'Visited the site in the last', form.siteDays, (v) => setForm({ ...form, siteDays: v }))}
+              <DaysBox id="site-days" label="Visited the site in the last" value={form.siteDays} onChange={(v) => setForm({ ...form, siteDays: v })} />
               <div className="space-y-1">
                 <label htmlFor="site-page" className={labelClass}>
                   Page
@@ -707,7 +747,7 @@ export default function SegmentsPage() {
               <p id="app-hint" className={`${hintClass} sm:col-span-2`}>
                 Comes from live app events, so it counts only what the app has sent.
               </p>
-              {daysBox('app-days', 'Used the app in the last', form.appDays, (v) => setForm({ ...form, appDays: v }))}
+              <DaysBox id="app-days" label="Used the app in the last" value={form.appDays} onChange={(v) => setForm({ ...form, appDays: v })} />
               <div className="space-y-1">
                 <label htmlFor="app-event" className={labelClass}>
                   Event

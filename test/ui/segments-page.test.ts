@@ -3,10 +3,11 @@ import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import componentsSource from '../../src/components.tsx?raw'
 import segmentsSource from '../../src/pages/SegmentsPage.tsx?raw'
-import { DEFINITIONS } from '../../shared/derive'
+import { TODAY } from '../../shared/config'
+import { addDays, DEFINITIONS, isNewSubscriber, NEW_SUBSCRIBER_DAYS } from '../../shared/derive'
 import { DEFINITION_LABEL, explain, GLOSSARY, isGlossaryKey } from '../../shared/glossary'
 import { BRIEF_EXAMPLE } from '../../src/previous-searches'
-import { MatchingRows, RowDetails, SearchOutcome } from '../../src/pages/SegmentsPage'
+import { DaysBox, MatchingRows, NEW_SUBSCRIBERS_HINT, RowDetails, SearchOutcome } from '../../src/pages/SegmentsPage'
 import type { SegmentRow } from '../../src/types'
 
 // /segments rendered (06 §/segments, §Vocabulary, §UI principles 4; 09 D-66, D-69; 19-segments-spec
@@ -67,7 +68,7 @@ describe('/segments: a search run from Previous searches shows its count beside 
     const section = segmentsSource.slice(start, segmentsSource.indexOf('</section>', start))
     expect(section.indexOf('<SearchOutcome outcome={outcome} />')).toBeGreaterThan(section.indexOf('</ul>'))
     // The page fills it for a previous search or "Open list" only, and the targets carry the ids.
-    expect(segmentsSource).toContain("result === null || origin === 'form'")
+    expect(segmentsSource).toContain("result === null || origin === 'form' || cleared")
     expect(segmentsSource).toContain("load(row.filters, 'previous')")
     expect(segmentsSource).toContain("preview(toFilters(toForm(opened)), 'opened')")
     expect(segmentsSource).toContain("const RESULT_HEADING_ID = 'result-heading'")
@@ -76,8 +77,49 @@ describe('/segments: a search run from Previous searches shows its count beside 
     expect(segmentsSource).toContain('id={PREVIEW_ERROR_ID}')
   })
 
+  it('while counting, one live region speaks: <Loading>, never the Announcer as well', () => {
+    expect(segmentsSource).toContain('<Loading label="Counting matching subscribers…" />')
+    expect(segmentsSource).toContain("if (result?.status === 'loading') announcement = ''")
+    expect(segmentsSource).not.toMatch(/announcement = 'Counting/)
+  })
+
+  it('"Went cold" left blank reads "Don\'t filter", never "Any subscriber" beside "Any time (cold now)"', () => {
+    const select = segmentsSource.slice(segmentsSource.indexOf('id="went-cold"'), segmentsSource.indexOf('</select>', segmentsSource.indexOf('id="went-cold"')))
+    expect(select).toContain('<option value="">Don\'t filter</option>')
+    expect(select).toContain('<option value="any">Any time (cold now)</option>')
+    expect(select).not.toContain('Any subscriber')
+  })
+
   it('More filters starts open, so the brief\'s Growth filters need no extra click (19 §7 note)', () => {
     expect(segmentsSource).toContain('const [moreOpen, setMoreOpen] = useState(true)')
+  })
+})
+
+describe('/segments names "new subscribers" at level 1, beside "Signed up in the last" (19 §3 row 2, 06 §Vocabulary)', () => {
+  it('the box renders the hint under it, tied to the input by aria-describedby', () => {
+    const { html, text } = render(
+      createElement(DaysBox, { id: 'signed-up-days', label: 'Signed up in the last', value: '', onChange: () => {}, hint: NEW_SUBSCRIBERS_HINT }),
+    )
+    expect(text).toContain('new subscribers')
+    expect(html).toMatch(/<input[^>]*id="signed-up-days"[^>]*aria-describedby="signed-up-days-hint"/)
+    expect(html).toMatch(/<p id="signed-up-days-hint"[^>]*>30 days = new subscribers\.<\/p>/)
+    // A box with no hint describes nothing.
+    const plain = render(createElement(DaysBox, { id: 'site-days', label: 'Visited the site in the last', value: '', onChange: () => {} }))
+    expect(plain.html).not.toContain('aria-describedby')
+  })
+
+  it('the 30 in the hint is the new_subscriber window: day 30 before TODAY is new, day 31 is not', () => {
+    expect(NEW_SUBSCRIBERS_HINT.startsWith(`${NEW_SUBSCRIBER_DAYS} days`)).toBe(true)
+    expect(isNewSubscriber(addDays(TODAY, -NEW_SUBSCRIBER_DAYS))).toBe(true)
+    expect(isNewSubscriber(addDays(TODAY, -NEW_SUBSCRIBER_DAYS - 1))).toBe(false)
+  })
+
+  it('the page gives the hint to the "Signed up in the last" box, in the Newsletter info group', () => {
+    const start = segmentsSource.indexOf('<DaysBox\n                id="signed-up-days"')
+    expect(start).toBeGreaterThan(segmentsSource.indexOf('>Newsletter info</legend>'))
+    const box = segmentsSource.slice(start, segmentsSource.indexOf('/>', segmentsSource.indexOf('hint=', start)) + 2)
+    expect(box).toContain('label="Signed up in the last"')
+    expect(box).toContain('hint={NEW_SUBSCRIBERS_HINT}')
   })
 })
 

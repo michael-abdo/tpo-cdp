@@ -5,7 +5,8 @@
 // `{"v":1,"items":[{"filters":{…}}]}` under one localStorage key. Storage can throw (private
 // mode, blocked site data), so every read and write is guarded the way src/theme.ts guards the
 // theme, and the page works without it. Bad JSON or another `v` reads as empty; an item with a
-// key outside FILTER_KEYS (or a value of the wrong type) is dropped; both are overwritten by the next write.
+// key outside FILTER_KEYS (or a value of the wrong type), or one missing a key every echo holds, is
+// dropped; both are overwritten by the next write.
 // The brief's example is never stored by rendering: visibleSearches adds it as the last row
 // whenever no stored item has its canonical key, so a new browser sees it first and Clear never
 // removes it.
@@ -68,9 +69,13 @@ function hasSchemaType(key: FilterKey, value: unknown): boolean {
   })
 }
 
+/** The keys every echo holds (the server always returns them), so a stored copy without one is not canonical. */
+const ECHOED_KEYS = ['status', 'include_never_opened', 'has_app'] as const satisfies readonly FilterKey[]
+
 /**
  * A stored item this page can name and re-run: exactly `{filters}`, every key in FILTER_KEYS with
- * its schema type, and a status list. Anything else is dropped on read.
+ * its schema type, and every key an echo always holds (ECHOED_KEYS). Anything else is dropped on
+ * read, so a hand-edited copy (BRIEF_EXAMPLE without has_app, say) never shows as a near-duplicate.
  */
 function storedFilters(item: unknown): SegmentFilters | null {
   if (!isRecord(item) || Object.keys(item).length !== 1 || !isRecord(item.filters)) return null
@@ -78,7 +83,7 @@ function storedFilters(item: unknown): SegmentFilters | null {
   for (const [key, value] of Object.entries(f)) {
     if (!isFilterKey(key) || !hasSchemaType(key, value)) return null
   }
-  if (f.status === undefined) return null
+  if (ECHOED_KEYS.some((key) => f[key] === undefined)) return null
   return f as unknown as SegmentFilters
 }
 

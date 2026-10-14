@@ -130,7 +130,7 @@ describe('T-SEG-4 Previous searches', () => {
     expect(visibleSearches(readSearches()).map((r) => r.example)).toEqual([true])
   })
 
-  it('drops bad JSON, another version, an unknown key or a wrong type, and the next write replaces them', () => {
+  it('drops bad JSON, another version, an unknown key, a wrong type or a missing echoed key, and the next write replaces them', () => {
     const store = new MemoryStore()
     for (const raw of ['{', '"x"', JSON.stringify({ v: 2, items: [{ filters: SEARCHES[0] }] }), JSON.stringify({ v: 1 })]) {
       store.setItem(STORAGE_KEY, raw)
@@ -146,11 +146,16 @@ describe('T-SEG-4 Previous searches', () => {
           { filters: { ...SEARCHES[2], engagement_gte: '50' } },
           { filters: SEARCHES[3], count: 935 },
           { filters: { include_never_opened: false, has_app: null } },
+          // Not canonical: an echo always holds include_never_opened and has_app. Kept, the first
+          // would show beside the example row as a near-duplicate with a different key.
+          { filters: { status: BRIEF_EXAMPLE.status, source: BRIEF_EXAMPLE.source, days_since_open_gte: BRIEF_EXAMPLE.days_since_open_gte, include_never_opened: true } },
+          { filters: { status: ['active'], has_app: null } },
           { filters: SEARCHES[4] },
         ],
       }),
     )
     expect(readSearches(store)).toEqual([SEARCHES[4]])
+    expect(visibleSearches(readSearches(store)).filter((r) => r.example)).toHaveLength(1)
     recordSearch(SEARCHES[5], store)
     expect(stored(store)).toEqual({ v: 1, items: [{ filters: SEARCHES[5] }, { filters: SEARCHES[4] }] })
   })
