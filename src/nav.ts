@@ -46,8 +46,8 @@ export function underNav(pathname: string, to: string): boolean {
 }
 
 // The disclosure-nav decision logic (06 §Nav, 09 D-71), pulled out of App.tsx's NavGroupMenu as
-// pure functions so each one has its own unit test with no DOM (App.tsx only wires the result to
-// state/focus/stopPropagation). Each function matches one behaviour D-71 names.
+// pure functions with unit tests that need no DOM; those tests do not reach App.tsx's wiring
+// (state, focus, stopPropagation), which README "Known gaps" records as checked live. Each function matches one behaviour D-71 names.
 
 /** Esc on an open disclosure-nav panel: close it and return focus to its button. */
 export function escapeAction(key: string, open: boolean): { close: boolean; refocus: boolean } {
@@ -58,11 +58,6 @@ export function escapeAction(key: string, open: boolean): { close: boolean; refo
 /** A pointer down outside every given root (the button+panel wrapper) closes the panel. */
 export function closesOnPointer(target: Node, roots: readonly (Node | null)[]): boolean {
   return !roots.some((root) => root !== null && root.contains(target))
-}
-
-/** Picking one of the panel's links always closes it. */
-export function pickCloses(): true {
-  return true
 }
 
 /** Click, Enter or Space on the button toggles the panel to the opposite of its current state. */

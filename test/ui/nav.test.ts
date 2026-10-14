@@ -21,8 +21,8 @@ import { closesOnPointer, escapeAction, NAV, nextOpen } from '../../src/nav'
 // escapeAction and e.stopPropagation(), the button.current?.focus() on refocus, the document
 // pointerdown listener that calls closesOnPointer, the NavLink onClick that closes on pick, or the
 // button onClick that calls nextOpen). workerd has no DOM, so none of (A)/(B)/(C) can render a real
-// keydown, pointerdown or click and observe React's handler run; that wiring needs a live browser
-// check (README "Known gaps" → "Techy nav: DOM wiring has no automated test").
+// keydown, pointerdown or click and observe React's handler run; that wiring is covered by the live browser
+// check recorded in README "Known gaps" → "Techy nav: the DOM wiring has no automated test".
 
 function renderAt(url: string): string {
   const navigator = {
@@ -183,12 +183,6 @@ describe('"Techy" nav group: decision logic (src/nav.ts, 09 D-71) — no DOM nee
     expect(escapeAction('Enter', true)).toEqual({ close: false, refocus: false })
     expect(escapeAction('a', true)).toEqual({ close: false, refocus: false })
   })
-
-  // pickCloses (src/nav.ts) takes no input and always returns the literal `true`; a test asserting
-  // that is a tautology on the function's type signature, not coverage of "picking a link closes
-  // the panel" (that claim needs the live DOM check above — App.tsx's NavLink onClick actually
-  // calling it and then setOpen(false)). Removed rather than kept as false coverage (09 D-71 fixer
-  // round 2).
 
   it('closesOnPointer: true outside every root, false inside any one of them', () => {
     const inside = {} as Node

@@ -21,7 +21,6 @@ import {
   NAV,
   type NavGroupEntry,
   nextOpen,
-  pickCloses,
   underNav,
 } from './nav'
 import { effectiveTheme, setTheme, type Theme } from './theme'
@@ -55,7 +54,7 @@ const quietButton =
  * (nextOpen); Esc closes it, returns focus to the button, and stops the keydown from reaching an
  * ancestor (`wrap`'s own onKeyDown, not a document listener, so on the phone menu Esc closes only
  * Techy — a second Esc then closes "#phone-menu" through its own handler); a pointer down outside
- * the button+panel closes it (closesOnPointer); picking a link closes it (pickCloses); nothing
+ * the button+panel closes it (closesOnPointer); picking a link closes it (the link's onClick); nothing
  * traps focus. The button reads as current (same soft fill + weight as a NavLink, navClass)
  * whenever /events, /audit or /audit/:traceId is the route, with a visually-hidden "(current
  * section)" standing in for aria-current, which only ever names one real page (D-67's comment on
@@ -64,9 +63,9 @@ const quietButton =
  * the panel out: "desktop" positions it `absolute`, right-aligned under the button and clamped to
  * the viewport width so it never widens the page; "phone" renders it as a plain in-flow list, so an
  * open panel pushes the theme/log-out row down instead of covering it. The decision logic
- * (escapeAction, closesOnPointer, pickCloses, nextOpen) lives in src/nav.ts as pure functions, each
- * with its own unit test with no DOM (test/ui/nav.test.ts); this component only wires their result
- * to state, focus and stopPropagation.
+ * (escapeAction, closesOnPointer, nextOpen) lives in src/nav.ts as pure functions with unit tests
+ * that need no DOM (test/ui/nav.test.ts); this component wires their result to state, focus and
+ * stopPropagation, which those tests do not reach (README "Known gaps" records the live check).
  */
 function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desktop' | 'phone' }) {
   const { pathname } = useLocation()
@@ -128,7 +127,7 @@ function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desk
       >
         {group.items.map((item) => (
           <li key={item.to}>
-            <NavLink to={item.to} className={navClass} onClick={() => pickCloses() && setOpen(false)}>
+            <NavLink to={item.to} className={navClass} onClick={() => setOpen(false)}>
               <Icon icon={item.icon} />
               {item.label}
             </NavLink>
