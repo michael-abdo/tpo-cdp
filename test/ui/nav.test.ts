@@ -3,19 +3,22 @@ import { renderToString } from 'react-dom/server'
 import { createPath, Router, type To } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../src/App'
-import { NAV } from '../../src/nav'
+import { closesOnPointer, escapeAction, NAV, nextOpen, pickCloses } from '../../src/nav'
 
 // "Techy" (06 §Nav, 09 D-71): App events and AI audit log fold into one dropdown, last in the nav,
-// after the WAI-ARIA disclosure-navigation pattern. Two kinds of check:
+// after the WAI-ARIA disclosure-navigation pattern. Three kinds of check:
 // (A) the NAV data itself (src/nav.ts NAV, the single source both the desktop and the phone nav
 // read) — this is what "a link is missing from the group" or "a link reappeared at top level"
 // actually mean, since the rendered nav is a pure map over this array.
-// (B) the Techy button's own rendered markup, via a static Router render (as test/ui/routes.test.ts
-// does; workerd has no DOM). The button's panel is portalled to document.body (so InfoTip-style
-// popovers are never clipped by the header, 09 D-60) and is skipped by the component itself when
-// there is no document.body, exactly as this harness has none — this proves the button's own
-// attributes and current-section marking without needing a browser; the panel's own markup (the
-// two real links, Esc, outside click, closing on a pick) is checked live (06 §Nav build notes).
+// (B) the Techy button and panel's own rendered markup, via a static Router render (as
+// test/ui/routes.test.ts does; workerd has no DOM). The panel is no longer portalled (App.tsx
+// NavGroupMenu), so it renders in this same server markup right after the button — this proves DOM
+// order, the hidden attribute, aria-controls naming the panel's real id, and the two real links,
+// with no browser needed.
+// (C) the disclosure's decision logic (src/nav.ts escapeAction, closesOnPointer, pickCloses,
+// nextOpen), unit-tested directly since App.tsx only wires each one's result to state, focus and
+// stopPropagation — no DOM needed for Esc-closes, Esc-refocuses, outside-click-closes, link-pick-
+// closes or toggle-opens/closes either.
 
 function renderAt(url: string): string {
   const navigator = {
@@ -44,6 +47,22 @@ function techyButton(html: string): string {
   const end = html.indexOf('</button>', textAt)
   if (end === -1) throw new Error('no closing </button> after "Techy"')
   return html.slice(start, end + '</button>'.length)
+}
+
+/**
+ * The markup strictly between the Techy button's closing tag and the next real NavLink after the
+ * whole group (09 D-71 requirement: the panel's own links sit right after the button in the DOM,
+ * not at the end of <body> through a portal). Fails the same way `techyButton` does when either
+ * boundary is missing, so a regression back to a portal (nothing between the button and whatever
+ * unrelated markup follows it) shows up as a missing "AI audit log" link, not a thrown error.
+ */
+function afterTechyButton(html: string): string {
+  const button = techyButton(html)
+  const from = html.indexOf(button) + button.length
+  // Wide enough to hold the panel's two links with their lucide-react <svg> icons (each icon's own
+  // markup runs several hundred characters); still tiny next to the live portal bug's 26-Tabs'-worth
+  // of unrelated markup (routes.test.ts's full-page render runs to tens of thousands of characters).
+  return html.slice(from, from + 2000)
 }
 
 describe('"Techy" nav group: the data (09 D-71 requirement 4, single source)', () => {
@@ -111,4 +130,67 @@ describe('"Techy" nav group: the rendered button (09 D-71 requirement 1, 2)', ()
       expect(button).not.toContain('(current section)')
     },
   )
+})
+
+describe('"Techy" nav group: the panel sits right after the button, not portalled (09 D-71 keyboard reachability)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('document', { documentElement: { dataset: {} } })
+    vi.stubGlobal('window', {})
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('a real <ul> whose id equals the button\'s aria-controls starts within a few characters of the button', () => {
+    const html = renderAt('/')
+    const button = techyButton(html)
+    const controls = /aria-controls="([^"]+)"/.exec(button)?.[1]
+    if (controls === undefined) throw new Error('the button has no aria-controls')
+    const after = afterTechyButton(html)
+    const panelAt = after.indexOf(`id="${controls}"`)
+    // Portalled markup sits at the end of <body>, thousands of characters and many elements away
+    // (26 Tabs' worth, live); inline markup sits in the handful of characters of its own opening tag.
+    expect(panelAt).toBeGreaterThanOrEqual(0)
+    expect(panelAt).toBeLessThan(40)
+  })
+
+  it('is hidden when closed (the default) and holds exactly App events then AI audit log, as real links', () => {
+    const after = afterTechyButton(renderAt('/'))
+    const ulAt = after.indexOf('<ul')
+    const ulTagEnd = after.indexOf('>', ulAt)
+    expect(after.slice(ulAt, ulTagEnd)).toContain('hidden')
+    const eventsAt = after.indexOf('href="/events"')
+    const auditAt = after.indexOf('href="/audit"')
+    expect(eventsAt).toBeGreaterThan(ulAt)
+    expect(auditAt).toBeGreaterThan(eventsAt)
+  })
+})
+
+describe('"Techy" nav group: decision logic (src/nav.ts, 09 D-71) — no DOM needed', () => {
+  it('nextOpen toggles: closed opens, open closes', () => {
+    expect(nextOpen(false)).toBe(true)
+    expect(nextOpen(true)).toBe(false)
+  })
+
+  it('escapeAction closes and refocuses only on Escape while open', () => {
+    expect(escapeAction('Escape', true)).toEqual({ close: true, refocus: true })
+    expect(escapeAction('Escape', false)).toEqual({ close: false, refocus: false })
+    expect(escapeAction('Enter', true)).toEqual({ close: false, refocus: false })
+    expect(escapeAction('a', true)).toEqual({ close: false, refocus: false })
+  })
+
+  it('pickCloses always says to close', () => {
+    expect(pickCloses()).toBe(true)
+  })
+
+  it('closesOnPointer: true outside every root, false inside any one of them', () => {
+    const inside = {} as Node
+    const outside = {} as Node
+    const empty = { contains: () => false } as unknown as Node
+    const holding = { contains: (n: Node) => n === inside } as unknown as Node
+    expect(closesOnPointer(outside, [empty, holding])).toBe(true)
+    expect(closesOnPointer(inside, [empty, holding])).toBe(false)
+    expect(closesOnPointer(outside, [null, null])).toBe(true)
+  })
 })

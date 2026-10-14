@@ -8,14 +8,22 @@
 // "Techy" (06 §Nav, 09 D-71): App events and AI audit log fold into one dropdown, last in the nav,
 // following the WAI-ARIA disclosure-navigation pattern (NavGroupMenu below).
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { TODAY } from '../shared/config'
 import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
 import { ErrorLine, Icon, ICONS } from './components'
-import { flatNavLinks, NAV, type NavGroupEntry, underNav } from './nav'
+import {
+  closesOnPointer,
+  escapeAction,
+  flatNavLinks,
+  NAV,
+  type NavGroupEntry,
+  nextOpen,
+  pickCloses,
+  underNav,
+} from './nav'
 import { effectiveTheme, setTheme, type Theme } from './theme'
 import AuditPage from './pages/AuditPage'
 import EventsPage from './pages/EventsPage'
@@ -39,78 +47,62 @@ function navClass({ isActive }: { isActive: boolean }): string {
 const quietButton =
   'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap text-ink-muted transition-colors duration-150 hover:bg-surface-2 hover:text-ink'
 
-/** Gap between the panel and the viewport edge, and its width, px (06 §UI principles 9: never wider than the screen). */
-const NAV_MENU_EDGE = 16
-const NAV_MENU_WIDTH = 200
-
 /**
  * "Techy" (06 §Nav, 09 D-71): a WAI-ARIA disclosure-navigation button that reveals App events and
- * AI audit log as real NavLinks. Click, Enter or Space toggles it; Esc closes it and returns focus
- * to the button; a click outside closes it; picking a link closes it; nothing traps focus (Tab
- * moves on to whatever sits after the button once the panel is open, since the panel's own links
- * sit right after it in the DOM). The button reads as current (same soft fill + weight as a NavLink,
- * navClass) whenever /events, /audit or /audit/:traceId is the route, with a visually-hidden
- * "(current section)" standing in for aria-current, which only ever names one real page (D-67's
- * comment on /audit/:traceId moves here: underNav's prefix match is what keeps "AI audit log"
- * current on a trace page). The panel is portalled to <body> and fixed-positioned, clamped inside
- * the viewport (phone width included), for the same reasons InfoTip is (components.tsx): it must
- * not be clipped by the header's own stacking or widen the page. Skipped where there is no
- * `document.body` (a server render, as test/ui/routes.test.ts renders the app without a DOM); the
- * live app always has one.
+ * AI audit log as real NavLinks, rendered inline right after the button (no portal) — so the panel
+ * sits in the DOM, and in Tab order, straight after the button: Tab from Techy lands on "App
+ * events", and Shift+Tab from "App events" returns to Techy. Click, Enter or Space toggles it
+ * (nextOpen); Esc closes it, returns focus to the button, and stops the keydown from reaching an
+ * ancestor (`wrap`'s own onKeyDown, not a document listener, so on the phone menu Esc closes only
+ * Techy — a second Esc then closes "#phone-menu" through its own handler); a pointer down outside
+ * the button+panel closes it (closesOnPointer); picking a link closes it (pickCloses); nothing
+ * traps focus. The button reads as current (same soft fill + weight as a NavLink, navClass)
+ * whenever /events, /audit or /audit/:traceId is the route, with a visually-hidden "(current
+ * section)" standing in for aria-current, which only ever names one real page (D-67's comment on
+ * /audit/:traceId moves here: underNav's prefix match is what keeps "AI audit log" current on a
+ * trace page). `variant` tells the two mounted copies (the desktop nav, the phone menu) how to lay
+ * the panel out: "desktop" positions it `absolute`, right-aligned under the button and clamped to
+ * the viewport width so it never widens the page; "phone" renders it as a plain in-flow list, so an
+ * open panel pushes the theme/log-out row down instead of covering it. The decision logic
+ * (escapeAction, closesOnPointer, pickCloses, nextOpen) lives in src/nav.ts as pure functions, each
+ * with its own unit test with no DOM (test/ui/nav.test.ts); this component only wires their result
+ * to state, focus and stopPropagation.
  */
-function NavGroupMenu({ group }: { group: NavGroupEntry }) {
+function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desktop' | 'phone' }) {
   const { pathname } = useLocation()
   const [open, setOpen] = useState(false)
   const id = useId()
   const wrap = useRef<HTMLSpanElement>(null)
   const button = useRef<HTMLButtonElement>(null)
-  const panel = useRef<HTMLDivElement>(null)
   const current = group.items.some((item) => underNav(pathname, item.to))
-
-  useLayoutEffect(() => {
-    const b = button.current
-    const p = panel.current
-    if (!open || b === null || p === null) return
-    const r = b.getBoundingClientRect()
-    const width = Math.min(NAV_MENU_WIDTH, window.innerWidth - 2 * NAV_MENU_EDGE)
-    const left = Math.min(Math.max(NAV_MENU_EDGE, r.right - width), window.innerWidth - NAV_MENU_EDGE - width)
-    p.style.width = `${width}px`
-    p.style.left = `${left}px`
-    p.style.top = `${r.bottom + 4}px`
-  }, [open])
 
   useEffect(() => {
     if (!open) return
-    const close = () => setOpen(false)
     const onPointer = (e: PointerEvent) => {
-      const t = e.target
-      if (!(t instanceof Node) || !(wrap.current?.contains(t) || panel.current?.contains(t))) close()
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      close()
-      button.current?.focus()
+      if (e.target instanceof Node && closesOnPointer(e.target, [wrap.current])) setOpen(false)
     }
     document.addEventListener('pointerdown', onPointer)
-    document.addEventListener('keydown', onKey)
-    window.addEventListener('scroll', close, true)
-    window.addEventListener('resize', close)
-    return () => {
-      document.removeEventListener('pointerdown', onPointer)
-      document.removeEventListener('keydown', onKey)
-      window.removeEventListener('scroll', close, true)
-      window.removeEventListener('resize', close)
-    }
+    return () => document.removeEventListener('pointerdown', onPointer)
   }, [open])
 
   return (
-    <span ref={wrap} className="inline-flex">
+    <span
+      ref={wrap}
+      className={variant === 'desktop' ? 'relative inline-flex' : 'flex flex-col'}
+      onKeyDown={(e) => {
+        const { close, refocus } = escapeAction(e.key, open)
+        if (!close) return
+        e.stopPropagation()
+        setOpen(false)
+        if (refocus) button.current?.focus()
+      }}
+    >
       <button
         ref={button}
         type="button"
         aria-expanded={open}
         aria-controls={id}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(nextOpen)}
         className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150 ${
           current
             ? 'bg-accent-soft font-semibold text-accent-strong'
@@ -125,28 +117,24 @@ function NavGroupMenu({ group }: { group: NavGroupEntry }) {
           className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
         />
       </button>
-      {typeof document !== 'undefined' &&
-        document.body &&
-        createPortal(
-          <div
-            ref={panel}
-            id={id}
-            hidden={!open}
-            className="fixed z-30 rounded-lg border border-line-strong bg-surface p-1 shadow-soft"
-          >
-            <ul className="flex flex-col gap-0.5">
-              {group.items.map((item) => (
-                <li key={item.to}>
-                  <NavLink to={item.to} className={navClass} onClick={() => setOpen(false)}>
-                    <Icon icon={item.icon} />
-                    {item.label}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>,
-          document.body,
-        )}
+      <ul
+        id={id}
+        hidden={!open}
+        className={
+          variant === 'desktop'
+            ? 'absolute top-full right-0 z-30 mt-1 flex w-[200px] max-w-[calc(100vw-2rem)] flex-col gap-0.5 rounded-lg border border-line-strong bg-surface p-1 shadow-soft'
+            : 'mt-0.5 flex flex-col gap-0.5 pl-6'
+        }
+      >
+        {group.items.map((item) => (
+          <li key={item.to}>
+            <NavLink to={item.to} className={navClass} onClick={() => pickCloses() && setOpen(false)}>
+              <Icon icon={item.icon} />
+              {item.label}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
     </span>
   )
 }
@@ -190,17 +178,21 @@ function TopBar() {
   }
 
   // Only Overview needs `end`. Techy (09 D-71) marks itself current for /events, /audit and
-  // /audit/:traceId with its own logic (NavGroupMenu's `underNav`), not a NavLink.
-  const links = NAV.map((item) =>
-    item.kind === 'group' ? (
-      <NavGroupMenu key={item.label} group={item} />
-    ) : (
-      <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
-        <Icon icon={item.icon} />
-        {item.label}
-      </NavLink>
-    ),
-  )
+  // /audit/:traceId with its own logic (NavGroupMenu's `underNav`), not a NavLink. Built twice (one
+  // mounted copy per nav) because NavGroupMenu's `variant` differs: the desktop copy below and the
+  // phone copy inside #phone-menu each need their own open/close state and their own layout.
+  function renderLinks(variant: 'desktop' | 'phone') {
+    return NAV.map((item) =>
+      item.kind === 'group' ? (
+        <NavGroupMenu key={item.label} group={item} variant={variant} />
+      ) : (
+        <NavLink key={item.to} to={item.to} end={item.to === '/'} className={navClass}>
+          <Icon icon={item.icon} />
+          {item.label}
+        </NavLink>
+      ),
+    )
+  }
   const logoutButton = (
     <button type="button" onClick={logout} className={quietButton}>
       <Icon icon={ICONS.logout} />
@@ -242,7 +234,7 @@ function TopBar() {
       </div>
       <div className="mx-auto hidden max-w-6xl items-center gap-2 px-4 pb-2 sm:flex sm:px-6">
         <nav aria-label="Main" className="flex flex-wrap gap-1">
-          {links}
+          {renderLinks('desktop')}
         </nav>
         <span className="ml-auto inline-flex gap-1 lg:hidden">
           <ThemeToggle />
@@ -261,7 +253,7 @@ function TopBar() {
           }}
         >
           <nav aria-label="Main" className="flex flex-col gap-1">
-            {links}
+            {renderLinks('phone')}
           </nav>
           <div className="mt-2 flex gap-1 border-t border-line pt-2">
             <ThemeToggle />
