@@ -1,8 +1,9 @@
 // Plain words for stored values, column names and filter keys (06 §UI principles 4). Display maps
 // only: the values sent to the API and the raw names shown in Technical details stay as they are.
-// /segments, /assistant and /growth read the same maps, so a reader's fields carry the same words on each.
+// /segments and /insights read the same maps, so a reader's fields carry the same words on each.
 
 import type { DefinitionKey } from '../shared/derive'
+import type { DataQualityCheckKey } from './types'
 
 /** Signup sources as stored (02 §Normalization: canonical lowercase) → display words. */
 export const SOURCE_LABEL: Readonly<Record<string, string>> = {
@@ -46,7 +47,25 @@ export const COLUMN_LABEL = {
   visitors: 'Visitors',
   subscribed: 'Subscribed',
   events: 'Events',
+  // The built-in tiles' columns (worker/insights/board.ts panelOutput, the former Growth panels).
+  with_app: 'Have the app',
+  at_risk: 'At risk',
+  active: 'Active subscribers',
+  check: 'What we checked',
+  count: 'Count',
+  of: 'Out of',
 } as const satisfies Record<string, string>
+
+/** The data-quality checks (worker/insights/data-quality.ts DATA_QUALITY_CHECKS) in words; the "Gaps in the data" tile's rows. */
+export const CHECK_LABEL: Record<DataQualityCheckKey, string> = {
+  subscribers_without_source: 'Subscribers with no signup source',
+  subscribers_unexpected_source: 'Subscribers with a signup source we don’t recognise',
+  page_views_without_utm: 'Website page views with no campaign source',
+  page_views_unexpected_utm: 'Website page views with a campaign source we don’t recognise',
+  app_users_not_on_list: 'App users whose email is not on the newsletter list',
+}
+
+export const checkLabel = (key: string) => (CHECK_LABEL as Record<string, string | undefined>)[key] ?? words(key)
 
 /** Segment filter keys (FILTER_KEYS) and the aggregate inputs a model may echo in filters_applied. */
 export const FILTER_LABEL: Readonly<Record<string, string>> = {
@@ -70,7 +89,7 @@ export function words(name: string): string {
 export const columnLabel = (name: string) => (COLUMN_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 export const filterLabel = (name: string) => (FILTER_LABEL as Record<string, string | undefined>)[name] ?? words(name)
 
-/** Plain headings for the definitions (02 §Derived), on /assistant and /growth; the raw names show only in Technical details. */
+/** Plain headings for the definitions (02 §Derived), on /insights; the raw names show only in Technical details. */
 export const DEFINITION_LABEL: Record<DefinitionKey, string> = {
   days_since_open: 'Days since last open',
   cold_since: 'Cold date',

@@ -1,6 +1,8 @@
 // Response shapes the UI reads, as 04 §Endpoints defines them (the worker routes are the producers).
 
 import type { DefinitionKey } from '../shared/derive'
+import type { InsightWindow, ResolvedWindow } from '../shared/insight-window'
+import type { ChartKind, ChartOverride } from '../shared/pick-chart'
 import type { FieldWeight, Reason, ScoredField } from '../worker/dedupe/score'
 import type { QuarantineReason, SubscriberStatus } from '../worker/ingest/quarantine'
 
@@ -243,7 +245,54 @@ export interface AuditTrace {
   rows: AuditRow[]
 }
 
-/** The counts every /growth number shares: the `explain` question opens /assistant prefilled (09 D-39). */
+/** The chart kinds a person can pick for a tile; `segment` follows from the result and is never picked (01 §insights). */
+export type ChartChoice = ChartOverride
+
+/** One tile of GET /api/insights (04 §/api/insights board, 09 D-64), re-run on this request. */
+export interface InsightTile {
+  id: string
+  title: string
+  /** The question that produced it, a label only; null for the built-in tiles. */
+  prompt: string | null
+  tool: string
+  built_in: boolean
+  sort_order: number
+  /** Resolved against TODAY by the server (shared/insight-window.ts). */
+  window: ResolvedWindow | null
+  /** The chart drawn: the override when set, else pickChart on the result. */
+  chart: ChartKind
+  chart_override: ChartChoice | null
+  /** Aggregates only; null when the tile failed this run. */
+  result: { columns: string[]; rows: Record<string, AssistantCell>[]; summary: Record<string, unknown> } | null
+  /** A segment tile's count and filters, never its rows. */
+  segment: { count: number; filters: SegmentFilters } | null
+  status: 'ok' | 'error'
+  error: string | null
+  /** UTC, when this request re-ran the tile. */
+  ran_at: string
+  /** The question "Explain this" puts in the Ask bar. */
+  explain: string
+  /** Technical details: the stored tool input (filters, keys and the window only, never PII). */
+  params: Record<string, unknown>
+  /** Technical details: the SQL that ran, for a SQL tile; null otherwise. */
+  sql: string | null
+}
+
+/** GET /api/insights */
+export interface InsightBoard {
+  today: string
+  tiles: InsightTile[]
+}
+
+/** PATCH /api/insights/:id; the window is re-validated by the server. */
+export interface InsightPatch {
+  title?: string
+  window?: InsightWindow
+  chart?: ChartChoice | null
+  sort_order?: number
+}
+
+/** The counts every insight panel shares (worker/insights/*.ts; the built-in tiles, 09 D-64). */
 interface Explained {
   /** Share as a fraction, 4 decimals; null when the group is empty. */
   rate: number | null

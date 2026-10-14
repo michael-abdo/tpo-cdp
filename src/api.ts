@@ -44,7 +44,10 @@ async function toApiError(res: Response): Promise<ApiError> {
 }
 
 /** fetch with credentials and the JSON content type on bodies; resolves only on a 2xx. */
-export async function request(path: string, init: { method?: 'GET' | 'POST'; body?: unknown } = {}): Promise<Response> {
+export async function request(
+  path: string,
+  init: { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown } = {},
+): Promise<Response> {
   const res = await fetch(path, {
     method: init.method ?? 'GET',
     credentials: 'same-origin',
@@ -63,6 +66,10 @@ export async function getJson<T>(path: string): Promise<T> {
 
 export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await request(path, { method: 'POST', body })).json() as Promise<T>
+}
+
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return (await request(path, { method: 'PATCH', body })).json() as Promise<T>
 }
 
 /**

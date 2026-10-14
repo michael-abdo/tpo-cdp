@@ -69,7 +69,15 @@ Under "How this answer was worked out", each answer lists the time period, filte
 
 ## Insights
 
-`/insights` (09 D-64) keeps answers as tiles on one shared board. On the server:
+"Insights" (`/insights`, 09 D-64) is one page to ask and to keep answers; `/assistant` and `/growth` redirect to it, keeping `?q=`.
+
+- **Ask bar** on top: the brief's three questions as one-click examples. The answer card shows the text, a chart picked from the result's shape (`shared/pick-chart.ts`), and "Time period · Filters · Definitions" one click down.
+- **Pin to board** opens a dialog: the tile's title (the question, editable) and, when the answer had a time period, "Rolling: last month" or "Fixed: Aug 1–31, 2026". The browser sends only the answer's trace id and the title; the server re-reads the trace's last successful tool call and re-checks it (Gate 2, and Gate 3 for SQL).
+- **The board** below: the four former Growth panels as built-in tiles, then pinned tiles. Every visit re-runs every tile through the same gated executor, with no AI call. Each tile shows its chart, its time period in words and "Updated just now".
+- **Options** on each tile: Change window, Change chart, Rename, Move up/down, Remove (not on built-in tiles), Explain this (fills the Ask bar and waits for Ask) and Technical details (tool, params, SQL, the question it came from).
+- **Charts** are our own SVG (`src/insights/charts.tsx`), no chart library: a big number, bars sorted largest first (top 20, then "Other"), a line over time, a table, or a list size with "Open list" to "Build a list". Every drawing keeps its numbers in a table that screen readers read, and "Show the numbers" shows it on screen.
+
+### Insights on the server
 
 - **Pin** (`POST /api/insights {audit_id, title?}`): the trace's last successful tool call (tool + checked input) is read from `ai_audit`, re-checked against today's tool rows and stored in the one `insights` table. A body with a tool, inputs or SQL is refused (400 `invalid_body`); an unknown trace is 404; a trace with no successful tool call, or with no AI call at all (a board run), is 409 `nothing_to_pin`; a call that no longer passes the gates is 400 `invalid_pin`; a result that lists individual readers is 400 `not_aggregate` (the board holds counts).
 - **Re-run** (`GET /api/insights`): one failing tile shows its own error and the board still answers 200. The tool calls are audited under a trace with no session, so viewing the board never counts toward the 100-questions-per-hour limit.
@@ -386,7 +394,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 30 files, 568 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 31 files, 577 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -411,7 +419,8 @@ Calls I made where the brief left room, each with the decision-log number it has
 | T-INS-7 | `pick-chart.test.ts` | the chart rule table of 06 §/insights on real results: one number, line, bar (also past 20 categories and with a null category), segment, empty, table, and the override |
 | — | `audit.test.ts`, `health.test.ts`, `overview.test.ts`, `pseudonym.test.ts` | the audit API and /audit's words for blocked steps, the D-58 screen of `filters_applied`, `/health`, Overview numbers, key derivation |
 | — | `events-poll.test.ts` | /events: the 5-second poll and what its screen-reader line says after each fetch, on real answers before and after webhook events |
-| — | `ui/assistant-result.test.ts` | "Ask a question" rendered: no model-written SQL in `filters_applied` reaches the page (typed by `tsconfig.ui-test.json`, DOM and JSX) |
+| — | `ui/assistant-result.test.ts` | the Insights answer card rendered: no model-written SQL in `filters_applied` reaches the page (typed by `tsconfig.ui-test.json`, DOM and JSX) |
+| — | `ui/insights.test.ts` | /insights rendered: the answer card offers "Pin to board" with the rolling/fixed choice; a built-in tile has no Remove; each chart kind (number, bar, line, table, segment) carries its numbers as text, on real rows and 02 §Counts numbers |
 | — | `ui/audit-step.test.ts` | /audit rendered: a Gate 2 or Gate 3 block shows its own sentence in words, not the generic one |
 
 ## Known gaps

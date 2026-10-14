@@ -6,12 +6,19 @@
 
 import {
   Activity,
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   CalendarDays,
+  CalendarRange,
+  ChartColumn,
+  ChartNoAxesCombined,
+  Check,
   ChevronRight,
   CircleAlert,
   CircleCheck,
   Download,
+  Ellipsis,
   Eye,
   Inbox,
   LayoutDashboard,
@@ -22,14 +29,19 @@ import {
   Menu,
   MessageCircleQuestion,
   Moon,
+  Pencil,
+  Pin,
+  RefreshCw,
   ScrollText,
   Search,
   ShieldBan,
   Sun,
-  TrendingUp,
+  Trash2,
   UserSearch,
+  Users,
+  X,
 } from 'lucide-react'
-import { type ButtonHTMLAttributes, Fragment, type ReactNode, useState } from 'react'
+import { type ButtonHTMLAttributes, Fragment, type ReactNode, type Ref, useState } from 'react'
 
 export type { LucideIcon }
 
@@ -43,9 +55,10 @@ export const ICONS = {
   lookup: UserSearch,
   segments: ListFilter,
   events: Activity,
-  assistant: MessageCircleQuestion,
-  growth: TrendingUp,
+  insights: ChartNoAxesCombined,
   audit: ScrollText,
+  // asking (the Ask bar on /insights, "Explain this", the audit log's empty state)
+  assistant: MessageCircleQuestion,
   // primary actions
   search: Search,
   preview: Eye,
@@ -56,6 +69,19 @@ export const ICONS = {
   themeLight: Sun,
   themeDark: Moon,
   today: CalendarDays,
+  refresh: RefreshCw,
+  // insights board (09 D-64)
+  pin: Pin,
+  tileOptions: Ellipsis,
+  moveUp: ArrowUp,
+  moveDown: ArrowDown,
+  rename: Pencil,
+  remove: Trash2,
+  window: CalendarRange,
+  chart: ChartColumn,
+  openList: Users,
+  close: X,
+  done: Check,
   // status
   success: CircleCheck,
   blocked: ShieldBan,
@@ -82,6 +108,8 @@ export function Button({
   className?: string
   /** Optional lucide icon shown before the label (the label stays visible). */
   icon?: LucideIcon
+  /** For returning focus to the button (a dialog or menu it opened has closed). */
+  ref?: Ref<HTMLButtonElement>
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'>) {
   const look =
     variant === 'primary'

@@ -384,7 +384,7 @@ function TraceList() {
       ) : settled.state.data.traces.length === 0 ? (
         <EmptyState
           action={
-            <Link to="/assistant" className={`${linkClass} gap-1.5`}>
+            <Link to="/insights" className={`${linkClass} gap-1.5`}>
               <Icon icon={ICONS.assistant} />
               Ask a question
             </Link>
