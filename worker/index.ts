@@ -9,6 +9,7 @@ import { eventRoutes } from './routes/events'
 import { insightRoutes } from './routes/insights'
 import { lookupRoutes } from './routes/lookup'
 import { overviewRoutes } from './routes/overview'
+import { quarantineRoutes } from './routes/quarantine'
 import { segmentRoutes } from './routes/segments'
 import { webhookRoutes } from './routes/webhook'
 
@@ -43,6 +44,8 @@ app.use('*', async (c, next) => {
 app.use('/api/*', requireJson, requireSession)
 app.route('/api', loginRoutes)
 app.route('/api', overviewRoutes)
+// GET /api/quarantine?reason=: the rows the import set aside, as written (04, 09 D-61); raw emails, so session only.
+app.route('/api', quarantineRoutes)
 app.route('/api', lookupRoutes)
 app.route('/api', segmentRoutes)
 app.route('/api', eventRoutes)

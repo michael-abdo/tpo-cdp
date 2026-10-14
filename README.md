@@ -25,7 +25,7 @@ npm install --legacy-peer-deps      # the flag installs package-lock.json exactl
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
 npm run db:migrate:local            # the three migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
-npm test                            # 26 files, 521 tests in workerd against a local D1; no network
+npm test                            # 27 files, 531 tests in workerd against a local D1; no network
 npm run dev                         # http://localhost:5173; sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
@@ -73,7 +73,7 @@ Screens are the menu names, with paths. Test IDs are in the `describe` names und
 
 | Brief | Where to see it | How | Tests |
 |---|---|---|---|
-| R1 Pulls it together: load the three files, link visits and app accounts by email, dedupe | Overview (`/`): the four headline numbers and "How the data was combined" (rows in, kept, merged, set aside, and why) | `scripts/csv2sql.ts` builds the seed with `worker/ingest/` and `shared/normalize.ts`; rules under [Data rules](#data-rules-and-known-edge-cases) | T-ING-1..6, T-NORM-1..3 |
+| R1 Pulls it together: load the three files, link visits and app accounts by email, dedupe | Overview (`/`): the four headline numbers and "How the data was combined" (rows in, kept, merged, set aside, and why); a "Needs review" card lists the 2 subscribers set aside for an invalid email, each as written in subscribers.csv, with the fix (read-only, `GET /api/quarantine`) | `scripts/csv2sql.ts` builds the seed with `worker/ingest/` and `shared/normalize.ts`; rules under [Data rules](#data-rules-and-known-edge-cases) | T-ING-1..6, T-NORM-1..3, T-OVR-1 |
 | R2 Finds anyone | Find a reader (`/lookup`): type an email or app `u_` id and press Find, or pick from the matches listed as you type; a near miss offers "Did you mean …?" links; Find also takes a `pk_` key, device `d_` id or visitor `v_` id (under "More ways to find a reader"); one view with newsletter, site visits (pre-signup ones tagged "Before signing up") and app activity, and "No website history" when there is none | `GET /api/lookup` (exact email, `u_`, `pk_`, `d_` or `v_`), `GET /api/lookup/search` (3+ characters, up to 20 matches; with none, up to 5 `did_you_mean` within 2 edits) | T-API-1, T-API-3, T-API-4 |
 | R3 Builds a segment | Build a list (`/segments`): the button "haven't opened in 30 days (the brief's example)" gives 177 readers and "55 unsubscribed readers not shown."; preview and Export CSV | `worker/segments/compile.ts` turns the filters into bound SQL; the export carries a `status` column | T-SEG-1..3 |
 | R4 Never sleeps | `POST /webhooks/app`; App events (`/events`, the last 20, newest first, fetched again every 5 seconds while the tab is in view, with a Refresh button; a screen-reader line says how many new events arrived); Find a reader shows new events at once | header HMAC, `event_id` idempotency, identity resolved at read time ([Webhook](#webhook)) | T-WH-1..8, T-WH-7b, T-WH-9a, T-WH-9b, T-WH-10..12, `test/events-poll.test.ts` |
@@ -118,6 +118,7 @@ curl $URL/health                                     # {"ok":true,"db":true,"tod
 #   GET  /api/lookup/search?q=joy.hal830@protonmail.com → 200, no matches, did_you_mean joy.hall830@protonmail.com (distance 1)
 #   POST /api/segments/preview {"filters":{"source":["instagram"],"status":["active"],"days_since_open_gte":30,"include_never_opened":true}}
 #        → count 177, hidden_unsubscribed 55
+#   GET  /api/quarantine?reason=invalid_email     → 200, 2 rows: subscribers.csv lines 1750 (not-an-email) and 1788 (@gmail.com), as written
 ```
 
 Live webhook check (the Wednesday checkpoint). First, before any event, note the `{"filters":{"source":["instagram"],"has_app":true},"limit":1000}` preview: count 245, and julia.evans230 has `engagement_score` 28. Then:
@@ -353,7 +354,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 - **Hidden-unsubscribed count (D-51).** The number shown is the unsubscribed rows that match every other filter (55 for the brief's preset), so including them raises the count by exactly that number (177 → 232).
 - **Email identity (D-26).** Trim and lowercase only, and `twitter` = `x`. Case folding is what makes all 1,400 `/subscribe` emails match (1,190 match raw); folding plus-addresses or Gmail dots would be a guess.
 - **Merge precedence (D-27).** Fixed rules for duplicate subscriber rows ([Dedupe](#data-rules-and-known-edge-cases)), tested even though no duplicate pair in the data disagrees.
-- **2,900 subscribers, not 2,902 (D-28).** A hand count of 2,995 rows minus 8 blank rows and 85 duplicates gives 2,902. Two more rows (`not-an-email`, `@gmail.com`) fail the email pattern, so they are quarantined, not counted. Overview shows each set-aside row and why.
+- **2,900 subscribers, not 2,902 (D-28).** A hand count of 2,995 rows minus 8 blank rows and 85 duplicates gives 2,902. Two more rows (`not-an-email`, `@gmail.com`) fail the email pattern, so they are quarantined, not counted. Overview's "Needs review" card lists both as written in the file, with the fix; the 8 blank rows show as a count under "How the data was combined".
 - **Web visits link for the whole history (D-08).** The brief links a visit to a subscriber by the email on `/subscribe`; this extends it to that visitor's every visit, before and after signup. Without it "which pages do new subscribers hit first?" has no answer.
 - **Nothing is dropped (D-15).** Anonymous visitors stay in the funnel. A `user_id` never seen gets a stub profile on arrival. An app account counts as coming from the newsletter only if it was created on a later day than the signup.
 - **CSV times are UTC (D-16).** The CSVs carry no zone; the webhook samples use `Z`.
@@ -373,7 +374,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 26 files, 521 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. At this commit: 27 files, 531 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -382,6 +383,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 | T-ING-1..6 | `ingest-core.test.ts`, `ingest-seed.test.ts`, `lookup.test.ts` | seed counts, quarantine, dedupe and precedence, web and app linking |
 | T-API-1, T-API-3, T-API-4 | `lookup.test.ts`, `lookup-search.test.ts` | exact lookup by email, `u_`, `pk_`, `d_` and `v_`; partial lookup; "did you mean" suggestions and the distance helper |
 | T-SEG-1..3 | `segments.test.ts` | 177, 55 hidden, export columns and status rule |
+| T-OVR-1 | `quarantine.test.ts` | the set-aside rows as written (2 invalid emails, 8 blank rows), the reason filter and its 400, and the "Needs review" card's sentence and fix on the real rows |
 | T-WH-1..8, T-WH-7b, T-WH-11..12 | `webhook.test.ts` | shape, events, null users, resolution, unknown users, order, duplicates, auth, caps |
 | T-WH-9a, T-WH-9b | `stitching.test.ts` | login stitching in both arrival orders |
 | T-WH-10 | `events.test.ts` | an event moves the stored score in a segment preview with no re-import |

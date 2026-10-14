@@ -3,6 +3,9 @@
 // Disclosure (06 §UI principles 2): level 1 = the four headline numbers and one sentence;
 // level 2 = "How the data was combined" (rows in → kept · merged · set aside, reasons in words);
 // level 3 = Technical details (raw file names, reason codes, run times in UTC).
+// "Needs review" (09 D-61) is level 1 when a set-aside row can be fixed: one sentence, each row as
+// written (GET /api/quarantine) and the fix; CSV line numbers and reason codes sit in Technical
+// details. Read-only: no edit or delete here (09 D-13).
 
 import { Smartphone, UserCheck, Users } from 'lucide-react'
 import { Link } from 'react-router'
@@ -15,12 +18,15 @@ import {
   Icon,
   Loading,
   PageHeader,
+  ResponsiveTable,
+  Section,
   StatGrid,
   StatTile,
   TechnicalDetails,
 } from '../components'
 import { utc } from '../format'
-import type { Overview } from '../types'
+import { asWritten, csvName, needsReview, reviewGroups } from '../needs-review'
+import type { Overview, QuarantineList } from '../types'
 import { useGet } from '../useGet'
 
 const TITLE = 'Overview'
@@ -72,6 +78,51 @@ function ImportLine({ run }: { run: Overview['import_runs'][number] }) {
         </>
       )}
     </li>
+  )
+}
+
+/** The set-aside rows a person can fix, each as written in its file, and what to do about them. */
+function NeedsReview() {
+  const state = useGet<QuarantineList>('/api/quarantine')
+  if (state === null || state.status === 'loading') return <Loading label="Loading the rows to review…" />
+  if (state.status === 'error')
+    return <ErrorLine message={state.message} next="Refresh the page to try again." />
+  const groups = reviewGroups(state.data.rows)
+  if (groups.length === 0) return null
+  return (
+    <Section title="Needs review" icon={ICONS.error}>
+      {groups.map((group) => (
+        <div key={group.key} className="space-y-2">
+          <p className="text-sm font-medium text-ink">{group.sentence}</p>
+          <ResponsiveTable
+            caption={group.sentence}
+            columns={group.columns.map((col) => ({
+              header: col.label,
+              cell: (row: QuarantineList['rows'][number]) => (
+                <span className="break-all whitespace-pre-wrap">{asWritten(row.fields[col.name])}</span>
+              ),
+            }))}
+            rows={group.rows}
+            rowKey={(row) => `${row.file}-${row.line_no}`}
+          />
+          <p className="flex items-start gap-2 text-sm text-ink-muted">
+            <Icon icon={ICONS.next} className="mt-0.5 size-4" />
+            <span>{group.fix}</span>
+          </p>
+        </div>
+      ))}
+      <TechnicalDetails>
+        <ul>
+          {groups.flatMap((group) =>
+            group.rows.map((row) => (
+              <li key={`${row.file}-${row.line_no}`}>
+                {csvName(row.file)} line {row.line_no} · {row.reason}
+              </li>
+            )),
+          )}
+        </ul>
+      </TechnicalDetails>
+    </Section>
   )
 }
 
@@ -231,6 +282,8 @@ export default function OverviewPage() {
           )}
         </TechnicalDetails>
       </Disclosure>
+
+      {reasons.some(([code]) => needsReview(code)) && <NeedsReview />}
 
       <p className="text-sm">
         <Link

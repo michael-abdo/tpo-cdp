@@ -1,7 +1,7 @@
 // Response shapes the UI reads, as 04 §Endpoints defines them (the worker routes are the producers).
 
 import type { DefinitionKey } from '../shared/derive'
-import type { SubscriberStatus } from '../worker/ingest/quarantine'
+import type { QuarantineReason, SubscriberStatus } from '../worker/ingest/quarantine'
 
 /** GET /api/overview */
 export interface Overview {
@@ -11,6 +11,18 @@ export interface Overview {
   events_received: number
   import_runs: { file: string; rows_in: number; rows_out: number; merged: number; quarantined: number; ran_at: string }[]
   quarantine_reasons: Record<string, number>
+}
+
+/** GET /api/quarantine?reason= (09 D-61): rows the import set aside, oldest file order. */
+export interface QuarantineList {
+  rows: {
+    file: 'subscribers' | 'web_events' | 'app_users'
+    /** 1-based line in the CSV file (the header is line 1). */
+    line_no: number
+    reason: QuarantineReason
+    /** Column name → the field's text exactly as written in the file. */
+    fields: Record<string, string>
+  }[]
 }
 
 /** GET /api/lookup/search?q= (09 D-52) */

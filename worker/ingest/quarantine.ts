@@ -11,7 +11,9 @@ import { normalizeEmail } from '../../shared/normalize'
  * email (missing_field), an unparseable email (invalid_email), the other required fields
  * (missing_field) and the dates (bad_date).
  */
-export type QuarantineReason = 'blank_row' | 'invalid_email' | 'missing_field' | 'bad_date'
+export const QUARANTINE_REASONS = ['blank_row', 'invalid_email', 'missing_field', 'bad_date'] as const
+
+export type QuarantineReason = (typeof QUARANTINE_REASONS)[number]
 
 /** The columns subscribers.csv must have; `acquisition_source` and `last_open_date` may be blank. */
 export const SUBSCRIBER_COLUMNS = [
