@@ -14,7 +14,7 @@ import { InsightChart } from '../../src/insights/charts'
 import type { ChartResult, ChartSegment } from '../../src/insights/shapes'
 import type { AssistantResponse, InsightTile } from '../../src/types'
 import { parseCsv } from '../../worker/ingest/csv'
-import { NOT_PINNABLE_MESSAGE, REQUEST_APPROVAL_OFFER_MESSAGE } from '../../shared/insight-messages'
+import { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_SHAPE_MESSAGE } from '../../shared/insight-messages'
 
 // /insights (06 §/insights, 09 D-64) rendered with React's server renderer, the way
 // test/ui/assistant-result.test.ts renders the answer card: the answer card offers "Pin to board",
@@ -320,7 +320,7 @@ describe('answers and tiles that cannot be pinned or run say so in plain words (
     expect(text).not.toContain('Request approval')
   })
 
-  it('a query_sql answer that fails the D-64b grammar offers "Request approval" instead of hiding Pin outright, and never claims the queue already happened (09 D-64b finding)', () => {
+  it('a query_sql answer that fails the D-64b grammar has no Pin button; the card says why, with no approval-queue wording (09 D-77)', () => {
     const data: AssistantResponse = {
       type: 'answer',
       text: 'Here is the table you asked for.',
@@ -333,14 +333,15 @@ describe('answers and tiles that cannot be pinned or run say so in plain words (
       audit_id: crypto.randomUUID(),
       pin_window: null,
       pin_own_dates: null,
-      pin_refusal: REQUEST_APPROVAL_OFFER_MESSAGE,
+      pin_refusal: NOT_PINNABLE_SHAPE_MESSAGE,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
-    expect(html).toContain('>Request approval</button>')
+    expect(html).not.toContain('aria-haspopup="dialog"')
     expect(text).not.toContain('Pin to board')
-    // The offer, not the "has been sent" sentence: nothing has been queued by rendering the card.
-    expect(text).toContain(REQUEST_APPROVAL_OFFER_MESSAGE)
-    expect(text).not.toContain("has been sent to the Growth team's approval list")
+    expect(text).not.toContain('Request approval')
+    expect(text).not.toContain('approval')
+    expect(text).not.toContain('sent')
+    expect(text).toContain(NOT_PINNABLE_SHAPE_MESSAGE)
   })
 
   it('a pin error has a next step for invalid_pin, not_pinnable and internal_error', () => {

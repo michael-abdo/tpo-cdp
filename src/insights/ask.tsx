@@ -34,11 +34,9 @@ import {
 import { humanRange } from '../format'
 import { filtersAppliedView } from '../filters-applied'
 import { DEFINITION_LABEL } from '../labels'
-import { REQUEST_APPROVAL_OFFER_MESSAGE } from '../../shared/insight-messages'
 import type { AssistantResponse, InsightTile, SegmentFilters } from '../types'
 import { InsightChart, SegmentTile, TableTile } from './charts'
 import { PinDialog } from './pin-dialog'
-import { pinBody } from './pin-words'
 import { BRIEF_QUESTIONS, tileElementId } from './questions'
 
 /** Next steps for the 04 errors that have one; the message itself is the envelope's. */
@@ -87,13 +85,6 @@ export function AnswerCard({
   const [pinnedId, setPinnedId] = useState<string | null>(null)
   const pinButton = useRef<HTMLButtonElement>(null)
   const seeTile = useRef<HTMLButtonElement>(null)
-  // "Request approval" (09 D-64b (C)): a free-form query that fails the positive grammar is not
-  // queued for a human until this button's own POST /api/insights runs; `queued` holds the 400's
-  // own message, the only point at which "has been sent" is true, so the card never claims it
-  // before the request actually went out.
-  const [requestingApproval, setRequestingApproval] = useState(false)
-  const [queued, setQueued] = useState<string | null>(null)
-  const [approvalError, setApprovalError] = useState<string | null>(null)
 
   // The Pin button is gone once pinned, so focus moves to the control that replaced it, never to
   // the page body (06 §UI principles 7, WCAG 2.4.3).
@@ -118,32 +109,6 @@ export function AnswerCard({
     setPinOpen(false)
     // Still mounted only when the dialog closed without a pin.
     pinButton.current?.focus()
-  }
-
-  /**
-   * POST /api/insights for a query_sql answer that fails the D-64b grammar: the server's own
-   * `pin()` is what actually queues it (requestApproval), so 400 not_pinnable here is success —
-   * its message is the true "has been sent" sentence, never guessed at on the client.
-   */
-  async function requestApproval() {
-    setRequestingApproval(true)
-    setApprovalError(null)
-    try {
-      const tile = await postJson<InsightTile>('/api/insights', pinBody(data.audit_id, question, question))
-      // The grammar refused it a moment ago (pin_refusal is this same check); if it now pins
-      // outright, this is an ordinary pin, not a queue.
-      setPinnedId(tile.id)
-      onPinned(tile, null)
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'not_pinnable') {
-        setQueued(err.message)
-      } else {
-        console.error('insights: request approval failed', err)
-        setApprovalError(errorMessage(err))
-      }
-    } finally {
-      setRequestingApproval(false)
-    }
   }
 
   function showTile() {
@@ -189,27 +154,18 @@ export function AnswerCard({
               See it on the board
             </Button>
           </>
-        ) : queued !== null ? (
-          <Tag tone="success" icon={ICONS.done}>
-            Sent for approval
-          </Tag>
         ) : data.pin_refusal === null ? (
           <Button ref={pinButton} icon={ICONS.pin} aria-haspopup="dialog" onClick={() => setPinOpen(true)}>
             Pin to board
-          </Button>
-        ) : data.pin_refusal === REQUEST_APPROVAL_OFFER_MESSAGE ? (
-          <Button icon={ICONS.pin} onClick={() => void requestApproval()} disabled={requestingApproval}>
-            {requestingApproval ? 'Requesting…' : 'Request approval'}
           </Button>
         ) : null}
       </div>
       {data.pin_refusal !== null && (
         <p className="flex items-start gap-1.5 text-sm text-ink-muted">
           <Icon icon={ICONS.pin} className="mt-0.5 size-4" />
-          {queued ?? data.pin_refusal}
+          {data.pin_refusal}
         </p>
       )}
-      {approvalError !== null && <ErrorLine message={approvalError} next="Press Request approval to try again." />}
       <p className="whitespace-pre-wrap text-base leading-relaxed text-ink">{data.text}</p>
       {data.partial && (
         <p className="text-sm text-ink-muted">The assistant did not finish cleanly, so this answer may be missing parts.</p>
