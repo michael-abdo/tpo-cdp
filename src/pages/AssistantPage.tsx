@@ -25,6 +25,8 @@ import {
   EmptyState,
   ErrorLine,
   Field,
+  ICONS,
+  Icon,
   Loading,
   PageHeader,
   ResponsiveTable,
@@ -134,14 +136,18 @@ export function Result({ data }: { data: AssistantResponse }) {
     filters.fields.length > 0 ||
     data.definitions_used.length > 0
   return (
-    <section aria-labelledby="answer-heading" className="space-y-4 rounded border border-gray-200 p-4">
+    <section aria-labelledby="answer-heading" className="space-y-4 rounded-xl bg-surface p-5 shadow-soft sm:p-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 id="answer-heading" className="text-lg font-semibold text-gray-900">
+        <h2 id="answer-heading" className="font-display text-lg font-semibold text-ink">
           Answer
         </h2>
-        {data.partial && <Tag>Incomplete answer</Tag>}
+        {data.partial && (
+          <Tag tone="danger" icon={ICONS.error}>
+            Incomplete answer
+          </Tag>
+        )}
       </div>
-      <p className="whitespace-pre-wrap text-gray-900">{data.text}</p>
+      <p className="whitespace-pre-wrap text-base leading-relaxed text-ink">{data.text}</p>
       {data.partial && (
         <p className="text-sm text-gray-600">
           The assistant did not finish cleanly, so this answer may be missing parts. The audit log shows each
@@ -150,18 +156,21 @@ export function Result({ data }: { data: AssistantResponse }) {
       )}
 
       {data.segment !== null && (
-        <div className="space-y-2 rounded bg-gray-50 p-3">
+        <div className="space-y-3 rounded-xl bg-surface-2 p-4">
           <div className="flex flex-wrap items-center gap-3">
-            <p className="font-medium text-gray-900">
+            <p className="mr-auto font-display text-2xl font-semibold text-ink">
               {data.segment.count === 1 ? '1 reader matches' : `${fmt(data.segment.count)} readers match`}
             </p>
             <Button
               variant="primary"
+              icon={ICONS.next}
               onClick={() => navigate('/segments', { state: { filters: data.segment?.filters } })}
             >
               Open in builder
             </Button>
-            <Button onClick={() => data.segment !== null && void exportCsv(data.segment.filters)} disabled={exporting}>
+            <Button
+              icon={ICONS.export}
+              onClick={() => data.segment !== null && void exportCsv(data.segment.filters)} disabled={exporting}>
               {exporting ? 'Preparing download…' : 'Export CSV'}
             </Button>
           </div>
@@ -175,13 +184,14 @@ export function Result({ data }: { data: AssistantResponse }) {
       <p className="text-sm">
         <Link
           to={`/audit/${data.audit_id}`}
-          className="inline-flex min-h-6 items-center text-blue-700 underline underline-offset-2 hover:text-blue-900"
+          className="inline-flex min-h-6 items-center gap-1.5 text-blue-700 underline underline-offset-2 hover:text-blue-900"
         >
+          <Icon icon={ICONS.audit} />
           See exactly what the AI saw for this answer
         </Link>
       </p>
 
-      <Disclosure label="How this answer was worked out" className="border-t border-gray-200 pt-3">
+      <Disclosure label="How this answer was worked out" className="border-t border-line pt-3">
         {!hasHow && (
           <p className="text-sm text-gray-600">The answer names no time period, filters or definitions.</p>
         )}
@@ -309,11 +319,12 @@ export default function AssistantPage() {
     <div className="space-y-6">
       <PageHeader
         title="Ask a question"
+        icon={ICONS.assistant}
         purpose="Ask about readers in plain words. Answers come from our data; no reader's email is sent to the AI."
       />
       <Announcer message={announcement} />
 
-      <form onSubmit={submit} className="space-y-2 rounded border border-gray-200 p-4">
+      <form onSubmit={submit} className="space-y-3 rounded-xl bg-surface p-5 shadow-soft sm:p-6">
         <label htmlFor="question" className="block text-sm font-medium text-gray-900">
           Your question
         </label>
@@ -325,13 +336,14 @@ export default function AssistantPage() {
             onChange={(e) => setQuestion(e.target.value)}
             aria-describedby="question-hint"
             autoComplete="off"
-            className="min-h-9 w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm"
+            className="min-h-11 w-full rounded-lg border border-line-strong bg-page px-3 py-2 text-base text-ink placeholder:text-ink-subtle"
           />
           <Button
             type="submit"
             variant="primary"
+            icon={ICONS.next}
             disabled={loading || question.trim() === ''}
-            className="px-5"
+            className="min-h-11 px-5"
           >
             {loading ? 'Asking…' : 'Ask'}
           </Button>
@@ -345,7 +357,7 @@ export default function AssistantPage() {
         <p className="text-sm text-gray-700">Not sure what to ask? Try one of these:</p>
         <div className="flex flex-wrap gap-2">
           {BRIEF_QUESTIONS.map((q) => (
-            <Button key={q} onClick={() => askExample(q)} disabled={loading}>
+            <Button key={q} onClick={() => askExample(q)} disabled={loading} className="rounded-full text-left">
               {q}
             </Button>
           ))}

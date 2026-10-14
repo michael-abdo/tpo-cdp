@@ -21,6 +21,8 @@ import {
   EmptyState,
   ErrorLine,
   Field,
+  ICONS,
+  Icon,
   Loading,
   PageHeader,
   ResponsiveTable,
@@ -64,6 +66,19 @@ function traceResult(t: AuditTraceSummary): string {
 }
 /** One step's result in words. */
 const STEP_STATUS: Record<AuditStatus, string> = { success: 'Done', error: 'Failed', blocked: 'Blocked' }
+/** The tag look per status: colour and icon only reinforce the word. */
+const STEP_LOOK = {
+  success: { tone: 'success', icon: ICONS.success },
+  error: { tone: 'danger', icon: ICONS.error },
+  blocked: { tone: 'danger', icon: ICONS.blocked },
+} as const
+
+/** The list's Result tag look, from how the request ended. */
+function resultLook(t: AuditTraceSummary) {
+  if (t.outcome === 'blocked') return STEP_LOOK.blocked
+  if (t.outcome === 'failed' || t.outcome === 'unfinished') return STEP_LOOK.error
+  return STEP_LOOK.success
+}
 
 /** Plain words for the seeded tools (scripts/tool-seeds.ts); any other tool is named in Technical details. */
 const TOOL_LABEL: Record<string, string> = {
@@ -130,12 +145,14 @@ export function Step({ row, title, matches }: { row: AuditRow; title: string; ma
   const tokens =
     row.tokens_in === null && row.tokens_out === null ? null : (row.tokens_in ?? 0) + (row.tokens_out ?? 0)
   return (
-    <li className="space-y-2 rounded border border-gray-200 p-4">
+    <li className="space-y-2 rounded-xl bg-surface p-5 shadow-soft">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="font-semibold text-gray-900">{title}</h2>
-        <Tag>{STEP_STATUS[row.status]}</Tag>
+        <h2 className="font-semibold text-ink">{title}</h2>
+        <Tag tone={STEP_LOOK[row.status].tone} icon={STEP_LOOK[row.status].icon}>
+          {STEP_STATUS[row.status]}
+        </Tag>
         {matches !== null && matches > 0 && (
-          <Tag>{matches === 1 ? '1 match' : `${fmt(matches)} matches`}</Tag>
+          <Tag tone="accent" icon={ICONS.search}>{matches === 1 ? '1 match' : `${fmt(matches)} matches`}</Tag>
         )}
       </div>
       <p className="text-sm text-gray-700">{stepSummary(row)}</p>
@@ -189,7 +206,7 @@ function TraceView({ traceId }: { traceId: string }) {
     </Link>
   )
   const header = (purpose?: string) => (
-    <PageHeader title="One question, step by step" purpose={purpose} action={back} />
+    <PageHeader title="One question, step by step" icon={ICONS.audit} purpose={purpose} action={back} />
   )
 
   if (state === null || state.status === 'loading') {
@@ -246,12 +263,17 @@ function TraceView({ traceId }: { traceId: string }) {
       )}
       <p className="text-sm text-gray-600">
         {fmt(rows.length)} stored {rows.length === 1 ? 'step' : 'steps'}, started{' '}
-        {humanDateTime(rows[0].created_at)}. An email in the question is replaced by [email] before anything
-        is sent or stored. Emails are put back into the answer only on the page that asked, so the answer
-        with emails is never stored and is not shown here.
+        {humanDateTime(rows[0].created_at)}.
       </p>
+      <Disclosure label="How emails are kept out">
+        <p className="text-sm text-gray-700">
+          An email in the question is replaced by [email] before anything
+        is sent or stored. Emails are put back into the answer only on the page that asked, so the answer
+          with emails is never stored and is not shown here.
+        </p>
+      </Disclosure>
 
-      <div className="space-y-1 rounded border border-gray-200 p-4">
+      <div className="space-y-2 rounded-xl bg-surface p-5 shadow-soft">
         <label htmlFor="trace-search" className="block text-sm font-medium text-gray-900">
           Search what was stored for this question
         </label>
@@ -263,9 +285,9 @@ function TraceView({ traceId }: { traceId: string }) {
             onChange={(e) => setSearch(e.target.value)}
             aria-describedby="trace-search-hint"
             autoComplete="off"
-            className="min-h-9 w-full max-w-sm rounded border border-gray-300 bg-white px-2 py-1 text-sm"
+            className="min-h-9 w-full max-w-sm rounded-lg border border-line-strong bg-page px-3 py-1.5 text-sm text-ink"
           />
-          <Button onClick={() => setSearch('@')}>Search for “@”</Button>
+          <Button icon={ICONS.search} onClick={() => setSearch('@')}>Search for “@”</Button>
         </div>
         <p id="trace-search-hint" className="text-sm text-gray-600">
           Searches everything sent to and from the AI for this question. Every email has an @, so “@” should
@@ -299,7 +321,14 @@ function traceColumns(): Column<AuditTraceSummary>[] {
         </Link>
       ),
     },
-    { header: 'Result', cell: traceResult },
+    {
+      header: 'Result',
+      cell: (t) => (
+        <Tag tone={resultLook(t).tone} icon={resultLook(t).icon}>
+          {traceResult(t)}
+        </Tag>
+      ),
+    },
     { header: 'Tokens used', cell: (t) => fmt(t.tokens_in + t.tokens_out), numeric: true },
   ]
 }
@@ -335,6 +364,7 @@ function TraceList() {
     <div className="space-y-6">
       <PageHeader
         title="AI audit log"
+        icon={ICONS.audit}
         purpose={`Every question sent to the assistant, newest first (the last ${LIST_LIMIT}). Open one to see exactly what the AI was sent and what it sent back.`}
         action={
           <Button
@@ -354,7 +384,8 @@ function TraceList() {
       ) : settled.state.data.traces.length === 0 ? (
         <EmptyState
           action={
-            <Link to="/assistant" className={linkClass}>
+            <Link to="/assistant" className={`${linkClass} gap-1.5`}>
+              <Icon icon={ICONS.assistant} />
               Ask a question
             </Link>
           }
