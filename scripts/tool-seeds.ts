@@ -258,3 +258,76 @@ export function toolSeedSql(values: readonly string[]): string {
 export function toolSeedInsert(seed: ToolSeed): { sql: string; params: SqlValue[] } {
   return { sql: toolSeedSql(COLUMNS.map(() => '?')), params: toolSeedValues(seed, crypto.randomUUID()) }
 }
+
+/**
+ * The columns a seed defines and a re-seed compares (09 D-69: a schema change must reach a row that
+ * already exists). `enabled` and `sort_order` are left out: a teammate may disable or reorder a row.
+ */
+export const SEEDED_FIELDS = ['description', 'input_schema', 'handler_type', 'execution_config'] as const
+export type SeededField = (typeof SEEDED_FIELDS)[number]
+
+/** An assistant_tools row as read back: its name and the seeded columns, as stored. */
+export type StoredToolRow = { name: string } & { [F in SeededField]: string }
+
+/** JSON with every object's keys sorted, so two equal schemas compare equal whatever their key order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+
+/**
+ * The seeded rows whose stored columns differ from TOOL_SEEDS, each with the fields that differ, in
+ * TOOL_SEEDS order. Pure. A row the table lacks is not listed here (the read-back names it as
+ * missing). The insert never overwrites (`toolSeedSql`), so `npm run tools:seed` uses this to fail
+ * loud on a row a newer seed changed, such as the `segment` row before D-69's keys.
+ */
+export function staleToolRows(rows: readonly StoredToolRow[]): { name: string; fields: SeededField[] }[] {
+  const byName = new Map(rows.map((r) => [r.name, r]))
+  const stale: { name: string; fields: SeededField[] }[] = []
+  for (const seed of TOOL_SEEDS) {
+    const row = byName.get(seed.name)
+    if (row === undefined) continue
+    const want: { [F in SeededField]: string } = {
+      description: seed.description,
+      input_schema: canonicalJson(seed.inputSchema),
+      handler_type: seed.handlerType,
+      execution_config: canonicalJson(seed.executionConfig),
+    }
+    // assistant_tools CHECKs json_valid on both JSON columns (0001_core.sql), so the parse cannot fail on a stored row.
+    const have: { [F in SeededField]: string } = {
+      description: row.description,
+      input_schema: canonicalJson(JSON.parse(row.input_schema)),
+      handler_type: row.handler_type,
+      execution_config: canonicalJson(JSON.parse(row.execution_config)),
+    }
+    const fields = SEEDED_FIELDS.filter((f) => have[f] !== want[f])
+    if (fields.length > 0) stale.push({ name: seed.name, fields })
+  }
+  return stale
+}
+
+/** The UPDATE values of one seed, in `toolSeedUpdateSql` order: the seeded columns, then the name. */
+export function toolSeedUpdateValues(seed: ToolSeed): SqlValue[] {
+  return [seed.description, JSON.stringify(seed.inputSchema), seed.handlerType, JSON.stringify(seed.executionConfig), seed.name]
+}
+
+/**
+ * Overwrites one existing row's seeded columns with its seed (`npm run tools:seed -- … --update
+ * <name>`, the explicit opt-in). `enabled` and `sort_order` stay as they are; updated_at is the
+ * write time, as in `toolSeedSql`.
+ */
+export function toolSeedUpdateSql(values: readonly string[]): string {
+  if (values.length !== SEEDED_FIELDS.length + 1) throw new Error(`tool-seeds: expected ${SEEDED_FIELDS.length + 1} values, got ${values.length}`)
+  const set = SEEDED_FIELDS.map((f, i) => `${f} = ${values[i]}`).join(', ')
+  return `UPDATE assistant_tools SET ${set}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE name = ${values[SEEDED_FIELDS.length]}`
+}
+
+/** The bound form of one seed's update. */
+export function toolSeedUpdate(seed: ToolSeed): { sql: string; params: SqlValue[] } {
+  return { sql: toolSeedUpdateSql([...SEEDED_FIELDS, 'name'].map(() => '?')), params: toolSeedUpdateValues(seed) }
+}

@@ -25,7 +25,7 @@ npm install --legacy-peer-deps      # the flag installs package-lock.json exactl
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
 npm run db:migrate:local            # the five migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
-npm test                            # 31 files, 617 tests in workerd against a local D1; no network
+npm test                            # 31 files, 618 tests in workerd against a local D1; no network
 npm run dev                         # http://localhost:5173; sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
@@ -41,6 +41,8 @@ For the assistant, also write its five tool rows into the local D1 once, after t
 ```bash
 npm run tools:seed -- --local       # segment, aggregate, query_sql, pages_new_subscribers_hit_first, describe_schema
 ```
+
+The command inserts missing rows and never overwrites one, then fails, naming the row and the fix, if a stored row differs from `scripts/tool-seeds.ts`. A local D1 seeded before 09 D-69 holds the old `segment` row (no new filter keys); replace it with `npm run tools:seed -- --local --update segment`.
 
 What you see without them: with no tool rows `/assistant` answers 500 `no_tools` naming this command; with an empty key, 503 `assistant_unavailable` pointing to the live app; with a key that is not real, 502 `model_error`. The failed call still shows up on the AI audit log page. Everything else works without a key.
 
@@ -97,7 +99,8 @@ for NAME in SITE_PASSWORD SESSION_SECRET WEBHOOK_SECRET PII_KEY_SECRET ANTHROPIC
 done
 npm run db:migrate:remote
 npm run db:seed:remote                               # type "cdp" at the prompt; refuses a database that already holds seed rows
-npm run tools:seed -- --remote                       # type "cdp"; inserts missing assistant_tools rows, never overwrites one
+npm run tools:seed -- --remote                       # type "cdp"; inserts missing assistant_tools rows, never overwrites one, fails naming any row that differs from the seed
+npm run tools:seed -- --remote --update segment      # type "cdp"; once, on a D1 seeded before 09 D-69: gives the segment row its new filter keys
 npm run deploy                                       # build + wrangler deploy
 ```
 
@@ -375,7 +378,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Tests
 
-`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the Overview's screen text from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 31 files, 617 tests.
+`npm test` runs every file in `test/` inside workerd, against a local D1 with the real migrations applied (`test/setup.ts`). Tests that need data seed it from the real CSVs (`test/helpers/seed.ts`). No network: the model transport is a function the assistant tests pass in, returning Messages-API-shaped responses written in the test file. `vitest.config.ts` also reads the Overview's screen text from the TypeScript AST in Node and passes it in as the `SCREEN_TEXTS` binding, since the compiler cannot load inside workerd (`test/helpers/screen-text.ts`). At this commit: 31 files, 618 tests.
 
 | IDs | File | What they pin |
 |---|---|---|
@@ -394,7 +397,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 | T-AUTH-1..2 | `auth.test.ts` | login, cookie, fail-closed secrets, no secret in any error or audit row |
 | T-PII-1..4 | `pii.test.ts`, `schema.test.ts`, `gate1.test.ts`, `assistant.test.ts` | no email or raw id in any request, view or audit row; blocking |
 | T-GATE-1..2, T-AI-2 | `gate1.test.ts`, `gate2.test.ts` | Gate 1 patterns and redaction; Gate 2/3 read-only SQL over views only |
-| T-AI-1, T-AI-8 | `tools.test.ts` | tool rows load or fail loud (a schema `pattern` that is not a string or does not compile with the `u` flag included); `query` rows bind in order |
+| T-AI-1, T-AI-8 | `tools.test.ts` | tool rows load or fail loud (a schema `pattern` that is not a string or does not compile with the `u` flag included); `tools:seed`'s read-back names a stored row that differs from its seed, the insert keeps it and only `--update` replaces it; `query` rows bind in order |
 | — | `describe-schema.test.ts` | `describe_schema` returns every `v_*` view's columns as read from `PRAGMA`, no rows and no PII column, and refuses a table name |
 | T-AI-3..5 | `assistant.test.ts` | typed results, audit rows per trace, no SQL in answer text |
 | T-INS-1..3 | `insights.test.ts` | the four Growth panels; `going_cold_risk` checked row by row on the seeded subscribers; each data-quality check made to count one gap by editing real rows (09 D-47), and the import/quarantine disagreement answering 500 |
