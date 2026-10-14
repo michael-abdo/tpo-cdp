@@ -125,9 +125,11 @@ async function deviceForAccount(db: D1Database, userId: string): Promise<string>
     .prepare('SELECT device_id FROM app_events WHERE user_id = ? ORDER BY event_ts DESC, rowid DESC LIMIT 1')
     .bind(userId)
     .first<string>('device_id')
-  if (device === null) return freshId('d_', 4)
+  // 8 bytes (64 bits), not 4: a fresh id must not collide with an existing anonymous device and
+  // silently stitch that device's anonymous events to this account on the next login resolution.
+  if (device === null) return freshId('d_', 8)
   const owner = await db.prepare('SELECT user_id FROM device_identity WHERE device_id = ?').bind(device).first<string>('user_id')
-  if (owner !== null && owner !== userId) return freshId('d_', 4)
+  if (owner !== null && owner !== userId) return freshId('d_', 8)
   return device
 }
 
