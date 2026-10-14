@@ -728,7 +728,14 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
         ),
         summary: { ...tile.result.summary, rows_total: rowsTotal, rows_shown: Math.min(PERSON_LIST_CAP, rowsTotal) },
       }
-    } else if (tile.result !== null && pinShape === 'totals' && freshShape !== null && freshShape.shape === 'totals') {
+      // Keyed on `freshShape` alone, never on the stored `pinShape`: the shape-mismatch throw
+      // above is the thing that is supposed to stop a "list"-pinned tile from ever reaching here
+      // with a now-totals SQL, but a tile whose pin_shape and freshShape disagree must never be
+      // ABLE to skip this mask even if that throw is ever weakened or removed — a mismatch should
+      // fail closed into `not_aggregate` up there, not fail open into an unmasked small group down
+      // here (09 D-64b finding, confirmed live: a pinned list's wrapped row edited to a grouped
+      // totals query with a group under 5 reached the screen with the real count, no "< 5").
+    } else if (tile.result !== null && freshShape !== null && freshShape.shape === 'totals') {
       const countColumns = freshShape.countColumns
       const dimensionColumns = new Set(freshShape.dimensionColumns)
       tile.result = { ...tile.result, rows: maskSmallGroups(tile.result.rows, tile.result.columns, countColumns, dimensionColumns) }

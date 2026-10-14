@@ -1620,6 +1620,43 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     expect(row.total).toBe('< 5')
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
+
+  it('a pinned "list" tile whose SQL drifts to a totals shape with a small group is refused, never run unmasked (09 D-64b finding)', async () => {
+    // Runtime proof: pin a person list, then let its wrapped row's SQL drift (a D-41 row is data)
+    // to a grouped totals query that holds a group under 5. The shape check above
+    // (`classified.shape !== pinShape`) is the only thing that stops this: without it, runTile
+    // would run the fresh (now-totals) SQL under a tile still carrying pin_shape "list", skip
+    // both the "list" re-hydration branch (identifierColumn is null — the fresh shape is not
+    // "list") and the "totals" mask branch (gated on pinShape, still "list"), and hand back the
+    // small group's real count unmasked. Confirmed live before this test existed: a pinned list's
+    // wrapped row edited to this same totals SQL showed
+    // {source:'x', status:'unsubscribed', month:'2026-08', n:3, s:8.333333333333334} with no "< 5".
+    const smallest = await env.DB.prepare(
+      "SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS n FROM v_profiles GROUP BY source, status, substr(signup_date, 1, 7) ORDER BY n ASC LIMIT 1",
+    ).first<{ source: string | null; status: string; month: string; n: number }>()
+    expect(smallest!.n).toBeLessThan(5) // the seed must hold a tiny group for this test to mean anything
+
+    const sql = "SELECT pkey, source FROM v_profiles WHERE status = 'active' LIMIT 3"
+    const answer = await askAnswer('three active subscribers by pkey and source', [
+      { name: 'query_sql', input: { sql, explanation: 'three active subscribers' } },
+    ])
+    const tile = await pin({ audit_id: answer.audit_id })
+    expect(tile.status).toBe('ok')
+    const storedRow = await stored(tile.id)
+    const toolName = storedRow!.tool
+
+    const totalsWithSmallGroup =
+      'SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS n FROM v_profiles ' + 'GROUP BY source, status, substr(signup_date, 1, 7)'
+    await env.DB.prepare('UPDATE assistant_tools SET execution_config = ? WHERE name = ?')
+      .bind(JSON.stringify({ sql: totalsWithSmallGroup, param_mapping: {} }), toolName)
+      .run()
+
+    const onBoard = (await board()).tiles.find((t) => t.id === tile.id)!
+    expect(onBoard.status).toBe('error')
+    expect(onBoard.error).toBe(NOT_AGGREGATE_MESSAGE)
+    expect(onBoard.error_details).toContain('this tile\'s SQL now classifies as "totals", not the "list" shape it was pinned with; re-pin it')
+    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
 })
 
 describe('board runs in the audit log (05 §Proof surfaces, R5.5)', () => {
