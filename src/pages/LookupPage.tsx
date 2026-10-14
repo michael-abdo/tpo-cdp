@@ -555,10 +555,9 @@ function SuggestionList({
             id={optionId(LISTBOX_ID, i)}
             active={isActive}
             onPick={() => onPick(m)}
-            // The active row gets a bar and a fill, not a faint tint alone (principle 7).
-            className={`flex cursor-pointer flex-wrap gap-x-3 border-l-4 px-3 py-2 hover:bg-gray-50 ${
-              isActive ? 'border-blue-600 bg-blue-50' : 'border-transparent'
-            }`}
+            // The active row's bar-and-fill treatment (principle 7) lives in the shared
+            // ListboxOption now, not here (D-72).
+            className="flex cursor-pointer flex-wrap gap-x-3 px-3 py-2 hover:bg-gray-50"
           >
             <span className="break-all font-medium text-gray-900">{m.email ?? m.user_id}</span>
             {/* The kind only when it is not the usual one (principle 5). */}

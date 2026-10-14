@@ -104,6 +104,20 @@ describe('the account field is the shared listbox contract (../listbox; WCAG 2.2
     expect(panelSource).toMatch(/aria-controls=\{listShown \? LISTBOX_ID : undefined\}/)
   })
 
+  it('the active option gets the shared LookupPage treatment — a left bar plus a fill, not a surface tint alone (06 §UI principles 7)', () => {
+    // The shared component carries the active styling now (D-72), so a mutant that weakens it
+    // to a tint (e.g. `active ? 'bg-surface' : ''`) fails here even though each page's own
+    // className prop still reads fine.
+    expect(listboxSource).toMatch(/border-l-4/)
+    expect(listboxSource).toMatch(/border-blue-600/)
+    expect(listboxSource).toMatch(/bg-blue-50/)
+    // Neither caller re-implements it: no page-local "active ?" ternary picking its own fill.
+    expect(panelSource).not.toMatch(/active\s*\?\s*'[^']*'\s*:\s*''/)
+    expect(panelSource).not.toMatch(/nav\.active\s*\?/)
+    expect(lookupSource).not.toMatch(/border-blue-600/)
+    expect(lookupSource).not.toMatch(/bg-blue-50/)
+  })
+
   it('the shared ListboxOption never wraps an inner interactive element (no nested-interactive)', () => {
     // Strip comments first: the files' own doc comments describe the rule in prose using the
     // literal text "<button>", which must not be mistaken for JSX it renders.

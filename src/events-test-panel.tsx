@@ -182,9 +182,9 @@ export function TestEventPanel({ onSent }: { onSent: (event: RecentEvent) => voi
                     id={optionId(LISTBOX_ID, i)}
                     active={i === nav.active}
                     onPick={() => pick(m)}
-                    className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-sm ${
-                      i === nav.active ? 'bg-surface' : ''
-                    }`}
+                    // The active row's bar-and-fill treatment lives in the shared ListboxOption
+                    // (D-72, 06 §UI principles 7), not a tint duplicated here.
+                    className="flex min-h-8 items-center gap-2 px-2 py-1 text-sm"
                   >
                     <span className="shrink-0 font-mono text-xs text-gray-600">{m.user_id}</span>
                     {m.email !== null && <span className="truncate">{m.email}</span>}
