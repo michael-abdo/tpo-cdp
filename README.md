@@ -187,7 +187,7 @@ Identity is the normalized email. When rows merge:
 - `signup_date` is the earliest.
 - `last_open_date` is the latest non-empty one.
 - `status` is `unsubscribed` if any row says so.
-- `source` comes from the row with the earliest non-blank source (the earlier-seen row on a tie).
+- `source` comes from the earliest-signup row whose source is not blank (the earlier-seen row on a tie; blank only if every row is).
 - `email_raw` is the first spelling seen.
 - `merged_count` records how many rows were collapsed.
 
@@ -447,9 +447,23 @@ The other concern I would address next: **prompt injection through event data.**
 **The build loop.** Each unit of work went through the same harness: one AI agent implemented it from the design docs, then three AI reviewers tried to break it (spec, process rules, tests), and a fixer closed what they found, up to two rounds. A unit still blocked after two rounds went to the orchestrating Claude session, which either fixed it with a mutation-checked test or brought me a design call (logged as a decision). That is why about half the commits are `fix:` commits: each one closes a defect a reviewer proved with a probe or a code mutation.
 
 **Where it was wrong.** [`docs/ai-log.md`](docs/ai-log.md) records every AI mistake that was caught: what was asked, what was wrong, how it was caught, and the fix. The ones worth reading first:
-- The SQL-in-answers filter: three stripping rules in a row were bypassed (line breaks, lower case, a keyword per line). The fix replaced stripping with rejection (the whole text is discarded and replaced by a server sentence).
-- Pinning free-form SQL to the shared board: a reviewer showed a query could cut a profile's key into pieces that the output check could not see. Pins were first restricted to fixed-SQL answers; the follow-up allows free-form pins only in shapes the server can check (totals, small groups hidden, whole-key lists) plus human approval for the rest.
-- Agent deploys were blocked by the permission system, so every deploy went through the orchestrating session after an independent check of tests, build, a secret scan and the live site.
+- The SQL-in-answers filter: three stripping rules in a row were bypassed (line breaks, lower case, a keyword per line). The orchestrating session replaced stripping with rejection (the whole text is discarded and replaced by a server sentence).
+- Gate 1's regex set: the AI transcribed the origin's 19 patterns from a design doc instead of copying the source file, and the transcription dropped the `\b` word boundary from 14 of them, so plain questions ("the migrant story", "impact as a share") were refused as attacks. The fix copies the regexes from the origin file byte for byte, checked by a diff of both files.
+- The model's segment tool: its first version wrapped the builder's raw-table SQL (`subscribers`, `app_users`, `profiles`) and only trimmed the output, so the README's claim that tools can only read the PII-free views was false for this one. The fix made the tool run only over `v_profiles`, checked by a test that scans its SQL for any non-view table name.
+
+**Where I intervened most** (my decisions, in order; the design log keeps the full text):
+
+| Date | Decision |
+|---|---|
+| 2026-10-12 | Claude only (no second model provider); tools stored as database rows so Growth can add a question type without a deploy |
+| 2026-10-13 | Partial lookup now, fuzzy matching later; UI for non-technical staff first (progressive disclosure, plain words, WCAG 2.2 AA) |
+| 2026-10-13 | A calm, icon-led visual refresh; a funded, workspace-scoped API key for the live assistant |
+| 2026-10-14 | Review list for set-aside rows (the two invalid emails); no fuzzy auto-merge, a scored "possible duplicates" review instead (after research: Segment, mParticle and RudderStack merge only on exact identifiers) |
+| 2026-10-14 | Overview as a data-driven list of sources and runs; problems shown as status on the source they came from |
+| 2026-10-14 | One Insights page: ask in plain English, then pin the answer as a tile that re-runs without the model (built; not yet merged into main) |
+| 2026-10-14 | TPO's own vocabulary everywhere (subscribers, profile, app accounts, site visits, segment) |
+| 2026-10-14 | Segments stays its own page (requirement 3 must work when the model is down); previous searches and five more filters |
+| 2026-10-14 | Settings: one home per definition now; a Settings page for the cold window and engagement score later |
 
 **A note on the history.** Four early UI commits (`ee55b54`, `7e95597`, `fb03a8d`, `d9dfbb9`) lack the `Co-Authored-By: Claude` trailer; they are AI-written like the rest. Some trailers name a model version; newer commits use a plain `Co-Authored-By: Claude` line. The history was not rewritten.
 
