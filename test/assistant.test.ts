@@ -210,6 +210,7 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
       handler_type: 'builtin',
       execution_config: '{"handler_name":"segment"}',
       sort_order: 10,
+      metadata: null,
     }
     expect(validateToolRow(good, []).handlerName).toBe('segment')
     const cases: Array<[Partial<ToolRow>, string]> = [

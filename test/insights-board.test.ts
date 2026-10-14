@@ -27,10 +27,11 @@ import { findPII, loadKnownEmails } from '../worker/assistant/gates/pii-guard'
 import { MODEL } from '../worker/assistant/build-request'
 import type { MessagesTransport } from '../worker/assistant/loop'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
+import { loadTools } from '../worker/assistant/tools/tool-loader'
 import { requireJson, requireSession } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
-import { INSIGHT_PANEL, INSIGHT_PANELS, NOT_AGGREGATE_MESSAGE, type Tile } from '../worker/insights/board'
+import { INSIGHT_PANEL, INSIGHT_PANELS, listApprovals, NOT_AGGREGATE_MESSAGE, type Tile } from '../worker/insights/board'
 import { assistantRoutes } from '../worker/routes/assistant'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
@@ -1352,6 +1353,61 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
 
+  it('a D-64b pin never adds a model-facing tool: the wrapped row is board_only and stays out of loadTools().definitions', async () => {
+    const before = (await loadTools(env.DB)).definitions.map((d) => d.name)
+    const sql = "SELECT status, count(*) AS n FROM v_profiles GROUP BY status"
+    const answer = await askAnswer('how many subscribers by status?', [{ name: 'query_sql', input: { sql, explanation: 'subscribers by status' } }])
+    const tile = await pin({ audit_id: answer.audit_id })
+    expect(tile.status).toBe('ok')
+    const storedRow = await stored(tile.id)
+    const toolRow = await env.DB.prepare('SELECT enabled, metadata FROM assistant_tools WHERE name = ?').bind(storedRow!.tool).first<{
+      enabled: number
+      metadata: string | null
+    }>()
+    expect(toolRow!.enabled).toBe(1)
+    expect(JSON.parse(toolRow!.metadata!)).toMatchObject({ board_only: true, wrapped_from_trace: answer.audit_id })
+    // Runnable by the board (byName) but never in the model's own tool list (definitions).
+    const loaded = await loadTools(env.DB)
+    expect(loaded.byName.has(storedRow!.tool)).toBe(true)
+    expect(loaded.definitions.map((d) => d.name)).toEqual(before)
+    await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
+
+  it('pinning the same trace twice reuses the wrapped row instead of leaving a second enabled tool behind', async () => {
+    const sql = "SELECT status, count(*) AS n FROM v_profiles GROUP BY status"
+    const answer = await askAnswer('how many subscribers by status, a second time?', [
+      { name: 'query_sql', input: { sql, explanation: 'subscribers by status, a second time' } },
+    ])
+    const first = await pin({ audit_id: answer.audit_id })
+    expect(first.status).toBe('ok')
+    const firstRow = await stored(first.id)
+    const before = await env.DB.prepare("SELECT count(*) AS n FROM assistant_tools WHERE handler_type = 'query' AND enabled = 1").first<number>('n')
+
+    const second = await pin({ audit_id: answer.audit_id, title: 'a second pin of the same answer' })
+    expect(second.status).toBe('ok')
+    const secondRow = await stored(second.id)
+    expect(secondRow!.tool).toBe(firstRow!.tool) // the same wrapped row, not a fresh one
+    const after = await env.DB.prepare("SELECT count(*) AS n FROM assistant_tools WHERE handler_type = 'query' AND enabled = 1").first<number>('n')
+    expect(after).toBe(before) // no new enabled tool row from the second pin
+
+    await env.DB.prepare('DELETE FROM insights WHERE id IN (?, ?)').bind(first.id, second.id).run()
+  })
+
+  it('a D-64b pin whose first run fails leaves no orphan enabled tool behind', async () => {
+    // Passes the grammar (so it does reach wrapQuerySql, unlike a grammar refusal which queues
+    // approval and never wraps anything) but is refused right after: an empty title cannot be
+    // stored (checkedTitle). If the row wrapQuerySql inserted were not cleaned up on this throw,
+    // it would stay enabled, model-visible, with no tile and nothing pointing to it.
+    const sql = "SELECT status, count(*) AS n FROM v_profiles GROUP BY status"
+    const answer = await askAnswer('how many subscribers by status, with a bad title?', [
+      { name: 'query_sql', input: { sql, explanation: 'subscribers by status, with a bad title' } },
+    ])
+    const before = await env.DB.prepare("SELECT count(*) AS n FROM assistant_tools WHERE handler_type = 'query' AND enabled = 1").first<number>('n')
+    await expect(pin({ audit_id: answer.audit_id, title: '' })).rejects.toThrow()
+    const after = await env.DB.prepare("SELECT count(*) AS n FROM assistant_tools WHERE handler_type = 'query' AND enabled = 1").first<number>('n')
+    expect(after).toBe(before)
+  })
+
   it('T-INS-11 shape B: any row whose people count reads under 5 shows "< 5" in every other column, every run', async () => {
     // A real small group, found rather than assumed (09 D-47): the smallest (source, status, signup month) triple
     // (finer than source+status alone, which this seed never makes small; a date bucket is itself an allowed dimension).
@@ -1459,6 +1515,32 @@ describe('T-INS-10..14: query_sql pins in safe shapes (totals, small-group mask,
     const again = await api(`/approvals/${pendingId}/approve`, { method: 'POST', body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'again' } })
     expect(again.status).toBe(404)
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+  })
+
+  it('T-INS-14 approval, first run fails: the response is an error and the row stays enabled=0 on the approvals list', async () => {
+    // Legal SQL (Gate 2/3 allow it live), refused by the D-64b grammar (OVER), so it queues for
+    // approval like T-INS-14's own case — but this one selects pkey bare, which the plain D-64a
+    // check (keyProjectionProblems, the one an approved row still gets) refuses at run time.
+    const sql = 'SELECT pkey, row_number() OVER (ORDER BY pkey) AS rn FROM v_profiles'
+    const answer = await askAnswer('rank every subscriber by pkey', [{ name: 'query_sql', input: { sql, explanation: 'subscribers ranked by pkey' } }])
+    await api('', { method: 'POST', body: { audit_id: answer.audit_id } }) // queues the approval
+    const pendingId = await env.DB.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(answer.audit_id).first<string>('id')
+    expect(pendingId).not.toBeNull()
+
+    const beforeTiles = await tileCount()
+    const res = await api(`/approvals/${pendingId}/approve`, {
+      method: 'POST',
+      body: { password: env.TOOL_APPROVAL, name: 'Growth', note: 'ranked by pkey, should never run' },
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json<{ error: string }>()).error).toBe('not_aggregate')
+    expect(await tileCount()).toBe(beforeTiles)
+    // Fail safe: the row the approve attempt would have enabled is still disabled and still
+    // listed as pending, so a human can see it was approved but never actually ran (09 D-64b
+    // finding: this used to leave it enabled=1 with no tile, 404 on a re-approve).
+    expect(await env.DB.prepare('SELECT enabled FROM assistant_tools WHERE id = ?').bind(pendingId).first<number>('enabled')).toBe(0)
+    const pending = await listApprovals(env.DB)
+    expect(pending.some((p) => p.id === pendingId)).toBe(true)
   })
 
   it('a pinned "totals" tile masks by the SQL as it runs today, not the count/dimension columns it was pinned with (09 D-64b "on every board run")', async () => {

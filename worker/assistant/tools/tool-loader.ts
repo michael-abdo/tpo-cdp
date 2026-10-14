@@ -42,6 +42,9 @@ export interface ToolRow {
   handler_type: string
   execution_config: string
   sort_order: number
+  /** Free-form JSON (01 assistant_tools.metadata), or null; `{board_only: true}` marks a row
+   *  board.ts wrapped from a grammar-approved query_sql pin (09 D-64b). */
+  metadata: string | null
 }
 
 /** One validated, enabled tool. */
@@ -55,6 +58,12 @@ export interface LoadedTool {
   handler: BuiltinHandler
   /** Set for a query row: its template rewritten to positional `?` and the input field bound to each. */
   query?: QueryTemplate
+  /** metadata.board_only (09 D-64b): runnable by the board's own executor, but left out of
+   *  `LoadedTools.definitions`, so it is never offered to the model as a callable tool. A row a
+   *  pin wraps proved its SQL safe to run and mask on the board; it never proved the row safe to
+   *  hand the model as a tool it can call directly (that path skips board.ts's own re-hydration
+   *  and small-group mask). */
+  boardOnly: boolean
 }
 
 export interface LoadedTools {
@@ -354,6 +363,15 @@ export function validateToolRow(row: ToolRow, views: readonly ViewSchema[]): Loa
     problems.push(`handler_type ${JSON.stringify(row.handler_type)} is not builtin, query or passthrough`)
   }
 
+  // metadata is free-form JSON (01); a row with no metadata, or metadata that is not an object or
+  // does not set board_only, is model-facing like any other row (fail safe toward visibility, not
+  // silently hiding a tool a typo'd metadata column never meant to hide).
+  let boardOnly = false
+  if (row.metadata !== null) {
+    const meta = parseJson(row.metadata, 'metadata', problems)
+    if (meta !== undefined && isObject(meta) && meta.board_only === true) boardOnly = true
+  }
+
   if (problems.length > 0 || handler === undefined || !isObject(schema)) throw new ToolConfigError(label, problems)
   return {
     id: row.id,
@@ -362,6 +380,7 @@ export function validateToolRow(row: ToolRow, views: readonly ViewSchema[]): Loa
     handlerType: row.handler_type === 'query' ? 'query' : 'builtin',
     handlerName,
     handler,
+    boardOnly,
     ...(query === undefined ? {} : { query }),
   }
 }
@@ -370,7 +389,10 @@ export function validateToolRow(row: ToolRow, views: readonly ViewSchema[]): Loa
 export function toLoadedTools(rows: readonly ToolRow[], views: readonly ViewSchema[]): LoadedTools {
   if (rows.length === 0) throw new ApiError(500, 'no_tools', 'The assistant has no enabled tools, so it cannot answer. Run `npm run tools:seed`.')
   const tools = rows.map((row) => validateToolRow(row, views))
-  return { tools, definitions: tools.map((t) => t.definition), byName: new Map(tools.map((t) => [t.name, t])) }
+  // board_only rows (09 D-64b: a wrapped grammar-pinned query) are runnable (byName), but never
+  // part of the Anthropic tools[] the model sees (definitions) — the model cannot call a tool it
+  // was never offered, however it is named.
+  return { tools, definitions: tools.filter((t) => !t.boardOnly).map((t) => t.definition), byName: new Map(tools.map((t) => [t.name, t])) }
 }
 
 let cached: { key: string; tools: LoadedTools } | undefined
@@ -379,7 +401,7 @@ let cached: { key: string; tools: LoadedTools } | undefined
 export async function loadTools(db: D1Database): Promise<LoadedTools> {
   const { results } = await db
     .prepare(
-      `SELECT id, name, description, input_schema, handler_type, execution_config, sort_order
+      `SELECT id, name, description, input_schema, handler_type, execution_config, sort_order, metadata
        FROM assistant_tools WHERE enabled = 1 ORDER BY sort_order, name`,
     )
     .all<ToolRow>()
