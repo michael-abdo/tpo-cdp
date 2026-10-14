@@ -163,6 +163,7 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     '0007_profiles_email_index',
     '0008_ai_audit_cache',
     '0009_tool_approval',
+    '0010_drop_tool_approval',
   ]
   const files = Object.keys(import.meta.glob('../migrations/*.sql', { query: '?raw' }))
     .map((path) => /\/([^/]+)\.sql$/.exec(path)?.[1] ?? path)
@@ -183,6 +184,15 @@ describe('the migrations are one contiguous, ordered sequence', () => {
     const said = /\bthe (\w+) migrations into the local D1\b/.exec(readme)?.[1]
     expect(said, 'README names the migration count ("the nine migrations")').toBeDefined()
     expect(WORDS.indexOf(said ?? ''), `README says "${said}"`).toBe(files.length)
+  })
+})
+
+// 0010_drop_tool_approval.sql (09 D-77: the approval queue is gone). 0009 added the column; 0010
+// drops it; migrations are never edited, so both stay in the sequence above and this pins the
+// column gone on the schema the whole sequence produces.
+describe('migration 0010 drops assistant_tools.requested_from_trace', () => {
+  it('PRAGMA table_info(assistant_tools) no longer lists it', async () => {
+    expect(await columnsOf('assistant_tools')).not.toContain('requested_from_trace')
   })
 })
 
