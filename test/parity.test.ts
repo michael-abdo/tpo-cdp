@@ -5,15 +5,21 @@ import appCsv from '../data/app_users.csv?raw'
 import subscribersCsv from '../data/subscribers.csv?raw'
 import webCsv from '../data/web_events.csv?raw'
 import { TODAY as APP_TODAY } from '../shared/config'
-import { loginCookie } from './helpers/auth'
+import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
+import { documentationIp, loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 import {
+  addDays,
   buildExpected,
   canonicalSource,
   type ExpectedPairInput,
+  engagementScore,
+  normalizeEmail,
   type OracleResult,
   parseCsvStrict,
+  pkeyForEmailNorm,
+  pkeyForUserId,
   resolveAppEvents,
   scoreDuplicates,
   type StoredAppEvent,
@@ -48,9 +54,11 @@ function reportLine(m: Mismatch): string {
   return `${m.table} · ${m.keyKind} · ${m.key} · ${m.field} · ${m.expected} · ${m.actual}`
 }
 
+type Row = Record<string, unknown>
+
 /** Compares two maps keyed by the same report key (pkey / visitor_hash / event id / CSV line),
  * field by field. Pushes one Mismatch per differing field into `out`; returns missing/extra keys. */
-function diffByKey<T extends Record<string, unknown>>(
+function diffByKey<T extends Row>(
   table: string,
   keyKind: string,
   expected: Map<string, T>,
@@ -76,6 +84,26 @@ function diffByKey<T extends Record<string, unknown>>(
   return { missing, extra }
 }
 
+/**
+ * Runs one table's diff, appends every mismatch to the shared `report` (for T-PAR-9's scan) and
+ * also asserts right here that *this* comparison alone found none — a field mismatch used to pass
+ * T-PAR-2..5 silently and show up only in T-PAR-9's "exit condition" under the wrong test id.
+ */
+function diffAndAssert<T extends Row>(
+  table: string,
+  keyKind: string,
+  expected: Map<string, T>,
+  got: Map<string, T>,
+  fields: readonly (keyof T & string)[],
+  report: Mismatch[],
+): { missing: string[]; extra: string[] } {
+  const before = report.length
+  const result = diffByKey(table, keyKind, expected, got, fields, report)
+  const local = report.slice(before)
+  expect(local.map(reportLine), `${table} field mismatches`).toEqual([])
+  return result
+}
+
 let oracle: OracleResult
 let secret: string
 const report: Mismatch[] = []
@@ -84,6 +112,17 @@ beforeAll(async () => {
   await seedDatabase()
   secret = piiKeySecret()
   oracle = await buildExpected({ subscribers: subscribersCsv, webEvents: webCsv, appUsers: appCsv }, secret)
+
+  // 21 §2.3 "Key probe first": before any diff, check pkey = HMAC(secret, email_norm) on 10
+  // profiles, so a wrong secret stops with one line instead of thousands of mismatches.
+  const { results: probeRows } = await env.DB.prepare(
+    'SELECT pkey, email_norm FROM profiles WHERE email_norm IS NOT NULL LIMIT 10',
+  ).all<{ pkey: string; email_norm: string }>()
+  let agree = 0
+  for (const r of probeRows) if ((await pkeyForEmailNorm(secret, r.email_norm)) === r.pkey) agree++
+  if (probeRows.length > 0 && agree === 0) {
+    throw new Error('parity: wrong PII_KEY_SECRET for this store (key probe failed 0 of 10)')
+  }
 })
 
 // -------------------------------------------------------------------------------------------
@@ -96,10 +135,14 @@ describe('T-PAR-1 oracle independence', () => {
     eager: true,
   })
 
+  /** Catches `import … from '…'`, `export … from '…'` (incl. `export *`) and dynamic
+   * `import('…')` / `require('…')` anywhere in the source, not only a leading `import` keyword. */
   function importPaths(source: string): string[] {
     const paths: string[] = []
-    const re = /^\s*import\s+(?:type\s+)?(?:[^'"]+?from\s+)?['"]([^'"]+)['"]/gm
-    for (const m of source.matchAll(re)) paths.push(m[1])
+    const fromRe = /\bfrom\s*['"]([^'"]+)['"]/g
+    for (const m of source.matchAll(fromRe)) paths.push(m[1])
+    const dynamicRe = /\b(?:import|require)\s*\(\s*['"]([^'"]+)['"]/g
+    for (const m of source.matchAll(dynamicRe)) paths.push(m[1])
     return paths
   }
 
@@ -114,28 +157,37 @@ describe('T-PAR-1 oracle independence', () => {
     '../scripts',
   ]
 
+  const hasForbidden = (paths: readonly string[]) =>
+    paths.some((p) => FORBIDDEN_PREFIXES.some((pre) => p.startsWith(pre)))
+
   it('reads the real file, not an empty glob', () => {
     expect(Object.keys(files)).toContain('./parity/oracle.ts')
   })
 
-  it('the matcher catches a planted forbidden import and leaves vitest/cloudflare:test alone', () => {
+  it('the matcher catches a planted forbidden import (static, re-export, dynamic, require) and leaves vitest/cloudflare:test alone', () => {
     const planted = [
       "import { normalizeEmail } from '../shared/normalize'",
       "import type { Seed } from '../worker/ingest/link'",
     ].join('\n')
-    const paths = importPaths(planted)
-    expect(paths.some((p) => FORBIDDEN_PREFIXES.some((pre) => p.startsWith(pre)))).toBe(true)
-    const clean = ["import { env } from 'cloudflare:test'", "import { describe, it } from 'vitest'"].join(
-      '\n',
-    )
-    expect(importPaths(clean).some((p) => FORBIDDEN_PREFIXES.some((pre) => p.startsWith(pre)))).toBe(false)
+    expect(hasForbidden(importPaths(planted))).toBe(true)
+
+    expect(hasForbidden(importPaths("export * from '../shared/normalize'"))).toBe(true)
+    expect(hasForbidden(importPaths("export { normalizeEmail } from '../shared/normalize'"))).toBe(true)
+    expect(hasForbidden(importPaths("const link = await import('../worker/ingest/link')"))).toBe(true)
+    expect(hasForbidden(importPaths("const sql = require('../scripts/csv2sql')"))).toBe(true)
+
+    const clean = [
+      "import { env } from 'cloudflare:test'",
+      "import { describe, it } from 'vitest'",
+      "const dynamic = await import('./oracle-helpers')",
+    ].join('\n')
+    expect(hasForbidden(importPaths(clean))).toBe(false)
   })
 
   it('test/parity/oracle.ts imports nothing from worker/, shared/, src/ or scripts/ (it imports nothing at all)', () => {
     const source = files['./parity/oracle.ts']
     const paths = importPaths(source)
-    const offenders = paths.filter((p) => FORBIDDEN_PREFIXES.some((pre) => p.startsWith(pre)))
-    expect(offenders).toEqual([])
+    expect(hasForbidden(paths)).toBe(false)
     expect(paths).toEqual([])
   })
 
@@ -145,134 +197,251 @@ describe('T-PAR-1 oracle independence', () => {
 })
 
 // -------------------------------------------------------------------------------------------
+// Shared table builders — one SELECT + expected-map per table, used by T-PAR-2..5 (the real diff)
+// and T-PAR-10 (the harness-can-fail check), so the two never drift apart (21 §4.1 item 6).
+// -------------------------------------------------------------------------------------------
+
+const SUBSCRIBER_FIELDS = [
+  'email_norm',
+  'email_raw',
+  'signup_date',
+  'status',
+  'source',
+  'last_open_date',
+  'cold_since',
+  'merged_count',
+] as const
+
+async function subscribersTable() {
+  const { results } = await env.DB.prepare(
+    `SELECT p.pkey AS pkey, s.email_norm, s.email_raw, s.signup_date, s.status, s.source,
+            s.last_open_date, s.cold_since, s.merged_count
+     FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm AND p.kind = 'subscriber'`,
+  ).all<Row>()
+  const got = new Map(results.map((r) => [r.pkey as string, r]))
+  const expected = new Map(
+    [...oracle.subscribers].map(([pkey, s]) => [
+      pkey,
+      {
+        pkey,
+        email_norm: s.email_norm,
+        email_raw: s.email_raw,
+        signup_date: s.signup_date,
+        status: s.status,
+        source: s.source,
+        last_open_date: s.last_open_date,
+        cold_since: s.cold_since,
+        merged_count: s.merged_count,
+      } as Row,
+    ]),
+  )
+  return { expected, got, fields: SUBSCRIBER_FIELDS }
+}
+
+const PROFILE_FIELDS = ['kind', 'created_at', 'engagement_score', 'email_norm'] as const
+
+/**
+ * app_events_last_30d by email_norm, read fresh from the store every call (resolved the oracle's
+ * own way, 21 §2.3 "Webhook data in the store"). On the seed this is empty, so every builder
+ * below gives the same answer whether it runs before or after T-PAR-8's webhooks — the stored
+ * engagement_score the builders compare against is exactly as live as the one the app keeps.
+ */
+async function appEventsByEmail(): Promise<Map<string, number>> {
+  const { results: events } = await env.DB.prepare(
+    'SELECT event_id, user_id, device_id, event_ts FROM app_events',
+  ).all<StoredAppEvent>()
+  const resolved = resolveAppEvents(events)
+  const { results: appUserRows } = await env.DB.prepare(
+    'SELECT user_id, email_norm FROM app_users WHERE email_norm IS NOT NULL',
+  ).all<{ user_id: string; email_norm: string }>()
+  const byEmail = new Map<string, number>()
+  for (const r of appUserRows) {
+    const count = resolved.countByUserId.get(r.user_id) ?? 0
+    if (count === 0) continue
+    byEmail.set(r.email_norm, (byEmail.get(r.email_norm) ?? 0) + count)
+  }
+  return byEmail
+}
+
+async function profilesTable() {
+  const { results } = await env.DB.prepare(
+    `SELECT pkey, email_norm, kind, engagement_score, created_at FROM profiles WHERE kind != 'unknown_user_stub'`,
+  ).all<Row>()
+  const got = new Map(results.map((r) => [r.pkey as string, r]))
+  const appCounts = await appEventsByEmail()
+  const expected = new Map<string, Row>()
+  for (const [pkey, s] of oracle.subscribers) {
+    expected.set(pkey, {
+      pkey,
+      kind: 'subscriber',
+      created_at: s.profile.created_at,
+      engagement_score: engagementScore(s.days_since_open, appCounts.get(s.email_norm) ?? 0, s.web.site_visits_30d),
+      email_norm: s.email_norm,
+    })
+  }
+  for (const [pkey, a] of oracle.appOnlyProfiles) {
+    expected.set(pkey, {
+      pkey,
+      kind: 'app_only',
+      created_at: a.created_at,
+      engagement_score: engagementScore(null, appCounts.get(a.email_norm) ?? 0, oracle.siteVisits30d.get(a.email_norm) ?? 0),
+      email_norm: a.email_norm,
+    })
+  }
+  return { expected, got, fields: PROFILE_FIELDS }
+}
+
+// 21 §4.1 item 2: v_profiles' full 11 non-key columns, not only the app/web half.
+const V_PROFILES_FIELDS = [
+  'has_app',
+  'app_created_at',
+  'app_after_signup',
+  'first_page',
+  'first_utm_source',
+  'signup_date',
+  'status',
+  'source',
+  'last_open_date',
+  'cold_since',
+  'engagement_score',
+] as const
+
+async function vProfilesTable() {
+  const { results } = await env.DB.prepare(
+    `SELECT pkey, kind, has_app, app_created_at, app_after_signup, first_page, first_utm_source,
+            signup_date, status, source, last_open_date, cold_since, engagement_score
+     FROM v_profiles WHERE kind != 'unknown_user_stub'`,
+  ).all<Row>()
+  const got = new Map(results.map((r) => [r.pkey as string, r]))
+  const appCounts = await appEventsByEmail()
+  const expected = new Map<string, Row>()
+  for (const [pkey, s] of oracle.subscribers) {
+    expected.set(pkey, {
+      pkey,
+      has_app: s.app.has_app ? 1 : 0,
+      app_created_at: s.app.created_at_min,
+      app_after_signup: s.app.app_after_signup ? 1 : 0,
+      first_page: s.web.first_page,
+      first_utm_source: s.web.first_utm_source,
+      signup_date: s.signup_date,
+      status: s.status,
+      source: s.source,
+      last_open_date: s.last_open_date,
+      cold_since: s.cold_since,
+      engagement_score: engagementScore(s.days_since_open, appCounts.get(s.email_norm) ?? 0, s.web.site_visits_30d),
+    })
+  }
+  for (const [pkey, a] of oracle.appOnlyProfiles) {
+    // app_only has no subscriber row: v_profiles LEFT JOINs subscribers, so every
+    // subscriber-sourced column is NULL (D-75: the view holds no formula either way).
+    expected.set(pkey, {
+      pkey,
+      has_app: 1,
+      app_created_at: a.created_at,
+      app_after_signup: 0,
+      first_page: null,
+      first_utm_source: null,
+      signup_date: null,
+      status: null,
+      source: null,
+      last_open_date: null,
+      cold_since: null,
+      engagement_score: engagementScore(null, appCounts.get(a.email_norm) ?? 0, oracle.siteVisits30d.get(a.email_norm) ?? 0),
+    })
+  }
+  return { expected, got, fields: V_PROFILES_FIELDS }
+}
+
+const QUARANTINE_FIELDS = ['file', 'line_no', 'reason', 'raw_row'] as const
+
+async function quarantineTable() {
+  const { results } = await env.DB.prepare('SELECT file, line_no, reason, raw_row FROM quarantine').all<Row>()
+  const got = new Map(results.map((r) => [`${r.file}:${r.line_no}`, r]))
+  const expected = new Map(oracle.quarantine.map((q) => [`${q.file}:${q.line_no}`, q as unknown as Row]))
+  return { expected, got, fields: QUARANTINE_FIELDS }
+}
+
+const IMPORT_RUN_FIELDS = ['rows_in', 'rows_out', 'merged', 'quarantined'] as const
+
+async function importRunsTable() {
+  const { results } = await env.DB.prepare(
+    'SELECT file, rows_in, rows_out, merged, quarantined FROM import_runs',
+  ).all<Row>()
+  const got = new Map(results.map((r) => [r.file as string, r]))
+  const expected = new Map(oracle.importRuns.map((r) => [r.file, r as unknown as Row]))
+  return { expected, got, fields: IMPORT_RUN_FIELDS }
+}
+
+const WEB_VISITOR_FIELDS = [
+  'visitor_id',
+  'email_norm',
+  'first_seen_ts',
+  'first_page',
+  'first_utm_source',
+  'signup_ts',
+] as const
+
+async function webVisitorsTable() {
+  const { results } = await env.DB.prepare(
+    'SELECT visitor_id, visitor_hash, email_norm, first_seen_ts, first_page, first_utm_source, signup_ts FROM web_visitors',
+  ).all<Row>()
+  const got = new Map(results.map((r) => [r.visitor_hash as string, r]))
+  const expected = new Map([...oracle.visitors].map(([h, v]) => [h, v as unknown as Row]))
+  return { expected, got, fields: WEB_VISITOR_FIELDS }
+}
+
+const WEB_EVENT_FIELDS = ['visitor_id', 'page', 'event_ts', 'utm_source'] as const
+
+async function webEventsTable() {
+  const { results } = await env.DB.prepare('SELECT id, visitor_id, page, event_ts, utm_source FROM web_events').all<Row>()
+  const got = new Map(results.map((r) => [String(r.id), r]))
+  const expected = new Map(oracle.events.map((e) => [String(e.id), e as unknown as Row]))
+  return { expected, got, fields: WEB_EVENT_FIELDS }
+}
+
+const APP_USER_FIELDS = ['email_norm', 'created_at', 'from_csv'] as const
+
+async function appUsersTable() {
+  const { results } = await env.DB.prepare(
+    'SELECT user_id, email_norm, created_at, from_csv FROM app_users WHERE from_csv = 1',
+  ).all<{ user_id: string; email_norm: string; created_at: string; from_csv: number }>()
+  const lineByUserId = new Map(oracle.appUsers.map((u) => [u.user_id, u.csvLine]))
+  const got = new Map<string, Row>()
+  const extraUserIds: string[] = []
+  for (const r of results) {
+    const line = lineByUserId.get(r.user_id)
+    if (line === undefined) extraUserIds.push(r.user_id)
+    else got.set(String(line), r)
+  }
+  const expected = new Map(oracle.appUsers.map((u) => [String(u.csvLine), u as unknown as Row]))
+  return { expected, got, fields: APP_USER_FIELDS, extraUserIds }
+}
+
+// -------------------------------------------------------------------------------------------
 // T-PAR-2: subscribers + profiles + v_profiles, 0 mismatches
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-2 subscribers + profiles + v_profiles', () => {
   it('2,900 subscribers × 8 stored columns, 0 missing / extra / mismatched', async () => {
-    const { results } = await env.DB.prepare(
-      `SELECT p.pkey AS pkey, s.email_norm, s.email_raw, s.signup_date, s.status, s.source,
-              s.last_open_date, s.cold_since, s.merged_count
-       FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm AND p.kind = 'subscriber'`,
-    ).all<Record<string, unknown>>()
-    const got = new Map(results.map((r) => [r.pkey as string, r]))
-    const expected = new Map(
-      [...oracle.subscribers].map(([pkey, s]) => [
-        pkey,
-        {
-          pkey,
-          email_norm: s.email_norm,
-          email_raw: s.email_raw,
-          signup_date: s.signup_date,
-          status: s.status,
-          source: s.source,
-          last_open_date: s.last_open_date,
-          cold_since: s.cold_since,
-          merged_count: s.merged_count,
-        } as Record<string, unknown>,
-      ]),
-    )
-    const { missing, extra } = diffByKey(
-      'subscribers',
-      'pkey',
-      expected,
-      got,
-      [
-        'email_norm',
-        'email_raw',
-        'signup_date',
-        'status',
-        'source',
-        'last_open_date',
-        'cold_since',
-        'merged_count',
-      ],
-      report,
-    )
+    const { expected, got, fields } = await subscribersTable()
+    const { missing, extra } = diffAndAssert('subscribers', 'pkey', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
     expect(expected.size).toBe(2900)
   })
 
-  it('profiles: pkey, kind, created_at, engagement_score (2,900 subscriber + 30 app_only)', async () => {
-    const { results } = await env.DB.prepare(
-      `SELECT pkey, email_norm, kind, engagement_score, created_at FROM profiles WHERE kind != 'unknown_user_stub'`,
-    ).all<Record<string, unknown>>()
-    const got = new Map(results.map((r) => [r.pkey as string, r]))
-    const expected = new Map<string, Record<string, unknown>>()
-    for (const [pkey, s] of oracle.subscribers) {
-      expected.set(pkey, {
-        pkey,
-        kind: 'subscriber',
-        created_at: s.profile.created_at,
-        engagement_score: s.profile.engagement_score,
-      })
-    }
-    for (const [pkey, a] of oracle.appOnlyProfiles) {
-      expected.set(pkey, {
-        pkey,
-        kind: 'app_only',
-        created_at: a.created_at,
-        engagement_score: a.engagement_score,
-      })
-    }
-    const { missing, extra } = diffByKey(
-      'profiles',
-      'pkey',
-      expected,
-      got,
-      ['kind', 'created_at', 'engagement_score'],
-      report,
-    )
+  it('profiles: pkey, kind, created_at, engagement_score, email_norm (2,900 subscriber + 30 app_only)', async () => {
+    const { expected, got, fields } = await profilesTable()
+    const { missing, extra } = diffAndAssert('profiles', 'pkey', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
     expect(oracle.appOnlyProfiles.size).toBe(30)
     expect(expected.size).toBe(2930)
-    // pkey must equal HMAC(secret, email_norm) for every email-bearing profile (key probe, 21 §2.3).
-    const probe = results.filter((r) => r.email_norm !== null).slice(0, 10)
-    let agree = 0
-    for (const r of probe) {
-      const { pkeyForEmailNorm } = await import('./parity/oracle')
-      if ((await pkeyForEmailNorm(secret, r.email_norm as string)) === r.pkey) agree++
-    }
-    if (probe.length > 0 && agree === 0)
-      throw new Error('parity: wrong PII_KEY_SECRET for this store (key probe failed 0 of 10)')
   })
 
-  it('v_profiles: has_app, app_created_at, app_after_signup, first_page, first_utm_source', async () => {
-    const { results } = await env.DB.prepare(
-      `SELECT pkey, kind, has_app, app_created_at, app_after_signup, first_page, first_utm_source
-       FROM v_profiles WHERE kind != 'unknown_user_stub'`,
-    ).all<Record<string, unknown>>()
-    const got = new Map(results.map((r) => [r.pkey as string, r]))
-    const expected = new Map<string, Record<string, unknown>>()
-    for (const [pkey, s] of oracle.subscribers) {
-      expected.set(pkey, {
-        pkey,
-        has_app: s.app.has_app ? 1 : 0,
-        app_created_at: s.app.created_at_min,
-        app_after_signup: s.app.app_after_signup ? 1 : 0,
-        first_page: s.web.first_page,
-        first_utm_source: s.web.first_utm_source,
-      })
-    }
-    for (const [pkey, a] of oracle.appOnlyProfiles) {
-      expected.set(pkey, {
-        pkey,
-        has_app: 1,
-        app_created_at: a.created_at,
-        app_after_signup: 0,
-        first_page: null,
-        first_utm_source: null,
-      })
-    }
-    const { missing, extra } = diffByKey(
-      'v_profiles',
-      'pkey',
-      expected,
-      got,
-      ['has_app', 'app_created_at', 'app_after_signup', 'first_page', 'first_utm_source'],
-      report,
-    )
+  it('v_profiles: all 11 non-key columns (has_app, app_created_at, app_after_signup, first_page, first_utm_source, signup_date, status, source, last_open_date, cold_since, engagement_score)', async () => {
+    const { expected, got, fields } = await vProfilesTable()
+    expect(fields.length).toBe(11)
+    const { missing, extra } = diffAndAssert('v_profiles', 'pkey', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
   })
@@ -283,21 +452,8 @@ describe('T-PAR-2 subscribers + profiles + v_profiles', () => {
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-3 quarantine + import_runs', () => {
   it('10 quarantine rows: line, reason, raw_row (blank -> missing -> invalid -> missing -> bad_date order)', async () => {
-    const { results } = await env.DB.prepare('SELECT file, line_no, reason, raw_row FROM quarantine').all<
-      Record<string, unknown>
-    >()
-    const got = new Map(results.map((r) => [`${r.file}:${r.line_no}`, r]))
-    const expected = new Map(
-      oracle.quarantine.map((q) => [`${q.file}:${q.line_no}`, q as unknown as Record<string, unknown>]),
-    )
-    const { missing, extra } = diffByKey(
-      'quarantine',
-      'file:line',
-      expected,
-      got,
-      ['file', 'line_no', 'reason', 'raw_row'],
-      report,
-    )
+    const { expected, got, fields } = await quarantineTable()
+    const { missing, extra } = diffAndAssert('quarantine', 'file:line', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
     expect(oracle.quarantine.length).toBe(10)
@@ -306,65 +462,28 @@ describe('T-PAR-3 quarantine + import_runs', () => {
   })
 
   it('3 import_runs: rows_in, rows_out, merged, quarantined', async () => {
-    const { results } = await env.DB.prepare(
-      'SELECT file, rows_in, rows_out, merged, quarantined FROM import_runs',
-    ).all<Record<string, unknown>>()
-    const got = new Map(results.map((r) => [r.file as string, r]))
-    const expected = new Map(oracle.importRuns.map((r) => [r.file, r as unknown as Record<string, unknown>]))
-    const { missing, extra } = diffByKey(
-      'import_runs',
-      'file',
-      expected,
-      got,
-      ['rows_in', 'rows_out', 'merged', 'quarantined'],
-      report,
-    )
+    const { expected, got, fields } = await importRunsTable()
+    const { missing, extra } = diffAndAssert('import_runs', 'file', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
   })
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-4: web visitors + events; per-subscriber visitors, events, pre-signup
+// T-PAR-4: web visitors + events; per-subscriber visitors, events, pre-signup (vs the app)
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-4 web visitors + events', () => {
   it('2,028 visitors × 7 stored columns', async () => {
-    const { results } = await env.DB.prepare(
-      'SELECT visitor_id, visitor_hash, email_norm, first_seen_ts, first_page, first_utm_source, signup_ts FROM web_visitors',
-    ).all<Record<string, unknown>>()
-    const got = new Map(results.map((r) => [r.visitor_hash as string, r]))
-    const expected = new Map(
-      [...oracle.visitors].map(([h, v]) => [h, v as unknown as Record<string, unknown>]),
-    )
-    const { missing, extra } = diffByKey(
-      'web_visitors',
-      'visitor_hash',
-      expected,
-      got,
-      ['visitor_id', 'email_norm', 'first_seen_ts', 'first_page', 'first_utm_source', 'signup_ts'],
-      report,
-    )
+    const { expected, got, fields } = await webVisitorsTable()
+    const { missing, extra } = diffAndAssert('web_visitors', 'visitor_hash', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
     expect(expected.size).toBe(2028)
   })
 
   it('10,000 events × 4 stored columns, keyed by id', async () => {
-    const { results } = await env.DB.prepare(
-      'SELECT id, visitor_id, page, event_ts, utm_source FROM web_events',
-    ).all<Record<string, unknown>>()
-    const got = new Map(results.map((r) => [String(r.id), r]))
-    const expected = new Map(
-      oracle.events.map((e) => [String(e.id), e as unknown as Record<string, unknown>]),
-    )
-    const { missing, extra } = diffByKey(
-      'web_events',
-      'id',
-      expected,
-      got,
-      ['visitor_id', 'page', 'event_ts', 'utm_source'],
-      report,
-    )
+    const { expected, got, fields } = await webEventsTable()
+    const { missing, extra } = diffAndAssert('web_events', 'id', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
     expect(expected.size).toBe(10000)
@@ -382,6 +501,68 @@ describe('T-PAR-4 web visitors + events', () => {
     )
     expect(withBoth.length).toBe(10)
   })
+
+  // Hardest case #6 (the strict `<` at lookup.ts:193) and case #5's pre-signup cut (21 §3) are
+  // unguarded if only the raw tables are checked: a lookup.ts bug in how it reads those same
+  // rows would still pass T-PAR-4's row-level diff above. This calls the real GET /api/lookup
+  // for every linked subscriber and diffs its per-pkey events/pre_signup count against the
+  // oracle, so the 1,930 total (02 §Counts) comes from the app, not only from the oracle itself.
+  it('GET /api/lookup per linked subscriber: events and pre-signup events match the oracle (M13 guard: lookup.ts:193 strict <)', async () => {
+    // 1,400 real HTTP round trips through the full session + lookup pipeline; vitest's default
+    // 5s per-test timeout is tight once `npm test` runs every file's workers concurrently (21
+    // §4.2's own budget is 15s for this whole file, measured in isolation at ~2.5s above).
+    const cookie = await loginCookie()
+    const linked = [...oracle.subscribers.values()].filter((s) => s.web.visitor_hashes.length > 0)
+    expect(linked.length).toBe(1400)
+
+    // Hardest case #6 (the exact same-second tie) and case #5 (the 101 visitors whose first
+    // /subscribe row shifted pre_signup) must be in the set this actually calls the API for.
+    const mustCover = new Set(['pk_0cf23009b4c8295e', 'pk_b8ba809aee5088e2', 'pk_dcb1088ffcd058db'])
+    for (const pkey of mustCover) {
+      if (!linked.some((s) => s.pkey === pkey)) throw new Error(`parity: expected linked subscriber ${pkey} missing from the oracle`)
+    }
+
+    let totalEventsFromApp = 0
+    let totalPreSignupFromApp = 0
+    const lookupMismatches: Mismatch[] = []
+    for (const s of linked) {
+      const res = await SELF.fetch(`http://cdp.test/api/lookup?q=${encodeURIComponent(s.pkey)}`, {
+        headers: { cookie },
+      })
+      expect(res.status, await res.clone().text()).toBe(200)
+      const body = await res.json<{
+        web: { visitors: { events: { event_ts: string; pre_signup: boolean }[] }[] } | null
+      }>()
+      const visitors = body.web?.visitors ?? []
+      const events = visitors.reduce((sum, v) => sum + v.events.length, 0)
+      const preSignup = visitors.reduce((sum, v) => sum + v.events.filter((e) => e.pre_signup).length, 0)
+      totalEventsFromApp += events
+      totalPreSignupFromApp += preSignup
+      if (events !== s.web.events) {
+        lookupMismatches.push({
+          table: 'lookup',
+          keyKind: 'pkey',
+          key: s.pkey,
+          field: 'events',
+          expected: JSON.stringify(s.web.events),
+          actual: JSON.stringify(events),
+        })
+      }
+      if (preSignup !== s.web.pre_signup_events) {
+        lookupMismatches.push({
+          table: 'lookup',
+          keyKind: 'pkey',
+          key: s.pkey,
+          field: 'pre_signup_events',
+          expected: JSON.stringify(s.web.pre_signup_events),
+          actual: JSON.stringify(preSignup),
+        })
+      }
+    }
+    expect(lookupMismatches.map(reportLine)).toEqual([])
+    expect(totalEventsFromApp).toBe(linked.reduce((sum, s) => sum + s.web.events, 0))
+    expect(totalPreSignupFromApp).toBe(1930) // 02 §Counts, now read from the app, not only the oracle
+  }, 30_000)
 })
 
 // -------------------------------------------------------------------------------------------
@@ -389,36 +570,11 @@ describe('T-PAR-4 web visitors + events', () => {
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-5 app users', () => {
   it('930 CSV-sourced app_users rows; 900 link a subscriber, 30 app_only', async () => {
-    const { results } = await env.DB.prepare(
-      'SELECT user_id, email_norm, created_at, from_csv FROM app_users WHERE from_csv = 1',
-    ).all<{
-      user_id: string
-      email_norm: string
-      created_at: string
-      from_csv: number
-    }>()
-    const lineByUserId = new Map(oracle.appUsers.map((u) => [u.user_id, u.csvLine]))
-    const got = new Map<string, Record<string, unknown>>()
-    const extraUserIds: string[] = []
-    for (const r of results) {
-      const line = lineByUserId.get(r.user_id)
-      if (line === undefined) extraUserIds.push(r.user_id)
-      else got.set(String(line), r)
-    }
-    const expected = new Map(
-      oracle.appUsers.map((u) => [String(u.csvLine), u as unknown as Record<string, unknown>]),
-    )
-    const { missing, extra } = diffByKey(
-      'app_users',
-      'csv_line',
-      expected,
-      got,
-      ['email_norm', 'created_at', 'from_csv'],
-      report,
-    )
+    const { expected, got, fields, extraUserIds } = await appUsersTable()
+    const { missing, extra } = diffAndAssert('app_users', 'csv_line', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
-    expect(extraUserIds).toEqual([])
+    expect(extraUserIds.length).toBe(0) // never prints the raw ids themselves (21 §2.4)
     expect(oracle.appUsers.length).toBe(930)
     const subscriberEmails = new Set([...oracle.subscribers.values()].map((s) => s.email_norm))
     const linked = oracle.appUsers.filter((u) => subscriberEmails.has(u.email_norm))
@@ -441,7 +597,8 @@ describe('T-PAR-5 app users', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-6: every 02 §Counts number, from the oracle alone
+// T-PAR-6: every 02 §Counts number, from the oracle alone (plus two read-time checks against
+// the real API/handler, guarding the M14/M15 derived-value mutants)
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
   it('subscribers.csv: 2,995 rows, 8 blank, 2 invalid, 85 merged pairs, 2,900 subscribers, 2,610/290 active/unsub', () => {
@@ -562,6 +719,27 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(by('x')).toBe(50)
   })
 
+  it('GET /api/segments/options-equivalent page counts, most subscribers first: /subscribe 1,400, / 900, /shadrachs-picks 406', () => {
+    const pageVisitors = new Map<string, Set<string>>() // page -> visitor_id set
+    for (const e of oracle.events) {
+      const set = pageVisitors.get(e.page) ?? new Set<string>()
+      set.add(e.visitor_id)
+      pageVisitors.set(e.page, set)
+    }
+    const subscribersWhoVisited = (page: string) => {
+      const visitorIds = pageVisitors.get(page) ?? new Set<string>()
+      return [...oracle.subscribers.values()].filter((s) =>
+        s.web.visitor_hashes.some((h) => {
+          const v = oracle.visitors.get(h)
+          return v !== undefined && visitorIds.has(v.visitor_id)
+        }),
+      ).length
+    }
+    expect(subscribersWhoVisited('/subscribe')).toBe(1400)
+    expect(subscribersWhoVisited('/')).toBe(900)
+    expect(subscribersWhoVisited('/shadrachs-picks')).toBe(406)
+  })
+
   it('app_users.csv: 930 accounts, 900 match a subscriber, 30 app_only, 98 unsubscribed app users', () => {
     const matched = oracle.appUsers.filter((u) =>
       [...oracle.subscribers.values()].some((s) => s.email_norm === u.email_norm),
@@ -598,6 +776,13 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
         return v !== undefined && shadrachs.has(v.visitor_id)
       })
     expect(bySplit(visitedShadrachs)).toEqual({ active: 366, unsub: 40 })
+
+    // D-69 items 2+3+6 combined, and the brief preset combined with #3/#6 (02 §Counts; 21 §4.1 item 3).
+    expect(bySplit((s) => s.new_subscriber && visitedShadrachs(s))).toEqual({ active: 120, unsub: 10 })
+    const preset = (s: (typeof subs)[number]) =>
+      s.source === 'instagram' && (s.days_since_open === null || s.days_since_open >= 30)
+    expect(bySplit((s) => preset(s) && s.web.site_visits_30d > 0)).toEqual({ active: 59, unsub: 19 })
+    expect(subs.filter((s) => preset(s) && visitedShadrachs(s) && s.status === 'active').length).toBe(31)
   })
 
   it('brief preset (Instagram, active, no open in 30+ days incl. never-opened): 177, 55 unsubscribed hidden', () => {
@@ -621,13 +806,131 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(subs.filter((s) => wentColdAug(s) && s.status === 'active').length).toBe(46)
     expect(subs.filter((s) => wentColdAug(s) && s.status === 'unsubscribed').length).toBe(20)
   })
+
+  // Read-time derived values, checked against the real segment endpoints, not only recomputed
+  // inside the oracle (21 §2.5 "Derived"). Guards M14 (days_since_open.sql +1) and M15 (cold.sql
+  // `<=` → `<`): both would move these counts but leave the oracle-only tests above untouched.
+  it('the brief preset and the built-in cold metric match the real segment endpoints: 177/55, 147/41', async () => {
+    const cookie = await loginCookie()
+    const previewRes = await SELF.fetch('http://cdp.test/api/segments/preview', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
+      body: JSON.stringify({
+        filters: { source: ['instagram'], days_since_open_gte: 30, include_never_opened: true },
+      }),
+    })
+    expect(previewRes.status, await previewRes.clone().text()).toBe(200)
+    const previewBody = await previewRes.json<{ count: number; hidden_unsubscribed: number }>()
+    expect(previewBody.count).toBe(177)
+    expect(previewBody.hidden_unsubscribed).toBe(55)
+
+    const coldActive = await BUILTIN_HANDLERS.aggregate.run(env.DB, {
+      metric: 'cold',
+      source: ['instagram'],
+      status: ['active'],
+    })
+    const coldUnsub = await BUILTIN_HANDLERS.aggregate.run(env.DB, {
+      metric: 'cold',
+      source: ['instagram'],
+      status: ['unsubscribed'],
+    })
+    expect((coldActive.rows[0] as { cold: number }).cold).toBe(147)
+    expect((coldUnsub.rows[0] as { cold: number }).cold).toBe(41)
+  })
+})
+
+// -------------------------------------------------------------------------------------------
+// T-PAR-6b: 21 §3 #17 "absent today, guarded anyway" — a non-zero here names the case and
+// fails, so a future CSV cannot silently exercise an unproven merge/edge rule. Non-ASCII bytes,
+// quoted fields, a repeated user_id, 2 emails on one visitor and web/app quarantine are already
+// guarded: buildExpected() in beforeAll would have thrown on any of them (21 §2.1).
+// -------------------------------------------------------------------------------------------
+describe('T-PAR-6b absent-today guards (21 §3 #17)', () => {
+  it('plus-addressing and Gmail dot aliases: 0 on this data', () => {
+    const subs = [...oracle.subscribers.values()]
+    const plusAddressed = subs.filter((s) => s.email_norm.split('@')[0]?.includes('+')).length
+    expect(plusAddressed, 'plus-addressing').toBe(0)
+
+    const byDotless = new Map<string, Set<string>>()
+    for (const s of subs) {
+      if (!s.email_norm.endsWith('@gmail.com')) continue
+      const local = s.email_norm.slice(0, s.email_norm.indexOf('@'))
+      const dotless = local.replace(/\./g, '')
+      const set = byDotless.get(dotless) ?? new Set<string>()
+      set.add(local)
+      byDotless.set(dotless, set)
+    }
+    const aliasGroups = [...byDotless.values()].filter((set) => set.size > 1).length
+    expect(aliasGroups, 'Gmail dot aliases').toBe(0)
+  })
+
+  it('date ordering: last open before signup, last open after TODAY, signup after TODAY: 0 each', () => {
+    const subs = [...oracle.subscribers.values()]
+    expect(
+      subs.filter((s) => s.last_open_date !== null && s.last_open_date < s.signup_date).length,
+      'last open before signup',
+    ).toBe(0)
+    expect(subs.filter((s) => s.last_open_date !== null && s.last_open_date > TODAY).length, 'last open after TODAY').toBe(0)
+    expect(subs.filter((s) => s.signup_date > TODAY).length, 'signup after TODAY').toBe(0)
+  })
+
+  it('one email on 2+ visitors, one email on 2+ app accounts, blank source on a kept row: 0 each', () => {
+    const subs = [...oracle.subscribers.values()]
+    expect(subs.filter((s) => s.web.visitor_hashes.length > 1).length, 'one email on 2+ visitors').toBe(0)
+    const accountsByEmail = new Map<string, number>()
+    for (const u of oracle.appUsers) accountsByEmail.set(u.email_norm, (accountsByEmail.get(u.email_norm) ?? 0) + 1)
+    expect([...accountsByEmail.values()].filter((n) => n > 1).length, 'one email on 2+ app accounts').toBe(0)
+    expect(subs.filter((s) => s.source === null).length, 'blank source on a kept row (G4)').toBe(0)
+  })
+
+  it('merged (duplicate) subscriber groups that disagree on signup_date, last_open_date, status or source: 0 (merge precedence never fires on this data)', () => {
+    const parsed = parseCsvStrict(subscribersCsv, 'subscribers.csv')
+    const col = {
+      email: parsed.header.indexOf('email'),
+      signup: parsed.header.indexOf('signup_date'),
+      status: parsed.header.indexOf('status'),
+      source: parsed.header.indexOf('acquisition_source'),
+      open: parsed.header.indexOf('last_open_date'),
+    }
+    interface Group {
+      signups: Set<string>
+      statuses: Set<string>
+      sources: Set<string>
+      opens: Set<string>
+    }
+    const groups = new Map<string, Group>()
+    for (const row of parsed.rows) {
+      const emailNorm = normalizeEmail(row[col.email])
+      if (emailNorm === null) continue
+      const signup = row[col.signup].trim()
+      const status = row[col.status].trim()
+      if (signup === '' || status === '') continue
+      const g: Group = groups.get(emailNorm) ?? {
+        signups: new Set(),
+        statuses: new Set(),
+        sources: new Set(),
+        opens: new Set(),
+      }
+      g.signups.add(signup)
+      g.statuses.add(status)
+      const source = canonicalSource(row[col.source])
+      if (source !== null) g.sources.add(source)
+      const open = row[col.open].trim()
+      if (open !== '') g.opens.add(open)
+      groups.set(emailNorm, g)
+    }
+    const disagreeing = [...groups.values()].filter(
+      (g) => g.signups.size > 1 || g.statuses.size > 1 || g.sources.size > 1 || g.opens.size > 1,
+    ).length
+    expect(disagreeing, 'duplicate pairs that disagree on a merged field').toBe(0)
+  })
 })
 
 // -------------------------------------------------------------------------------------------
 // T-PAR-7: D-62 table equals GET /api/duplicates
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-7 D-62 possible duplicates', () => {
-  it('1,704 candidate pairs over 788 stems (1,977 emails); 0 auto, 16 review, 1,688 hidden on the seed', async () => {
+  it('1,704 candidate pairs over 788 stems (1,977 emails); 0 auto, 16 review (each 76); the chance check (≈17 by chance, ≈97 without the device weight, the device weight itself ≈ -3.32)', async () => {
     const readers: ExpectedPairInput[] = [...oracle.subscribers.values()].map((s) => ({
       pkey: s.pkey,
       email_norm: s.email_norm,
@@ -641,21 +944,46 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
     const bands = { auto: 0, review: 0, hidden: 0 }
     for (const p of result.pairs) bands[p.band]++
     expect(bands).toEqual({ auto: 0, review: 16, hidden: 1688 })
-    for (const p of result.pairs.filter((x) => x.band === 'review')) expect(p.score).toBe(76)
+    const reviewPairs = result.pairs.filter((x) => x.band === 'review')
+    for (const p of reviewPairs) expect(p.score).toBe(76)
+
+    // 09 D-62 "the chance check": pairs agreeing on all three soft fields vs what independence
+    // alone would predict, and what the shared_device field alone is worth (21 §4.1 item 3).
+    const allSoftAgree = result.pairs.filter(
+      (p) => p.agreement.domain && p.agreement.signup_gap && p.agreement.source,
+    ).length
+    expect(allSoftAgree).toBe(16)
+    const n = result.candidates
+    const expectedByChance =
+      n * (result.weights.domain.agreeing / n) * (result.weights.signup_gap.agreeing / n) * (result.weights.source.agreeing / n)
+    expect(expectedByChance).toBeGreaterThan(15)
+    expect(expectedByChance).toBeLessThan(19)
+    const deviceWeight = result.weights.shared_device
+    const deviceDisagree = Math.log2((1 - deviceWeight.m) / (1 - deviceWeight.u))
+    expect(deviceDisagree).toBeCloseTo(-3.32, 1)
+    // Every review pair shares the same agreement pattern (all three soft fields, not shared_device).
+    const weightWithoutDevice = reviewPairs[0].weight - deviceDisagree
+    const scoreWithoutDevice = Math.round(100 / (1 + 2 ** -weightWithoutDevice))
+    expect(scoreWithoutDevice).toBeGreaterThanOrEqual(95)
+    expect(scoreWithoutDevice).toBeLessThanOrEqual(99)
   })
 
-  it('GET /api/duplicates (seed, 0 webhook events sent yet): candidates/review/hidden match the oracle', async () => {
+  it('GET /api/duplicates (seed, 0 webhook events sent yet): candidates/review/hidden/to_review/weights/per-pair scores match the oracle', async () => {
     const cookie = await loginCookie()
     const res = await SELF.fetch('http://cdp.test/api/duplicates', { headers: { cookie } })
     expect(res.status).toBe(200)
     const body = await res.json<{
       candidates: number
+      to_review: number
       hidden_below_review: number
       review: { pair_id: string; score: number }[]
+      weights: Record<'domain' | 'signup_gap' | 'source' | 'shared_device', { m: number; u: number; agree: number; disagree: number }>
     }>()
     expect(body.candidates).toBe(1704)
     expect(body.hidden_below_review).toBe(1688)
     expect(body.review.length).toBe(16)
+    expect(body.to_review).toBe(16) // no decisions submitted yet
+
     const readers: ExpectedPairInput[] = [...oracle.subscribers.values()].map((s) => ({
       pkey: s.pkey,
       email_norm: s.email_norm,
@@ -666,26 +994,83 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
     const expectedPairIds = new Set(result.pairs.filter((p) => p.band !== 'hidden').map((p) => p.pair_id))
     const gotPairIds = new Set(body.review.map((p) => p.pair_id))
     expect(gotPairIds).toEqual(expectedPairIds)
+
+    // Per-pair scores, exact (21 §2.5).
+    const expectedScoreByPairId = new Map(
+      result.pairs.filter((p) => p.band !== 'hidden').map((p) => [p.pair_id, p.score]),
+    )
+    const gotScoreByPairId = new Map(body.review.map((p) => [p.pair_id, p.score]))
+    expect(gotScoreByPairId).toEqual(expectedScoreByPairId)
+
+    // Weights, within 1e-9 (21 §2.3 "D-62 weights").
+    for (const field of ['domain', 'signup_gap', 'source', 'shared_device'] as const) {
+      const expectedField = result.weights[field]
+      const gotField = body.weights[field]
+      expect(gotField.m).toBeCloseTo(expectedField.m, 9)
+      expect(gotField.u).toBeCloseTo(expectedField.u, 9)
+      expect(gotField.agree).toBeCloseTo(Math.log2(expectedField.m / expectedField.u), 9)
+      expect(gotField.disagree).toBeCloseTo(Math.log2((1 - expectedField.m) / (1 - expectedField.u)), 9)
+    }
+  })
+
+  it('a submitted review writes only duplicate_reviews, naming real subscriber pkeys with pkey_a < pkey_b, and changes no other table', async () => {
+    const cookie = await loginCookie()
+    const listRes = await SELF.fetch('http://cdp.test/api/duplicates', { headers: { cookie } })
+    const listBody = await listRes.json<{ review: { pair_id: string }[] }>()
+    const target = listBody.review[0]
+    if (target === undefined) throw new Error('parity: no review-band pair available to submit a decision on')
+
+    const subscribersBefore = await env.DB.prepare('SELECT count(*) AS n FROM subscribers').first<number>('n')
+    const profilesBefore = await env.DB.prepare('SELECT count(*) AS n FROM profiles').first<number>('n')
+
+    const reviewRes = await SELF.fetch(`http://cdp.test/api/duplicates/${target.pair_id}/review`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ verdict: 'same_person' }),
+    })
+    expect(reviewRes.status, await reviewRes.clone().text()).toBe(200)
+
+    const row = await env.DB.prepare('SELECT pair_id, pkey_a, pkey_b FROM duplicate_reviews WHERE pair_id = ?')
+      .bind(target.pair_id)
+      .first<{ pair_id: string; pkey_a: string; pkey_b: string }>()
+    if (row === null) throw new Error('parity: the submitted review was not stored')
+    expect(row.pkey_a < row.pkey_b).toBe(true)
+    const knownPkeys = new Set(oracle.subscribers.keys())
+    expect(knownPkeys.has(row.pkey_a)).toBe(true)
+    expect(knownPkeys.has(row.pkey_b)).toBe(true)
+
+    const subscribersAfter = await env.DB.prepare('SELECT count(*) AS n FROM subscribers').first<number>('n')
+    const profilesAfter = await env.DB.prepare('SELECT count(*) AS n FROM profiles').first<number>('n')
+    expect(subscribersAfter).toBe(subscribersBefore)
+    expect(profilesAfter).toBe(profilesBefore)
   })
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-8: after real signed webhooks, 0 mismatches (stitch, stub, shared device)
+// T-PAR-8: after real signed webhooks, 0 mismatches (stitch, stub, shared device, full re-diff)
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-8 store-side (webhook) cases', () => {
   const nextEventId = eventIdPool()
 
-  it("julia.evans230's engagement recomputes exactly (hardest case #1, the .5-tie formula) after one signed read_story", async () => {
-    // Real app_users.csv row (09 D-11, D-47): u_2b6447a3, julia.evans230@gmail.com, no web history.
+  /** The subscriber a real app_users.csv user_id links to, by the oracle's own fold (never an
+   * email local part in the error, 21 §2.4). */
+  function subscriberForUserId(userId: string) {
+    const emailNorm = oracle.appUsers.find((u) => u.user_id === userId)?.email_norm
+    return emailNorm === undefined
+      ? undefined
+      : [...oracle.subscribers.values()].find((s) => s.email_norm === emailNorm)
+  }
+
+  it("julia.evans230's engagement recomputes exactly (hardest case #1, the .5-tie formula) after one signed read_story: 28 -> 31 (02 §Counts)", async () => {
+    // Real app_users.csv row (09 D-11, D-47): u_2b6447a3, no web history.
     const userId = 'u_2b6447a3'
-    const email = 'julia.evans230@gmail.com'
-    const subscriber = [...oracle.subscribers.values()].find((s) => s.email_norm === email)
-    if (subscriber === undefined)
-      throw new Error('parity: julia.evans230 not found in the oracle subscribers')
+    const subscriber = subscriberForUserId(userId)
+    if (subscriber === undefined) throw new Error('parity: expected app_users.csv line 1 fixture missing from the oracle')
     const before = await env.DB.prepare('SELECT engagement_score FROM profiles WHERE pkey = ?')
       .bind(subscriber.pkey)
       .first<{ engagement_score: number }>()
     expect(before?.engagement_score).toBe(subscriber.profile.engagement_score)
+    expect(before?.engagement_score).toBe(28) // 02 §Counts, 09 D-53
 
     const res = await sendWebhook(
       JSON.stringify({
@@ -702,21 +1087,27 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     const after = await env.DB.prepare('SELECT engagement_score FROM profiles WHERE pkey = ?')
       .bind(subscriber.pkey)
       .first<{ engagement_score: number }>()
-    const expectedAfter = (await import('./parity/oracle')).engagementScore(
-      subscriber.days_since_open,
-      1,
-      subscriber.web.site_visits_30d,
-    )
+    const expectedAfter = engagementScore(subscriber.days_since_open, 1, subscriber.web.site_visits_30d)
     expect(after?.engagement_score).toBe(expectedAfter)
+    expect(after?.engagement_score).toBe(31) // 02 §Counts, 09 D-53
+
+    // D-69 item 5, simplified (the app_active_within_days segment filter is on the `segments`
+    // branch, not this one, 21 §7): a direct count of identified users with an event in the
+    // last 7 days. 0 before this webhook (seed has none), 1 right after.
+    const activeLast7 = await env.DB.prepare(
+      'SELECT count(DISTINCT user_id) AS n FROM app_events WHERE user_id IS NOT NULL AND event_ts >= ?',
+    )
+      .bind(`${addDays(TODAY, -6)}T00:00:00Z`)
+      .first<number>('n')
+    expect(activeLast7).toBe(1)
   })
 
   it('F1 repro (hardest case #1, ranked first): emily.green827 at exactly 24 days since open, 0 site visits, scores the exact half-up 13 after one app event, never the float-rounded 12', async () => {
-    // Real app_users.csv line 12 (09 D-11, D-47): u_ffe05a36, emily.green827@gmail.com, last_open_date
-    // 2026-09-04 (24 days before TODAY), 0 web history. This is 21 §3 case 1's own example data point.
+    // Real app_users.csv line 12 (09 D-11, D-47): u_ffe05a36, last_open_date 2026-09-04 (24 days
+    // before TODAY), 0 web history. This is 21 §3 case 1's own example data point.
     const userId = 'u_ffe05a36'
-    const email = 'emily.green827@gmail.com'
-    const subscriber = [...oracle.subscribers.values()].find((s) => s.email_norm === email)
-    if (subscriber === undefined) throw new Error('parity: emily.green827 not found in the oracle subscribers')
+    const subscriber = subscriberForUserId(userId)
+    if (subscriber === undefined) throw new Error('parity: expected app_users.csv line 12 fixture missing from the oracle')
     expect(subscriber.days_since_open).toBe(24)
     expect(subscriber.web.site_visits_30d).toBe(0)
     expect(subscriber.profile.engagement_score).toBe(10) // seed: 0 app events, matches 21 §3 case 1
@@ -736,8 +1127,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     const after = await env.DB.prepare('SELECT engagement_score FROM profiles WHERE pkey = ?')
       .bind(subscriber.pkey)
       .first<{ engagement_score: number }>()
-    const { engagementScore: oracleEngagementScore } = await import('./parity/oracle')
-    const expectedAfter = oracleEngagementScore(24, 1, 0)
+    const expectedAfter = engagementScore(24, 1, 0)
     expect(expectedAfter).toBe(13) // exact half-up of 12.5; the fixed float formula would give 12
     expect(after?.engagement_score, `pkey ${subscriber.pkey}`).toBe(expectedAfter)
   })
@@ -755,7 +1145,6 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       }),
     )
     expect(res.status, await res.clone().text()).toBe(202)
-    const { pkeyForUserId } = await import('./parity/oracle')
     const expectedStubPkey = await pkeyForUserId(secret, unknownUserId)
     const stub = await env.DB.prepare('SELECT pkey, email_norm, kind FROM profiles WHERE pkey = ?')
       .bind(expectedStubPkey)
@@ -763,6 +1152,53 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(stub).toMatchObject({ pkey: expectedStubPkey, email_norm: null, kind: 'unknown_user_stub' })
     const anyEmailPkeys = new Set([...oracle.subscribers.keys(), ...oracle.appOnlyProfiles.keys()])
     expect(anyEmailPkeys.has(expectedStubPkey)).toBe(false)
+  })
+
+  it('hardest case #16, the stitch: an anonymous app_open then a login on one device, then an anonymous read_story, all resolve to the logged-in user', async () => {
+    // Real app_users.csv row: u_baba14aa, daniel.hill389@gmail.com. Never referenced earlier in
+    // this file, so this device carries no prior events.
+    const userId = 'u_baba14aa'
+    const device = 'd_baba14aa'
+    const openRes = await sendWebhook(
+      JSON.stringify({
+        event_id: nextEventId(),
+        event: 'app_open',
+        device_id: device,
+        timestamp: `${TODAY}T12:00:00Z`,
+      }),
+    )
+    expect(openRes.status, await openRes.clone().text()).toBe(202)
+    const loginRes = await sendWebhook(
+      JSON.stringify({
+        event_id: nextEventId(),
+        event: 'login',
+        user_id: userId,
+        device_id: device,
+        timestamp: `${TODAY}T12:00:00Z`, // same second as the anonymous app_open (21 §3 #6/#16)
+      }),
+    )
+    expect(loginRes.status, await loginRes.clone().text()).toBe(202)
+    const storyRes = await sendWebhook(
+      JSON.stringify({
+        event_id: nextEventId(),
+        event: 'read_story',
+        device_id: device,
+        timestamp: `${TODAY}T12:00:01Z`, // anonymous again, after the login
+        properties: { story: 'stitched-event-repro' },
+      }),
+    )
+    expect(storyRes.status, await storyRes.clone().text()).toBe(202)
+
+    const { results: events } = await env.DB.prepare(
+      'SELECT event_id, user_id, device_id, event_ts FROM app_events WHERE device_id = ?',
+    )
+      .bind(device)
+      .all<StoredAppEvent>()
+    expect(events.length).toBe(3)
+    const resolved = resolveAppEvents(events)
+    expect(resolved.ambiguousDevices).toEqual([])
+    expect(resolved.deviceOwner.get(device)).toBe(userId)
+    expect(resolved.countByUserId.get(userId)).toBe(3)
   })
 
   it('a shared app device (mark.mitchell424 / mark.mitchell662, 0 soft-field agreement) scores >= 90 and matches GET /api/duplicates (hardest case #12)', async () => {
@@ -784,7 +1220,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     const aPkey = [...oracle.subscribers.values()].find((s) => s.email_norm === MARK_A.email)?.pkey
     const bPkey = [...oracle.subscribers.values()].find((s) => s.email_norm === MARK_B.email)?.pkey
     if (aPkey === undefined || bPkey === undefined)
-      throw new Error('parity: mark.mitchell subscribers not found')
+      throw new Error('parity: expected shared-device fixture subscribers missing from the oracle')
     const pairKey = aPkey < bPkey ? `${aPkey}|${bPkey}` : `${bPkey}|${aPkey}`
     const readers: ExpectedPairInput[] = [...oracle.subscribers.values()].map((s) => ({
       pkey: s.pkey,
@@ -796,20 +1232,24 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     const pair = result.pairs.find(
       (p) => (p.a_pkey === aPkey && p.b_pkey === bPkey) || (p.a_pkey === bPkey && p.b_pkey === aPkey),
     )
-    if (pair === undefined) throw new Error('parity: mark.mitchell pair missing from oracle candidates')
+    if (pair === undefined) throw new Error('parity: expected shared-device pair missing from the oracle candidates')
     expect(pair.score).toBeGreaterThanOrEqual(90)
 
     const cookie = await loginCookie()
     const res = await SELF.fetch('http://cdp.test/api/duplicates', { headers: { cookie } })
     const body = await res.json<{ review: { pair_id: string; score: number; band: string }[] }>()
     const stored = body.review.find((p) => p.pair_id === pair.pair_id)
-    if (stored === undefined)
-      throw new Error('parity: the auto-band mark.mitchell pair is missing from GET /api/duplicates')
+    if (stored === undefined) throw new Error('parity: the auto-band shared-device pair is missing from GET /api/duplicates')
     expect(stored.score).toBe(pair.score)
     expect(stored.band).toBe('auto')
   })
 
-  it("the oracle's own device resolution agrees with the store's device_identity for every device seen so far", async () => {
+  it("the oracle's own device resolution agrees with the store's device_identity for every device seen so far, in both directions", async () => {
+    async function mask(value: string): Promise<string> {
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
+      return [...digest].slice(0, 4).map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+
     const { results: events } = await env.DB.prepare(
       'SELECT event_id, user_id, device_id, event_ts FROM app_events',
     ).all<StoredAppEvent>()
@@ -820,9 +1260,52 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     const resolved = resolveAppEvents(events)
     expect(resolved.ambiguousDevices).toEqual([])
     const storedOwners = new Map(identity.map((r) => [r.device_id, r.user_id]))
-    for (const [device, owner] of resolved.deviceOwner) {
-      expect(storedOwners.get(device)).toBe(owner)
+
+    // Masked (never printed raw, 21 §2.4), both directions: the oracle names no device the
+    // store lacks, and the store names no device the oracle lacks.
+    const resolvedPairs = await Promise.all(
+      [...resolved.deviceOwner].map(async ([d, o]) => `${await mask(d)}:${await mask(o)}`),
+    )
+    const storedPairs = await Promise.all([...storedOwners].map(async ([d, o]) => `${await mask(d)}:${await mask(o)}`))
+    expect(new Set(resolvedPairs)).toEqual(new Set(storedPairs))
+    expect(resolved.deviceOwner.size).toBe(storedOwners.size)
+  })
+
+  it('every one of the 2,930 subscriber/app_only profiles, plus every unknown_user_stub, recomputes exactly after every webhook above (21 §2.6 "diff again"); guards M19 (site visits zeroed on recompute) and M20 (resolve.ts drops a login-stitched anonymous event)', async () => {
+    // profilesTable() reads app_events_last_30d fresh from the store (appEventsByEmail), so
+    // calling it here — after every T-PAR-8 webhook — re-diffs the subscriber + app_only half
+    // of profiles exactly as T-PAR-2 did on the seed, now against the post-webhook state.
+    const { expected, got, fields } = await profilesTable()
+    const rediff: Mismatch[] = []
+    const { missing, extra } = diffByKey('profiles', 'pkey', expected, got, fields, rediff)
+    expect(missing).toEqual([])
+    expect(extra).toEqual([])
+    expect(rediff.map(reportLine)).toEqual([])
+    expect(expected.size).toBe(2930)
+
+    // unknown_user_stub profiles: not in profilesTable() (it excludes that kind), checked here.
+    const { results: storedEvents } = await env.DB.prepare(
+      'SELECT event_id, user_id, device_id, event_ts FROM app_events',
+    ).all<StoredAppEvent>()
+    const resolved = resolveAppEvents(storedEvents)
+    expect(resolved.ambiguousDevices).toEqual([])
+    const { results: stubUsers } = await env.DB.prepare(
+      'SELECT user_id FROM app_users WHERE email_norm IS NULL',
+    ).all<{ user_id: string }>()
+    const { results: stubProfileRows } = await env.DB.prepare(
+      `SELECT pkey, engagement_score FROM profiles WHERE kind = 'unknown_user_stub'`,
+    ).all<{ pkey: string; engagement_score: number }>()
+    const stubGot = new Map(stubProfileRows.map((r) => [r.pkey, r as Row]))
+    const stubExpected = new Map<string, Row>()
+    for (const { user_id: userId } of stubUsers) {
+      const pkey = await pkeyForUserId(secret, userId)
+      stubExpected.set(pkey, { pkey, engagement_score: engagementScore(null, resolved.countByUserId.get(userId) ?? 0, 0) })
     }
+    const stubRediff: Mismatch[] = []
+    const stubDiff = diffByKey('profiles', 'pkey', stubExpected, stubGot, ['engagement_score'], stubRediff)
+    expect(stubDiff.missing).toEqual([])
+    expect(stubDiff.extra).toEqual([])
+    expect(stubRediff.map(reportLine)).toEqual([])
   })
 })
 
@@ -857,68 +1340,80 @@ describe('T-PAR-9 report scan', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-10: planted single-value swaps are each reported (the harness can fail)
+// T-PAR-10: planted single-value swaps are each reported (the harness can fail), for every
+// compared column of every table — not only subscribers.source — all done in memory on a copy
+// of the already-fetched rows, so the real test database is never written (21 §4.1 item 6).
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-10 the harness can fail', () => {
-  it('swapping one real subscriber source for another real subscriber source is caught as exactly one mismatch', async () => {
+  /** The first two keys whose real values for `field` differ, or null when every row agrees
+   * (e.g. app_users.from_csv, which this data holds as 1 on every row: nothing real to swap in,
+   * and 09 D-47 forbids inventing one). */
+  function firstDifferingPair(got: Map<string, Row>, field: string): [string, unknown] | null {
+    let first: { key: string; value: unknown } | undefined
+    for (const [key, row] of got) {
+      const value = row[field]
+      if (first === undefined) {
+        first = { key, value }
+        continue
+      }
+      if (value !== first.value) return [first.key, value]
+    }
+    return null
+  }
+
+  /** Clones `got`'s row at `key`, swaps `field` to `otherValue`, diffs that one field alone
+   * against `expected`, and asserts exactly one mismatch at the right key and field. */
+  function assertSwapCaught(
+    table: string,
+    keyKind: string,
+    expected: Map<string, Row>,
+    got: Map<string, Row>,
+    key: string,
+    field: string,
+    otherValue: unknown,
+  ): void {
+    const swapped = new Map(got)
+    const original = got.get(key)
+    if (original === undefined) throw new Error(`parity: T-PAR-10 lost its own row for ${table} key ${key}`)
+    swapped.set(key, { ...original, [field]: otherValue })
+    const mutationReport: Mismatch[] = []
+    diffByKey(table, keyKind, expected, swapped, [field], mutationReport)
+    expect(mutationReport, `${table}.${field}`).toHaveLength(1)
+    expect(mutationReport[0]).toMatchObject({ table, key, field })
+  }
+
+  async function checkTable(
+    label: string,
+    build: () => Promise<{ expected: Map<string, Row>; got: Map<string, Row>; fields: readonly string[] }>,
+    keyKind: string,
+  ) {
+    const { expected, got, fields } = await build()
+    for (const field of fields) {
+      const found = firstDifferingPair(got, field)
+      if (found === null) continue // no second real value exists for this column on this data (09 D-47)
+      const [key, otherValue] = found
+      assertSwapCaught(label, keyKind, expected, got, key, field, otherValue)
+    }
+  }
+
+  it('every compared column of every table: a swap to another real value is caught as exactly one mismatch', async () => {
+    await checkTable('subscribers', subscribersTable, 'pkey')
+    await checkTable('profiles', profilesTable, 'pkey')
+    await checkTable('v_profiles', vProfilesTable, 'pkey')
+    await checkTable('quarantine', quarantineTable, 'file:line')
+    await checkTable('import_runs', importRunsTable, 'file')
+    await checkTable('web_visitors', webVisitorsTable, 'visitor_hash')
+    await checkTable('web_events', webEventsTable, 'id')
+    await checkTable('app_users', appUsersTable, 'csv_line')
+  })
+
+  it('subscribers.source specifically (the original case): swapping one real source for another is caught at the right pkey', async () => {
+    const { expected, got } = await subscribersTable()
     const subs = [...oracle.subscribers.values()]
     const distinctSources = [...new Set(subs.map((s) => s.source).filter((s): s is string => s !== null))]
     const a = subs.find((s) => s.source === distinctSources[0])
     const b = subs.find((s) => s.source === distinctSources[1] && s.pkey !== a?.pkey)
-    if (a === undefined || b === undefined)
-      throw new Error('parity: could not find two subscribers with different real sources')
-
-    await env.DB.prepare('UPDATE subscribers SET source = ? WHERE email_norm = ?')
-      .bind(b.source, a.email_norm)
-      .run()
-
-    const { results } = await env.DB.prepare(
-      `SELECT p.pkey AS pkey, s.email_norm, s.email_raw, s.signup_date, s.status, s.source,
-              s.last_open_date, s.cold_since, s.merged_count
-       FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm AND p.kind = 'subscriber'`,
-    ).all<Record<string, unknown>>()
-    const got = new Map(results.map((r) => [r.pkey as string, r]))
-    const expected = new Map(
-      subs.map((s) => [
-        s.pkey,
-        {
-          pkey: s.pkey,
-          email_norm: s.email_norm,
-          email_raw: s.email_raw,
-          signup_date: s.signup_date,
-          status: s.status,
-          source: s.source,
-          last_open_date: s.last_open_date,
-          cold_since: s.cold_since,
-          merged_count: s.merged_count,
-        } as Record<string, unknown>,
-      ]),
-    )
-    const mutationReport: Mismatch[] = []
-    diffByKey(
-      'subscribers',
-      'pkey',
-      expected,
-      got,
-      [
-        'email_norm',
-        'email_raw',
-        'signup_date',
-        'status',
-        'source',
-        'last_open_date',
-        'cold_since',
-        'merged_count',
-      ],
-      mutationReport,
-    )
-    expect(mutationReport).toHaveLength(1)
-    expect(mutationReport[0]).toMatchObject({
-      table: 'subscribers',
-      key: a.pkey,
-      field: 'source',
-      expected: JSON.stringify(a.source),
-      actual: JSON.stringify(b.source),
-    })
+    if (a === undefined || b === undefined) throw new Error('parity: could not find two subscribers with different real sources')
+    assertSwapCaught('subscribers', 'pkey', expected, got, a.pkey, 'source', b.source)
   })
 })
