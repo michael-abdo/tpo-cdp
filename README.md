@@ -25,7 +25,7 @@ npm install --legacy-peer-deps      # the flag installs package-lock.json exactl
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
 npm run db:migrate:local            # the four migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
-npm test                            # 30 files, 580 tests in workerd against a local D1; no network
+npm test                            # every test in workerd against a local D1; no network (count: [Tests](#tests))
 npm run dev                         # http://localhost:5173; sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
