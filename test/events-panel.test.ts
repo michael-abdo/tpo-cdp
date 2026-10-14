@@ -143,7 +143,7 @@ describe('POST /api/events/test (09 D-73)', () => {
     expect(after).toBe(before)
   })
 
-  it('T-WH-PANEL-5b: a resend sends the inner webhook exactly the stored row, no more and no less (kills M14: a dropped properties spread; M15: user_id sent as null)', async () => {
+  it('T-WH-PANEL-5d: a resend sends the inner webhook exactly the stored row, no more and no less (kills M14: a dropped properties spread; M15: user_id sent as null)', async () => {
     // Spies on the inner POST /webhooks/app call the same way T-WH-PANEL-10's own runtime-proof
     // test does, so this is a live assertion on what the route actually sent, not just on its
     // response body.
