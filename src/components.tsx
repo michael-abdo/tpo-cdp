@@ -374,19 +374,26 @@ export function Section({
           {icon && <Icon icon={icon} className="size-4 text-accent" />}
           {title}
         </h2>
-        {summary !== undefined && <p className="text-sm text-ink-muted">{summary}</p>}
+        {/* A div, not a p: a caller's summary (OverviewPage's FactLine) is a <ul>, which a <p> cannot
+            legally contain (invalid nesting, a hydration warning). */}
+        {summary !== undefined && <div className="text-sm text-ink-muted">{summary}</div>}
       </div>
       {children}
     </section>
   )
 }
 
-/** A label/value pair inside a <dl>. Labels are plain words, never raw field names (principle 4). */
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+/**
+ * A label/value pair inside a <dl>. Labels are plain words, never raw field names (principle 4).
+ * The value wraps at word boundaries by default, so plain prose never breaks mid-word; a caller
+ * showing a raw id or hash with no natural break point (a profile key, a device or visitor id)
+ * passes `breakAll` so a long token still wraps inside its column instead of overflowing it.
+ */
+export function Field({ label, children, breakAll = false }: { label: string; children: ReactNode; breakAll?: boolean }) {
   return (
     <div className="flex gap-2 text-sm">
       <dt className="w-28 shrink-0 text-ink-muted">{label}</dt>
-      <dd className="break-all">{children}</dd>
+      <dd className={breakAll ? 'break-all' : 'break-words'}>{children}</dd>
     </div>
   )
 }

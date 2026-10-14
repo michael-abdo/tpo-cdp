@@ -143,7 +143,7 @@ function Header({ data }: { data: Lookup }) {
         <p className="text-sm text-gray-700">{DEFINITIONS.engagement_score.doc}</p>
         <TechnicalDetails>
           <dl className="space-y-1">
-            <Field label="Profile key">
+            <Field label="Profile key" breakAll>
               <span className="font-mono">{profile.pkey}</span>
             </Field>
             <Field label="Kind">
@@ -227,7 +227,7 @@ function VisitorTechnical({ visitor }: { visitor: LookupVisitor }) {
   return (
     <>
       <dl className="space-y-1">
-        <Field label="Visitor ID">
+        <Field label="Visitor ID" breakAll>
           <span className="font-mono">{visitor.visitor_id}</span>
         </Field>
         <Field label="First UTM source">{visitor.first_utm_source ?? 'none'}</Field>
@@ -350,13 +350,13 @@ function AccountTechnical({ account }: { account: LookupAppAccount }) {
   return (
     <>
       <dl className="space-y-1">
-        <Field label="User ID">
+        <Field label="User ID" breakAll>
           <span className="font-mono">{account.user_id}</span>
         </Field>
         <Field label="Created date">{account.created_at}</Field>
         <Field label="Origin">{account.from_csv ? 'app_users.csv' : 'created from webhook'}</Field>
         {account.devices.length > 0 && (
-          <Field label="Device IDs">
+          <Field label="Device IDs" breakAll>
             <span className="font-mono">{account.devices.join(', ')}</span>
           </Field>
         )}
@@ -771,13 +771,13 @@ export default function LookupPage() {
             </p>
             <TechnicalDetails>
               <dl className="space-y-1">
-                <Field label="Profile key">
+                <Field label="Profile key" breakAll>
                   <span className="font-mono">pk_…</span>
                 </Field>
-                <Field label="Device ID">
+                <Field label="Device ID" breakAll>
                   <span className="font-mono">d_…</span> (the device's most recent app account)
                 </Field>
-                <Field label="Visitor ID">
+                <Field label="Visitor ID" breakAll>
                   <span className="font-mono">v_…</span> (visitors who signed up)
                 </Field>
               </dl>
