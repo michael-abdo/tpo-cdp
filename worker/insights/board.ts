@@ -54,7 +54,14 @@
 // (`insights.created_at`, a tile's `ran_at`; 09 D-64); no date rule reads them.
 
 import { pickChart, type ChartKind, CHART_OVERRIDES, type ChartOverride } from '../../shared/pick-chart'
-import { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_OTHER_MESSAGE, PIN_FAILED_MESSAGE, TILE_RUN_FAILED_MESSAGE } from '../../shared/insight-messages'
+import {
+  NOT_PINNABLE_MESSAGE,
+  NOT_PINNABLE_OTHER_MESSAGE,
+  PIN_FAILED_MESSAGE,
+  REQUEST_APPROVAL_MESSAGE,
+  REQUEST_APPROVAL_OFFER_MESSAGE,
+  TILE_RUN_FAILED_MESSAGE,
+} from '../../shared/insight-messages'
 import { TODAY } from '../../shared/config'
 import { humanRange, PRESET_LABEL } from '../../shared/date-words'
 import { detectWindow, type InsightWindow, isCalendarDate, type ResolvedWindow, resolveWindow, windowProblems } from '../../shared/insight-window'
@@ -65,10 +72,13 @@ import { findPII, guardPayload, loadKnownEmails, PiiBlockedError, redactKnownLoc
 import type { BuiltinHandler, ResultRow, ToolOutput } from '../assistant/tools/builtin-handlers'
 import { executeToolCall } from '../assistant/tools/tool-executor'
 import { type LoadedTool, type LoadedTools, loadTools } from '../assistant/tools/tool-loader'
+import { loadEmailsByPkey } from '../assistant/rehydrate'
+import { constantTimeStringEq } from '../auth/constant-time'
 import { ApiError } from '../auth/middleware'
 import { dataQuality } from './data-quality'
 import { funnel } from './funnel'
 import { goingCold } from './going-cold'
+import { classifyPinnableSql, type PinnableShape } from './pin-grammar'
 import { sourceAppConversion } from './source-app'
 
 /** The board-only tool behind the built-in tiles (01 §insights `tool`). */
@@ -88,7 +98,9 @@ export const SORT_ORDER_MAX = 1_000_000_000
 
 // The level-1 sentences of the board (09 D-64a) live in shared/insight-messages.ts, so the UI tests
 // read the same home; re-exported here for the server's callers and tests.
-export { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_OTHER_MESSAGE, PIN_FAILED_MESSAGE, TILE_RUN_FAILED_MESSAGE }
+export { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_OTHER_MESSAGE, PIN_FAILED_MESSAGE, REQUEST_APPROVAL_MESSAGE, REQUEST_APPROVAL_OFFER_MESSAGE, TILE_RUN_FAILED_MESSAGE }
+/** A person-list tile's level-1 row cap (09 D-64b); the full list stays available via Segments/export. */
+export const PERSON_LIST_CAP = 10
 /** The builtin handlers whose lookups can be pinned; every `query` row can be too (09 D-64a). */
 const PINNABLE_BUILTINS: ReadonlySet<string> = new Set(['segment', 'aggregate'])
 /**
@@ -221,6 +233,7 @@ export const INSIGHT_PANEL: LoadedTool = {
   handlerType: 'builtin',
   handlerName: INSIGHT_PANEL_TOOL,
   handler: insightPanelHandler,
+  boardOnly: true,
 }
 
 /** The tools a tile may name, and why the assistant rows are missing when they could not load. */
@@ -260,10 +273,24 @@ async function boardTools(db: D1Database): Promise<BoardTools> {
 }
 
 /**
- * Why an answer's tool can never be pinned (09 D-64a): the not_pinnable sentence, or null when it
- * can be. A tool whose row is not loaded (turned off or gone) is null here: re-validation reports it.
+ * Why an answer's tool can never be pinned (09 D-64a, amended by D-64b), or null when it can be. A
+ * tool whose row is not loaded (turned off or gone) is null here: re-validation reports it.
+ *
+ * The literal `query_sql` tool is handled on its own (09 D-64b): `sql`, when given, is classified
+ * by the positive grammar, so a totals or a person-list query refuses with null (pinnable) and
+ * anything else with REQUEST_APPROVAL_OFFER_MESSAGE — the preview form, since this is pinPeriod's
+ * read-only check (POST /api/assistant's `pin_refusal`): nothing has been queued yet, so the
+ * card's own "Request approval" action is what actually calls pin() and queues it. Callers that
+ * already know they are past that step (pin() after wrapping the SQL as its own tool row, or a
+ * stored board row, which is never literally `query_sql`) call with no `sql` and get the old hard
+ * refusal, same as a builtin row that merely aliases query_sql's handler under another name
+ * (handled below, unaffected).
  */
-function pinRefusal(tools: BoardTools, tool: string): string | null {
+function pinRefusal(tools: BoardTools, tool: string, sql: string | null = null): string | null {
+  if (tool === 'query_sql') {
+    if (sql === null) return NOT_PINNABLE_MESSAGE
+    return classifyPinnableSql(sql).ok ? null : REQUEST_APPROVAL_OFFER_MESSAGE
+  }
   if (NEVER_PINNED.has(tool)) return NOT_PINNABLE_MESSAGE
   const loaded = tools.tools.byName.get(tool)
   if (loaded === undefined || loaded.handlerType === 'query' || PINNABLE_BUILTINS.has(loaded.handlerName)) return null
@@ -350,13 +377,24 @@ export function ownDates(sql: string | null): { from: string; to: string } | nul
 }
 
 /**
+ * The keys this file writes into `params` for a D-64b pin-grammar tile (pin-shape bookkeeping,
+ * not a tool input field): stripped out here before the input reaches the tool, the way `window`
+ * already is. The wrapped tool's own input_schema declares no properties at all (wrapQuerySql), so
+ * any of these reaching it would be an undeclared property Gate 2 refuses.
+ */
+const PIN_SHAPE_KEYS = ['pin_shape', 'count_columns', 'dimension_columns', 'identifier_column'] as const
+
+/**
  * Stored params → the tool input for a run on `today`, and the window it covers. A stored window
  * always becomes window_from/window_to: a tool that takes neither (any tile but an aggregate, after
  * drift) is then refused by Gate 2, never run with its dates dropped.
  */
 export function callInput(params: Params, today: string): { input: Params; window: ResolvedWindow | null } {
-  if (!Object.hasOwn(params, 'window')) return { input: params, window: null }
-  const { window: stored, ...rest } = params
+  const rest: Params = { ...params }
+  const stored = rest.window
+  delete rest.window
+  for (const key of PIN_SHAPE_KEYS) delete rest[key]
+  if (stored === undefined) return { input: rest, window: null }
   const problems = windowProblems(stored)
   if (problems.length > 0) throw new Error(`insights-board: stored window is invalid: ${problems.join('; ')}`)
   const window = resolveWindow(stored as InsightWindow, today)
@@ -485,6 +523,27 @@ export function namesASubject(output: Pick<ToolOutput, 'columns' | 'rows'>, keys
 }
 
 /**
+ * namesASubject, with `identifierColumn` left out of the scan: a D-64b person-list tile (09
+ * D-64b "lists") deliberately names its one subject in that column, the same pk_ key a segment
+ * tool's own rows already carry (05 §Pseudonymous key); every *other* column is still checked, so
+ * an identifier that leaked into an approved column (a bucket, an aggregate) is still caught.
+ */
+function namesASubjectInOtherColumns(output: Pick<ToolOutput, 'columns' | 'rows'>, keys: KnownKeys, identifierColumn: string): boolean {
+  const columns = output.columns.filter((c) => c !== identifierColumn)
+  const rows = output.rows.map((row) => Object.fromEntries(Object.entries(row).filter(([k]) => k !== identifierColumn)))
+  return namesASubject({ columns, rows }, keys)
+}
+
+/** D-64b (B): any row whose people-count column(s) read under 5 shows "< 5" in every non-dimension column. Pure. */
+function maskSmallGroups(rows: readonly ResultRow[], columns: readonly string[], countColumns: readonly string[], dimensionColumns: ReadonlySet<string>): ResultRow[] {
+  return rows.map((row) => {
+    const small = countColumns.some((c) => typeof row[c] === 'number' && (row[c] as number) < 5)
+    if (!small) return row
+    return Object.fromEntries(columns.map((c) => [c, dimensionColumns.has(c) ? row[c] : '< 5']))
+  })
+}
+
+/**
  * The "Explain this" question of a pinned tile. With no window it is the question the tile was
  * pinned from. With one, the tile's title and the dates it shows now lead, and the pinned question
  * follows as context, so a tile moved to "Last 30 days" whose question says "last month" is
@@ -498,7 +557,7 @@ export function explainQuestion(title: string, prompt: string, window: ResolvedW
 }
 
 /** A tile whose result would list individual subscribers (04 not_aggregate). */
-const NOT_AGGREGATE_MESSAGE = 'This tile lists individual subscribers; the board shows counts only. Pin a count or a segment instead.'
+export const NOT_AGGREGATE_MESSAGE = 'This tile lists individual subscribers; the board shows counts only. Pin a count or a segment instead.'
 /** A tile whose stored call no longer passes (a gate, a handler or 09 D-64a refused it). */
 const REFUSED_MESSAGE = 'This tile’s saved lookup no longer passes today’s checks, so it cannot run. Technical details say why.'
 /** A tile that names an assistant tool while the tool rows cannot load (no_tools, tool_config_error). */
@@ -569,6 +628,13 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     const params: unknown = JSON.parse(row.params)
     if (!isObject(params)) throw new Error(`insights-board: params of tile ${row.id} is not a JSON object`)
     tile.params = params
+    // D-64b pin-shape bookkeeping (board.ts `pin`, `approveInsightTool`), never a tool input field
+    // (callInput strips it out below): which runtime treatment, if any, this tile's result needs.
+    // Only `pinShape` itself (which branch to take) comes from the stored params; the count and
+    // dimension columns a "totals" tile masks by come from the fresh classification below, never
+    // from params, so an edited execution_config.sql (D-41 rows are data) cannot drift the mask
+    // away from what the SQL actually does (09 D-64b finding).
+    const pinShape = params.pin_shape === 'totals' || params.pin_shape === 'list' ? params.pin_shape : null
     const { input, window } = callInput(params, TODAY)
     tile.window = window
     if (row.prompt !== null) tile.explain = explainQuestion(row.title, row.prompt, window)
@@ -578,10 +644,34 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
     if (!ctx.board.tools.byName.has(row.tool) && ctx.board.loadError !== null) {
       throw new TileError('tools_unavailable', TOOLS_UNAVAILABLE_MESSAGE, [ctx.board.loadError.message])
     }
-    // A query row's SQL selects no key but as count(DISTINCT key), checked before it runs (04).
+    // A query row's SQL selects no key but as count(DISTINCT key), checked before it runs (04). A
+    // D-64b pin-shape tile re-checks the positive grammar itself instead (stricter, and the one
+    // check that allows a "list" shape's one bare identifier column); every other query row keeps
+    // the plain D-64a check.
     const template = ctx.board.tools.byName.get(row.tool)?.query
-    const keyProblems = template === undefined ? [] : keyProjectionProblems(template.sql)
-    if (keyProblems.length > 0) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, keyProblems)
+    // The fresh D-64b shape (null for a non-pinShape tile): computed once here, from the SQL that
+    // is actually about to run, and used below for the mask instead of the stale params this row
+    // was pinned with (09 D-64b "checked … on every board run", not just at pin time).
+    let freshShape: PinnableShape | null = null
+    if (template !== undefined) {
+      if (pinShape !== null) {
+        const classified = classifyPinnableSql(template.sql)
+        if (!classified.ok) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, classified.problems)
+        if (classified.shape !== pinShape) {
+          throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, [
+            `this tile's SQL now classifies as "${classified.shape}", not the "${pinShape}" shape it was pinned with; re-pin it`,
+          ])
+        }
+        freshShape = classified
+      } else {
+        const keyProblems = keyProjectionProblems(template.sql)
+        if (keyProblems.length > 0) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, keyProblems)
+      }
+    }
+    // A pin-shape tile whose tool is no longer a query row (its handler_type changed under it)
+    // has nothing fresh to check against: fail closed rather than fall back to the stored params.
+    if (pinShape !== null && freshShape === null) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE, ['this tile is no longer backed by a query tool'])
+    const identifierColumn = freshShape !== null && freshShape.shape === 'list' ? freshShape.identifierColumn : null
     const executed = await executeToolCall({ db: ctx.db, trace: ctx.trace, tools: ctx.board.tools }, { id: `tile-${row.id}`, name: row.tool, input })
     const output = executed.output
     if (output === null) {
@@ -605,17 +695,51 @@ async function runTile(ctx: RunContext, row: InsightRow): Promise<RunOutcome> {
       tile.result = { columns: [], rows: [], summary }
       tile.segment = { count: output.segment.count, filters: output.segment.filters }
     } else {
-      if (namesASubject(output, ctx.keys)) {
-        throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE)
-      }
+      // A "list" tile's one identifier column is deliberate (D-64b); every other column is still
+      // checked, so an identifier that leaked anywhere else is still caught (the usual rule).
+      const leaked = pinShape === 'list' && identifierColumn !== null ? namesASubjectInOtherColumns(output, ctx.keys, identifierColumn) : namesASubject(output, ctx.keys)
+      if (leaked) throw new TileError('not_aggregate', NOT_AGGREGATE_MESSAGE)
       tile.result = { columns: output.columns, rows: output.rows, summary: output.summary }
       if (row.tool === INSIGHT_PANEL_TOOL && typeof output.summary.explain === 'string') tile.explain = output.summary.explain
     }
     // The whole tile leaves the server: scanned once more, past the executor's own scan and the
     // stored-row scan above (05 §Scanner). Defense in depth: every part was scanned on its way in,
     // so no reachable input trips this one; it stays so a new tile field cannot leave unscanned.
+    // This still holds the raw pk_ key of a "list" tile (not PII, 05 §Pseudonymous key) and no
+    // email yet: re-hydration (below) happens only after this scan, so a real email never reaches
+    // ai_audit or the PII guard.
     const { status: _status, error: _error, ran_at: _ranAt, ...leaving } = tile
     await guardPayload(ctx.trace, leaving, 'tool_result', row.tool)
+    // D-64b run-time treatment, past the scan above: a "list" tile is re-hydrated to email for
+    // staff and capped at PERSON_LIST_CAP (04, 06 "the full list via Segments/export"); a "totals"
+    // tile has every row whose people-count column reads under 5 masked to "< 5" in every other
+    // column (B) — a stored window never resolves that count itself, so this is checked fresh
+    // every run, not once at pin time.
+    if (tile.result !== null && pinShape === 'list' && identifierColumn !== null) {
+      const pkeys = tile.result.rows.map((r) => r[identifierColumn]).filter((v): v is string => typeof v === 'string')
+      const emails = await loadEmailsByPkey(ctx.db, pkeys)
+      const rowsTotal = tile.result.rows.length
+      tile.result = {
+        columns: tile.result.columns.map((c) => (c === identifierColumn ? 'email' : c)),
+        rows: tile.result.rows.slice(0, PERSON_LIST_CAP).map((r) =>
+          Object.fromEntries(
+            Object.entries(r).map(([k, v]) => [k === identifierColumn ? 'email' : k, k === identifierColumn && typeof v === 'string' ? emails.get(v) ?? v : v]),
+          ),
+        ),
+        summary: { ...tile.result.summary, rows_total: rowsTotal, rows_shown: Math.min(PERSON_LIST_CAP, rowsTotal) },
+      }
+      // Keyed on `freshShape` alone, never on the stored `pinShape`: the shape-mismatch throw
+      // above is the thing that is supposed to stop a "list"-pinned tile from ever reaching here
+      // with a now-totals SQL, but a tile whose pin_shape and freshShape disagree must never be
+      // ABLE to skip this mask even if that throw is ever weakened or removed — a mismatch should
+      // fail closed into `not_aggregate` up there, not fail open into an unmasked small group down
+      // here (09 D-64b finding, confirmed live: a pinned list's wrapped row edited to a grouped
+      // totals query with a group under 5 reached the screen with the real count, no "< 5").
+    } else if (tile.result !== null && freshShape !== null && freshShape.shape === 'totals') {
+      const countColumns = freshShape.countColumns
+      const dimensionColumns = new Set(freshShape.dimensionColumns)
+      tile.result = { ...tile.result, rows: maskSmallGroups(tile.result.rows, tile.result.columns, countColumns, dimensionColumns) }
+    }
     tile.chart = pickChart({ columns: tile.result.columns, rows: tile.result.rows, segment: tile.segment }, row.chart)
     tile.status = 'ok'
     return { tile, code: null, details: [] }
@@ -730,6 +854,189 @@ async function tracePrompt(db: D1Database, traceId: string): Promise<string | nu
     .first<string | null>('q')
 }
 
+// ── D-64b: query_sql pins and human approval ────────────────────────────────────────────
+
+/** A fresh assistant_tools name: letters/digits only (TOOL_NAME, tool-loader.ts), so a uuid's dashes are stripped. */
+const freshToolName = (prefix: string) => `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`
+
+/**
+ * Wraps a grammar-approved query_sql SQL as its own new `query`-type assistant_tools row (09
+ * D-64b): an input_schema with no properties (the SQL takes no placeholders; query_sql's own
+ * input never does) and `execution_config.sql` exactly the SQL that ran (Gate 3's forced LIMIT
+ * already applied). The loader validates it like any row on the next load (tool-loader.ts), so
+ * Gate 2/3 check it a second time independently of this file's own grammar.
+ *
+ * `metadata.board_only` keeps it out of loadTools' model-facing `definitions` (tool-loader.ts):
+ * the grammar only ever proved the SQL safe to run and mask on the board, never safe to hand the
+ * model as a callable tool (a "list" shape's wrapped row returns bare, un-re-hydrated pkeys to
+ * whoever calls it — re-hydration is board.ts's own run-time step, not the generic executor's).
+ * Idempotent per trace (`wrapped_from_trace`, in `metadata` like `requested_from_trace`): pinning
+ * the same query_sql answer twice reuses the row instead of leaving an orphan enabled tool behind
+ * each time; `created` tells the caller whether this call is the one that should clean it up on a
+ * failed first run (board.ts `pin`).
+ */
+async function wrapQuerySql(db: D1Database, traceId: string, sql: string): Promise<{ id: string; name: string; created: boolean }> {
+  const existing = await db
+    .prepare("SELECT id, name FROM assistant_tools WHERE handler_type = 'query' AND json_extract(metadata, '$.wrapped_from_trace') = ?")
+    .bind(traceId)
+    .first<{ id: string; name: string }>()
+  if (existing !== null) return { ...existing, created: false }
+  const id = crypto.randomUUID()
+  const name = freshToolName('pinned')
+  await db
+    .prepare(
+      `INSERT INTO assistant_tools (id, name, description, input_schema, handler_type, execution_config, enabled, sort_order, metadata, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'query', ?, 1, (SELECT coalesce(max(sort_order), 0) + 10 FROM assistant_tools), ?,
+               strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+    )
+    .bind(
+      id,
+      name,
+      'A free-form query pinned to the board: its SQL passed the D-64b positive grammar at pin time.',
+      JSON.stringify({ type: 'object', properties: {} }),
+      JSON.stringify({ sql, param_mapping: {} }),
+      JSON.stringify({ board_only: true, wrapped_from_trace: traceId }),
+    )
+    .run()
+  return { id, name, created: true }
+}
+
+/**
+ * "Request approval" (09 D-64b (C)): stores `sql` as a new, disabled `query`-type assistant_tools
+ * row flagged `requested_from_trace`, so it appears on the approval list (listApprovals) instead
+ * of being discarded. Idempotent per trace: pinning the same answer twice never queues it twice.
+ */
+async function requestApproval(db: D1Database, traceId: string, sql: string): Promise<void> {
+  const existing = await db.prepare('SELECT id FROM assistant_tools WHERE requested_from_trace = ?').bind(traceId).first<{ id: string }>()
+  if (existing !== null) return
+  const name = freshToolName('pending')
+  await db
+    .prepare(
+      `INSERT INTO assistant_tools (id, name, description, input_schema, handler_type, execution_config, enabled, sort_order, requested_from_trace, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'query', ?, 0, (SELECT coalesce(max(sort_order), 0) + 10 FROM assistant_tools), ?,
+               strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+    )
+    .bind(
+      crypto.randomUUID(),
+      name,
+      'A free-form query a teammate asked to pin; its shape needs Growth team approval (09 D-64b) before it can run.',
+      JSON.stringify({ type: 'object', properties: {} }),
+      JSON.stringify({ sql, param_mapping: {} }),
+      traceId,
+    )
+    .run()
+}
+
+/** One row of the approval list (GET /api/insights/approvals, 09 D-64b). */
+export interface PendingApproval {
+  id: string
+  name: string
+  sql: string
+  requested_from_trace: string
+  created_at: string
+}
+
+/** Every disabled query row still waiting on a human (09 D-64b), oldest first. */
+export async function listApprovals(db: D1Database): Promise<PendingApproval[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id, name, execution_config, requested_from_trace, created_at FROM assistant_tools
+       WHERE handler_type = 'query' AND enabled = 0 AND requested_from_trace IS NOT NULL ORDER BY created_at, rowid`,
+    )
+    .all<{ id: string; name: string; execution_config: string; requested_from_trace: string; created_at: string }>()
+  return results.map((r) => ({
+    id: r.id,
+    name: r.name,
+    sql: (JSON.parse(r.execution_config) as { sql: string }).sql,
+    requested_from_trace: r.requested_from_trace,
+    created_at: r.created_at,
+  }))
+}
+
+/**
+ * POST /api/insights/approvals/:id/approve {password, name, note} (09 D-64b): enables the pending
+ * row (checked against the one shared TOOL_APPROVAL password — a wrong one is 403, logged with no
+ * password value) and records who/why in its `metadata` JSON column (no new table or column for
+ * that), then pins it like any other saved question type: run once, store only if it succeeds.
+ * Unlike a grammar-approved query_sql pin, an approved row carries no pin_shape (it is exactly
+ * what a human vouched for, not a shape this file verified itself), so it keeps only the standing
+ * protections every query row has: Gate 2/3 and the executor's own PII and key scans.
+ */
+export async function approveInsightTool(db: D1Database, id: string, rawBody: unknown, correctPassword: string): Promise<Tile> {
+  const body = bodyObject(rawBody, ['password', 'name', 'note'])
+  for (const field of ['password', 'name', 'note'] as const) {
+    if (typeof body[field] !== 'string' || (body[field] as string).trim() === '') throw invalidBody([`${field} is required`])
+  }
+  const { password, name, note } = body as { password: string; name: string; note: string }
+  // Constant-time, like SITE_PASSWORD at login (worker/auth/login.ts): a `!==` compare here would
+  // let a timing attack find TOOL_APPROVAL one byte at a time (09 D-64b finding).
+  if (!constantTimeStringEq(password, correctPassword)) {
+    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'wrong_approval_password', tool: id }))
+    throw new ApiError(403, 'wrong_password', 'That password is not correct.')
+  }
+  const row = await db
+    .prepare('SELECT id, name, requested_from_trace, enabled FROM assistant_tools WHERE id = ?')
+    .bind(id)
+    .first<{ id: string; name: string; requested_from_trace: string | null; enabled: number }>()
+  if (row === null || row.requested_from_trace === null || row.enabled === 1) {
+    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'approval_not_found', id }))
+    throw new ApiError(404, 'not_found', 'There is no pending approval with this id.')
+  }
+
+  const prompt = await tracePrompt(db, row.requested_from_trace)
+  const title = prompt !== null ? defaultTitle(prompt) : row.name
+  await assertStorable(db, { title, question: prompt })
+  const max = await db.prepare('SELECT coalesce(max(sort_order), 0) AS m FROM insights').first<number>('m')
+  const newRow: InsightRow = {
+    id: crypto.randomUUID(),
+    title,
+    prompt,
+    tool: row.name,
+    tool_version: INSIGHT_PARAMS_VERSION,
+    params: '{}',
+    chart: null,
+    sort_order: Math.min((max ?? 0) + 10, SORT_ORDER_MAX),
+    built_in: 0,
+    created_at: new Date().toISOString(),
+  }
+
+  // Run the tile FIRST, while the row stays disabled on every other reader (listApprovals,
+  // loadTools' model-facing set): runTile only finds a tool through the enabled rows loadTools
+  // selects, so this flips `enabled` just long enough to try it, and reverts on any failure
+  // before this function returns — never leaving an approved-but-untested row enabled with no
+  // tile to show for it (09 D-64b finding: a 400 not_aggregate first run still left enabled=1).
+  await db.prepare("UPDATE assistant_tools SET enabled = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").bind(id).run()
+  let stored = false
+  try {
+    const ctx = await openContext(db)
+    const { tile, code, details } = await runTile(ctx, newRow)
+    if (code === 'not_aggregate') throw new ApiError(400, 'not_aggregate', tile.error ?? 'The board shows counts only.')
+    if (code === 'blocked_pii') throw new ApiError(400, 'blocked_pii', 'This answer cannot be pinned: its result failed the personal-data check.')
+    if (code === 'tile_failed' || code === 'query_failed') throw new ApiError(500, 'internal_error', PIN_FAILED_MESSAGE)
+    if (code !== null) {
+      console.warn(JSON.stringify({ at: 'insights-board', outcome: 'approved_first_run_refused', code }))
+      throw new ApiError(400, 'invalid_pin', 'This query was approved but does not run today.', details.length > 0 ? [...details] : undefined)
+    }
+    // Only now, with a tile to show for it, does the row become a standing enabled tool and the
+    // approval get recorded: metadata and the stored insight go together, in the same success path.
+    const metadata = JSON.stringify({ approval: { by: name, note, approved_at: new Date().toISOString() } })
+    await db.prepare("UPDATE assistant_tools SET metadata = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").bind(metadata, id).run()
+    await db
+      .prepare(
+        `INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(newRow.id, newRow.title, newRow.prompt, newRow.tool, newRow.tool_version, newRow.params, newRow.chart, newRow.sort_order, newRow.built_in, newRow.created_at)
+      .run()
+    stored = true
+    // Audited (09 D-64b "name + note required, audited"): who approved which row and why, never the password.
+    console.warn(JSON.stringify({ at: 'insights-board', outcome: 'tool_approved', tool: row.name, by: name, note }))
+    return tile
+  } finally {
+    if (!stored) await db.prepare('UPDATE assistant_tools SET enabled = 0 WHERE id = ?').bind(id).run()
+  }
+}
+
 /**
  * POST /api/insights {audit_id, title?} → the new tile (04, 09 D-64). A server-side failure (a
  * database error, a failed audit write) is logged and answered with one plain retry sentence,
@@ -761,51 +1068,96 @@ async function pin(db: D1Database, rawBody: unknown): Promise<Tile> {
     console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'nothing_to_pin' }))
     throw new ApiError(409, 'nothing_to_pin', 'This answer did not come from a data tool, so there is nothing to pin.')
   }
-  const { tool_name: toolName, input } = call
-  // Only fixed-SQL lookups are pinned (09 D-64a), checked against the enabled assistant_tools rows only.
-  const tools = await assistantTools(db)
-  const refusal = pinRefusal(tools, toolName)
-  if (refusal !== null) {
-    console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'not_pinnable', tool_name: toolName }))
-    throw new ApiError(400, 'not_pinnable', refusal)
+  let { tool_name: toolName, input } = call
+  let pinShape: PinnableShape | null = null
+  // Set only when this call itself inserted a fresh wrapped row (wrapQuerySql `created: true`):
+  // the one case where this call, and no earlier pin of the same trace, is responsible for
+  // cleaning it up if nothing below ends up stored (09 D-64b finding: an orphan enabled tool,
+  // model-visible until this fix, left behind by a failed first run).
+  let wrappedToolId: string | null = null
+
+  if (toolName === 'query_sql') {
+    // D-64b: a free-form query_sql answer pins only when its SQL passes the positive grammar.
+    // The literal query_sql tool never itself becomes a stored tile (NEVER_PINNED); instead its
+    // SQL is wrapped as its own new `query`-type assistant_tools row (wrapQuerySql), the same
+    // shape the Growth team's own rows take (09 D-41), so every later run goes through the
+    // ordinary query-row path with no query_sql special case anywhere else in this file.
+    const sql = call.sql
+    const classified = sql === null ? null : classifyPinnableSql(sql)
+    if (classified === null || !classified.ok) {
+      await requestApproval(db, traceId, sql ?? '')
+      console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'not_pinnable', tool_name: toolName, request_approval: true }))
+      throw new ApiError(400, 'not_pinnable', REQUEST_APPROVAL_MESSAGE, classified === null ? undefined : classified.problems)
+    }
+    pinShape = classified
+    const wrapped = await wrapQuerySql(db, traceId, sql!)
+    toolName = wrapped.name
+    if (wrapped.created) wrappedToolId = wrapped.id
+    input = {}
   }
 
-  const prompt = await tracePrompt(db, traceId)
-  const title = body.title !== undefined ? checkedTitle(body.title) : prompt !== null ? defaultTitle(prompt) : null
-  if (title === null) throw invalidBody(['title is required: this trace has no question to name the tile after'])
+  try {
+    // Only fixed-SQL lookups are pinned (09 D-64a, D-64b), checked against the enabled assistant_tools rows only.
+    const tools = await assistantTools(db)
+    const refusal = pinRefusal(tools, toolName)
+    if (refusal !== null) {
+      console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'not_pinnable', tool_name: toolName }))
+      throw new ApiError(400, 'not_pinnable', refusal)
+    }
 
-  const params = storedParams(input, TODAY)
-  const problems = revalidate(tools, toolName, callInput(params, TODAY).input)
-  if (problems.length > 0) {
-    console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'revalidation_failed', problems }))
-    throw new ApiError(400, 'invalid_pin', 'This answer can no longer be pinned: its saved tool call does not pass today’s checks.', problems)
-  }
-  await assertStorable(db, { title, question: prompt, 'saved input': params })
+    const prompt = await tracePrompt(db, traceId)
+    const title = body.title !== undefined ? checkedTitle(body.title) : prompt !== null ? defaultTitle(prompt) : null
+    if (title === null) throw invalidBody(['title is required: this trace has no question to name the tile after'])
 
-  const max = await db.prepare('SELECT coalesce(max(sort_order), 0) AS m FROM insights').first<number>('m')
-  const row: InsightRow = {
-    id: crypto.randomUUID(),
-    title,
-    prompt,
-    tool: toolName,
-    tool_version: INSIGHT_PARAMS_VERSION,
-    params: JSON.stringify(params),
-    chart: null,
-    // A new tile goes last; sort_order is bounded (SORT_ORDER_MAX), so this stays a safe integer.
-    sort_order: Math.min((max ?? 0) + 10, SORT_ORDER_MAX),
-    built_in: 0,
-    // Wall clock: when the tile was pinned (02 §Time allow-list, `insights.created_at`; 09 D-64).
-    created_at: new Date().toISOString(),
+    let params = storedParams(input, TODAY)
+    if (pinShape !== null) {
+      params = {
+        ...params,
+        pin_shape: pinShape.shape,
+        ...(pinShape.shape === 'totals' ? { count_columns: pinShape.countColumns, dimension_columns: pinShape.dimensionColumns } : { identifier_column: pinShape.identifierColumn }),
+      }
+    }
+    const problems = revalidate(tools, toolName, callInput(params, TODAY).input)
+    if (problems.length > 0) {
+      console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'revalidation_failed', problems }))
+      throw new ApiError(400, 'invalid_pin', 'This answer can no longer be pinned: its saved tool call does not pass today’s checks.', problems)
+    }
+    await assertStorable(db, { title, question: prompt, 'saved input': params })
+
+    const max = await db.prepare('SELECT coalesce(max(sort_order), 0) AS m FROM insights').first<number>('m')
+    const row: InsightRow = {
+      id: crypto.randomUUID(),
+      title,
+      prompt,
+      tool: toolName,
+      tool_version: INSIGHT_PARAMS_VERSION,
+      params: JSON.stringify(params),
+      chart: null,
+      // A new tile goes last; sort_order is bounded (SORT_ORDER_MAX), so this stays a safe integer.
+      sort_order: Math.min((max ?? 0) + 10, SORT_ORDER_MAX),
+      built_in: 0,
+      // Wall clock: when the tile was pinned (02 §Time allow-list, `insights.created_at`; 09 D-64).
+      created_at: new Date().toISOString(),
+    }
+    const ctx = await openContext(db)
+    const { tile, code, details } = await runTile(ctx, row)
+    return await finishPin(db, row, tile, code, details)
+  } catch (err) {
+    // Nothing was stored: a wrapped row this call itself created is never left behind, enabled
+    // and model-visible, with no tile to show for it (09 D-64b finding).
+    if (wrappedToolId !== null) await db.prepare('DELETE FROM assistant_tools WHERE id = ?').bind(wrappedToolId).run()
+    throw err
   }
-  const ctx = await openContext(db)
-  const { tile, code, details } = await runTile(ctx, row)
-  // Fail safe: a tile whose first run fails is never stored (04).
+}
+
+/** The outcome of a tile's first run (`pin`, `approveInsightTool`): stored only on success, fail safe otherwise (04). */
+async function finishPin(db: D1Database, row: InsightRow, tile: Tile, code: RunOutcome['code'], details: RunOutcome['details']): Promise<Tile> {
   if (code === 'not_aggregate') throw new ApiError(400, 'not_aggregate', tile.error ?? 'The board shows counts only.')
   if (code === 'blocked_pii') throw new ApiError(400, 'blocked_pii', 'This answer cannot be pinned: its result failed the personal-data check.')
   // runTile logged the reason (09 D-64a: a database failure is a 500 with a plain retry sentence).
   if (code === 'tile_failed' || code === 'query_failed') throw new ApiError(500, 'internal_error', PIN_FAILED_MESSAGE)
   if (code !== null) {
-    console.warn(JSON.stringify({ at: 'insights-board', trace_id: traceId, outcome: 'first_run_refused', code }))
+    console.warn(JSON.stringify({ at: 'insights-board', insight_id: row.id, outcome: 'first_run_refused', code }))
     throw new ApiError(400, 'invalid_pin', 'This answer can no longer be pinned: its saved lookup does not run today.', details.length > 0 ? [...details] : undefined)
   }
   await db
@@ -855,8 +1207,9 @@ export async function pinPeriod(
 ): Promise<{ window: ResolvedWindow | null; own_dates: { from: string; to: string } | null; refusal: string | null }> {
   const call = await pinnableCall(db, traceId)
   if (call === null) return { window: null, own_dates: null, refusal: null }
-  // The same refusal POST /api/insights gives (09 D-64a): the card then offers no Pin and says why.
-  const refusal = pinRefusal(await assistantTools(db), call.tool_name)
+  // The same refusal POST /api/insights gives (09 D-64a, D-64b): the card then offers no Pin (or,
+  // for a free-form query that fails the grammar, a Request-approval refusal) and says why.
+  const refusal = pinRefusal(await assistantTools(db), call.tool_name, call.sql)
   if (refusal !== null) return { window: null, own_dates: null, refusal }
   if (Object.hasOwn(call.input, 'window')) return { window: null, own_dates: null, refusal: null }
   const window = callInput(storedParams(call.input, TODAY), TODAY).window

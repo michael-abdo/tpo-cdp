@@ -19,6 +19,9 @@ export interface AuditEntry {
   model?: string | null
   tokens_in?: number | null
   tokens_out?: number | null
+  /** 09 D-74 (migration 0008): the usage meters a prompt-cached call reports; 0 or NULL on a cold call. */
+  cache_read_tokens?: number | null
+  cache_write_tokens?: number | null
   /** model_request: the exact payload sent, after `assertNoPII`. */
   request_json?: unknown
   response_json?: unknown
@@ -111,8 +114,9 @@ export class AuditTrace {
       const result = await this.db
         .prepare(
           `INSERT INTO ai_audit (id, trace_id, kind, tool_name, status, latency_ms, model, tokens_in, tokens_out,
-                                 request_json, response_json, sql, row_count, error, created_at, session_sub, client_key)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                 request_json, response_json, sql, row_count, error, created_at, session_sub, client_key,
+                                 cache_read_tokens, cache_write_tokens)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           id,
@@ -132,6 +136,8 @@ export class AuditTrace {
           createdAt,
           this.sessionSub,
           this.clientKey,
+          entry.cache_read_tokens ?? null,
+          entry.cache_write_tokens ?? null,
         )
         .run()
       if (result.meta.changes !== 1) throw new Error(`expected 1 row written, D1 reported ${result.meta.changes}`)

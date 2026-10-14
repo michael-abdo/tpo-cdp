@@ -372,10 +372,22 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
   it('names every missing binding and secret in one error', () => {
     expect(() =>
       assertBindings(
-        envWithout('DB', 'WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET', 'LOGIN_LIMITER', 'WEBHOOK_LIMITER', 'ASSISTANT_LIMITER', 'EXPORT_LIMITER', 'TEST_EVENT_LIMITER'),
+        envWithout(
+          'DB',
+          'WEBHOOK_SECRET',
+          'PII_KEY_SECRET',
+          'SITE_PASSWORD',
+          'SESSION_SECRET',
+          'LOGIN_LIMITER',
+          'WEBHOOK_LIMITER',
+          'ASSISTANT_LIMITER',
+          'EXPORT_LIMITER',
+          'TEST_EVENT_LIMITER',
+          'APPROVAL_LIMITER',
+        ),
       ),
     ).toThrow(
-      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER, TEST_EVENT_LIMITER',
+      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER, TEST_EVENT_LIMITER, APPROVAL_LIMITER',
     )
   })
 

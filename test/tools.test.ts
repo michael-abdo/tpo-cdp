@@ -61,6 +61,7 @@ function toolRow(seed: ToolSeed): ToolRow {
     handler_type: seed.handlerType,
     execution_config: JSON.stringify(seed.executionConfig),
     sort_order: seed.sortOrder,
+    metadata: null,
   }
 }
 

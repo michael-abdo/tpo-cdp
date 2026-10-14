@@ -14,7 +14,7 @@ import { InsightChart } from '../../src/insights/charts'
 import type { ChartResult, ChartSegment } from '../../src/insights/shapes'
 import type { AssistantResponse, InsightTile } from '../../src/types'
 import { parseCsv } from '../../worker/ingest/csv'
-import { NOT_PINNABLE_MESSAGE } from '../../shared/insight-messages'
+import { NOT_PINNABLE_MESSAGE, REQUEST_APPROVAL_OFFER_MESSAGE } from '../../shared/insight-messages'
 
 // /insights (06 §/insights, 09 D-64) rendered with React's server renderer, the way
 // test/ui/assistant-result.test.ts renders the answer card: the answer card offers "Pin to board",
@@ -317,6 +317,30 @@ describe('answers and tiles that cannot be pinned or run say so in plain words (
     expect(html).not.toContain('aria-haspopup="dialog"')
     expect(html).not.toContain('<dialog')
     expect(text).not.toContain('Pin to board')
+    expect(text).not.toContain('Request approval')
+  })
+
+  it('a query_sql answer that fails the D-64b grammar offers "Request approval" instead of hiding Pin outright, and never claims the queue already happened (09 D-64b finding)', () => {
+    const data: AssistantResponse = {
+      type: 'answer',
+      text: 'Here is the table you asked for.',
+      table: { columns: ['source', 'n'], rows: [{ source: 'instagram', n: 10 }] },
+      segment: null,
+      window: null,
+      filters_applied: {},
+      definitions_used: [],
+      partial: false,
+      audit_id: crypto.randomUUID(),
+      pin_window: null,
+      pin_own_dates: null,
+      pin_refusal: REQUEST_APPROVAL_OFFER_MESSAGE,
+    }
+    const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
+    expect(html).toContain('>Request approval</button>')
+    expect(text).not.toContain('Pin to board')
+    // The offer, not the "has been sent" sentence: nothing has been queued by rendering the card.
+    expect(text).toContain(REQUEST_APPROVAL_OFFER_MESSAGE)
+    expect(text).not.toContain("has been sent to the Growth team's approval list")
   })
 
   it('a pin error has a next step for invalid_pin, not_pinnable and internal_error', () => {

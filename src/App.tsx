@@ -121,13 +121,20 @@ function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desk
         hidden={!open}
         className={
           variant === 'desktop'
-            ? 'absolute top-full right-0 z-30 mt-1 flex w-[200px] max-w-[calc(100vw-2rem)] flex-col gap-0.5 rounded-lg border border-line-strong bg-surface p-1 shadow-soft'
+            ? 'absolute top-full right-0 z-30 mt-1 flex w-max max-w-[calc(100vw-2rem)] flex-col gap-0.5 rounded-lg border border-line-strong bg-surface p-1 shadow-soft'
             : 'mt-0.5 flex flex-col gap-0.5 pl-6'
         }
       >
         {group.items.map((item) => (
           <li key={item.to}>
-            <NavLink to={item.to} className={navClass} onClick={() => setOpen(false)}>
+            <NavLink
+              to={item.to}
+              // The panel sizes to its content (w-max above); each link still fills that width, so
+              // hover/current fills land edge-to-edge instead of hugging the icon+label (desktop
+              // panel only — top-level nav items keep navClass as-is, per-link, un-widened).
+              className={(state) => (variant === 'desktop' ? `${navClass(state)} w-full` : navClass(state))}
+              onClick={() => setOpen(false)}
+            >
               <Icon icon={item.icon} />
               {item.label}
             </NavLink>

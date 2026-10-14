@@ -75,7 +75,13 @@ export function buildModelRequest(input: ModelRequestInput): Anthropic.MessageCr
   return {
     model: MODEL,
     max_tokens: MAX_TOKENS,
-    system: renderSystemPrompt(input.views),
+    // 09 D-74 / design 20 §3 R1: the system prompt as one text block with an ephemeral cache
+    // breakpoint, so tools + system (rendered before it, see module header) are served from
+    // Anthropic's prompt cache on every call within the 5-minute TTL. The bytes the model reads
+    // are unchanged (pii.test.ts "buildModelRequest is pure"); no marker on a tool (T-AI-1 pins
+    // tools verbatim) and no top-level cache_control (it would land on the unique tail and pay a
+    // write per call).
+    system: [{ type: 'text', text: renderSystemPrompt(input.views), cache_control: { type: 'ephemeral' } }],
     tools: input.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.input_schema })),
     messages,
   }

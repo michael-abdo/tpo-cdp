@@ -115,16 +115,34 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     }
 
     await guardPayload(input.trace, response.content, 'model_output')
+    // 09 D-74 (design 20 §3 R2): cache_read_input_tokens / cache_creation_input_tokens are prompt
+    // tokens too (R1 put a cache breakpoint in the system block), so tokens_in keeps meaning "the
+    // total prompt tokens sent" — unchanged on a cold call, where both meters are 0 or absent.
+    const cacheRead = response.usage.cache_read_input_tokens ?? 0
+    const cacheWrite = response.usage.cache_creation_input_tokens ?? 0
     await input.trace.write({
       kind: 'model_request',
       status: 'success',
       model: response.model,
       latency_ms: Date.now() - started,
-      tokens_in: response.usage.input_tokens,
+      tokens_in: response.usage.input_tokens + cacheRead + cacheWrite,
       tokens_out: response.usage.output_tokens,
+      cache_read_tokens: cacheRead,
+      cache_write_tokens: cacheWrite,
       request_json: request,
       response_json: { stop_reason: response.stop_reason, content: response.content },
     })
+    console.log(
+      JSON.stringify({
+        at: 'loop',
+        trace_id: input.trace.traceId,
+        call,
+        input_tokens: response.usage.input_tokens,
+        cache_read_tokens: cacheRead,
+        cache_write_tokens: cacheWrite,
+        tokens_out: response.usage.output_tokens,
+      }),
+    )
 
     const uses = response.content.filter((block): block is Anthropic.ToolUseBlock => block.type === 'tool_use')
     if (response.stop_reason !== 'tool_use' || uses.length === 0) {

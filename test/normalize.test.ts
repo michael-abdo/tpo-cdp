@@ -106,6 +106,7 @@ describe('T-NORM-3 single implementation', () => {
     '../src/insights/pin-dialog.tsx': 'a time period preset label',
     '../worker/insights/board.ts': 'pk_ key hex digits, hex runs in result text, SQL column names, a preset label',
     '../worker/insights/going-cold.ts': 'the first letter of a definition sentence',
+    '../worker/insights/pin-grammar.ts': 'SQL column, function and alias names of a pinned query_sql SQL (09 D-64b)',
   }
   const LOWERCASE_CALL = /\.(?:toLowerCase|toLocaleLowerCase)\s*\(/
 
