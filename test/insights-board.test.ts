@@ -9,7 +9,11 @@ import {
   BLOCKED_TILE_TITLE,
   INSIGHT_PARAMS_VERSION,
   KEY_PIECE_CHARS,
+  keyProjectionProblems,
+  loadKnownKeys,
+  namesASubject,
   NOT_PINNABLE_MESSAGE,
+  NOT_PINNABLE_OTHER_MESSAGE,
   PIN_FAILED_MESSAGE,
   SORT_ORDER_MAX,
   TILE_RUN_FAILED_MESSAGE,
@@ -297,11 +301,18 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     await env.DB.prepare("UPDATE assistant_tools SET input_schema = ? WHERE name = 'aggregate'").bind(JSON.stringify(schema)).run()
     try {
       const before = await env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')
+      const auditBefore = await env.DB.prepare('SELECT coalesce(max(rowid), 0) AS r FROM ai_audit').first<number>('r')
       const res = await api('', { method: 'POST', body: { audit_id: auditId } })
       expect(res.status).toBe(400)
-      const body = await res.json<{ error: string; details: string[] }>()
+      const body = await res.json<{ error: string; message: string; details: string[] }>()
       expect(body.error).toBe('invalid_pin')
+      // The pin's own re-validation refused it, before any run: its sentence, not the first run's, and
+      // no blocked audit row (a run would have reached the executor's Gate 2 and written one).
+      expect(body.message).toBe('This answer can no longer be pinned: its saved tool call does not pass today’s checks.')
       expect(body.details).toContain('input_schema: input has unknown property "window_from"')
+      expect(
+        await env.DB.prepare("SELECT count(*) AS n FROM ai_audit WHERE rowid > ? AND kind = 'blocked'").bind(auditBefore).first<number>('n'),
+      ).toBe(0)
       expect(await env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')).toBe(before)
     } finally {
       await env.DB.prepare("UPDATE assistant_tools SET input_schema = ? WHERE name = 'aggregate'").bind(original).run()
@@ -340,6 +351,51 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'not_pinnable', message: NOT_PINNABLE_MESSAGE })
     expect(await tileCount()).toBe(before)
+
+    // With the query_sql row turned off, its answer is still not_pinnable with the D-64a sentence,
+    // never re-validated into invalid_pin: the refusal is by name, not by the loaded row.
+    const offAnswer = await askAnswer('how many Instagram signups went cold last month?', [
+      { name: 'query_sql', input: { sql: WENT_COLD_AUGUST_SQL, explanation } },
+    ])
+    await env.DB.prepare("UPDATE assistant_tools SET enabled = 0 WHERE name = 'query_sql'").run()
+    try {
+      const offRes = await api('', { method: 'POST', body: { audit_id: offAnswer.audit_id } })
+      expect(offRes.status).toBe(400)
+      expect(await offRes.json()).toEqual({ error: 'not_pinnable', message: NOT_PINNABLE_MESSAGE })
+      expect(await tileCount()).toBe(before)
+    } finally {
+      await env.DB.prepare("UPDATE assistant_tools SET enabled = 1 WHERE name = 'query_sql'").run()
+    }
+    expect(offAnswer.pin_refusal).toBe(NOT_PINNABLE_MESSAGE)
+  })
+
+  it('only segment and aggregate among the builtins pin: describe_schema and every other builtin is 400 not_pinnable', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // A real input for each builtin that is not a count or a segment; a new builtin fails here until it is listed.
+    const inputs: Record<string, unknown> = {
+      query_sql: { sql: WENT_COLD_AUGUST_SQL, explanation: 'Instagram active subscribers whose cold_since is in August' },
+      describe_schema: {},
+    }
+    const others = Object.keys(BUILTIN_HANDLERS).filter((name) => name !== 'segment' && name !== 'aggregate')
+    expect(others.sort()).toEqual(Object.keys(inputs).sort())
+    for (const name of others) {
+      const answer = await askAnswer('what data can you see?', [{ name, input: inputs[name] }])
+      // The answer itself ran (a real successful tool call), so only D-64a stops the pin.
+      const call = await env.DB.prepare("SELECT tool_name FROM ai_audit WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'")
+        .bind(answer.audit_id)
+        .first<string>('tool_name')
+      expect(call).toBe(name)
+      // D-64a's sentence is about free-form queries; a schema answer gets a sentence that is true of it.
+      const message = name === 'query_sql' ? NOT_PINNABLE_MESSAGE : NOT_PINNABLE_OTHER_MESSAGE
+      expect(answer.pin_refusal, name).toBe(message)
+      expect(answer.pin_window).toBeNull()
+      const before = await tileCount()
+      const res = await api('', { method: 'POST', body: { audit_id: answer.audit_id } })
+      expect(res.status, name).toBe(400)
+      expect(await res.json()).toEqual({ error: 'not_pinnable', message })
+      expect(await tileCount()).toBe(before)
+    }
+    expect(NOT_PINNABLE_OTHER_MESSAGE).toBe('Only counts, segments and saved question types can be pinned, and this answer is none of them.')
   })
 
   it('an aggregate trace whose went-cold call lost its window is 400 invalid_pin on its first run; nothing is stored', async () => {
@@ -521,7 +577,34 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     }
   })
 
-  it('a stored query-type tile whose params drifted is re-checked by Gate 2 / Gate 3 on every board run', async () => {
+  it('tiles that name an assistant tool say so plainly when the tool rows cannot load; the loader’s words are only in Technical details', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    const enabled = (await env.DB.prepare('SELECT name FROM assistant_tools WHERE enabled = 1').all<{ name: string }>()).results.map((r) => r.name)
+    expect(enabled.length).toBeGreaterThan(0)
+    // No enabled row: the loader refuses (no_tools), and only the tiles that need a row fail.
+    await env.DB.prepare('UPDATE assistant_tools SET enabled = 0').run()
+    try {
+      const res = await api('')
+      expect(res.status).toBe(200)
+      const { tiles } = await res.json<{ tiles: Tile[] }>()
+      const failed = tiles.find((t) => t.id === tile.id)!
+      expect(failed).toMatchObject({
+        status: 'error',
+        result: null,
+        error: 'The data tools are not set up right now, so this tile cannot run. Technical details say why.',
+      })
+      expect(failed.error).not.toMatch(/tools:seed|assistant_tools|execution_config/)
+      expect(failed.error_details).toMatch(/\S/)
+      expect(tiles.filter((t) => t.built_in).every((t) => t.status === 'ok')).toBe(true)
+    } finally {
+      for (const name of enabled) await env.DB.prepare('UPDATE assistant_tools SET enabled = 1 WHERE name = ?').bind(name).run()
+      await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+    }
+  })
+
+  it('a stored query-type tile whose params drifted is re-checked by Gate 2 on every board run; a row drifted to query_sql never runs', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const tile = await pin({ audit_id: await askRecorded('which pages do new subscribers hit first?', [{ name: QUERY_ROW, input: {} }]) })
@@ -529,33 +612,46 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     const chained = 'SELECT count(*) AS n FROM v_profiles; SELECT count(*) AS n FROM v_web_events'
     // Copies of the real row whose stored params now carry SQL: the query row's input takes none (Gate 2).
     const asQueryRow = [await insertCopy(tile.id, { sql: rawTable }, 'Drifted to raw-table SQL'), await insertCopy(tile.id, { sql: chained }, 'Drifted to chained SQL')]
-    // Copies whose tool also drifted to query_sql, which runs the SQL it is given: Gate 2's view check, then Gate 3.
+    // Copies whose tool also drifted to query_sql: refused before the executor (09 D-64a), whether or
+    // not their SQL would pass the gates (the last one does, and would show a number if it ran).
     const asQuerySql = [
       await insertCopy(tile.id, { sql: rawTable, explanation: 'drift' }, 'Drifted to query_sql over a table'),
       await insertCopy(tile.id, { sql: chained, explanation: 'drift' }, 'Drifted to chained query_sql'),
+      await insertCopy(tile.id, { sql: WENT_COLD_AUGUST_SQL, explanation: 'drift' }, 'Drifted to gate-passing query_sql'),
     ]
     for (const id of asQuerySql) await env.DB.prepare("UPDATE insights SET tool = 'query_sql' WHERE id = ?").bind(id).run()
-    const drifted = [...asQueryRow, ...asQuerySql]
+    // A pinned row drifted to the board's own tool: insight_panel runs only on a built-in tile.
+    const asPanel = await insertCopy(tile.id, { panel: 'funnel' }, 'Drifted to insight_panel')
+    await env.DB.prepare("UPDATE insights SET tool = 'insight_panel' WHERE id = ?").bind(asPanel).run()
+    const drifted = [...asQueryRow, ...asQuerySql, asPanel]
     try {
       for (const run of [1, 2]) {
         const before = await env.DB.prepare('SELECT coalesce(max(rowid), 0) AS r FROM ai_audit').first<number>('r')
-        const { tiles } = await board()
+        const res = await api('')
+        expect(res.status).toBe(200)
+        const { tiles } = await res.json<{ tiles: Tile[] }>()
         for (const id of drifted) {
           const t = tiles.find((x) => x.id === id)!
-          expect(t, `run ${run}`).toMatchObject({ status: 'error', result: null, segment: null })
+          expect(t, `run ${run}`).toMatchObject({ status: 'error', result: null, segment: null, sql: null })
           // Level 1 is a plain sentence; the gates' problems are only in Technical details (09 D-64a).
           expect(t.error).toBe('This tile’s saved lookup no longer passes today’s checks, so it cannot run. Technical details say why.')
           expect(t.error_details).toMatch(/\S/)
         }
+        for (const id of asQuerySql) expect(tiles.find((x) => x.id === id)!.error_details).toContain('query_sql is not a tool a tile may run')
+        expect(tiles.find((x) => x.id === asPanel)!.error_details).toBe('insight_panel runs only on a built-in tile')
+        expect(tiles.filter((t) => !drifted.includes(t.id)).every((t) => t.status === 'ok')).toBe(true)
         expect(await env.DB.prepare('SELECT count(*) AS n FROM insights WHERE id = ?').bind(tile.id).first<number>('n')).toBe(1)
-        // Every run re-checks every drifted tile: one blocked audit row each, naming the gate.
-        const blocked = (
-          await env.DB.prepare("SELECT error FROM ai_audit WHERE rowid > ? AND kind = 'blocked' ORDER BY rowid").bind(before).all<{ error: string }>()
-        ).results.map((r) => r.error)
-        expect(blocked, `run ${run}`).toHaveLength(drifted.length)
-        expect(blocked.filter((e) => e.startsWith('gate2_denied: input_schema: input has unknown property "sql"'))).toHaveLength(2)
-        expect(blocked.some((e) => e.startsWith('gate2_denied: ') && e.includes('subscribers is not one of the views'))).toBe(true)
-        expect(blocked.some((e) => e.startsWith('gate3_denied: '))).toBe(true)
+        // Every run re-checks every drifted query-row tile: one blocked audit row each, naming the gate.
+        // The query_sql and insight_panel rows never reach the executor, so they run nothing and write no call.
+        const rows = (
+          await env.DB.prepare("SELECT kind, tool_name, error FROM ai_audit WHERE rowid > ? AND kind IN ('blocked', 'tool_call') ORDER BY rowid")
+            .bind(before)
+            .all<{ kind: string; tool_name: string | null; error: string | null }>()
+        ).results
+        const blocked = rows.filter((r) => r.kind === 'blocked').map((r) => r.error)
+        expect(blocked, `run ${run}`).toHaveLength(asQueryRow.length)
+        expect(blocked.every((e) => e?.startsWith('gate2_denied: input_schema: input has unknown property "sql"'))).toBe(true)
+        expect(rows.some((r) => r.tool_name === 'query_sql')).toBe(false)
       }
     } finally {
       for (const id of [...drifted, tile.id]) await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(id).run()
@@ -613,6 +709,31 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     }
   })
 
+  it('a stored row whose params are not a JSON object or whose window is invalid is that tile’s plain error; the board answers 200', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
+    const params = JSON.parse((await stored(tile.id))!.params) as Record<string, unknown>
+    // Copies of the real row (09 D-47): one with a window the board does not know, one whose params is a JSON array.
+    const badWindow = await insertCopy(tile.id, { ...params, window: { rolling: 'bogus' } }, 'Drifted window')
+    const notObject = await insertCopy(tile.id, params, 'Drifted params shape')
+    await env.DB.prepare('UPDATE insights SET params = ? WHERE id = ?').bind(JSON.stringify([params]), notObject).run()
+    try {
+      const res = await api('')
+      expect(res.status).toBe(200)
+      const { tiles } = await res.json<{ tiles: Tile[] }>()
+      for (const id of [badWindow, notObject]) {
+        const t = tiles.find((x) => x.id === id)!
+        expect(t, id).toMatchObject({ status: 'error', result: null, segment: null, error: TILE_RUN_FAILED_MESSAGE })
+        // The server's own words for the failure stay in its log: never "insights-board:" or an Error name at level 1.
+        expect(t.error).not.toMatch(/insights-board|Error|window\.rolling/)
+      }
+      expect(tiles.filter((t) => t.id !== badWindow && t.id !== notObject).every((t) => t.status === 'ok')).toBe(true)
+    } finally {
+      for (const id of [badWindow, notObject, tile.id]) await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(id).run()
+    }
+  })
+
   it('a failed audit write fails the request (500), never a tile error; a pin then stores nothing (04, 03 row 11)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -622,10 +743,13 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     try {
       const get = await api('')
       expect(get.status).toBe(500)
-      expect((await get.json<{ error: string }>()).error).toBe('internal_error')
+      const getBody = await get.json<{ error: string; message: string }>()
+      expect(getBody.error).toBe('internal_error')
+      // The raw server text (the error's name, the trigger's message) stays in the log, never in the response.
+      expect(getBody.message).not.toMatch(/AuditWriteError|audit down/)
       const post = await api('', { method: 'POST', body: { audit_id: auditId } })
       expect(post.status).toBe(500)
-      expect((await post.json<{ error: string }>()).error).toBe('internal_error')
+      expect(await post.json()).toEqual({ error: 'internal_error', message: PIN_FAILED_MESSAGE })
       expect(await tileCount()).toBe(before)
     } finally {
       await env.DB.prepare('DROP TRIGGER audit_down').run()
@@ -840,6 +964,16 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       'SELECT substr(pkey, 1, 12) AS k, signup_date FROM v_profiles LIMIT 5',
       'SELECT substr(visitor_hash, 5, 10) AS v, page FROM v_web_events LIMIT 5',
       `SELECT substr(pkey, 9, ${KEY_PIECE_CHARS}) AS k, count(*) AS n FROM v_profiles GROUP BY k LIMIT 5`,
+      // A key split across cells (7 + 7 + 2) or into dashed groups of 4: no cell holds 8 hex in a row.
+      "SELECT substr(pkey, 4, 7) AS a, substr(pkey, 11, 7) AS b, substr(pkey, 18, 2) AS c FROM v_profiles WHERE source = 'instagram' LIMIT 5",
+      "SELECT substr(pkey, 4, 4) || '-' || substr(pkey, 8, 4) || '-' || substr(pkey, 12, 4) || '-' || substr(pkey, 16, 4) AS k FROM v_profiles LIMIT 5",
+      // A key spelled as numbers (each hex digit's place in '0123456789abcdef'): no string cell holds
+      // it, so only the check on the SQL (a key selected other than as count(DISTINCT …)) refuses it.
+      "SELECT instr('0123456789abcdef', substr(pkey, 4, 1)) AS d1, instr('0123456789abcdef', substr(pkey, 5, 1)) AS d2, " +
+        "instr('0123456789abcdef', substr(pkey, 6, 1)) AS d3 FROM v_profiles LIMIT 5",
+      // A key column with no rows at all still names subscribers: the column is refused, not its cells.
+      "SELECT * FROM v_profiles WHERE source = 'instagram' AND signup_date > '2999-01-01'",
+      "SELECT * FROM v_web_events WHERE event_ts > '2999-01-01'",
     ]) {
       await withQueryRow(sql, async (name) => {
         const auditId = await askRecorded('list some Instagram subscribers', [{ name, input: {} }])
@@ -849,6 +983,80 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       })
     }
     expect(await tileCount()).toBe(before)
+  })
+
+  it('a query row may select a key only as count(DISTINCT key): checked on its SQL before it runs (04, 09 D-64a)', () => {
+    // Allowed: the seeded query row, distinct counts (any case, qualified), keys outside every SELECT list.
+    const seeded = TOOL_SEEDS.find((t) => t.name === QUERY_ROW)!.executionConfig as { sql: string }
+    for (const sql of [
+      // As the loader holds it: every :name rewritten to ? (09 D-45, tool-loader.ts).
+      seeded.sql.replace(/:\w+/g, '?'),
+      'SELECT source, count(DISTINCT pkey) AS subscribers FROM v_profiles GROUP BY source',
+      'SELECT page, COUNT( distinct w.visitor_hash ) AS visitors FROM v_web_events w GROUP BY page',
+      'SELECT count(*) AS n FROM v_web_events WHERE pkey IS NOT NULL',
+      "SELECT 'pkey' AS word, count(*) AS n FROM v_profiles -- pkey in a comment",
+    ])
+      expect(keyProjectionProblems(sql), sql).toEqual([])
+    // Refused: every other way a key reaches a SELECT list, at any depth.
+    for (const sql of [
+      "SELECT substr(pkey, 4, 7) AS a, substr(pkey, 11, 7) AS b, substr(pkey, 18, 2) AS c FROM v_profiles WHERE source = 'instagram'",
+      "SELECT substr(pkey, 4, 4) || '-' || substr(pkey, 8, 4) AS k FROM v_profiles",
+      'SELECT min(pkey) AS first, count(*) AS n FROM v_profiles',
+      'SELECT p.pkey FROM v_profiles p',
+      'SELECT "PKEY" FROM v_profiles',
+      'SELECT count(DISTINCT pkey || page) AS n FROM v_web_events',
+      'SELECT count(*) AS n FROM (SELECT substr(visitor_hash, 5, 10) AS v FROM v_web_events)',
+      'SELECT (SELECT max(visitor_hash) FROM v_web_events) AS v',
+    ])
+      expect(keyProjectionProblems(sql).length, sql).toBeGreaterThan(0)
+    expect(keyProjectionProblems('SELECT substr(pkey, 4) FROM v_profiles')).toEqual(['pkey is selected other than as count(DISTINCT pkey)'])
+  })
+
+  it('a result naming a key across cells, through separators, or as a bare key column is not an aggregate (namesASubject)', async () => {
+    const keys = await loadKnownKeys(env.DB)
+    // A real subscriber's key and a real visitor's (09 D-47).
+    const pkey = (await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(JOY).first<string>('pkey'))!
+    const visitor = (await env.DB.prepare('SELECT visitor_hash FROM web_visitors WHERE email_norm = ?').bind(JOY).first<string>('visitor_hash'))!
+    const hex = pkey.slice(3)
+    const row = (cells: Record<string, string | number | null>) => ({ columns: Object.keys(cells), rows: [cells] })
+    // The old check read one cell at a time and only unbroken runs: each of these got past it.
+    expect(namesASubject(row({ a: hex.slice(0, 7), b: hex.slice(7, 14), c: hex.slice(14) }), keys)).toBe(true)
+    expect(namesASubject(row({ k: hex.match(/.{4}/g)!.join('-') }), keys)).toBe(true)
+    expect(namesASubject(row({ a: `${hex.slice(0, 4)}-`, n: 3, b: hex.slice(4, 9) }), keys)).toBe(true)
+    expect(namesASubject(row({ v: visitor.slice(3).split('').join(' ') }), keys)).toBe(true)
+    expect(namesASubject({ columns: ['pkey', 'signup_date'], rows: [] }, keys)).toBe(true)
+    expect(namesASubject({ columns: ['n', 'visitor_hash'], rows: [] }, keys)).toBe(true)
+    // An aggregate passes: a category and its numbers, and a page path with a date in it.
+    expect(namesASubject(row({ source: 'instagram', subscribers: 412, rate: 0.1234 }), keys)).toBe(false)
+    expect(namesASubject(row({ first_page: '/stories/2026-08-29', new_subscribers: 4 }), keys)).toBe(false)
+  })
+
+  it('a query row whose result holds a dashed key it did not select is refused at pin (the output check, 04)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // Joy's stored first page drifts to carry her own key in dashed groups of four, as a client-sent
+    // path can (09 D-47: a real row, edited). The query row selects no key, so only the output check sees it.
+    const auditId = await askRecorded('which pages do new subscribers hit first?', [{ name: QUERY_ROW, input: {} }])
+    const original = (
+      await env.DB.prepare('SELECT visitor_hash, first_page FROM web_visitors WHERE email_norm = ?').bind(JOY).all<{ visitor_hash: string; first_page: string | null }>()
+    ).results
+    const drift = await env.DB.prepare(
+      `UPDATE web_visitors SET first_page = '/s/' || (SELECT substr(pkey, 4, 4) || '-' || substr(pkey, 8, 4) || '-' || substr(pkey, 12, 4) || '-' || substr(pkey, 16, 4)
+         FROM profiles WHERE profiles.email_norm = web_visitors.email_norm) WHERE email_norm = ?`,
+    )
+      .bind(JOY)
+      .run()
+    expect(drift.meta.changes).toBeGreaterThan(0)
+    try {
+      const before = await tileCount()
+      const res = await api('', { method: 'POST', body: { audit_id: auditId } })
+      expect(res.status).toBe(400)
+      expect((await res.json<{ error: string }>()).error).toBe('not_aggregate')
+      expect(await tileCount()).toBe(before)
+    } finally {
+      for (const row of original) {
+        await env.DB.prepare('UPDATE web_visitors SET first_page = ? WHERE visitor_hash = ?').bind(row.first_page, row.visitor_hash).run()
+      }
+    }
   })
 
   it('a pin whose first run’s result fails the scanner is 400 blocked_pii, never echoing the email; nothing is stored', async () => {

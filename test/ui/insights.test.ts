@@ -14,6 +14,7 @@ import { InsightChart } from '../../src/insights/charts'
 import type { ChartResult, ChartSegment } from '../../src/insights/shapes'
 import type { AssistantResponse, InsightTile } from '../../src/types'
 import { parseCsv } from '../../worker/ingest/csv'
+import { NOT_PINNABLE_MESSAGE } from '../../shared/insight-messages'
 
 // /insights (06 §/insights, 09 D-64) rendered with React's server renderer, the way
 // test/ui/assistant-result.test.ts renders the answer card: the answer card offers "Pin to board",
@@ -295,7 +296,8 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
 
 describe('answers and tiles that cannot be pinned or run say so in plain words (09 D-64a)', () => {
   it('an answer from free-form SQL has no Pin button; the card says why in the D-64a sentence', () => {
-    const sentence = "Answers written as free-form queries can't be pinned. Ask the Growth team to add this as a saved question type."
+    // The server's sentence (one home, shared/insight-messages.ts), as POST /api/assistant returns it.
+    const sentence = NOT_PINNABLE_MESSAGE
     const data: AssistantResponse = {
       type: 'answer',
       text: '46 active Instagram signups went cold in Aug 1–31, 2026.',

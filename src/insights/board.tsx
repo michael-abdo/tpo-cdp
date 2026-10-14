@@ -33,6 +33,15 @@ const CHOICES: readonly ChartChoice[] = CHART_OVERRIDES
 type Mode = 'list' | 'window' | 'chart' | 'rename' | 'remove'
 type FormMode = Exclude<Mode, 'list'>
 
+/**
+ * A failed tile always carries the server's sentence (04 `error`); one without it is a server bug,
+ * logged loud here rather than covered with a copy of a server sentence.
+ */
+function unexplainedError(id: string): string {
+  console.error(`insights: tile ${id} has status error but no error sentence from the server`)
+  return 'This tile did not run.'
+}
+
 /** Focuses the element once, when the form that holds it opens (06 §UI principles 7). */
 function useFocusOnOpen<T extends HTMLElement>(): RefObject<T | null> {
   const ref = useRef<T>(null)
@@ -463,7 +472,7 @@ function Tile({
       <div className="min-w-0 flex-1">
         {tile.status === 'error' ? (
           // The server's sentence carries its own next step; raw problems sit in Technical details (09 D-64a).
-          <ErrorLine message={tile.error ?? 'This tile could not run right now. Press Refresh to try again.'} />
+          <ErrorLine message={tile.error ?? unexplainedError(tile.id)} />
         ) : (
           <InsightChart kind={tile.chart} result={tile.result ?? { columns: [], rows: [] }} segment={tile.segment} caption={tile.title} />
         )}

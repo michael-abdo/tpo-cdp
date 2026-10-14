@@ -17,7 +17,7 @@ export function pinNext(code: string | null): string | undefined {
     case 'invalid_pin':
       return 'The lookup behind this answer has changed since it was asked. Ask the question again, then pin the new answer.'
     case 'not_pinnable':
-      return 'You can still ask it in other words: an answer that is a count or a segment can be pinned.'
+      return 'You can still ask it in other words: an answer that is a count, a segment or a saved question type can be pinned.'
     case 'internal_error':
       return 'If it fails again, ask the question again and pin the new answer.'
     default:
