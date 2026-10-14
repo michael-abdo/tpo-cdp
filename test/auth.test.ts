@@ -383,11 +383,10 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
           'ASSISTANT_LIMITER',
           'EXPORT_LIMITER',
           'TEST_EVENT_LIMITER',
-          'APPROVAL_LIMITER',
         ),
       ),
     ).toThrow(
-      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER, TEST_EVENT_LIMITER, APPROVAL_LIMITER',
+      'DB, WEBHOOK_SECRET, PII_KEY_SECRET, SITE_PASSWORD, SESSION_SECRET, LOGIN_LIMITER, WEBHOOK_LIMITER, ASSISTANT_LIMITER, EXPORT_LIMITER, TEST_EVENT_LIMITER',
     )
   })
 
@@ -401,6 +400,11 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
     expect(() => assertBindings({ ...env, WEBHOOK_SECRET: '' })).toThrow('WEBHOOK_SECRET')
     expect(() => assertBindings(envWithout('ANTHROPIC_API_KEY'))).not.toThrow()
     expect((await app.fetch(new Request(`${BASE}/health`), envWithout('ANTHROPIC_API_KEY'))).status).toBe(200)
+  })
+
+  it('boots and serves with no TOOL_APPROVAL binding (09 D-77: the approval queue, and its secret, are gone)', async () => {
+    expect(() => assertBindings(envWithout('TOOL_APPROVAL'))).not.toThrow()
+    expect((await app.fetch(new Request(`${BASE}/health`), envWithout('TOOL_APPROVAL'))).status).toBe(200)
   })
 
   it('runs before routing: /health with a missing limiter is 500 naming it', async () => {
