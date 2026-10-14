@@ -21,29 +21,7 @@ import { SOURCES } from '../shared/sources'
 import { COLUMN_LABEL, FILTER_LABEL } from '../src/labels'
 import { FILES } from '../src/needs-review'
 import { VOCABULARY_SCAN } from './helpers/screen-text'
-
-/**
- * Retired anywhere user-facing (06 §Vocabulary, last line). "Reader(s)" stays only inside the brief's
- * own example question; "screen reader" names assistive technology, not a person on the list.
- */
-const RETIRED: readonly { name: string; pattern: RegExp }[] = [
-  { name: 'reader(s)', pattern: /\breaders?\b/i },
-  { name: 'Find a reader', pattern: /\bfind a reader\b/i },
-  { name: 'Build a list', pattern: /\bbuil[dt] a list\b/i },
-  { name: 'Newsletter list', pattern: /\bnewsletter list\b/i },
-  { name: 'App users', pattern: /\bapp users?\b/i },
-]
-/**
- * Phrases that may hold a retired word: the brief's question (R5.2), whole, and assistive technology.
- * Only the full question passes (08 T-VOC-1 "the exact brief question"); "most engaged readers" on its
- * own, as a label or a sentence, is still flagged.
- */
-const ALLOWED = [/build me a list of our most engaged readers/gi, /screen[- ]readers?/gi]
-
-function retiredIn(text: string): string[] {
-  const cleaned = ALLOWED.reduce((t, allowed) => t.replace(allowed, ''), text)
-  return RETIRED.filter((r) => r.pattern.test(cleaned)).map((r) => r.name)
-}
+import { retiredIn } from './helpers/vocabulary'
 
 function offences(files: Record<string, readonly string[]>): string[] {
   const out: string[] = []

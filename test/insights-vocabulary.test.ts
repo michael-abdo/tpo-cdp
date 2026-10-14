@@ -16,6 +16,7 @@ import {
 } from '../worker/insights/board'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
+import { retiredIn } from './helpers/vocabulary'
 
 // T-VOC-1 (08; 09 D-66, 06 §Vocabulary) for the Insights work: every word /insights, its board, its
 // pin dialog and its server sentences can put on screen or hand to Ask is the brief's own. Scope:
@@ -26,22 +27,6 @@ import { seedDatabase } from './helpers/seed'
 // Inputs: the real seeded board (data/*.csv, scripts/tool-seeds.ts) as GET /api/insights sends it,
 // the server's own sentences, the label maps, and the source text of the page's components with
 // comments removed (their JSX text and literals; test/ui/ renders them). No network.
-
-/** Retired anywhere user-facing (06 §Vocabulary, last line). */
-const RETIRED: readonly { name: string; pattern: RegExp }[] = [
-  { name: 'reader(s)', pattern: /\breaders?\b/i },
-  { name: 'Find a reader', pattern: /\bfind a reader\b/i },
-  { name: 'Build a list', pattern: /\bbuil[dt] a list\b/i },
-  { name: 'Newsletter list', pattern: /\bnewsletter list\b/i },
-  { name: 'App users', pattern: /\bapp users?\b/i },
-]
-/** The brief's own question (R5.2) keeps its word; "screen reader" is assistive technology, not a subscriber. */
-const ALLOWED = [/most engaged readers/gi, /screen[- ]readers?/gi]
-
-function retiredIn(text: string): string[] {
-  const cleaned = ALLOWED.reduce((t, allowed) => t.replace(allowed, ''), text)
-  return RETIRED.filter((r) => r.pattern.test(cleaned)).map((r) => r.name)
-}
 
 function offences(where: string, texts: readonly string[]): string[] {
   return texts.flatMap((text) => retiredIn(text).map((name) => `${where}: ${name} in "${text.trim().slice(0, 160)}"`))

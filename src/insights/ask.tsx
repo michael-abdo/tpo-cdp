@@ -351,7 +351,7 @@ export function AskSection({
       <Announcer message={announcement} />
       <form onSubmit={submit} className="space-y-3 rounded-xl border border-line bg-surface p-5 shadow-soft sm:p-6">
         <label htmlFor="question" className="block text-sm font-medium text-ink">
-          Ask a question
+          Ask the AI assistant in plain English
         </label>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
