@@ -1,5 +1,5 @@
 // Segment filters → bound SQL (04 §/api/segments/preview, 03 §Module layout; R3, 09 D-07,
-// D-30, D-46, D-69). Pure: a parsed filter object in, SQL text and its parameters out. Every value
+// D-30, D-46, D-69, D-76). Pure: a parsed filter object in, SQL text and its parameters out. Every value
 // is a bound `?`, TODAY and every date included, so the SQL text is its own placeholders-only
 // `sql_shape`. Each date comparison is a `DEFINITIONS.*.sql` fragment from shared/derive.ts with
 // its dates computed there (lastNDays, wentColdWindow), never a re-typed formula. Source values are
@@ -21,6 +21,8 @@ import {
   ENGAGEMENT_MAX,
   ENGAGEMENT_MIN,
   FILTER_KEYS,
+  SEGMENT_COLUMNS,
+  SEGMENT_SORT_COLUMN,
   type SegmentFilters,
   SITE_PAGE_PATTERN,
   WENT_COLD_ANY,
@@ -32,8 +34,9 @@ import { ApiError } from '../auth/middleware'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../ingest/quarantine'
 import type { SqlValue } from '../ingest/sql'
 
-/** The validated filter object and its keys: one home, shared/segment-filters.ts (19 §5.5). */
-export { FILTER_KEYS, type SegmentFilters }
+/** The validated filter object and its keys, and the export's column list and sort column: one
+ * home, shared/segment-filters.ts (19 §5.5, 09 D-76). */
+export { FILTER_KEYS, SEGMENT_COLUMNS, SEGMENT_SORT_COLUMN, type SegmentFilters }
 
 export interface CompiledSegment {
   /** One SELECT over the segment's rows in the 04 export column order, ordered by email. */
@@ -42,17 +45,6 @@ export interface CompiledSegment {
   /** The SQL with placeholders only (04): the same text, since no value is ever inlined. */
   sql_shape: string
 }
-
-/** Columns of a segment row, in the 04 §/api/segments/export.csv order. */
-export const SEGMENT_COLUMNS = [
-  'email',
-  'status',
-  'source',
-  'signup_date',
-  'last_open_date',
-  'engagement_score',
-  'has_app',
-] as const
 
 /** One segment row as the routes return it; has_app is a boolean, not SQLite's 0/1. */
 export interface SegmentRow {
@@ -301,6 +293,24 @@ const TABLES: SegmentRelation = {
   hasApp: 'EXISTS (SELECT 1 FROM app_users a WHERE a.email_norm = s.email_norm)',
 }
 
+/**
+ * How the builder's SELECT reads each export column, raw (no `AS`): compileSegment aliases it to
+ * the column's SEGMENT_COLUMNS name, and for SEGMENT_SORT_COLUMN alone, uses it bare in ORDER BY.
+ * One home (09 D-76) for the export's column list and its sort, so the SELECT and the ORDER BY can
+ * never read a different expression for the same column than the other does, and the /segments
+ * "What's in the file" disclosure, reading only the column NAMES from shared/segment-filters.ts,
+ * never needs to repeat this SQL to describe the same file.
+ */
+const SEGMENT_COLUMN_SQL: { readonly [K in (typeof SEGMENT_COLUMNS)[number]]: string } = {
+  email: 's.email_norm',
+  status: 's.status',
+  source: 's.source',
+  signup_date: 's.signup_date',
+  last_open_date: 's.last_open_date',
+  engagement_score: 'p.engagement_score',
+  has_app: TABLES.hasApp,
+}
+
 /** The assistant's relation: v_profiles, the view 01 §PII-free views lets the model read. */
 const MODEL_VIEW: SegmentRelation = {
   column: (name) => name,
@@ -422,11 +432,10 @@ function segmentWhere(filters: SegmentFilters, rel: SegmentRelation): { where: s
 export function compileSegment(filters: SegmentFilters): CompiledSegment {
   const { where, params } = segmentWhere(filters, TABLES)
   const sql = [
-    'SELECT s.email_norm AS email, s.status, s.source, s.signup_date, s.last_open_date, p.engagement_score,',
-    `${TABLES.hasApp} AS has_app`,
+    `SELECT ${SEGMENT_COLUMNS.map((c) => `${SEGMENT_COLUMN_SQL[c]} AS ${c}`).join(', ')}`,
     'FROM subscribers s LEFT JOIN profiles p ON p.email_norm = s.email_norm',
     `WHERE ${where}`,
-    'ORDER BY s.email_norm',
+    `ORDER BY ${SEGMENT_COLUMN_SQL[SEGMENT_SORT_COLUMN]}`,
   ].join(' ')
   return { sql, params, sql_shape: sql }
 }

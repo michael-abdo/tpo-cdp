@@ -1,9 +1,10 @@
 /**
  * The segment filter contract (design 19 §5.5, 04 §/api/segments/preview; 09 D-69): the one home
  * of the filter keys, their order, their TypeScript type, their limits and patterns, and the
- * JSON-schema fragment the assistant's `segment` tool row declares. Imported by
- * worker/segments/compile.ts (validation and SQL), scripts/tool-seeds.ts (the tool's
- * input_schema) and src/ (the form and the Previous searches label).
+ * JSON-schema fragment the assistant's `segment` tool row declares; also the export's column list
+ * and sort column (09 D-76). Imported by worker/segments/compile.ts (validation and SQL),
+ * scripts/tool-seeds.ts (the tool's input_schema) and src/ (the form, the Previous searches label
+ * and the export's "What's in the file" disclosure).
  *
  * Every string key, `source` included, is limited by an enum or a pattern, so no value can hold
  * an email address or a raw app, device or visitor id (shared/pii.ts EMAIL_REGEX, RAW_ID_REGEX;
@@ -47,6 +48,23 @@ export const FILTER_KEYS = [
 ] as const
 
 export type FilterKey = (typeof FILTER_KEYS)[number]
+
+/**
+ * Columns of an exported segment row, in the 04 §/api/segments/export.csv order: email first so
+ * the file imports into beehiiv unchanged, status always present (02 §Defaults export rule). One
+ * home for both sides (09 D-76): worker/segments/compile.ts reads this to build the export SELECT
+ * and export.ts's CSV header, and /segments' "What's in the file" disclosure reads it for the
+ * plain-word column list and the raw headers in Technical details, so the two can never list a
+ * different file.
+ */
+export const SEGMENT_COLUMNS = ['email', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app'] as const
+
+/**
+ * The export's sort column, ascending (worker/segments/compile.ts compileSegment's ORDER BY; 09
+ * D-76): the one home the SQL and the /segments "Sorted by" sentence both read, so they can never
+ * name a different order.
+ */
+export const SEGMENT_SORT_COLUMN: (typeof SEGMENT_COLUMNS)[number] = 'email'
 
 /** The validated, canonical filter object: what POST /api/segments/preview echoes as `filters`. */
 export interface SegmentFilters {
