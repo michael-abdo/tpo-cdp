@@ -18,8 +18,8 @@ beforeAll(async () => {
   await seedDatabase()
 })
 
-describe('T-INS-7: pickChart picks the chart from the result shape (06 §/insights)', () => {
-  it('one number → number (went_cold_in August, 46 in 02 §Counts)', async () => {
+describe('T-INS-7: pickChart picks the chart from the result shape', () => {
+  it('one number → number (went_cold_in August, 46)', async () => {
     const result = await run('aggregate', { metric: 'went_cold', status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' })
     expect(result.rows).toEqual([{ went_cold: 46 }])
     expect(pickChart(shape(result))).toBe('number')

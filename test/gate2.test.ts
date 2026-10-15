@@ -109,8 +109,8 @@ const ALIAS_PROBES: Array<[string, RegExp]> = [
   ['SELECT count(*) AS n FROM v_profiles WHERE pkey IN main.subscribers', /^IN must be followed by "\("/],
 ]
 
-describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
-  it('reads the v_* allowlist from PRAGMA: exactly the views of 01, none with a PII column', () => {
+describe('T-GATE-2 Gate 2: validateSqlAgainstViews', () => {
+  it('reads the v_* allowlist from PRAGMA: exactly the PII-free views, none with a PII column', () => {
     expect(views.map((v) => v.name)).toEqual(['v_app_events', 'v_funnel', 'v_profiles', 'v_source_app_conversion', 'v_web_events'])
     for (const v of views) for (const c of v.columns) expect(PII_COLUMNS).not.toContain(c.name)
   })
@@ -250,7 +250,7 @@ describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
   })
 })
 
-describe('T-GATE-2 Gate 3: the read-only floor (03 row 8)', () => {
+describe('T-GATE-2 Gate 3: the read-only floor', () => {
   it('LIMIT 100 is appended when absent; a larger LIMIT is capped; a smaller one and OFFSET are kept', () => {
     expect(SQL_ROW_LIMIT).toBe(100)
     expect(readOnlySelect('SELECT pkey FROM v_profiles ORDER BY signup_date')).toEqual({
@@ -307,7 +307,7 @@ describe('T-GATE-2 Gate 3: the read-only floor (03 row 8)', () => {
   })
 })
 
-describe('T-GATE-2 every tool call goes through Gate 2: authorizeToolCall (03 row 7)', () => {
+describe('T-GATE-2 every tool call goes through Gate 2: authorizeToolCall', () => {
   it('an unknown tool is denied; input failing input_schema is denied; valid input passes', async () => {
     const tools = await loadTools(env.DB)
     expect(tools.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql', 'pages_new_subscribers_hit_first', 'describe_schema'])
@@ -343,7 +343,7 @@ describe('T-GATE-2 every tool call goes through Gate 2: authorizeToolCall (03 ro
   })
 })
 
-describe('query_sql through Gates 2 and 3 (03 rows 7-9)', () => {
+describe('query_sql through Gates 2 and 3', () => {
   it('runs a real query once, with LIMIT forced, and audits the SQL that ran', async () => {
     const sql = 'SELECT status, count(*) AS subscribers FROM v_profiles WHERE status IS NOT NULL GROUP BY status ORDER BY status'
     const { executed, rows } = await runTool('query_sql', { sql, explanation: 'subscribers by status' })
@@ -442,7 +442,7 @@ describe('query_sql through Gates 2 and 3 (03 rows 7-9)', () => {
   })
 })
 
-describe('T-AI-2 query_sql results contain pk_ keys only (05 §Strategy, §Leak paths)', () => {
+describe('T-AI-2 query_sql results contain pk_ keys only', () => {
   it('subjects come back as pk_ keys: the demo subject by her key, visitors and readers by theirs; no email or raw id in any cell', async () => {
     const joy = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(JOY).first<string>('pkey')
     if (joy === null) throw new Error('no profile for the demo subject (02 §Counts)')

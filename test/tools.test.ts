@@ -135,7 +135,7 @@ function recordingDb(): { db: D1Database; prepared: string[]; bound: unknown[][]
 
 const NEW_PAGES = 'pages_new_subscribers_hit_first'
 
-describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows fail loud (03 row 3, 09 D-41)', () => {
+describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows fail loud', () => {
   it('every seeded row loads verbatim as an Anthropic tool with a valid JSON Schema, the query row included', async () => {
     const loaded = await loadTools(env.DB)
     expect(loaded.definitions.map((d) => d.name)).toEqual(TOOL_SEEDS.map((s) => s.name))
@@ -192,7 +192,7 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
     expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(TOOL_SEEDS.map((s) => s.name))
   })
 
-  it('a `pattern` must be a string that compiles with the u flag, or the row is refused at load (09 D-69)', async () => {
+  it('a `pattern` must be a string that compiles with the u flag, or the row is refused at load', async () => {
     // The segment row's patterns (shared/segment-filters.ts) pass; Gate 2 compiles each with `u`.
     expect(schemaProblems({ type: 'string', pattern: '^/[a-z0-9/-]{0,120}$' }, 'p')).toEqual([])
     expect(schemaProblems({ type: 'string', pattern: '(' }, 'p')).toEqual(['p.pattern is not a valid regular expression'])
@@ -224,7 +224,7 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
     }
   })
 
-  it('tools:seed reports a stale seeded row, which the insert keeps and only --update replaces (09 D-69)', async () => {
+  it('tools:seed reports a stale seeded row, which the insert keeps and only --update replaces', async () => {
     const stored = async () =>
       (await env.DB.prepare('SELECT name, description, input_schema, handler_type, execution_config FROM assistant_tools').all<StoredToolRow>()).results
     expect(staleToolRows(await stored())).toEqual([])
@@ -311,7 +311,7 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
   })
 })
 
-describe('T-AI-8 a query row runs its template with bound params through Gate 2/3 (03 row 9, 09 D-41, D-45)', () => {
+describe('T-AI-8 a query row runs its template with bound params through Gate 2/3', () => {
   it('placeholders become positional "?" in template order; strings, quoted names and comments are left alone', () => {
     expect(rewritePlaceholders("SELECT pkey FROM v_profiles WHERE source = :source AND (status = :status OR :status IS NULL) AND first_page <> ':page'")).toEqual({
       sql: "SELECT pkey FROM v_profiles WHERE source = ? AND (status = ? OR ? IS NULL) AND first_page <> ':page'",
@@ -355,7 +355,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
     })
   })
 
-  it('Instagram active cold = 147 (02 §Counts) through a query row with three bound inputs', async () => {
+  it('Instagram active cold = 147 through a query row with three bound inputs', async () => {
     const seed = queryRow(
       'cold_count',
       {
@@ -373,7 +373,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
     })
   })
 
-  it('values bind in template order, not param_mapping order; a placeholder used twice is bound twice (Instagram active cold = 147, 02 §Counts)', async () => {
+  it('values bind in template order, not param_mapping order; a placeholder used twice is bound twice (Instagram active cold = 147)', async () => {
     // The mapping lists today, status, source; the template uses source, status, status, today.
     const seed = queryRow(
       'cold_count_reordered',
@@ -435,7 +435,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
   })
 })
 
-describe('the seeded query row pages_new_subscribers_hit_first (02 §Derived new_subscriber, 09 D-36)', () => {
+describe('the seeded query row pages_new_subscribers_hit_first (new_subscriber)', () => {
   /** First page → new subscribers, computed in JavaScript with DEFINITIONS.new_subscriber.fn. */
   async function expected(includeUnsubscribed: boolean): Promise<Map<string | null, number>> {
     const { results } = await env.DB.prepare('SELECT signup_date, status, first_page FROM v_profiles WHERE signup_date IS NOT NULL').all<{

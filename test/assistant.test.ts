@@ -221,7 +221,7 @@ beforeAll(async () => {
   }
 })
 
-describe('tool loader (03 row 3, 09 D-41)', () => {
+describe('tool loader', () => {
   it('loads the seeded rows in sort_order as Anthropic tools, verbatim', async () => {
     const loaded = await loadTools(env.DB)
     expect(loaded.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql', 'pages_new_subscribers_hit_first', 'describe_schema'])
@@ -356,7 +356,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     expect(rows.find((r) => r.kind === 'tool_call')?.row_count).toBe(1)
   })
 
-  it('09 D-74: cache usage meters are stored; the first call in a window is a cache write, the next a cache read, tokens_in keeps counting every prompt token', async () => {
+  it('cache usage meters are stored; the first call in a window is a cache write, the next a cache read, tokens_in keeps counting every prompt token', async () => {
     const cookie = await loginCookie()
     const cached = (content: Anthropic.ContentBlock[], stop_reason: Anthropic.StopReason, cache: { read: number; write: number }) => {
       const base = message(content, stop_reason)
@@ -854,7 +854,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(tableLines.map((line) => line.split('|')[1].trim())).toEqual(builderTen)
   })
 
-  it('structural: the segment tool\'s SQL names only v_profiles and selects no PII column (05 "Structural")', () => {
+  it('structural: the segment tool\'s SQL names only v_profiles and selects no PII column', () => {
     expect(MODEL_SEGMENT_COLUMNS.filter((c) => (PII_COLUMNS as readonly string[]).includes(c))).toEqual([])
     const variants = [PRESET, {}, { has_app: true }, { has_app: false, status: ['active', 'unsubscribed'] }, { days_since_open_gte: 7 }]
     for (const input of variants) {
@@ -922,7 +922,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
   })
 })
 
-describe('the aggregate tool over v_profiles (02 §Derived cold / went_cold_in, §Defaults, §Counts)', () => {
+describe('the aggregate tool over v_profiles (cold / went_cold_in, the default status, the seed counts)', () => {
   const aggregate = BUILTIN_HANDLERS.aggregate
   const august = { source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 
@@ -951,7 +951,7 @@ describe('the aggregate tool over v_profiles (02 §Derived cold / went_cold_in, 
   })
 })
 
-describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded whole (09 D-58)', () => {
+describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded whole', () => {
   const ANSWER_SENTENCE = "I couldn't phrase that answer safely — see Technical details for the steps."
   const answerBlock = (value: string) => finalText('prose', { type: 'answer', text: value, window: null, filters_applied: {}, definitions_used: [] })
 
@@ -991,7 +991,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     ['a four-backtick fence', 'There are 46.\n````sql\nSELECT 1 FROM v_profiles\n````\nDone.'],
     ['a fence that never closes', 'There are 46.\n```sql\nSELECT 1 FROM v_profiles'],
     ['fullwidth letters (NFKC)', 'There are 46. ｓｅｌｅｃｔ pkey ｆｒｏｍ v_profiles'],
-    ['prose with both words (accepted by D-58)', 'select a segment from the builder'],
+    ['prose with both words (an accepted false positive)', 'select a segment from the builder'],
     ['prose with both words, mid-sentence', 'To export them, select a segment from the builder.'],
   ]
   // Each invisible character the SQL-in-text rule names, inside each keyword.
@@ -1119,7 +1119,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     expect(() => discardSentence('segment', null)).toThrow(/has a count/)
   })
 
-  it('through the route: the discard reaches the body as the server sentence and ai_audit as a blocked row naming D-58', async () => {
+  it('through the route: the discard reaches the body as the server sentence and ai_audit as a blocked row naming sql_in_output', async () => {
     const cookie = await loginCookie()
     const { transport } = scripted([
       () => message([toolUse('toolu_seg', 'segment', PRESET)], 'tool_use'),
@@ -1245,7 +1245,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     )
   })
 
-  it('the final result (route.ts): an email whose local part ALSO decodes only when parsed is blocked at the parsed result (09 D-79 fixer round)', async () => {
+  it('the final result (route.ts): an email whose local part ALSO decodes only when parsed is blocked at the parsed result', async () => {
     // Same idea as the test above, but the local part's own "." is escaped too, so the raw model
     // text holds no literal "@" AND no contiguous known local part: loop.ts's scan of the raw
     // response.content passes clean, and only respond.ts's JSON.parse of the fenced block
@@ -1281,7 +1281,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     expect(requests).toHaveLength(1)
   })
 
-  it('the model request (loop.ts): a known local part with no "@" in an assistant_tools description is blocked (09 D-79: known_local_part, not only email_pattern)', async () => {
+  it('the model request (loop.ts): a known local part with no "@" in an assistant_tools description is blocked (known_local_part, not only email_pattern)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
@@ -1304,7 +1304,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     }
   })
 
-  it('the model response (loop.ts): a disguised email split by a real newline and a real tab is blocked, not only a space-separated one (09 D-79 fixer round)', async () => {
+  it('the model response (loop.ts): a disguised email split by a real newline and a real tab is blocked, not only a space-separated one', async () => {
     // findPII's whole-serialized-JSON pass alone never sees this: JSON.stringify of
     // response.content turns a real newline/tab inside a text block into the two characters a
     // backslash and "n"/"t", which the bracket mappings' \s* never matches. The leaf-string pass
@@ -1326,7 +1326,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     expect(requests).toHaveLength(1)
   })
 
-  it('the question (Gate 1): a word-joiner (U+2060) inside a known address is still redacted, not only the five older zero-width characters (09 D-79 fixer round)', async () => {
+  it('the question (Gate 1): a word-joiner (U+2060) inside a known address is still redacted, not only the five older zero-width characters', async () => {
     // shared/pii.ts normalizeForScan used to drop only five zero-width/soft-hyphen characters; it
     // now shares shared/sql-sign.ts's full format-character class, which also covers U+2060 WORD
     // JOINER. A probe against the old five-character list left a question holding

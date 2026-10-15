@@ -140,7 +140,7 @@ function expectAskable(explain: string) {
 }
 
 describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
-  it('counts only apps created after signup: 432 of the 900 subscribers with an app (02 §Counts)', async () => {
+  it('counts only apps created after signup: 432 of the 900 subscribers with an app', async () => {
     const res = await get('source-app-conversion')
     expect(res.status).toBe(200)
     const body = await res.json<SourceAppConversion>()
@@ -157,7 +157,7 @@ describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
     expect(body.definitions_used).toEqual(['app_after_signup', 'has_app'])
   })
 
-  it('each source equals an independent tally of the CSVs, and the tally itself matches 02 §Counts', async () => {
+  it('each source equals an independent tally of the CSVs, and the tally itself matches the expected counts', async () => {
     const { perSource, split } = tallySourceApp()
     expect(split).toEqual({ before: APP_CREATED_BEFORE_SIGNUP, after: APP_CREATED_AFTER_SIGNUP, same_day: APP_CREATED_SAME_DAY })
     const body = await (await get('source-app-conversion')).json<SourceAppConversion>()
@@ -196,7 +196,7 @@ describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
 })
 
 describe('T-INS-2 GET /api/insights/funnel', () => {
-  it('totals equal 02 §Counts: 2,028 visitors, 1,400 subscribed, 628 anonymous', async () => {
+  it('totals equal the expected counts: 2,028 visitors, 1,400 subscribed, 628 anonymous', async () => {
     const res = await get('funnel')
     expect(res.status).toBe(200)
     const body = await res.json<Funnel>()
@@ -275,7 +275,7 @@ interface SeededSubscriber {
   cold_since: string
 }
 
-describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-31)', () => {
+describe('going_cold_risk and GET /api/insights/going-cold', () => {
   async function seeded() {
     const { results } = await env.DB.prepare(
       'SELECT source, status, signup_date, last_open_date, cold_since FROM subscribers',
@@ -284,7 +284,7 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
     return results
   }
 
-  it('goingColdRisk agrees with the 02 §Derived sentence on every seeded subscriber, and both halves occur', async () => {
+  it('goingColdRisk agrees with its definition sentence on every seeded subscriber, and both halves occur', async () => {
     const halves = { opened_15_to_30_days_ago_only: 0, cold_within_7_days_only: 0, both: 0, neither: 0 }
     for (const row of await seeded()) {
       // The stored cold date is cold_since: 30 days after the last open, else after signup.
@@ -375,7 +375,7 @@ function tallyDataQuality() {
 }
 
 describe('T-INS-3 GET /api/insights/data-quality', () => {
-  it('the import numbers equal import_runs and quarantine, and 02 §Counts', async () => {
+  it('the import numbers equal import_runs and quarantine, and the expected counts', async () => {
     const res = await get('data-quality')
     expect(res.status).toBe(200)
     const body = await res.json<DataQuality>()
@@ -416,7 +416,7 @@ describe('T-INS-3 GET /api/insights/data-quality', () => {
     ])
   })
 
-  it('the record checks equal 02 §Counts and an independent tally of the CSVs', async () => {
+  it('the record checks equal the expected counts and an independent tally of the CSVs', async () => {
     const t = tallyDataQuality()
     expect([t.subscribers, t.page_views, t.without_utm]).toEqual([SUBSCRIBERS, WEB_ROWS, WEB_ROWS_WITHOUT_UTM])
     const body = await (await get('data-quality')).json<DataQuality>()
@@ -452,7 +452,7 @@ describe('T-INS-3 GET /api/insights/data-quality', () => {
   // raw spelling `twitter` (it occurs in data/web_events.csv; ingest folds it to `x`) stored as if
   // normalization had been skipped, and a copy of a real page view that has no UTM. Every edit is
   // undone in `finally`, so the seed-count tests keep their numbers.
-  it('each check counts a gap made from real rows, and only its own: +1 each, page views +1 (09 D-47)', async () => {
+  it('each check counts a gap made from real rows, and only its own: +1 each, page views +1', async () => {
     const web = parseCsv(webCsv)
     const utmColumn = column(web, 'utm_source')
     expect(web.rows.some((row) => row[utmColumn] === 'twitter')).toBe(true)

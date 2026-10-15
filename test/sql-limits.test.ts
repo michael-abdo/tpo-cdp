@@ -228,7 +228,7 @@ const toolCount = async () => (await env.DB.prepare('SELECT count(*) AS n FROM a
 // passes it, the plan check.
 const CROSS_JOIN_REFUSAL = /unindexed table scans|JOIN … ON a\.column = b\.column|column equality|comma list/
 
-describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan before it runs', () => {
+describe('the plan check refuses a cartesian/unindexed nested scan before it runs', () => {
   it('a comma cross join of two views is refused; nothing runs', async () => {
     const { db, prepared } = recordingDb()
     await expect(runReadOnlySelect(db, CARTESIAN_COMMA)).rejects.toThrow(GateDenied)
@@ -394,7 +394,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     })
   })
 
-  it('the brief\'s seeded query row (pages_new_subscribers_hit_first) still runs with its real result, unaffected by D-81', async () => {
+  it('the brief\'s seeded query row (pages_new_subscribers_hit_first) still runs with its real result, unaffected by the query limits', async () => {
     const { executed } = await runTool('pages_new_subscribers_hit_first', {})
     expect(executed.output).not.toBeNull()
     expect(executed.output!.rows.length).toBeGreaterThan(0)
@@ -402,7 +402,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
   })
 })
 
-describe('09 D-81 #2: the time limit', () => {
+describe('the time limit', () => {
   it('an injected tiny timeout on a real query refuses as SqlTooHeavyError(sql_timeout), not SqlRunError', async () => {
     try {
       await runReadOnlySelect(env.DB, LEGIT_SQL, [], { timeoutMs: 0 })
@@ -454,7 +454,7 @@ describe('09 D-81 #2: the time limit', () => {
   })
 })
 
-describe('09 D-81 #3: the row-scan cap', () => {
+describe('the row-scan cap', () => {
   it('an injected small cap on a real query refuses as SqlTooHeavyError(sql_rows_cap)', async () => {
     try {
       await runReadOnlySelect(env.DB, LEGIT_SQL, [], { rowsReadCap: 10 })
@@ -490,7 +490,7 @@ describe('09 D-81 #3: the row-scan cap', () => {
   })
 })
 
-describe('09 D-81 #4: one shared function protects every path that runs model/saved SQL, including the board and pin paths', () => {
+describe('one shared function protects every path that runs model/saved SQL, including the board and pin paths', () => {
   it('a pinned query-type tile whose stored SQL is a cartesian is refused on every board run, not just at pin time; nothing is stored or left behind', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const toolName = 'board_cartesian_probe'
@@ -561,7 +561,7 @@ describe('09 D-81 #4: one shared function protects every path that runs model/sa
   })
 })
 
-describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset the live D1)', () => {
+describe('join-shape rule (a filtered cross join once reset the live D1)', () => {
   const LIVE_SQL = "SELECT COUNT(*) AS profile_visit_combinations FROM v_profiles, v_web_events WHERE v_profiles.status = 'active'"
   it('the exact query the model wrote live is refused before anything runs', () => {
     expect(() => readOnlySelect(LIVE_SQL)).toThrow(GateDenied)

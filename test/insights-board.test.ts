@@ -335,7 +335,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     }
   })
 
-  it('insight_panel is always 400 not_pinnable with the D-64a sentence; nothing is stored', async () => {
+  it('insight_panel is always 400 not_pinnable with the not-pinnable sentence; nothing is stored', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     // insight_panel is the board's own tool, never pinned: a real trace's call edited to name it.
     const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
@@ -353,7 +353,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     expect(NOT_PINNABLE_MESSAGE).toBe("Answers written as free-form queries can't be pinned. Ask the Growth team to add this as a saved question type.")
   })
 
-  it('a query_sql answer whose SQL fails the D-64b positive grammar is 400 not_pinnable with the grammar\'s reasons; nothing is stored (09 D-77: no approval queue)', async () => {
+  it('a query_sql answer whose SQL fails the positive pin grammar is 400 not_pinnable with the grammar\'s reasons; nothing is stored (no approval queue)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     // Runs fine (Gate 2/3 allow HAVING; it is a real successful tool call), but the pin grammar
     // refuses HAVING outright (a crafted HAVING cannot wave a small group through, since
@@ -383,7 +383,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')).toBe(beforeTools)
   })
 
-  it('a builtin row that aliases query_sql under another name is still not pinnable, at pin and on the board (09 D-64a)', async () => {
+  it('a builtin row that aliases query_sql under another name is still not pinnable, at pin and on the board', async () => {
     // The loader accepts a builtin row whose handler is query_sql under any name; the refusal follows the handler.
     const alias: ToolSeed = { ...TOOL_SEEDS.find((t) => t.name === 'query_sql')!, name: 'free_sql', sortOrder: 901 }
     const { sql: insert, params } = toolSeedInsert(alias)
@@ -411,7 +411,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     }
   })
 
-  it('describe_schema never pins (400 not_pinnable); segment, aggregate and a grammar-conforming query_sql all do (09 D-64, D-64b)', async () => {
+  it('describe_schema never pins (400 not_pinnable); segment, aggregate and a grammar-conforming query_sql all do', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     // describe_schema's answer is no query at all, so the free-form-query sentence would be
     // untrue of it; it gets NOT_PINNABLE_OTHER_MESSAGE instead, unconditionally, unlike query_sql.
@@ -473,7 +473,7 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     expect(detectWindow('2026-08-01', '2026-08-15', TODAY)).toEqual({ fixed: ['2026-08-01', '2026-08-15'] })
   })
 
-  it('the reused presets are 02 §Derived itself: last_month = lastMonth(today), last_30_days = lastNDays(30, today), on any day', () => {
+  it('the reused presets are the derived windows themselves: last_month = lastMonth(today), last_30_days = lastNDays(30, today), on any day', () => {
     // One home per definition: the board must not carry its own month or 30-day formula.
     // Month ends, a year boundary and a leap day, so a second formula that agrees only on TODAY fails.
     for (const today of [TODAY, '2026-01-01', '2026-03-31', '2024-03-01', '2028-02-29', '2026-12-31']) {
@@ -523,7 +523,7 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     expect(fixed.explain).toBe(`Explain “${title}” for Aug 1–15, 2026 only. It was pinned from: ${question}`)
   })
 
-  it('a built-in tile’s "Explain this" is its panel’s question (09 D-39), in plain words', async () => {
+  it('a built-in tile’s "Explain this" is its panel’s question, in plain words', async () => {
     const { tiles } = await board()
     for (const tile of tiles.filter((t) => t.built_in)) {
       const panel = (await stored(tile.id).then((r) => JSON.parse(r!.params))) as { panel: string }
@@ -760,7 +760,7 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     }
   })
 
-  it('a row stored under another params version reports outdated (01 §insights); the rest of the board runs', async () => {
+  it('a row stored under another params version reports outdated; the rest of the board runs', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
     const params = JSON.parse((await stored(tile.id))!.params) as Record<string, unknown>
@@ -802,7 +802,7 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     }
   })
 
-  it('a failed audit write fails the request (500), never a tile error; a pin then stores nothing (04, 03 row 11)', async () => {
+  it('a failed audit write fails the request (500), never a tile error; a pin then stores nothing', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
@@ -1017,7 +1017,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     expect((await api(`/${tile.id}`, { method: 'DELETE' })).status).toBe(204)
   })
 
-  it('a title holding a known local part ("joy.hall830") is refused on POST and PATCH: Gate 1 rule D-70 #1 holds on this path', async () => {
+  it('a title holding a known local part ("joy.hall830") is refused on POST and PATCH: the T-HARD-1 rule holds on this path', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const LOCAL = JOY.slice(0, JOY.indexOf('@'))
     expect(LOCAL).toBe('joy.hall830')
@@ -1089,7 +1089,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     expect(await tileCount()).toBe(before)
   })
 
-  it('a query row may select a key only as count(DISTINCT key): checked on its SQL before it runs (04, 09 D-64a)', () => {
+  it('a query row may select a key only as count(DISTINCT key): checked on its SQL before it runs', () => {
     // Allowed: the seeded query row, distinct counts (any case, qualified), keys outside every SELECT list.
     const seeded = TOOL_SEEDS.find((t) => t.name === QUERY_ROW)!.executionConfig as { sql: string }
     for (const sql of [
@@ -1135,7 +1135,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     expect(namesASubject(row({ first_page: '/stories/2026-08-29', new_subscribers: 4 }), keys)).toBe(false)
   })
 
-  it('a query row whose result holds a dashed key it did not select is refused at pin (the output check, 04)', async () => {
+  it('a query row whose result holds a dashed key it did not select is refused at pin (the output check)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     // Joy's stored first page drifts to carry her own key in dashed groups of four, as a client-sent
     // path can (a real row, edited). The query row selects no key, so only the output check sees it.
@@ -1329,7 +1329,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
   // after the real signed webhook lands the local part in v_app_events.link (mutation check:
   // tool-executor.ts:138's guardPayload — removing it, or weakening it to scan only text holding
   // "@", lets this test's tile answer 200 with the link instead of blocking).
-  it('a stored query tile that later reads a webhook link holding a known local part is a "Blocked tile" (09 D-79 item 3)', async () => {
+  it('a stored query tile that later reads a webhook link holding a known local part is a "Blocked tile"', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const LOCAL = JOY.slice(0, JOY.indexOf('@'))
@@ -1401,7 +1401,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
 
-  it('a D-64b pin never adds a model-facing tool: the wrapped row is board_only and stays out of loadTools().definitions', async () => {
+  it('a grammar pin never adds a model-facing tool: the wrapped row is board_only and stays out of loadTools().definitions', async () => {
     const before = (await loadTools(env.DB)).definitions.map((d) => d.name)
     const sql = "SELECT status, count(*) AS n FROM v_profiles GROUP BY status"
     const answer = await askAnswer('how many subscribers by status?', [{ name: 'query_sql', input: { sql, explanation: 'subscribers by status' } }])
@@ -1441,7 +1441,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     await env.DB.prepare('DELETE FROM insights WHERE id IN (?, ?)').bind(first.id, second.id).run()
   })
 
-  it('a D-64b pin whose first run fails leaves no orphan enabled tool behind', async () => {
+  it('a grammar pin whose first run fails leaves no orphan enabled tool behind', async () => {
     // Passes the grammar (so it does reach wrapQuerySql, unlike a grammar refusal which queues
     // approval and never wraps anything) but is refused right after: an empty title cannot be
     // stored (checkedTitle). If the row wrapQuerySql inserted were not cleaned up on this throw,
@@ -1517,7 +1517,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
 
-  it('T-INS-13 refusal: anything else is 400 not_pinnable with the grammar\'s reasons; nothing is stored, and the approval routes are gone (09 D-77)', async () => {
+  it('T-INS-13 refusal: anything else is 400 not_pinnable with the grammar\'s reasons; nothing is stored, and the approval routes are gone', async () => {
     // Window functions are Gate 2/3-legal (so this runs fine live) but not one of the two pinnable shapes.
     const sql = 'SELECT source, row_number() OVER (ORDER BY source) AS rn FROM v_profiles GROUP BY source'
     const answer = await askAnswer('rank each source', [{ name: 'query_sql', input: { sql, explanation: 'sources ranked' } }])
@@ -1539,7 +1539,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     expect(approve.status).toBe(404)
   })
 
-  it('a pinned "totals" tile masks by the SQL as it runs today, not the count/dimension columns it was pinned with (09 D-64b "on every board run")', async () => {
+  it('a pinned "totals" tile masks by the SQL as it runs today, not the count/dimension columns it was pinned with ("on every board run")', async () => {
     const smallest = await env.DB.prepare(
       "SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS n FROM v_profiles GROUP BY source, status, substr(signup_date, 1, 7) ORDER BY n ASC LIMIT 1",
     ).first<{ source: string | null; status: string; month: string; n: number }>()
@@ -1585,7 +1585,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
   })
 
-  it('a pinned "list" tile whose SQL drifts to a totals shape with a small group is refused, never run unmasked (09 D-64b finding)', async () => {
+  it('a pinned "list" tile whose SQL drifts to a totals shape with a small group is refused, never run unmasked', async () => {
     // Runtime proof: pin a person list, then let its wrapped row's SQL drift (an assistant_tools row is data)
     // to a grouped totals query that holds a group under 5. The shape check above
     // (`classified.shape !== pinShape`) is the only thing that stops this: without it, runTile
@@ -1623,7 +1623,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
   })
 })
 
-describe('board runs in the audit log (05 §Proof surfaces, R5.5)', () => {
+describe('board runs in the audit log', () => {
   it('a board run is listed as board_run only on request; the questions stay on the default page', async () => {
     const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
     for (let i = 0; i < 4; i++) await board()

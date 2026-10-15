@@ -25,7 +25,7 @@ function secret(): string {
   return value
 }
 
-describe('pseudonymous keys (05 §Pseudonymous key)', () => {
+describe('pseudonymous keys', () => {
   it('every key has the pk_ + 16 hex format', async () => {
     expect(await pkeyForEmail(secret(), JOY)).toMatch(KEY_FORMAT)
     expect(await pkeyForUnknownUser(secret(), JOY_USER)).toMatch(KEY_FORMAT)
@@ -85,7 +85,7 @@ describe('pseudonymous keys (05 §Pseudonymous key)', () => {
   })
 })
 
-describe('PII denylist and patterns (01 §PII denylist, 05 §Scanner)', () => {
+describe('PII denylist and patterns', () => {
   it('lists exactly the denylisted columns', () => {
     expect(PII_COLUMNS).toEqual([
       'email_norm',

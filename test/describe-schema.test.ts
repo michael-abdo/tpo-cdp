@@ -42,7 +42,7 @@ async function run(input: unknown) {
   return { executed, audit }
 }
 
-describe('describe_schema: v_* view names and PRAGMA columns only (16 parked item 1)', () => {
+describe('describe_schema: v_* view names and PRAGMA columns only', () => {
   it('loads from its assistant_tools row as a builtin, verbatim', async () => {
     const seed = TOOL_SEEDS.find((s) => s.name === 'describe_schema')!
     const loaded = (await loadTools(env.DB)).byName.get('describe_schema')

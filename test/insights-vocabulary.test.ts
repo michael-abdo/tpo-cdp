@@ -69,7 +69,7 @@ beforeAll(async () => {
   cookie = await loginCookie(documentationIp())
 })
 
-describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", () => {
+describe("T-VOC-1 for /insights: the brief's words", () => {
   it('the guard flags each retired term and lets the brief\'s question and "screen reader" through', () => {
     expect(retiredIn('Cold readers')).toEqual(['reader(s)'])
     expect(retiredIn('Find a reader')).toEqual(['reader(s)', 'Find a reader'])
@@ -129,7 +129,7 @@ describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", 
     expect(offences('server', sentences)).toEqual([])
   })
 
-  it("every label a result or a filter shows is the brief's: no retired word, the 06 field names", () => {
+  it("every label a result or a filter shows is the brief's: no retired word, the brief's field names", () => {
     const labels = [
       ...Object.values(COLUMN_LABEL),
       ...Object.values(FILTER_LABEL),
@@ -157,7 +157,7 @@ describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", 
     })
   })
 
-  it('nav labels are the 06 words; "Insights" stays the operator\'s name for the page (09 D-64, 09 D-71)', () => {
+  it('nav labels use the agreed words; "Insights" stays the operator\'s name for the page', () => {
     const nav = navArrayText(SOURCES['../src/nav.ts'])
     expect([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])).toEqual([
       'Overview',

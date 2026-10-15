@@ -215,7 +215,7 @@ beforeAll(async () => {
   }
 })
 
-describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', () => {
+describe('GET /api/audit and /api/audit/:trace_id', () => {
   it('both routes are behind the session: no cookie → 401 unauthorized', async () => {
     for (const path of ['/api/audit', '/api/audit?limit=5', `/api/audit/${crypto.randomUUID()}`]) {
       const res = await get(path)
@@ -438,7 +438,7 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
     })
   })
 
-  it('a D-58 discard → 200 with the server sentence: outcome answered_text_replaced, status blocked', async () => {
+  it('a SQL-in-text discard → 200 with the server sentence: outcome answered_text_replaced, status blocked', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const cookie = await loginCookie()
     const { transport } = scripted([
@@ -519,7 +519,7 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
   })
 })
 
-describe('/assistant shows plain words for every column and filter a tool can return (06 §UI principles 4)', () => {
+describe('/assistant shows plain words for every column and filter a tool can return', () => {
   const aggregateSchema = TOOL_SEEDS.find((t) => t.name === 'aggregate')!.inputSchema as {
     properties: { metric: { enum: string[] }; group_by: { enum: string[] } }
   }
@@ -569,7 +569,7 @@ describe('/assistant shows plain words for every column and filter a tool can re
   })
 })
 
-describe("/assistant screens the model's filters_applied with the D-58 check before showing it (09 D-58)", () => {
+describe("/assistant screens the model's filters_applied with the SQL-in-text check before showing it", () => {
   // The filters the model echoes for the brief's first question (46 = Instagram active went_cold_in
   // 2026-08). The SQL strings are the shapes T-AI-5 discards from the answer text.
   const REAL = { status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
@@ -637,7 +637,7 @@ describe("/assistant screens the model's filters_applied with the D-58 check bef
   })
 })
 
-describe('/audit names every blocked step in words (06 §UI principles 4)', () => {
+describe('/audit names every blocked step in words', () => {
   // Every blocked-row error the worker writes, as "<code>: <detail>": the constants where the writer
   // exports one, the code prefix where it builds the string inline (worker/assistant writers).
   const written: Array<[string, string]> = [

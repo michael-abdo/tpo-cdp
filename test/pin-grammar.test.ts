@@ -40,7 +40,7 @@ describe('classifyPinnableSql: shape A (totals)', () => {
     expect(classifyPinnableSql('SELECT count(*) AS n, sum(story) AS s FROM v_app_events')).toMatchObject({ ok: false })
   })
 
-  it('a bare approved column (plain_approved) alongside a count is refused, even ungrouped (09 D-64b finding: max() + a bare date column)', () => {
+  it('a bare approved column (plain_approved) alongside a count is refused, even ungrouped (max() + a bare date column)', () => {
     // SQLite reads an ungrouped bare column from one arbitrary row; with max() present, that row
     // is the top scorer's own record, so signup_date/last_open_date/cold_since named one real person.
     expect(
@@ -52,7 +52,7 @@ describe('classifyPinnableSql: shape A (totals)', () => {
   })
 })
 
-describe('classifyPinnableSql: FROM is exactly one view (09 D-64b finding: a join moved the small-group anchor off the aggregate it masked)', () => {
+describe('classifyPinnableSql: FROM is exactly one view (a join moved the small-group anchor off the aggregate it masked)', () => {
   it('a comma-joined FROM list is refused', () => {
     expect(
       classifyPinnableSql(
@@ -76,7 +76,7 @@ describe('classifyPinnableSql: FROM is exactly one view (09 D-64b finding: a joi
   })
 })
 
-describe('classifyPinnableSql: an alias keeps its exact case (09 D-64b finding: AS Subscribers never matched the lowercased countColumns)', () => {
+describe('classifyPinnableSql: an alias keeps its exact case (AS Subscribers never matched the lowercased countColumns)', () => {
   it('a mixed-case count alias still reports as written, so board.ts can find it in the D1 row', () => {
     const r = classifyPinnableSql('SELECT source, status, count(*) AS Subscribers FROM v_profiles GROUP BY source, status')
     expect(r).toMatchObject({ ok: true, shape: 'totals', countColumns: ['Subscribers'] })
@@ -103,7 +103,7 @@ describe('classifyPinnableSql: "lists" (a person list)', () => {
   })
 })
 
-describe('classifyPinnableSql: a person list may sort by its own key as a tie-breaker (09 D-64b, amended 2026-10-14)', () => {
+describe('classifyPinnableSql: a person list may sort by its own key as a tie-breaker', () => {
   it('the live "most engaged" list, ORDER BY engagement_score DESC, pkey, pins as a list', () => {
     const sql = "SELECT pkey, engagement_score, last_open_date, has_app FROM v_profiles WHERE status = 'active' ORDER BY engagement_score DESC, pkey LIMIT 25"
     expect(classifyPinnableSql(sql)).toMatchObject({ ok: true, shape: 'list', identifierColumn: 'pkey' })
@@ -124,7 +124,7 @@ describe('classifyPinnableSql: a person list may sort by its own key as a tie-br
   })
 })
 
-describe('classifyPinnableSql: every D-64b bypass class is refused', () => {
+describe('classifyPinnableSql: every known bypass class is refused', () => {
   it('aliasing: the identifier column of a person list cannot be renamed', () => {
     expect(classifyPinnableSql('SELECT pkey AS reader_id, source FROM v_profiles')).toMatchObject({ ok: false })
   })
