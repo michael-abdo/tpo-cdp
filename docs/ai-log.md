@@ -2,6 +2,8 @@
 
 Built in Claude Code throughout. Each entry: what was asked, what the AI got wrong, how it was caught, the fix. Entries are written the day they happen.
 
+Entries cite decision IDs (`D-xx`) and design sections (`NN §…`) from the author's private design log, which is not in this repo; [notes](notes.md#assumptions) summarizes the decisions that shape behaviour.
+
 "The origin" means the AI gateway the author built before this project, whose shape the assistant reuses ([notes, D-24](notes.md#assumptions)). In entries, "I", "me" and "my" mean the agent that made the fix, not the author.
 
 **Hash map.** Some commits were rebased on local branches before they were merged, so four hashes cited below are no longer in this history. Each maps to a commit with the same subject, author date and diff (same `git patch-id`): `2e0fe2c` → `46936f7`, `bdac826` → `da26516`, `77e35b9` → `f0927b6`, `dc14952` → `79b0a01`. `9e712ab`, `bb23a0a` and `c787230` are commits to the design notes, which are kept outside this repo.
