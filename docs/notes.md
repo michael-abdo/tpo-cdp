@@ -227,6 +227,9 @@ The server checks the signature on the raw bytes before it parses any JSON, with
 | 202 | stored; the body is `{"accepted":true,"event_id":"…"}` and names no person (who the event belongs to shows on `/events` and in Look up, behind the session) |
 | 200 | `event_id` already stored (duplicate), checked before the schema and the personal-data checks |
 | 400 `invalid_event` | schema failure; `details` names each field |
+| 400 `invalid_event` (personal data) | `properties.story` or `properties.link` holds an email, a subscriber's email name part or a raw id; the value is never quoted back |
+| 403 `https_required` | plain http to the hosted host (a non-GET/HEAD method; GET/HEAD are redirected to https) |
+| 405 | any method other than POST; `Allow: POST` |
 | 401 `bad_signature` · `stale_timestamp` · `missing_headers` | auth failure; the reason is logged server-side |
 | 413 · 415 · 429 | body over 64 KB · not `application/json` · over 300 requests a minute |
 
