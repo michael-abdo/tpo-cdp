@@ -336,7 +336,7 @@ const RANGE_CONDITION = /^[\w.]+\s*[<>]\?$/
 /**
  * True for a `SEARCH` row whose entire constraint list is range-only: every condition inside its
  * one parenthesized detail bounds a column with `<`/`>` against `?`, never pins one with `=`
- * (09 D-81 #2's self-audit: a cartesian with one indexed range filter added — `w.page > ''`,
+ * (09 D-81 #1's self-audit: a cartesian with one indexed range filter added — `w.page > ''`,
  * `w.page >= ''`, a `CROSS JOIN … WHERE` with the same filter, or a correlated subquery's own
  * unindexed-looking column reached only by a range bound — answers with a `SEARCH` instead of a
  * `SCAN` on that side, so the plan check's SCAN-only rule missed it even though a range-bound
@@ -356,7 +356,7 @@ function isRangeOnlySearch(row: PlanRow): boolean {
   return conditions.length > 0 && conditions.every((c) => RANGE_CONDITION.test(c.trim()))
 }
 
-/** A plan row this check treats as paying for a whole, otherwise-unjoined relation (09 D-81 #1, #2): a real SCAN or a range-only SEARCH. */
+/** A plan row this check treats as paying for a whole, otherwise-unjoined relation (09 D-81 #1): a real SCAN or a range-only SEARCH. */
 function isUnjoinedRelationScan(row: PlanRow): boolean {
   return isRealScan(row) || isRangeOnlySearch(row)
 }
@@ -402,7 +402,7 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
  *      SEARCH an added indexed range filter (`w.page > ''`, `w.page >= ''`, a `CROSS JOIN …
  *      WHERE` with the same filter) turns it into: one token's difference from the comma/`ON 1 =
  *      1` shape, measured to pass the SCAN-only version of this check while still reading
- *      hundreds of millions of rows (09 D-81 #2's self-audit). A normal nested-loop join (one
+ *      hundreds of millions of rows (09 D-81 #1's self-audit). A normal nested-loop join (one
  *      driving SCAN, every other relation reached by an indexed SEARCH *on the join's own
  *      column*) only ever puts one such row in any one scope; a second one there means a second
  *      relation is driven independently with nothing joining it to the first.

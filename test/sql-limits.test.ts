@@ -295,7 +295,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     expect(prepared.some((q) => q.includes(CORRELATED_UNINDEXED_SCAN) && !q.startsWith('EXPLAIN'))).toBe(false)
   })
 
-  // The self-audit's finding (09 D-81 #2): a SCAN-only plan check is a one-token variant of its
+  // The self-audit's finding (09 D-81 #1): a SCAN-only plan check is a one-token variant of its
   // own cartesian example away from passing — add one indexed range filter (`w.page > ''`) to
   // either side and that side's driving SCAN becomes a SEARCH, which `isRealScan` never counted.
   // Each of these is the exact comma/`ON 1 = 1`/nested-subquery/correlated shape already covered
