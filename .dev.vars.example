@@ -1,6 +1,6 @@
 # Copy to .dev.vars (gitignored). Any non-empty strings work locally. ANTHROPIC_API_KEY must be a real key only for the
 # assistant to answer; `npm test` never calls the network, so any string works there too.
-# Production values are set with `wrangler secret put <NAME>` (README "Deploy").
+# Production values are set with `wrangler secret put <NAME>` (docs/notes.md "Deploy").
 SITE_PASSWORD=
 SESSION_SECRET=
 WEBHOOK_SECRET=

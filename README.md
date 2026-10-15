@@ -12,32 +12,27 @@ npm install --legacy-peer-deps      # the flag installs package-lock.json exactl
 cp .dev.vars.example .dev.vars      # then give all five names a value: any strings work locally (see below)
 npm run db:migrate:local            # the eleven migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
+npm run tools:seed -- --local       # the assistant's five tool rows into the local D1 (see below)
 npm test                            # every test in workerd against a local D1; no network (count: [Tests](docs/notes.md#tests))
 npm run parity -- --local           # D-75 parity oracle (21 §2.6 mode B) against a throwaway local D1; never the dev database
 npm run dev                         # http://localhost:5173 (another port: npm run dev -- --port 5174); sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
-`npm run dev` keeps running; stop it with Ctrl-C. `npm test` does not need the dev server or the seed. A plain `npm install` also works today (checked with npm 10.9 and 11.6), but npm 11 then adds `"peer": true` lines to the lockfile.
+`npm run dev` keeps running, so run anything after it in a second terminal; stop it with Ctrl-C. `npm test` does not need the dev server or the seed. A plain `npm install` also works today (checked with npm 10.9 and 11.6), but npm 11 then adds `"peer": true` lines to the lockfile.
 
 About `.dev.vars`:
 
 - `SITE_PASSWORD`, `SESSION_SECRET`, `WEBHOOK_SECRET`, `PII_KEY_SECRET`: any non-empty strings. The first request fails with a message naming any one that is missing.
 - `ANTHROPIC_API_KEY`: a real key only if you want the assistant to answer. For `npm test` any non-empty string works; the tests never call the network, but 71 tests in 4 files that go through the assistant route fail when it is empty (see [Known gaps](docs/notes.md#known-gaps)).
 
-For the assistant, also write its five tool rows into the local D1 once, after the seed:
-
-```bash
-npm run tools:seed -- --local       # segment, aggregate, query_sql, pages_new_subscribers_hit_first, describe_schema
-```
-
-The command inserts missing rows and never overwrites one, then fails, naming the row and the fix, if a stored row differs from `scripts/tool-seeds.ts`. A local D1 seeded before 09 D-69 holds the old `segment` row (no new filter keys); replace it with `npm run tools:seed -- --local --update segment`.
+`npm run tools:seed -- --local` writes the assistant's five tool rows (`segment`, `aggregate`, `query_sql`, `pages_new_subscribers_hit_first`, `describe_schema`) into the local D1; run it after the seed. It inserts missing rows and never overwrites one, then fails, naming the row and the fix, if a stored row differs from `scripts/tool-seeds.ts`. A local D1 seeded before 09 D-69 holds the old `segment` row (no new filter keys); replace it with `npm run tools:seed -- --local --update segment`.
 
 What you see without them: with no tool rows, Ask on "Insights" (`/insights`) answers 500 `no_tools` naming this command; with an empty key, 503 `assistant_unavailable` pointing to the live app; with a key that is not real, 502 `model_error`. The failed call still shows up on the AI audit log page. Everything else works without a key.
 
-Send an app event to the local server (signed with `WEBHOOK_SECRET` from `.dev.vars`, which the script never prints):
+With `npm run dev` running, send an app event to the local server from a second terminal (signed with `WEBHOOK_SECRET` from `.dev.vars`, which the script never prints):
 
 ```bash
-npm run webhook:send -- --event read_story --user u_2b6447a3   # 202, resolves to julia.evans230
+npm run webhook:send -- --event read_story --user u_2b6447a3   # 202; the body's "resolved" holds u_2b6447a3 and a pk_ key (julia.evans230's profile)
 npm run webhook:send -- --event read_story --again             # 200 {"accepted":true,"duplicate":true}
 ```
 

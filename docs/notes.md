@@ -104,7 +104,7 @@ Live webhook check (the Wednesday checkpoint). First, before any event, note the
 
 ```bash
 # run these two back to back: --again re-sends the body in .wrangler/send-webhook-last.json, which any webhook:send in between (even to localhost) overwrites
-npm run webhook:send -- --url $URL --event read_story --user u_2b6447a3   # expect 202, resolves to julia.evans230
+npm run webhook:send -- --url $URL --event read_story --user u_2b6447a3   # expect 202; "resolved" holds u_2b6447a3 and julia.evans230's pk_ key
 npm run webhook:send -- --url $URL --event read_story --again             # expect 200 {"accepted":true,"duplicate":true}
 # with the cookie:
 #   GET  /api/lookup?q=u_2b6447a3        → the read_story event in julia.evans230's app timeline
@@ -428,7 +428,7 @@ Calls I made where the brief left room, each with the decision-log number it has
 
 ## Known gaps
 
-- **14 future features are gated in place, not built yet (09 D-80).** Each sits at its real, final spot, drawn as a real-looking control — never a placeholder box — with `aria-disabled="true"` (so it stays focusable and in the Tab order; never the `disabled` attribute), a visible "Coming soon" chip and a note that says what it will do, in AA-contrast muted text, never colour alone. Activating one (click, Enter or Space; a keystroke for a gated input) does exactly one thing: reveal and announce that note. No fetch, no navigation, no fake progress, no fake row, no file picker while gated. One shared contract for all of them: `shared/features.ts` (the one home for every label and note), `src/use-gated.ts` (`useGated`), and `src/components.tsx`'s `<ComingSoonTag>`/`<GatedNote>`. Each ungates alone, following its own `../design/22-pages/*.md` spec's "Ungating checklist":
+- **14 future features are gated in place, not built yet (09 D-80).** Each sits at its real, final spot, drawn as a real-looking control — never a placeholder box — with `aria-disabled="true"` (so it stays focusable and in the Tab order; never the `disabled` attribute), a visible "Coming soon" chip and a note that says what it will do, in AA-contrast muted text, never colour alone. Activating one (click, Enter or Space; a keystroke for a gated input) does exactly one thing: reveal and announce that note. No fetch, no navigation, no fake progress, no fake row, no file picker while gated. One shared contract for all of them: `shared/features.ts` (the one home for every label and note), `src/use-gated.ts` (`useGated`), and `src/components.tsx`'s `<ComingSoonTag>`/`<GatedNote>`. Each ungates alone, following the "Ungating checklist" in its own page spec (in the design notes kept outside this repo):
 
   | Page | Feature(s) | Flag(s) |
   |---|---|---|
