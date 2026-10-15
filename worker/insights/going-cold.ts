@@ -1,16 +1,15 @@
-// Readers at risk of going cold, the third /growth panel (16 §If time remains 4; 04 §GET
-// /api/insights/going-cold, 06 §/growth; R6, 09 D-31). Per signup source: how many active
-// subscribers meet `going_cold_risk` (02 §Derived). The rule has one home, `goingColdRisk` in
-// shared/derive.ts, and it is applied here to each subscriber's stored `last_open_date` and
-// `cold_since` (09 D-46): SQL only reads the rows, it never restates the formula.
-// Active only, like every list (02 §Defaults); the at-risk readers who are unsubscribed are
+// Readers at risk of going cold, the third /growth panel (GET /api/insights/going-cold). Per
+// signup source: how many active subscribers meet `going_cold_risk`. The rule has one home,
+// `goingColdRisk` in shared/derive.ts, and it is applied here to each subscriber's stored
+// `last_open_date` and `cold_since`: SQL only reads the rows, it never restates the formula.
+// Active only, like every list; the at-risk readers who are unsubscribed are
 // counted in `hidden_unsubscribed` so the default is never silent. Every number carries an
-// `explain` question for the "Explain this" link (09 D-39). Live query on every request; nothing
-// is cached (03 §No-restart).
+// `explain` question for the "Explain this" link. Live query on every request; nothing
+// is cached.
 
 import { DEFINITIONS, type DefinitionKey, goingColdRisk } from '../../shared/derive'
 
-/** The definitions the panel's numbers use, rendered from DEFINITIONS by the UI (02 §Derived). */
+/** The definitions the panel's numbers use, rendered from DEFINITIONS by the UI. */
 export const GOING_COLD_DEFINITIONS: readonly DefinitionKey[] = ['going_cold_risk', 'cold_since']
 
 export interface GoingColdCounts {
@@ -20,18 +19,18 @@ export interface GoingColdCounts {
   at_risk: number
   /** at_risk / active, 4 decimals; null when the group has no active subscribers. */
   rate: number | null
-  /** The assistant question these numbers answer (09 D-39). */
+  /** The assistant question these numbers answer. */
   explain: string
 }
 
 export interface GoingColdRow extends GoingColdCounts {
-  /** Canonical source (02 §Normalization); null = no source recorded. */
+  /** Canonical source (shared/normalize.ts); null = no source recorded. */
   source: string | null
 }
 
 export interface GoingCold {
   total: GoingColdCounts
-  /** Unsubscribed readers who meet going_cold_risk, left out of every count above (02 §Defaults). */
+  /** Unsubscribed readers who meet going_cold_risk, left out of every count above but never silently. */
   hidden_unsubscribed: { count: number; explain: string }
   /** Most readers at risk first, then the larger source, then by name (no source last). */
   by_source: GoingColdRow[]
@@ -49,9 +48,9 @@ interface SubscriberRow {
 const ROWS_SQL = `SELECT source, status, last_open_date, cold_since FROM v_profiles WHERE kind = 'subscriber'`
 
 /**
- * The rule in plain words, from its one runtime source (02 §Derived): "Explain this" puts the
- * question in the Ask bar at level 1, so it names the rule by what it means, never by its code
- * name (06 §UI principles 4), and the model still gets the exact rule.
+ * The rule in plain words, from its one runtime source: "Explain this" puts the question in the
+ * Ask bar where staff read it, so it names the rule by what it means, never by its code name,
+ * and the model still gets the exact rule.
  */
 const RULE_WORDS = `at risk of going cold (${DEFINITIONS.going_cold_risk.doc.charAt(0).toLowerCase()}${DEFINITIONS.going_cold_risk.doc.slice(1).replace(/\.$/, '')})`
 

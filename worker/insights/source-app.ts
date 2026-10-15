@@ -1,15 +1,15 @@
-// Source → app conversion, the first /growth panel (04 §GET /api/insights/source-app-conversion,
-// 06 §/growth; R6). Per signup source: how many subscribers created an app account AFTER their
-// newsletter signup (02 §Linking 6, 09 D-15). An app created before signup, or on the signup day,
-// is not a conversion: the rule is `app_after_signup` (02 §Derived), stored in v_profiles, the
-// same column the assistant's `source_to_app` metric sums, so "Explain this" reproduces these
-// numbers. Every status is counted: the panel describes every subscriber, so each `explain`
-// question asks the assistant to include unsubscribed ones (its default is active only,
-// 02 §Defaults). Live query on every request; nothing is cached (03 §No-restart).
+// Source → app conversion, the first /growth panel (GET /api/insights/source-app-conversion).
+// Per signup source: how many subscribers created an app account AFTER their newsletter signup,
+// since a conversion has to come after the signup. An app created before signup, or on the
+// signup day, is not a conversion: the rule is `app_after_signup` (shared/derive.ts), stored in
+// v_profiles, the same column the assistant's `source_to_app` metric sums, so "Explain this"
+// reproduces these numbers. Every status is counted: the panel describes every subscriber, so
+// each `explain` question asks the assistant to include unsubscribed ones (its default is active
+// only). Live query on every request; nothing is cached.
 
 import type { DefinitionKey } from '../../shared/derive'
 
-/** The definitions the panel's numbers use, rendered from DEFINITIONS by the UI (02 §Derived). */
+/** The definitions the panel's numbers use, rendered from DEFINITIONS by the UI. */
 export const SOURCE_APP_DEFINITIONS: readonly DefinitionKey[] = ['app_after_signup', 'has_app']
 
 export interface SourceAppCounts {
@@ -20,12 +20,12 @@ export interface SourceAppCounts {
   with_app_after_signup: number
   /** with_app_after_signup / subscribers, 4 decimals; null when there are no subscribers. */
   rate: number | null
-  /** The assistant question these numbers answer (09 D-39). */
+  /** The assistant question these numbers answer. */
   explain: string
 }
 
 export interface SourceAppRow extends SourceAppCounts {
-  /** Canonical source (02 §Normalization); null = no source recorded. */
+  /** Canonical source (shared/normalize.ts); null = no source recorded. */
   source: string | null
 }
 

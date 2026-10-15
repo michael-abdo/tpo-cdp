@@ -1,16 +1,15 @@
-// The D-64b positive grammar: whether one query_sql answer's SQL may be pinned to the board
-// (design 09 D-64b, amending D-64a; 01 §insights; 04 §/api/insights; 06 §/insights). Checked at
-// pin time (worker/insights/board.ts `pin`) and again on every board run (`runTile`), on the
+// The pin grammar: whether one query_sql answer's SQL may be pinned to the shared board. Checked
+// at pin time (worker/insights/board.ts `pin`) and again on every board run (`runTile`), on the
 // lexed SQL Gate 2 and Gate 3 have already passed (views only, read-only, one statement, LIMIT
 // ≤ 100): this file is strictly additional, never a substitute for those gates.
 //
-// D-64a's finding was an output denylist on free-form SQL: a cut of a key (substr(pkey, …))
-// slipped a key fragment onto the board. D-64b replaces the denylist with an allow-list checked
-// on the query's SHAPE, not its output: every SELECT-list expression must be one of a short list
+// Why an allow-list on SHAPE: a denylist on a free-form query's output cannot see a cut of a key
+// (substr(pkey, …)), which puts a key fragment on the board. So the check is on the query's
+// SHAPE, not its output: every SELECT-list expression must be one of a short list
 // of known shapes, and every occurrence of an identifier column (pkey, visitor_hash) anywhere in
 // the query — not just the SELECT list — must be one of exactly two allowed positions. Anything
 // the shapes below do not recognise is refused, never guessed at (fail safe): a query that is
-// "probably fine" is exactly the class D-64a's denylist got wrong.
+// "probably fine" is exactly the class a denylist gets wrong.
 //
 // Two shapes pin:
 //   - totals (A): every output column is count(*), count(DISTINCT pkey|visitor_hash), an
@@ -33,11 +32,11 @@
 
 import { lexSql, SqlLexError, type SqlToken } from '../assistant/gates/gate3-readonly-sql'
 
-/** 01 §Pseudonymous key: the two columns a v_* view uses to name a subject. */
+/** The two pseudonymous-key columns a v_* view uses to name a subject. */
 export const IDENTIFIER_COLUMNS: ReadonlySet<string> = new Set(['pkey', 'visitor_hash'])
 
 /**
- * Approved dimension columns (09 D-64b "acquisition source, status, page, utm_source, event"):
+ * Approved dimension columns (acquisition source, status, page, utm_source, event):
  * low-cardinality, non-identifying columns of the v_* views that may be a GROUP BY key (totals)
  * or a plain output column (a list). first_page/first_utm_source are v_profiles' and v_funnel's
  * own names for "page"/"utm_source" on a subscriber or a funnel row.
@@ -122,7 +121,7 @@ function asCall(tokens: readonly SqlToken[]): { fn: string; args: SqlToken[][] }
   return { fn: tokens[0].text.toLowerCase(), args: inner.length === 0 ? [[]] : splitOn(inner, tokens[1].depth + 1) }
 }
 
-/** Punctuation that makes an expression arithmetic or a string concatenation (09 D-64b "no string/arithmetic function"). */
+/** Punctuation that makes an expression arithmetic or a string concatenation, which could rebuild part of a key. */
 const OPERATORS = new Set(['+', '-', '*', '/', '|'])
 
 interface Expr {
@@ -147,9 +146,9 @@ function classifyExpression(tokens: readonly SqlToken[], all: readonly SqlToken[
   let alias: string | null = null
   if (base.length >= 2 && isWord(base.at(-2), 'AS') && isWord(base.at(-1))) {
     // Kept exactly as written (not lowercased): D1 returns the column under this exact alias, and
-    // board.ts's maskSmallGroups (the small-group mask, D-64b B) looks the row up by this same
-    // name. Lowercasing here once let `AS Subscribers` mask nothing, because the result came back
-    // spelled `Subscribers` (09 D-64b finding).
+    // board.ts's maskSmallGroups (the small-group mask, B) looks the row up by this same name;
+    // a lowercased alias would let `AS Subscribers` mask nothing, because the result comes back
+    // spelled `Subscribers`.
     alias = base.at(-1)!.text
     base = base.slice(0, -2)
   }
@@ -215,8 +214,8 @@ function classifyExpression(tokens: readonly SqlToken[], all: readonly SqlToken[
 const canon = (tokens: readonly SqlToken[]) => tokens.map((t) => (t.kind === 'word' ? t.text.toUpperCase() : t.text)).join(' ')
 
 /**
- * The D-64b grammar over one query_sql SQL text, already passed through Gate 2 and Gate 3 (03
- * rows 7-8). Pure: no view lookup, since every name here is checked against the fixed allow-lists
+ * The pin grammar over one query_sql SQL text, already passed through Gate 2 and Gate 3. Pure:
+ * no view lookup, since every name here is checked against the fixed allow-lists
  * above, a strict subset of what the views already expose PII-free. Returns the shape or every
  * problem found (never partial: a query failing in two ways reports both).
  */
@@ -240,9 +239,9 @@ export function classifyPinnableSql(sql: string): PinGrammarResult {
     problems.push('HAVING is not allowed: groups under 5 people are hidden automatically at run time, whatever HAVING says')
   }
   // Exactly one relation: no JOIN (there is only one SELECT by this point, so a JOIN can only be
-  // this query's own FROM list, never a subquery's) and no comma-joined FROM list. A join let
-  // count(*) describe one relation's rows while an aggregate read a WHERE-narrowed slice of the
-  // other, so the small-group check (B) masked the wrong thing (09 D-64b finding).
+  // this query's own FROM list, never a subquery's) and no comma-joined FROM list. A join lets
+  // count(*) describe one relation's rows while an aggregate reads a WHERE-narrowed slice of the
+  // other, so the small-group check (B) would mask the wrong thing.
   if (tokens.some((t) => isWord(t, 'JOIN'))) problems.push('a pinned query may read only one view: no JOIN')
   const fromAt = tokens.findIndex((t) => t.depth === 0 && isWord(t, 'FROM'))
   let viewName: string | null = null
@@ -300,13 +299,13 @@ export function classifyPinnableSql(sql: string): PinGrammarResult {
   // The identifier-position sweep: every pkey/visitor_hash token anywhere in the query must be
   // one of the positions an expression above already classified as allowed (count(DISTINCT …) or
   // the one bare identifier of a list). Anything else — WHERE, ORDER BY, an alias, a second
-  // mention — is refused, whatever it looks like (fail safe, 09 D-64a's own lesson).
+  // mention — is refused, whatever it looks like (fail safe).
   const cleared = new Set(expressions.flatMap((e) => e.identifierAt))
   // A person list may also sort by its own key as a tie-breaker (`ORDER BY engagement_score DESC,
-  // pkey`, the order D-56 gives "most engaged"): the list already shows that whole key, so a bare
-  // sort key reveals nothing new. Only a sort item that is exactly `pkey`, optionally ASC or DESC,
-  // is cleared; any expression over it (substr, ||, COLLATE, a CASE) stays refused below (09 D-64b,
-  // amended 2026-10-14).
+  // pkey`, the order the segment tool uses for "most engaged"): the list already shows that whole
+  // key, so a bare sort key reveals nothing new. Only a sort item that is exactly `pkey`,
+  // optionally ASC or DESC, is cleared; any expression over it (substr, ||, COLLATE, a CASE) stays
+  // refused below.
   const listKeys = expressions.filter((e) => e.kind === 'bare_identifier')
   if (listKeys.length === 1 && listKeys[0].name === 'pkey') {
     for (const i of bareSortKeyPositions(tokens, 'pkey')) cleared.add(i)
@@ -330,10 +329,10 @@ export function classifyPinnableSql(sql: string): PinGrammarResult {
   }
 
   // A totals query's every column must already be count(*)/count(DISTINCT …), an aggregate or a
-  // grouped dimension (09 D-64b A). A bare approved numeric/date column ('plain_approved', the
+  // grouped dimension (A). A bare approved numeric/date column ('plain_approved', the
   // list shape's own allowance) is a SQLite bug waiting to fire: inside an aggregate query it
   // reads one arbitrary row's value, and with max()/min() present that row is a real, identifiable
-  // person's (09 D-64b finding: `max(engagement_score)` next to a bare `signup_date`).
+  // person's (e.g. `max(engagement_score)` next to a bare `signup_date`).
   const plain = expressions.filter((e) => e.kind === 'plain_approved')
   if (plain.length > 0) {
     problems.push(`a totals query's columns must be count(*), count(DISTINCT pkey|visitor_hash), an aggregate or a grouped dimension — not the plain column ${plain[0].name}`)

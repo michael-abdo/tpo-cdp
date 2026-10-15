@@ -1,17 +1,18 @@
-// Visitor → subscriber funnel, the second /growth panel (04 §GET /api/insights/funnel,
-// 06 §/growth; R6). Website visitors, and how many of them subscribed, by the page and by the
-// campaign source (UTM) of their earliest visit (09 D-49), read from the PII-free v_funnel view,
-// the same relation the assistant's `visitor_to_subscriber` metric reads, so "Explain this"
-// reproduces these numbers. Anonymous visitors stay in the counts (02 §Linking 3, 09 D-15).
-// The self-reported-vs-UTM panel is dropped (09 D-21). Live query on every request (03 §No-restart).
+// Visitor → subscriber funnel, the second /growth panel (GET /api/insights/funnel). Website
+// visitors, and how many of them subscribed, by the page and by the campaign source (UTM) of
+// their earliest visit (one event defines a visitor's arrival, so page and source never describe
+// different visits), read from the PII-free v_funnel view, the same relation the assistant's
+// `visitor_to_subscriber` metric reads, so "Explain this" reproduces these numbers. Anonymous
+// visitors stay in the counts: nothing is dropped. There is no self-reported-vs-UTM panel: the
+// data has no mismatch to show. Live query on every request.
 
 export interface FunnelCounts {
   visitors: number
-  /** Visitors linked to a subscriber by a /subscribe email (02 §Linking 2). */
+  /** Visitors linked to a subscriber by a /subscribe email. */
   subscribed: number
   /** subscribed / visitors, 4 decimals; null when there are no visitors. */
   rate: number | null
-  /** The assistant question these numbers answer (09 D-39). */
+  /** The assistant question these numbers answer. */
   explain: string
 }
 
@@ -20,7 +21,7 @@ export interface FunnelPageRow extends FunnelCounts {
 }
 
 export interface FunnelUtmRow extends FunnelCounts {
-  /** Canonical UTM of the earliest visit; null = that visit carried none (09 D-49). */
+  /** Canonical UTM of the earliest visit; null = that visit carried none (not the first non-empty one). */
   first_utm_source: string | null
 }
 
