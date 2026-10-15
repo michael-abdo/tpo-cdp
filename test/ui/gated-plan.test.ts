@@ -145,7 +145,7 @@ describe('T-GATE-6 (D-72, one home): no features.ts label/controls string is han
   // literal words sitting in source, not merely what ends up on screen.
   //
   // Two words collide on purpose. `ask.tsx`'s own, pre-existing "Ask" button (AskSection's real,
-  // working submit button, 06 §/insights R5) is not derived from follow_up_questions at all — it
+  // working submit button) is not derived from follow_up_questions at all — it
   // predates that flag and shares the single word by coincidence. "Details" is `components.tsx`'s
   // generic Disclosure default (`detailsLabel = 'Details'`) and the per-row toggles built from it
   // on /audit and three unrelated rows of /lookup (visits, app events, and Disclosure's own

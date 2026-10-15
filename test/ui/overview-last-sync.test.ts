@@ -6,9 +6,9 @@ import { humanDate, humanDateTime } from '../../src/format'
 import { SourcesTable } from '../../src/pages/OverviewPage'
 import type { CsvSource, WebhookSource } from '../../src/types'
 
-// Overview's Sources table, Last sync column (06 §Overview 2, R4.1, R4.10): a CSV's last sync is a
+// Overview's Sources table, Last sync column: a CSV's last sync is a
 // date (one run a day at most), but the webhook's row must show date AND time, so a reader can tell
-// an event arrived moments ago rather than merely "today" (09 D-72).
+// an event arrived moments ago rather than merely "today".
 
 const CSV: CsvSource = {
   id: 'subscribers',

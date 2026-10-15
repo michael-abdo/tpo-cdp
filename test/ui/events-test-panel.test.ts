@@ -12,7 +12,7 @@ const listNavSource = import.meta.glob<string>('../../src/list-nav.ts', { query:
 const lookupSource = import.meta.glob<string>('../../src/pages/LookupPage.tsx', { query: '?raw', import: 'default', eager: true })['../../src/pages/LookupPage.tsx']
 const eventsPageSource = import.meta.glob<string>('../../src/pages/EventsPage.tsx', { query: '?raw', import: 'default', eager: true })['../../src/pages/EventsPage.tsx']
 
-// "Send a test event" panel rendered (06 §/events panel, 09 D-73; T-WH-PANEL-*). workerd has no
+// "Send a test event" panel rendered (T-WH-PANEL-*). workerd has no
 // DOM, so this renders statically (react-dom/server, as test/ui/routes.test.ts does); a native
 // <details> serializes its children regardless of `open`, so the collapsed level and the
 // expanded content are both visible to renderToString. Unlike routes.test.ts this leaves
@@ -59,7 +59,7 @@ describe('"Send a test event" panel: labels (D-55 levels, WCAG 2.2 AA)', () => {
   it('the placeholder names only what /api/lookup/search actually matches: the start of a user ID, or an email', () => {
     const page = html()
     expect(page).toContain('Type the start of a user ID or an email, e.g. u_2b64')
-    // No separate helper line repeats or contradicts it (D-72: one thing in one place).
+    // No separate helper line repeats or contradicts it (one thing in one place).
     expect(page).not.toContain('Type part of a user ID')
     expect(page.match(/e\.g\. u_/g)).toHaveLength(1)
   })

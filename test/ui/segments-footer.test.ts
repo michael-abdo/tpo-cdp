@@ -6,8 +6,8 @@ import { DEFINITIONS } from '../../shared/derive'
 import SegmentsPage from '../../src/pages/SegmentsPage'
 import type { SegmentFilters } from '../../src/types'
 
-// /segments (09 D-72, D-55, 06 §UI principles 2/4): each fact once per screen across levels. The
-// never-opened toggle's contrast with "Cold" (09 D-30) is the level-1 hint beside the days field;
+// /segments: each fact once per screen across levels. The
+// never-opened toggle's contrast with "Cold" is the level-1 hint beside the days field;
 // "How these filters work" (level 2) no longer repeats no_open_in_days' or cold's plain words, only
 // their raw formulas in Technical details (level 3). A days value is routed in via location.state,
 // the same way "Open segment" on /insights arrives (SegmentsPage's own opened-filters path), so the

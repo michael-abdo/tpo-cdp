@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest'
 import { Field } from '../../src/components'
 import lookupSource from '../../src/pages/LookupPage.tsx?raw'
 
-// src/components.tsx Field (09 D-55, D-60): the value wraps at word boundaries by default, so
+// src/components.tsx Field: the value wraps at word boundaries by default, so
 // plain prose never breaks mid-word; a caller showing a raw id or hash with no natural break
 // point passes `breakAll` so a long token still wraps inside its column instead of overflowing
-// it. Every LookupPage Field that shows an id or hash must pass that flag (06 §Vocabulary).
+// it. Every LookupPage Field that shows an id or hash must pass that flag.
 
 /** The rendered <dd> element's class attribute for a Field with the given props/children. */
 function ddClass(props: { label: string; breakAll?: boolean }, children: string = 'plain prose'): string {

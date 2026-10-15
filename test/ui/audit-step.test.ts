@@ -5,14 +5,14 @@ import { BLOCK_REASON, BLOCKED_FALLBACK } from '../../src/block-reason'
 import { Step } from '../../src/pages/AuditPage'
 import type { AuditRow } from '../../src/types'
 
-// /audit (06 §/audit, §UI principles 4): a blocked step reads in words. test/audit.test.ts runs the
+// /audit: a blocked step reads in words. test/audit.test.ts runs the
 // pure blockReason on every error the worker writes; this renders the page's own Step, so it also
 // shows the page calls blockReason rather than printing the generic sentence. The rows have the
 // shape tool-executor.ts deny() writes for a Gate 2 and a Gate 3 refusal ("<gate>_denied: <problems>",
 // kind and status 'blocked', the tool's name). The error strings are the ones deny() stores, built
 // from a run of the real gates: Gate 2's inputSchemaProblems (gate2-tool-authorizer.ts) on the
 // seeded segment schema (scripts/tool-seeds.ts) given status ["Instagram"], a value from
-// subscribers.csv's source column (09 D-47), with the "input_schema: " prefix executeToolCall adds
+// subscribers.csv's source column, with the "input_schema: " prefix executeToolCall adds
 // to each Gate 2 problem (the form test/gate2.test.ts pins); and Gate 3's readOnlySelect
 // (gate3-readonly-sql.ts) on two SELECTs over v_profiles joined by ";", which deny() stores as is.
 

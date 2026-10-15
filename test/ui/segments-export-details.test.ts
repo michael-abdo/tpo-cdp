@@ -6,12 +6,12 @@ import { ExportFileDetails } from '../../src/pages/SegmentsPage'
 import { BRIEF_EXAMPLE } from '../../src/previous-searches'
 import { SEGMENT_COLUMNS, SEGMENT_SORT, type SegmentFilters } from '../../shared/segment-filters'
 
-// /segments "What's in the file" (06 §/segments, R3; 09 D-76): beside Export CSV, one short
+// /segments "What's in the file": beside Export CSV, one short
 // level-1 line names the rows and whether unsubscribed subscribers are part of the file, and a
 // level-2 disclosure lists the columns in file order, the sort order and the filters the server
 // echoed, every piece read from SEGMENT_COLUMNS / SEGMENT_SORT (shared/segment-filters.ts,
 // the same array compileSegment reads to build the export's SQL) so the UI can never describe a
-// different file than the one Export CSV downloads. D-72: the row count is stated once more, in
+// different file than the one Export CSV downloads. The row count is stated once more, in
 // new words, never the heading's exact count sentence or segmentLabel's exact sentence.
 
 /** React's own marker between two adjacent text-ish children; never real content. */
@@ -67,7 +67,7 @@ describe('/segments ExportFileDetails: "What\'s in the file" (09 D-76)', () => {
   it('raw column headers, export order, sit in Technical details, exactly SEGMENT_COLUMNS joined', () => {
     const html = rendered(BRIEF_EXAMPLE, 177)
     expect(html).toContain([...SEGMENT_COLUMNS].join(', '))
-    // Inside <details>, not the plain-word level-2 body (level 3, 06 §UI principles 2–5).
+    // Inside <details>, not the plain-word level-2 body (level 3).
     const techAt = html.indexOf('Technical details')
     expect(techAt).toBeGreaterThan(-1)
     expect(html.indexOf([...SEGMENT_COLUMNS].join(', '))).toBeGreaterThan(techAt)
@@ -105,7 +105,7 @@ describe('/segments: ExportFileDetails sits beside Export CSV, only once a resul
 
   // The file Export CSV downloads and the file ExportFileDetails describes must be the same
   // file: both read the identical filters expression, so a divergence (e.g. Export CSV sending
-  // a wider status list than the disclosure claims it will) cannot pass silently (09 D-76).
+  // a wider status list than the disclosure claims it will) cannot pass silently.
   it('Export CSV and ExportFileDetails read the identical filters expression, not two separate copies', () => {
     const onClickMatch = segmentsSource.match(/onClick=\{\(\) => void exportCsv\(([^)]*)\)\}/)
     const detailsMatch = segmentsSource.match(/<ExportFileDetails filters=\{([^}]*)\} count=/)

@@ -12,13 +12,13 @@ import { FIELD_ID, FIELD_LABEL } from '../../src/segment-form'
 import { DaysBox, MatchingRows, NEW_SUBSCRIBERS_HINT, RowDetails, SearchOutcome } from '../../src/pages/SegmentsPage'
 import type { SegmentRow } from '../../src/types'
 
-// /segments rendered (06 §/segments, §Vocabulary, §UI principles 4; 09 D-66, D-69). React's
+// /segments rendered. React's
 // server renderer cannot render the whole
 // page (InfoTip portals to document.body), so this renders its exported parts and reads the
 // page's source for where they sit and which InfoTips it shows.
 // Inputs: julia.evans230's row of subscribers.csv (line 373: signed up 2026-09-13, active,
-// Instagram, last open 2026-09-15) with her seeded engagement_score 28 and app account (02
-// §Counts demo subject); 46 is Instagram went cold in 2026-08 (02 §Counts); the filters are the
+// Instagram, last open 2026-09-15) with her seeded engagement_score 28 and app account (a
+// demo subject); 46 is Instagram went cold in 2026-08; the filters are the
 // brief's example (src/previous-searches.ts) and the same with both statuses.
 
 const JULIA: SegmentRow = {
@@ -46,7 +46,7 @@ function render(element: ReturnType<typeof createElement>): { html: string; text
 /** The text of every element `tag` in `html`, in order. */
 const cells = (html: string, tag: string) => [...html.matchAll(new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 'g'))].map((m) => m[1].replace(/<[^>]*>/g, ''))
 
-/** 06 §Vocabulary "subscriber fields": the brief's words, the only labels a subscriber field may have. */
+/** The subscriber fields in the brief's words, the only labels a subscriber field may have. */
 const SUBSCRIBER_FIELDS = ['Email', 'Signup date', 'Status', 'Acquisition source', 'Last open date']
 
 describe('/segments: a search run from Previous searches shows its count beside the list (19 §2)', () => {

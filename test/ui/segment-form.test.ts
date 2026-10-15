@@ -17,10 +17,10 @@ import {
   toForm,
 } from '../../src/segment-form'
 
-// The /segments form as data (09 D-69 review gaps 2, 3 and 4; 08 T-SEG-4, T-SEG-6, T-SEG-7, T-SEG-9).
+// The /segments form as data (T-SEG-4, T-SEG-6, T-SEG-7, T-SEG-9).
 // Every filter object here is canonical, as POST /api/segments/preview echoes it (T-SEG-6), with
-// real values (09 D-47): sources from subscribers.csv, /shadrachs-picks from web_events.csv, the
-// windows and counts of 02 §Counts (30 days, Aug 2026, engagement 50,
+// real values: sources from subscribers.csv, /shadrachs-picks from web_events.csv, the
+// seed's windows and counts (30 days, Aug 2026, engagement 50,
 // read_story in the last 7 days). The server's own problem lines and their plain words are pinned
 // against the real Worker in test/segments.test.ts; here they are rendered.
 

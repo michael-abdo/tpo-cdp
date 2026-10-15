@@ -3,17 +3,17 @@ import { FILTER_KEYS, type FilterKey, type SegmentFilters } from '../../shared/s
 import { segmentLabel } from '../../src/labels'
 import { BRIEF_EXAMPLE, searchKey } from '../../src/previous-searches'
 
-// T-SEG-5 (08; 09 D-69): segmentLabel is the one home of segment
+// T-SEG-5: segmentLabel is the one home of segment
 // names. Every filter object here is canonical, the shape POST /api/segments/preview echoes
 // (shared/segment-filters.ts: status and source sorted, has_app present, include_never_opened
-// false without days, engagement 0 and 100 dropped). Values are real (09 D-47): sources from
+// false without days, engagement 0 and 100 dropped). Values are real: sources from
 // subscribers.csv's source column, /shadrachs-picks from web_events.csv, read_story from the
-// brief's event names, and the spec's own windows (30 days, August 2026, engagement 50).
+// brief's event names, and the example filters' windows (30 days, August 2026, engagement 50).
 
 const ACTIVE: SegmentFilters = { status: ['active'], include_never_opened: false, has_app: null }
 const f = (more: Partial<SegmentFilters>): SegmentFilters => ({ ...ACTIVE, ...more })
 
-/** 06 §Vocabulary "Retired anywhere user-facing" (09 D-66, the words T-VOC-1 bans). */
+/** Words retired anywhere user-facing (the words T-VOC-1 bans). */
 const RETIRED = [/\breaders?\b/i, /\blists?\b/i, /newsletter list/i, /app users/i, /find a reader/i, /build a list/i]
 
 describe('T-SEG-5 segmentLabel names a segment in the brief\'s words', () => {

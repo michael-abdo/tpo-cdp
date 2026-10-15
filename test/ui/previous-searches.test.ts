@@ -14,10 +14,10 @@ import {
   visibleSearches,
 } from '../../src/previous-searches'
 
-// T-SEG-4 (08; 09 D-69): Previous searches keep the last 5 echoed filter
+// T-SEG-4: Previous searches keep the last 5 echoed filter
 // objects in this browser and nothing else. Each filter object is canonical, the shape POST
-// /api/segments/preview echoes (shared/segment-filters.ts), with real values (09 D-47): sources
-// from subscribers.csv, /shadrachs-picks from web_events.csv, the spec's windows.
+// /api/segments/preview echoes (shared/segment-filters.ts), with real values: sources
+// from subscribers.csv, /shadrachs-picks from web_events.csv, the example filters' windows.
 
 /** An in-memory Storage: the test's stand-in for localStorage, which workerd does not have. */
 class MemoryStore implements SearchStore {

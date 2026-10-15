@@ -7,7 +7,7 @@ import { Profile } from '../../src/pages/LookupPage'
 import type { Lookup } from '../../src/types'
 import { elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 
-// Look up's gated future features (09 D-80): App revenue (a fourth column)
+// Look up's gated future features: App revenue (a fourth column)
 // and Delete this person (a quiet row at the end). T-FEAT-LK-1..4.
 
 const PROFILE: Lookup = {

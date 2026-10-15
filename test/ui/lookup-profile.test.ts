@@ -10,13 +10,13 @@ import { ingestSubscribers } from '../../worker/ingest/subscribers'
 import { ingestWeb } from '../../worker/ingest/web'
 import { JOY, OWN_ACCOUNT, OWN_ACCOUNT_EVENT, SECOND_ACCOUNT, SECOND_VISITOR, sharedIdCsvs } from '../helpers/shared-ids'
 
-// The Look up page's half of 09 D-70 item 4 (08 T-HARD-4; the API half is test/hardening-ids.test.ts):
+// The Look up page's half of T-HARD-4 (the API half is test/hardening-ids.test.ts):
 // a profile with two app accounts and two web visitors shows how many at level 1 and each one under
 // its own heading in Details and Technical details. The profile is joy.hall830 on the derived files
-// of test/helpers/shared-ids.ts, shaped as GET /api/lookup returns it (04: earliest first, the
+// of test/helpers/shared-ids.ts, shaped as GET /api/lookup returns it (earliest first, the
 // single-object fields = the first) by the seed's own pure ingest steps. Its pkey is shown only in
 // Technical details and asserted nowhere: it needs PII_KEY_SECRET, which this project cannot read,
-// so it carries 04's own placeholder. Her later account u_ceed5f12 holds one app event, the brief's
+// so it carries the placeholder `pk_…`. Her later account u_ceed5f12 holds one app event, the brief's
 // sample webhook as test/helpers/shared-ids.ts defines it, in the shape test/hardening-ids.test.ts
 // pins for GET /api/lookup.
 

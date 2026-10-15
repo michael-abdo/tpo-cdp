@@ -6,17 +6,17 @@ import { FILTERS_HIDDEN_MESSAGE } from '../../src/filters-applied'
 import { AnswerCard } from '../../src/insights/ask'
 import type { AssistantResponse } from '../../src/types'
 
-// The answer card of /insights (06 §/insights, formerly /assistant; 09 D-58, D-64) as the page renders it. The model
+// The answer card of /insights (formerly /assistant) as the page renders it. The model
 // writes filters_applied and the server passes it through unscreened (test/audit.test.ts), so this
 // renders the page's own AnswerCard with React's server renderer and reads every character it would
 // show, at both levels and in Technical details (<details> content is in the HTML even when closed).
 // The response is the recorded answer to the brief's first question (46 = Instagram active
-// went_cold_in 2026-08, 02 §Counts), as the server returns it; filters_applied is the model's
-// output, test input like D-54's transport payloads. The SQL is the shape T-AI-5 discards from text.
+// went_cold_in 2026-08), as the server returns it; filters_applied is the model's
+// output, test input like the recorded transport payloads. The SQL is the shape T-AI-5 discards from text.
 
 const REAL = { status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 const SQL = 'SELECT email_norm FROM subscribers'
-/** The brief's first question (R5.2), the one this recorded answer replies to. */
+/** The brief's first question, the one this recorded answer replies to. */
 const QUESTION = 'how many Instagram signups went cold last month?'
 
 function answer(filtersApplied: Record<string, unknown>): AssistantResponse {

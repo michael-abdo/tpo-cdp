@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../src/App'
 import { closesOnPointer, escapeAction, NAV, nextOpen } from '../../src/nav'
 
-// "Techy" (06 §Nav, 09 D-71): App events and AI audit log fold into one dropdown, last in the nav,
+// "Techy": App events and AI audit log fold into one dropdown, last in the nav,
 // after the WAI-ARIA disclosure-navigation pattern. Three kinds of check, with different reach:
 // (A) the NAV data itself (src/nav.ts NAV, the single source both the desktop and the phone nav
 // read) — this is what "a link is missing from the group" or "a link reappeared at top level"
@@ -55,7 +55,7 @@ function techyButton(html: string): string {
 
 /**
  * The markup strictly between the Techy button's closing tag and the next real NavLink after the
- * whole group (09 D-71 requirement: the panel's own links sit right after the button in the DOM,
+ * whole group (the panel's own links sit right after the button in the DOM,
  * not at the end of <body> through a portal). Fails the same way `techyButton` does when either
  * boundary is missing, so a regression back to a portal (nothing between the button and whatever
  * unrelated markup follows it) shows up as a missing "AI audit log" link, not a thrown error.
