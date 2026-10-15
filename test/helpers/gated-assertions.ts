@@ -1,4 +1,4 @@
-// Shared assertions for every test/ui/*-gated.test.ts file (09 D-80). Plain string/regex checks
+// Shared assertions for every test/ui/*-gated.test.ts file. Plain string/regex checks
 // over rendered HTML (renderToString output), with no DOM: tests run inside workerd, which has no
 // `document`. Centralised so a stronger check (a strict `disabled` regex, an aria-describedby id
 // that must resolve to the FEATURES note's exact text) is written once and every gated test
@@ -13,7 +13,7 @@
  */
 const DISABLED_ATTRIBUTE = /(?<![\w-])disabled(="[^"]*")?(?=[\s/>])/
 
-/** True if `html` carries a real `disabled` attribute anywhere (09 D-80: a gated control never does). */
+/** True if `html` carries a real `disabled` attribute anywhere (a gated control never does). */
 export function hasDisabledAttribute(html: string): boolean {
   return DISABLED_ATTRIBUTE.test(html)
 }

@@ -6,7 +6,7 @@ import { parseCsv } from '../../worker/ingest/csv'
 import { documentationIp } from './auth'
 import { piiKeySecret } from './seed'
 
-// Signs and sends app webhooks the way 04 §Webhook headers specifies, with WEBHOOK_SECRET from
+// Signs and sends app webhooks the way the API's webhook headers specify, with WEBHOOK_SECRET from
 // .dev.vars (never printed). The HMAC is computed here with WebCrypto, independently of
 // worker/webhooks/verify.ts, so a bug there cannot be mirrored by the signer.
 
@@ -24,7 +24,7 @@ export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-/** `v1=` + hex HMAC-SHA256(secret, `<timestamp>.<raw body bytes>`) (04 §Webhook headers). */
+/** `v1=` + hex HMAC-SHA256(secret, `<timestamp>.<raw body bytes>`) (the webhook signature header). */
 export async function signature(secret: string, timestamp: string, body: Uint8Array): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw',
@@ -83,7 +83,7 @@ export async function sendWebhook(body: string | Uint8Array, options: SendOption
 }
 
 /**
- * Distinct event ids built from real ids (09 D-11): `evt_` + the hex of each distinct visitor_id
+ * Distinct event ids built from real ids: `evt_` + the hex of each distinct visitor_id
  * in data/web_events.csv, in file order. No events CSV exists, so ids cannot come from one.
  */
 export function eventIdPool(): () => string {

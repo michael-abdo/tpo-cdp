@@ -9,7 +9,7 @@ import { seedSql, type SeedFile } from '../../worker/ingest/sql'
 
 // Loads the three real data/*.csv files into the test D1 (migrations applied by test/setup.ts)
 // through the production pipeline: parseCsv → buildSeed → seedSql, the same path
-// scripts/csv2sql.ts takes (11 §Seed). Storage is isolated per test file, so each file that
+// scripts/csv2sql.ts takes. Storage is isolated per test file, so each file that
 // needs data calls seedDatabase() in beforeAll; repeat calls in one file reuse the first load.
 
 export interface SeededDb {
@@ -26,7 +26,7 @@ export function piiKeySecret(): string {
   return value
 }
 
-/** The three real CSVs, freshly parsed (callers may edit their copies, 09 D-47). */
+/** The three real CSVs, freshly parsed (callers may make minimal edits to their copies). */
 export function realCsvs(): SeedCsvs {
   return { subscribers: parseCsv(subscribersCsv), web_events: parseCsv(webCsv), app_users: parseCsv(appCsv) }
 }
@@ -38,7 +38,7 @@ async function load(): Promise<SeededDb> {
   if (existing !== 0)
     throw new Error(`seed helper: import_runs already holds ${existing} rows; refusing to seed twice`)
   const seed = await buildSeed(realCsvs(), piiKeySecret())
-  // import_runs.ran_at is the wall-clock time the seed ran (02 §Time allow-list, 09 D-48); the
+  // import_runs.ran_at is the wall-clock time the seed ran (one of the few wall-clock reads); the
   // helper stands in for the seed script, so it takes the clock the same way.
   const ranAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   const files = seedSql(seed, ranAt)
