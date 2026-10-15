@@ -217,7 +217,7 @@ function FixableGroups({ list }: { list: readonly QuarantinedRow[] }) {
   ))
 }
 
-/** CSV line and reason code per row (level 3, principle 2). */
+/** CSV line and reason code per row (level 3: Technical details). */
 function RowLines({ list }: { list: readonly QuarantinedRow[] }) {
   return (
     <TechnicalDetails>
@@ -631,7 +631,7 @@ const VERDICT_WORDS: Record<DuplicateDecision['verdict'], string> = {
   different_people: 'different people',
 }
 
-/** The 0–100 score as a bar plus its number in words; the bar is decoration (principle 7). */
+/** The 0–100 score as a bar plus its number in words; the bar is decoration (never colour alone). */
 function ScoreBar({ score }: { score: number }) {
   return (
     <div className="flex items-center gap-3 text-sm">
@@ -716,7 +716,7 @@ function DuplicateCard({
   )
 }
 
-/** Weights and the chance check, raw (level 3, principle 2). */
+/** Weights and the chance check, raw (level 3: Technical details). */
 function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: DuplicatePair[] }) {
   return (
     <TechnicalDetails>

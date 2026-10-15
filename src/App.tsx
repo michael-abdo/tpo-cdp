@@ -37,7 +37,7 @@ import SegmentsPage from './pages/SegmentsPage'
 const APP_NAME = 'TPO Mini CDP'
 
 function navClass({ isActive }: { isActive: boolean }): string {
-  // The current page reads by weight + a soft fill, not colour alone (principle 7).
+  // The current page reads by weight + a soft fill, not colour alone (WCAG 2.2 AA).
   return `inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150 ${
     isActive
       ? 'bg-accent-soft font-semibold text-accent-strong'

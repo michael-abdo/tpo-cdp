@@ -24,7 +24,7 @@ export default function LoginPage() {
     document.title = 'Sign in · TPO Mini CDP'
   }, [])
 
-  // The neutral limit notice follows a plain miss; a 429's own message already says it (principle 5).
+  // The neutral limit notice follows a plain miss; a 429's own message already says it, so it is not repeated.
   const missed = error === 'Wrong password'
 
   async function submit(e: FormEvent) {

@@ -136,7 +136,7 @@ export function Icon({ icon: I, className = 'size-4' }: { icon: LucideIcon; clas
   return <I aria-hidden="true" focusable="false" strokeWidth={1.75} className={`shrink-0 ${className}`} />
 }
 
-/** Primary = the one main action of a screen (principle 1); secondary = everything else. */
+/** Primary = the one main action of a screen (each screen has one job); secondary = everything else. */
 export function Button({
   variant = 'secondary',
   type = 'button',
@@ -228,7 +228,7 @@ function Chevron({ open }: { open?: boolean }) {
 }
 
 /**
- * Level 2 (principles 2, 3): a native <details>/<summary> with a chevron and words, so hidden
+ * Level 2: a native <details>/<summary> with a chevron and words, so hidden
  * info has scent, opens by tap or keyboard (Enter/Space) and never needs hover.
  * `label` is what the toggle says ("Details", "How the data was combined", "Show all 9 visits").
  */
@@ -264,7 +264,7 @@ export function Disclosure({
 }
 
 /**
- * Level 3 (principle 2): the one fixed-labelled "Technical details" toggle. Use it only inside a
+ * Level 3: the one fixed-labelled "Technical details" toggle. Use it only inside a
  * Disclosure (or a block that is itself level 2), never nested in another TechnicalDetails.
  * Holds raw names, codes, ids, pk_ keys, SQL shape and second-precise UTC times (format.ts utc()).
  */
@@ -283,7 +283,7 @@ export function TechnicalDetails({ children }: { children: ReactNode }) {
 }
 
 /**
- * A polite live region (principle 7) for result counts and status changes. Keep it mounted and
+ * A polite live region (for screen readers) for result counts and status changes. Keep it mounted and
  * change `message`, so screen readers hear each change. `visible` shows it as a quiet line too.
  */
 export function Announcer({ message, visible = false }: { message: string; visible?: boolean }) {
@@ -294,7 +294,7 @@ export function Announcer({ message, visible = false }: { message: string; visib
   )
 }
 
-/** A short text loading state, announced politely (principles 7, 8). */
+/** A short text loading state, announced politely; text, not a spinner alone. */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   return (
     <p role="status" aria-live="polite" className="inline-flex items-center gap-2 text-sm text-ink-muted">
@@ -404,7 +404,7 @@ export function Section({
 }
 
 /**
- * A label/value pair inside a <dl>. Labels are plain words, never raw field names (principle 4).
+ * A label/value pair inside a <dl>. Labels are plain words, never raw field names.
  * The value wraps at word boundaries by default, so plain prose never breaks mid-word; a caller
  * showing a raw id or hash with no natural break point (a profile key, a device or visitor id)
  * passes `breakAll` so a long token still wraps inside its column instead of overflowing it.
@@ -600,8 +600,8 @@ export function Metric({
 }
 
 /**
- * A small badge that carries its meaning in words, never colour alone (principle 7). With
- * `onClick` it is a button (a status chip that opens what it counts), 24 px tall (principle 7).
+ * A small badge that carries its meaning in words, never colour alone (WCAG 2.2 AA). With
+ * `onClick` it is a button (a status chip that opens what it counts), 24 px tall (the minimum target size).
  */
 export function Tag({
   children,
@@ -667,7 +667,7 @@ export function GatedNote({ id, activated, text }: { id: string; activated: bool
 }
 
 export interface Column<T> {
-  /** Plain-language header (principle 4); also the label in the stacked cards. */
+  /** Plain-language header; also the label in the stacked cards. */
   header: string
   cell: (row: T) => ReactNode
   /** Right-aligns the column in the table. */
@@ -695,8 +695,8 @@ function useNarrow(): boolean {
 }
 
 /**
- * A table from 640 px up; stacked label:value cards below (principle 9), so the page never scrolls
- * sideways. `details` adds a per-row toggle ("Details" by default) for level-2 fields (principle 2).
+ * A table from 640 px up; stacked label:value cards below, so the page never scrolls
+ * sideways on a phone. `details` adds a per-row toggle ("Details" by default) for level-2 fields.
  * Both layouts share one set of open rows, and an open row's details mount only in the layout on
  * screen, so a panel that fetches or holds state exists once. Pass `open` and `onOpenChange` to
  * control which rows are open from outside (a control elsewhere on the row that opens it).

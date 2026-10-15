@@ -17,7 +17,7 @@ export interface ChartSegment {
   filters: SegmentFilters
 }
 
-/** Table rows shown before "Show all …" (principle 2: the rest is one click away). */
+/** Table rows shown before "Show all …" (the rest is one click away). */
 export const FIRST_ROWS = 10
 
 // ── shapes ───────────────────────────────────────────────────────────────────────────────

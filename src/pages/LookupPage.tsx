@@ -85,7 +85,7 @@ function latest(timestamps: string[]): string | null {
   return timestamps.reduce<string | null>((max, ts) => (max === null || ts > max ? ts : max), null)
 }
 
-/** The bar is decoration; the words carry the number (principle 7: never colour alone). */
+/** The bar is decoration; the words carry the number (never colour alone). */
 function ScoreMeter({ score }: { score: number }) {
   return (
     <span className="inline-flex items-center gap-2 text-sm text-gray-800">
@@ -192,7 +192,7 @@ function Header({ data }: { data: Lookup }) {
   // A profile with no email is named in words; the raw app id lives in Technical details.
   const identity = profile.email ?? 'App account with no email on file'
   const facts: string[] = []
-  // The kind word only when it says something the columns don't (principle 5).
+  // The kind word only when it says something the columns don't (no repeats).
   if (!(profile.kind === 'subscriber' && newsletter !== null)) facts.push(KIND_LABEL[profile.kind])
   if (newsletter !== null) {
     facts.push(capitalized(newsletter.status))
@@ -267,7 +267,7 @@ function PartHeading({ children }: { children: ReactNode }) {
   return <p className="text-sm font-medium text-gray-900">{children}</p>
 }
 
-/** One visitor's visits; `utmInSummary` = its first visit's source is already in the summary (principle 5). */
+/** One visitor's visits; `utmInSummary` = its first visit's source is already in the summary, so it is not repeated. */
 function VisitList({ visitor, utmInSummary }: { visitor: LookupVisitor; utmInSummary: boolean }) {
   return (
     <ol className="space-y-1 text-sm">
@@ -632,7 +632,7 @@ function SuggestionList({
             className="flex cursor-pointer flex-wrap gap-x-3 px-3 py-2 hover:bg-gray-50"
           >
             <span className="break-all font-medium text-gray-900">{m.email ?? m.user_id}</span>
-            {/* The kind only when it is not the usual one (principle 5). */}
+            {/* The kind only when it is not the usual one (no repeats). */}
             {m.kind !== 'subscriber' && <span className="text-gray-700">{KIND_LABEL[m.kind]}</span>}
             {m.status !== null && <span className="text-gray-700">{capitalized(m.status)}</span>}
           </ListboxOption>
@@ -775,7 +775,7 @@ export default function LookupPage() {
   const notFound = state?.status === 'not_found' ? state : null
   const result = state?.status === 'ok' ? state.data : null
 
-  // One polite live region for every result change (principle 7); visible when it is the answer.
+  // One polite live region for every result change (screen readers); visible when it is the answer.
   let message = ''
   let messageVisible = false
   if (suggested !== null) {
