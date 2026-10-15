@@ -51,6 +51,26 @@ const CORRELATED_UNINDEXED_SCAN = "SELECT p.pkey, (SELECT count(*) FROM v_web_ev
 // A genuine syntax error: EXPLAIN QUERY PLAN fails on it the same way the real run would.
 const SYNTAX_ERROR_SQL = 'SELECT source, count(*) AS n FROM v_profiles GROUP BY'
 
+// One-token variants of the exact comma/`ON 1 = 1` cartesian above, each adding a single indexed
+// range filter that turns the filtered side's driving SCAN into a SEARCH, so a SCAN-only plan
+// check lets every one of these through (09 D-81 #2's self-audit; K-labels match its probes).
+// Measured in workerd against the real seed: K2 189,674,521 rows, K3 189,674,521 rows (the `ON 1
+// = 1` shape), K22 (CROSS JOIN) passed the same way, K5 537,660,000 rows (no SCAN row at all —
+// both sides become range SEARCHes), K8 537,677,692 rows, K26 28,891,129 rows. K1 (`w.page =
+// '/'`, a constant *equality* filter instead of a range one) still passes uncaught — the plan
+// check's range-only rule (gate3-readonly-sql.ts `isRangeOnlySearch`) deliberately excludes any
+// `=?` term so it does not also refuse a genuine equality join or equality-correlated subquery;
+// README "Known gaps" discloses K1's shape as a residual, so no refusal test is added for it.
+const CARTESIAN_WITH_RANGE_FILTER_COMMA = "SELECT count(*) AS n FROM v_profiles p, v_web_events w WHERE w.page > ''"
+const CARTESIAN_WITH_RANGE_FILTER_JOIN_ON = "SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON w.page >= ''"
+const CARTESIAN_SELF_JOIN_BOTH_RANGE_FILTERED = "SELECT count(*) AS n FROM v_web_events a, v_web_events b WHERE a.page > '' AND b.page > ''"
+const CARTESIAN_NESTED_IN_SUBQUERY_RANGE_FILTERED =
+  "SELECT pkey FROM v_profiles WHERE pkey IN (SELECT a.pkey FROM v_web_events a, v_web_events b WHERE b.page > '')"
+// Not a cartesian group (one SEARCH in its own scope), but the same range-only-SEARCH shape as
+// CORRELATED_UNINDEXED_SCAN's SCAN: an indexed range bound, correlated to the outer row, run once
+// per outer row.
+const CORRELATED_RANGE_SCAN = "SELECT p.pkey, (SELECT count(*) FROM v_web_events w WHERE w.page >= p.first_page) AS n FROM v_profiles p"
+
 let cookie: string
 
 beforeAll(async () => {
@@ -273,6 +293,48 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
       expect((err as GateDenied).problems[0]).toMatch(/correlated subquery/)
     }
     expect(prepared.some((q) => q.includes(CORRELATED_UNINDEXED_SCAN) && !q.startsWith('EXPLAIN'))).toBe(false)
+  })
+
+  // The self-audit's finding (09 D-81 #2): a SCAN-only plan check is a one-token variant of its
+  // own cartesian example away from passing — add one indexed range filter (`w.page > ''`) to
+  // either side and that side's driving SCAN becomes a SEARCH, which `isRealScan` never counted.
+  // Each of these is the exact comma/`ON 1 = 1`/nested-subquery/correlated shape already covered
+  // above, with that one filter added; `isRangeOnlySearch` now counts a range-bound SEARCH the
+  // same as a SCAN, so every one is refused before it runs, the same as its unfiltered twin.
+  it.each([
+    ['a comma cross join with an indexed range filter on one side (K2)', CARTESIAN_WITH_RANGE_FILTER_COMMA],
+    ['a JOIN … ON with an indexed range condition instead of ON 1 = 1 (K3)', CARTESIAN_WITH_RANGE_FILTER_JOIN_ON],
+    ['a self-join of the same view with a range filter on both sides, which shows no SCAN row at all (K5)', CARTESIAN_SELF_JOIN_BOTH_RANGE_FILTERED],
+    ['the same self-join nested inside an IN (SELECT …) subquery (K8)', CARTESIAN_NESTED_IN_SUBQUERY_RANGE_FILTERED],
+  ])('%s is refused before it runs, not only its unfiltered twin', async (_label, sql) => {
+    const { db, prepared } = recordingDb()
+    try {
+      await runReadOnlySelect(db, sql)
+      throw new Error('expected a GateDenied')
+    } catch (err) {
+      expect(err, sql).toBeInstanceOf(GateDenied)
+      const denied = err as GateDenied
+      expect(denied.gate, sql).toBe('gate3')
+      expect(denied.problems[0], sql).toContain('unindexed table scans')
+    }
+    expect(prepared.some((q) => q.includes(sql) && !q.startsWith('EXPLAIN')), sql).toBe(false)
+    expect(prepared.some((q) => q.startsWith('EXPLAIN QUERY PLAN')), sql).toBe(true)
+  })
+
+  // Case A's own range-bound twin (K26): the correlated subquery reaches its relation by an
+  // indexed range SEARCH (`page>?`), not an unindexed SCAN, so only `isRangeOnlySearch` (not
+  // `isRealScan`) makes `hasCorrelatedAncestor` apply here.
+  it('a correlated subquery that reaches its relation by an indexed range SEARCH is refused the same way as an unindexed SCAN (K26)', async () => {
+    const { db, prepared } = recordingDb()
+    try {
+      await runReadOnlySelect(db, CORRELATED_RANGE_SCAN)
+      throw new Error('expected a GateDenied')
+    } catch (err) {
+      expect(err).toBeInstanceOf(GateDenied)
+      expect((err as GateDenied).gate).toBe('gate3')
+      expect((err as GateDenied).problems[0]).toMatch(/correlated subquery/)
+    }
+    expect(prepared.some((q) => q.includes(CORRELATED_RANGE_SCAN) && !q.startsWith('EXPLAIN'))).toBe(false)
   })
 
   // v_source_app_conversion's own view SQL carries a real CORRELATED SCALAR SUBQUERY (it reaches

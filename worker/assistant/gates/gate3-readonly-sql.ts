@@ -328,6 +328,39 @@ function isRealScan(row: PlanRow): boolean {
   return /^SCAN\b/.test(row.detail) && row.detail !== SCAN_CONSTANT_ROW
 }
 
+/** The constraint list inside a SEARCH/SCAN row's one parenthesized detail, when it has one. */
+const SEARCH_CONSTRAINT = /\(([^()]*)\)/
+/** One ANDed constraint that bounds, never pins, a column: `col>?` or `col<?` (SQLite prints `>=`/`<=` the same way). */
+const RANGE_CONDITION = /^[\w.]+\s*[<>]\?$/
+
+/**
+ * True for a `SEARCH` row whose entire constraint list is range-only: every condition inside its
+ * one parenthesized detail bounds a column with `<`/`>` against `?`, never pins one with `=`
+ * (09 D-81 #2's self-audit: a cartesian with one indexed range filter added — `w.page > ''`,
+ * `w.page >= ''`, a `CROSS JOIN … WHERE` with the same filter, or a correlated subquery's own
+ * unindexed-looking column reached only by a range bound — answers with a `SEARCH` instead of a
+ * `SCAN` on that side, so the plan check's SCAN-only rule missed it even though a range-bound
+ * index walk over an otherwise-unjoined relation pays almost the same full cost). A constraint
+ * list holding even one `=?` term — alone (`page=?`, a constant equality filter) or mixed with a
+ * range one (`email_norm=? AND created_at>?`, the shape a real equality-joined or
+ * equality-correlated relation shows, e.g. `v_source_app_conversion`'s own correlated subquery) —
+ * is never range-only, so neither shape is flagged: the constant-equality one is a known,
+ * disclosed gap (README "Known gaps"), and the equality-joined/correlated one is the cheap,
+ * legitimate indexed access this check must not refuse.
+ */
+function isRangeOnlySearch(row: PlanRow): boolean {
+  if (!/^SEARCH\b/.test(row.detail)) return false
+  const constraint = SEARCH_CONSTRAINT.exec(row.detail)
+  if (constraint === null) return false
+  const conditions = constraint[1].split(/\s+AND\s+/)
+  return conditions.length > 0 && conditions.every((c) => RANGE_CONDITION.test(c.trim()))
+}
+
+/** A plan row this check treats as paying for a whole, otherwise-unjoined relation (09 D-81 #1, #2): a real SCAN or a range-only SEARCH. */
+function isUnjoinedRelationScan(row: PlanRow): boolean {
+  return isRealScan(row) || isRangeOnlySearch(row)
+}
+
 /**
  * True when `row`'s own plan scope — walking its `parent` chain up through EXPLAIN QUERY PLAN's
  * own tree — sits inside a `CORRELATED …` node (09 D-81 #1, the self-audit's case A: a scalar
@@ -361,40 +394,53 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
  * cartesian moved one level down (into a UNION branch or a FROM/IN/scalar subquery), not strict
  * enough: that shape leaves exactly one SCAN at `parent = 0` and puts a second one under some
  * other, non-zero parent, which the old rule never looked at):
- *   1. Two or more full scans of a real relation (`isRealScan`) sharing one immediate parent
+ *   1. Two or more rows that each pay for a whole, otherwise-unjoined relation (`isUnjoinedRelationScan`:
+ *      a real SCAN, or a SEARCH whose constraint is range-only) sharing one immediate parent
  *      scope — a comma join or `JOIN … ON 1 = 1` of two views, wherever it sits: at the outer
  *      query's own level, inside a UNION branch, inside a `FROM (SELECT …)`, inside `IN (SELECT
- *      …)`, or inside a scalar `(SELECT …)`. A normal nested-loop join (one driving SCAN, every
- *      other relation reached by an indexed SEARCH on the join's own column) only ever puts one
- *      SCAN in any one scope; a second one there means a second relation is driven independently
- *      with nothing searching it by a key the first supplies.
- *   2. A full scan of a real relation whose enclosing scope is a `CORRELATED …` subquery: run
- *      once per outer row, the same cost as a cartesian even though it is only ever one SCAN in
- *      its own scope.
+ *      …)`, or inside a scalar `(SELECT …)` — and whether each side shows as a plain SCAN or as a
+ *      SEARCH an added indexed range filter (`w.page > ''`, `w.page >= ''`, a `CROSS JOIN …
+ *      WHERE` with the same filter) turns it into: one token's difference from the comma/`ON 1 =
+ *      1` shape, measured to pass the SCAN-only version of this check while still reading
+ *      hundreds of millions of rows (09 D-81 #2's self-audit). A normal nested-loop join (one
+ *      driving SCAN, every other relation reached by an indexed SEARCH *on the join's own
+ *      column*) only ever puts one such row in any one scope; a second one there means a second
+ *      relation is driven independently with nothing joining it to the first.
+ *   2. A full scan of a real relation, or a range-only SEARCH, whose enclosing scope is a
+ *      `CORRELATED …` subquery: run once per outer row, the same cost as a cartesian even though
+ *      it is only ever one such row in its own scope.
  * Checked live against every legitimate query_sql/query-row SQL this repo runs (the brief's query
  * row, every grammar-pin SQL test/insights-board.test.ts runs, every T-AI-2/"query_sql through
  * Gates 2 and 3" probe in test/gate2.test.ts including the real `v_profiles JOIN v_web_events ON
  * w.pkey = p.pkey`, a UNION of two single-view counts, a `pkey IN (SELECT … FROM v_app_events)`
  * subquery, a `FROM (SELECT … FROM v_funnel)` subquery, the row_number() grammar-pin SQL, and
  * `v_source_app_conversion`'s own CORRELATED SCALAR SUBQUERY, which reaches its relation by an
- * indexed SEARCH, never a SCAN): none is refused. A comma/`ON 1 = 1` cartesian of two views is
- * refused the same way wherever it is nested (a UNION branch, a FROM/IN/scalar subquery), and a
- * correlated scalar subquery that scans its relation (`SELECT p.pkey, (SELECT count(*) FROM
- * v_web_events w WHERE w.utm_source = p.source) FROM v_profiles p`, which read 1,096,962 rows
- * before the self-audit's forced-run measurement) is refused by rule 2.
+ * equality-constrained SEARCH, never a SCAN and never a range-only one): none is refused. A
+ * comma/`ON 1 = 1` cartesian of two views is refused the same way wherever it is nested (a UNION
+ * branch, a FROM/IN/scalar subquery), and a correlated scalar subquery that scans its relation
+ * (`SELECT p.pkey, (SELECT count(*) FROM v_web_events w WHERE w.utm_source = p.source) FROM
+ * v_profiles p`, which read 1,096,962 rows before the self-audit's forced-run measurement) is
+ * refused by rule 2, as is the same shape with an indexed range bound instead of an unindexed
+ * equality one (`WHERE w.page >= p.first_page`, a `SEARCH … (page>?)` under a `CORRELATED SCALAR
+ * SUBQUERY` node, read 28,891,129 rows and was not flagged before this rule covered SEARCH too).
+ * A cartesian with one side filtered by a *constant equality* (`w.page = '/'`) is not caught by
+ * either rule — see "Known, accepted gaps" below.
  *
  * Known, accepted gaps this still misses (README "Known gaps"): a low-cardinality equi-join
- * SQLite answers with `SEARCH … USING AUTOMATIC COVERING INDEX` instead of a second SCAN, and a
- * join on a range condition (`ON w.pkey > p.pkey`) that SQLite answers with an indexed `SEARCH
- * (pkey<?)` on one side — both real scans in neither case, so neither shape trips this check,
- * and both are still capped only by the after-the-fact row-scan cap (#3). This also refuses one
- * legitimate pattern no query here uses: a share-of-total comma join against a scalar subquery
- * total (`FROM v_profiles p, (SELECT count(*) FROM v_profiles) t`), which plans as two top-level
- * SCANs; it is over-refusal, not a parity break, since nothing seeded or tested writes that shape.
+ * SQLite answers with `SEARCH … USING AUTOMATIC COVERING INDEX` instead of a second SCAN; and a
+ * cartesian where one side's own driving access becomes an indexed SEARCH on a *constant
+ * equality* filter (`w.page = '/'`, `SEARCH we USING INDEX web_events_page (page=?)`) instead of
+ * a SCAN — `isRangeOnlySearch` deliberately excludes any `=?` term so it does not also refuse a
+ * genuine equality join or equality-correlated subquery, and that same exclusion is why this one
+ * constant-filter shape still passes uncaught. Both are still capped only by the after-the-fact
+ * row-scan cap (#3). This also refuses one legitimate pattern no query here uses: a share-of-total
+ * comma join against a scalar subquery total (`FROM v_profiles p, (SELECT count(*) FROM
+ * v_profiles) t`), which plans as two top-level SCANs; it is over-refusal, not a parity break,
+ * since nothing seeded or tested writes that shape.
  */
 function cartesianScans(rows: readonly PlanRow[]): PlanRow[] {
   const byId = new Map(rows.map((row) => [row.id, row]))
-  const scans = rows.filter(isRealScan)
+  const scans = rows.filter(isUnjoinedRelationScan)
   const byParent = new Map<number, PlanRow[]>()
   for (const scan of scans) byParent.set(scan.parent, [...(byParent.get(scan.parent) ?? []), scan])
   const flagged = new Set<PlanRow>()
