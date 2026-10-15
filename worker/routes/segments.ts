@@ -1,11 +1,11 @@
-// POST /api/segments/preview, POST /api/segments/export.csv and GET /api/segments/options (04
-// §/api/segments/preview, §/api/segments/export.csv; 19 §5.2–5.3; R3, 09 D-07, D-69). Mounted at
-// /api behind requireJson and requireSession. The filters are validated and compiled by
-// worker/segments/compile.ts to one bound SELECT (the UI may see emails, 03 §Request flows); every
-// query here runs that SQL with its parameters, wrapped only in count(*) or LIMIT ?. The preview
+// POST /api/segments/preview, POST /api/segments/export.csv and GET /api/segments/options.
+// Mounted at /api behind requireJson and requireSession. The filters are validated and compiled by
+// worker/segments/compile.ts to one bound SELECT (staff may see emails here; the model never
+// does); every query here runs that SQL with its parameters, wrapped only in count(*) or LIMIT ?.
+// The preview
 // echoes the canonical filters that parseFilters returned, so the browser keys Previous searches
-// on the server's form and never normalizes a value itself (19 §2). Nothing is cached (03
-// §No-restart).
+// on the server's form and never normalizes a value itself. Nothing is cached, so a new event
+// counts on the next preview.
 
 import { Hono } from 'hono'
 import { SITE_PAGE_PATTERN } from '../../shared/segment-filters'
@@ -24,7 +24,7 @@ import {
 } from '../segments/compile'
 import { segmentCsv } from '../segments/export'
 
-/** Rows a preview returns when the body names no limit (04). */
+/** Rows a preview returns when the body names no limit. */
 export const PREVIEW_DEFAULT_LIMIT = 100
 /** Upper bound on a preview's rows; the full segment is what export.csv is for. */
 export const PREVIEW_MAX_LIMIT = 1000
@@ -53,8 +53,8 @@ async function readBody(req: Request, route: string, allowed: readonly string[])
   }
   const unknown = Object.keys(body).filter((k) => !allowed.includes(k))
   if (unknown.length > 0) {
-    // No key text, same as parseFilters' "unknown filter" (09 D-70 item 1, fixer round 4):
-    // the field name is a client's text, never echoed back or logged. redactDetail is still
+    // No key text, same as parseFilters' "unknown filter": the field name is a client's text
+    // (it could hold PII), never echoed back or logged. redactDetail is still
     // run as a backstop, though a literal "unknown field" never needs redaction.
     throw invalidBody(route, shape, unknown.map(() => redactDetail('unknown field')))
   }
@@ -104,7 +104,7 @@ export async function segmentRows(db: D1Database, segment: CompiledSegment, limi
   return results.map(toSegmentRow)
 }
 
-/** Unsubscribed rows matching every other filter, or 0 when the status filter already includes them (02 §Defaults). */
+/** Unsubscribed rows matching every other filter, or 0 when the status filter already includes them, so the default never hides them silently. */
 export async function hiddenUnsubscribed(db: D1Database, filters: SegmentFilters): Promise<number> {
   const hidden = hiddenUnsubscribedFilters(filters)
   return hidden === null ? 0 : countSegment(db, compileSegment(hidden))
@@ -128,7 +128,7 @@ segmentRoutes.post('/segments/preview', async (c) => {
 })
 
 segmentRoutes.post('/segments/export.csv', async (c) => {
-  // The whole list in one response, so a per-client limit (EXPORT_LIMITER, 09 D-70 #6). Cloudflare
+  // The whole list in one response, so a per-client limit (EXPORT_LIMITER). Cloudflare
   // sets CF-Connecting-IP at the edge; local dev has no edge, so every local client shares one key.
   const { success } = await c.env.EXPORT_LIMITER.limit({ key: c.req.header('cf-connecting-ip') ?? 'local' })
   if (!success) {
@@ -146,7 +146,7 @@ segmentRoutes.post('/segments/export.csv', async (c) => {
 
 /**
  * Every page in the site visits, ordered by how many subscribers visited it (most first), then
- * alphabetically: the choices of the site_visit_page filter (19 §5.3). Reads v_web_events, whose
+ * alphabetically: the choices of the site_visit_page filter. Reads v_web_events, whose
  * pkey is NULL for an anonymous visitor, so count(DISTINCT pkey) counts linked subscribers only.
  * A stored page the filter's pattern would refuse fails loud: offering it would only produce a
  * 400 on the next preview.

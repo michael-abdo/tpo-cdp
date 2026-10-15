@@ -1,15 +1,14 @@
-// Segment filters → bound SQL (04 §/api/segments/preview, 03 §Module layout; R3, 09 D-07,
-// D-30, D-46, D-69, D-76). Pure: a parsed filter object in, SQL text and its parameters out. Every value
+// Segment filters → bound SQL. Pure: a parsed filter object in, SQL text and its parameters out. Every value
 // is a bound `?`, TODAY and every date included, so the SQL text is its own placeholders-only
 // `sql_shape`. Each date comparison is a `DEFINITIONS.*.sql` fragment from shared/derive.ts with
 // its dates computed there (lastNDays, wentColdWindow), never a re-typed formula. Source values are
-// canonicalized by shared/normalize.ts, never by SQL (02 §Normalization). The filter keys, their
-// limits and patterns live in shared/segment-filters.ts (19 §5.5); this file is their one
+// canonicalized by shared/normalize.ts, never by SQL. The filter keys, their
+// limits and patterns live in shared/segment-filters.ts; this file is their one
 // validator. The builder's SQL reads tables for the subscriber row: its rows carry the email,
-// which the UI may see (03 §Other request flows). The assistant's segment tool compiles the same
+// which staff may see on /segments. The assistant's segment tool compiles the same
 // filters, through the same WHERE builder, over v_profiles (`compileModelSegment`), so the
 // model's tool never reads a table. Site visits and app activity are, in both, an uncorrelated
-// `pkey IN (SELECT pkey FROM v_web_events | v_app_events …)` (19 §0 F3, §4): the identity rule of
+// `pkey IN (SELECT pkey FROM v_web_events | v_app_events …)`: the identity rule of
 // app events lives once, in v_app_events, and only positive filters exist, because those views'
 // pkey is NULL for anonymous rows and `NOT IN` over a NULL is never true.
 
@@ -35,14 +34,14 @@ import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../ingest/quarantine
 import type { SqlValue } from '../ingest/sql'
 
 /** The validated filter object and its keys, and the export's column list and row order: one
- * home, shared/segment-filters.ts (19 §5.5, 09 D-76). */
+ * home, shared/segment-filters.ts. */
 export { FILTER_KEYS, SEGMENT_COLUMNS, SEGMENT_SORT, type SegmentFilters }
 
 export interface CompiledSegment {
-  /** One SELECT over the segment's rows in the 04 export column order, in SEGMENT_SORT order. */
+  /** One SELECT over the segment's rows in the export's column order, in SEGMENT_SORT order. */
   sql: string
   params: SqlValue[]
-  /** The SQL with placeholders only (04): the same text, since no value is ever inlined. */
+  /** The SQL with placeholders only: the same text, since no value is ever inlined. */
   sql_shape: string
 }
 
@@ -66,7 +65,7 @@ export interface RawSegmentRow extends Omit<SegmentRow, 'engagement_score' | 'ha
 
 /**
  * D1 row → SegmentRow. A subscriber without a profile fails loud rather than being exported
- * with an invented score; the message names no email (04 §Error envelope).
+ * with an invented score; the message names no email.
  */
 export function toSegmentRow(raw: RawSegmentRow): SegmentRow {
   if (raw.engagement_score === null) {
@@ -156,7 +155,7 @@ function patterned(raw: Record<string, unknown>, key: string, pattern: RegExp, r
 }
 
 /**
- * Validates a request's `filters` and returns the canonical object (19 §2 "Dedupe", §5.2), keys
+ * Validates a request's `filters` and returns the canonical object, keys
  * in FILTER_KEYS order: status and source sorted and deduped, defaults applied (`status`
  * ['active'], `has_app` null), `include_never_opened` false whenever `days_since_open_gte` is
  * absent, an engagement bound at its end of the range (0, 100) dropped as no filter, every other
@@ -180,8 +179,8 @@ export function parseFilters(input: unknown): SegmentFilters {
   const raw = input as Record<string, unknown>
   const problems: string[] = []
   for (const key of Object.keys(raw)) {
-    // No key text: an unknown filter key is a client's text, never echoed back or logged (04
-    // row 33's "the log names only how many"; 09 D-70 item 1, fixer round 4). The response's
+    // No key text: an unknown filter key is a client's text (it could hold PII), never echoed
+    // back or logged; the log names only how many. The response's
     // `details` array still carries one entry per unknown key, so its length is the count.
     if (!(FILTER_KEYS as readonly string[]).includes(key)) problems.push('unknown filter')
   }
@@ -206,7 +205,7 @@ export function parseFilters(input: unknown): SegmentFilters {
         const unique = [...new Set(canonical as string[])].sort()
         // Capped before the membership check: many distinct values (canonical or not) would
         // otherwise all reach the membership check and, if ever this list grows, bind that many
-        // SQL variables (19 §0 F7: today 7 canonical names, so 100 distinct values would try to
+        // SQL variables (today 7 canonical names, so 100 distinct values would try to
         // bind as many as 100 of them before this cap, hitting SQLite's "too many SQL variables").
         if (unique.length > CANONICAL_SOURCES.length) problems.push(`source must name at most ${CANONICAL_SOURCES.length} sources`)
         else if (unique.some((s) => !(CANONICAL_SOURCES as readonly string[]).includes(s))) {
@@ -277,15 +276,15 @@ function placeholders(n: number): string {
 interface SegmentRelation {
   /** A column of the subscriber row as this relation names it. */
   column(name: 'status' | 'source' | 'last_open_date' | 'signup_date' | 'cold_since'): string
-  /** The stored engagement_score (09 D-46). */
+  /** The stored engagement_score (computed at write time, never in SQL). */
   engagement: string
-  /** The profile's pseudonymous key, which v_web_events and v_app_events carry (05 §Pseudonymous key). */
+  /** The profile's pseudonymous key, which v_web_events and v_app_events carry. */
   pkey: string
   /** True exactly when the subscriber has an app account. */
   hasApp: string
 }
 
-/** The builder's relation: tables, so its rows can carry the email the UI shows (03 §Other request flows). */
+/** The builder's relation: tables, so its rows can carry the email the UI shows. */
 const TABLES: SegmentRelation = {
   column: (name) => `s.${name}`,
   engagement: 'p.engagement_score',
@@ -296,7 +295,7 @@ const TABLES: SegmentRelation = {
 /**
  * How the builder's SELECT reads each export column, raw (no `AS`): compileSegment aliases it to
  * the column's SEGMENT_COLUMNS name, and uses the SEGMENT_SORT columns bare in ORDER BY. One home
- * (09 D-76) for the export's column list and its order, so the SELECT and the ORDER BY can never
+ * for the export's column list and its order, so the SELECT and the ORDER BY can never
  * read a different expression for the same column, and the /segments "What's in the file"
  * disclosure, reading only the column NAMES from shared/segment-filters.ts, never needs to repeat
  * this SQL to describe the same file.
@@ -311,7 +310,7 @@ const SEGMENT_COLUMN_SQL: { readonly [K in (typeof SEGMENT_COLUMNS)[number]]: st
   has_app: TABLES.hasApp,
 }
 
-/** The assistant's relation: v_profiles, the view 01 §PII-free views lets the model read. */
+/** The assistant's relation: v_profiles, a PII-free view the model may read. */
 const MODEL_VIEW: SegmentRelation = {
   column: (name) => name,
   engagement: 'engagement_score',
@@ -335,10 +334,10 @@ function windowClause(
 }
 
 /**
- * `<pkey> IN (SELECT pkey FROM <view> WHERE …)` for one event filter (19 §4 "Same visit / same
- * event"): the window and the page or event narrow the same rows. Uncorrelated, so SQLite runs the
- * subquery once (19 §0 F3). Event times are full timestamps; `event_ts >= 'YYYY-MM-DD'` holds from
- * that day's first second, with no upper bound, so a live event after TODAY counts (09 D-01).
+ * `<pkey> IN (SELECT pkey FROM <view> WHERE …)` for one event filter: the window and the page or
+ * event narrow the same rows (same visit, same event). Uncorrelated, so SQLite runs the
+ * subquery once. Event times are full timestamps; `event_ts >= 'YYYY-MM-DD'` holds from
+ * that day's first second, with no upper bound, so a live event after TODAY counts.
  */
 function eventClause(
   rel: SegmentRelation,
@@ -377,7 +376,7 @@ function segmentWhere(filters: SegmentFilters, rel: SegmentRelation): { where: s
   }
 
   if (filters.days_since_open_gte !== undefined) {
-    // 02 §Derived: days_since_open >= N; never-openers only with the toggle, regardless of signup age.
+    // days_since_open >= N; never-openers only with the toggle, regardless of signup age.
     const lastOpen = rel.column('last_open_date')
     const opened = `(${lastOpen} IS NOT NULL AND ${DAYS_SINCE_OPEN_SQL} >= ?)`
     params.push(TODAY, filters.days_since_open_gte)
@@ -385,7 +384,7 @@ function segmentWhere(filters: SegmentFilters, rel: SegmentRelation): { where: s
   }
 
   if (filters.went_cold !== undefined) {
-    // `any` = cold now (`cold`); a month = `went_cold_in(month)` (02 §Derived, 09 D-10).
+    // `any` = cold now (`cold`); a month = `went_cold_in(month)` (shared/derive.ts).
     where.push(
       filters.went_cold === WENT_COLD_ANY
         ? windowClause(COLD_NOW, rel, { today: TODAY }, params)
@@ -425,8 +424,8 @@ function segmentWhere(filters: SegmentFilters, rel: SegmentRelation): { where: s
 }
 
 /**
- * Compiles validated filters to one bound SELECT. Every subscriber has a profile (seed,
- * 02 §Linking); the LEFT JOIN keeps a subscriber without one in the count, and the row
+ * Compiles validated filters to one bound SELECT. Every subscriber has a profile (the seed
+ * creates one per subscriber); the LEFT JOIN keeps a subscriber without one in the count, and the row
  * readers fail loud on its missing score instead of the row vanishing.
  */
 export function compileSegment(filters: SegmentFilters): CompiledSegment {
@@ -443,7 +442,7 @@ export function compileSegment(filters: SegmentFilters): CompiledSegment {
 /** Columns of a segment row as the assistant's segment tool returns it: the pkey in place of the email. */
 export const MODEL_SEGMENT_COLUMNS = ['pkey', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app'] as const
 
-/** The assistant's segment: the same filters over the v_* views, keyed by pkey (05 §Strategy). */
+/** The assistant's segment: the same filters over the v_* views, keyed by pkey (never an email). */
 export interface CompiledModelSegment {
   /** The segment's rows, MODEL_SEGMENT_COLUMNS in order, most engaged first; the caller appends `LIMIT ?`. */
   rowsSql: string
@@ -454,9 +453,9 @@ export interface CompiledModelSegment {
 
 /**
  * The same filters compiled over v_profiles, with site visits and app activity as IN-subqueries
- * on v_web_events and v_app_events: only v_* views, never a table (05 §Exactly what the model
- * receives, "Structural"). Rows come out most engaged first: the stored
- * engagement_score descending (09 D-56, D-46: an ORDER BY on the stored column, no formula), as
+ * on v_web_events and v_app_events: only v_* views, never a table, so the model's tool can read
+ * no PII column. Rows come out most engaged first: the stored
+ * engagement_score descending (an ORDER BY on the stored column, no formula), as
  * the builder's do. Ties break by pkey here, since the view has no email; the builder breaks them
  * by email, so two rows with the same score may swap places between the two lists.
  * status IN (…) drops the profiles that have no subscriber row.
@@ -471,7 +470,7 @@ export function compileModelSegment(filters: SegmentFilters): CompiledModelSegme
 }
 
 /**
- * The filters whose unsubscribed rows the default hides (02 §Defaults): every other filter kept,
+ * The filters whose unsubscribed rows the default hides (counted, so the default is never silent): every other filter kept,
  * status set to unsubscribed. `null` when the status filter already includes them.
  */
 export function hiddenUnsubscribedFilters(filters: SegmentFilters): SegmentFilters | null {
