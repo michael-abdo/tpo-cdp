@@ -196,7 +196,7 @@ describe('T-PAR-1 oracle independence', () => {
     expect(paths).toEqual([])
   })
 
-  it("TODAY matches shared/config.ts's TODAY (the oracle's own constant, checked here, 21 §2.1)", () => {
+  it("TODAY matches shared/config.ts's TODAY (the oracle's own constant, checked here)", () => {
     expect(TODAY).toBe(APP_TODAY)
   })
 })
@@ -482,7 +482,7 @@ describe('T-PAR-3 quarantine + import_runs', () => {
 // (beforeAll's real CSVs): each case parses its own edited copy of the raw text and compares the
 // two in memory, so T-PAR-2..10's 0-mismatch store diff above is never at risk.
 // -------------------------------------------------------------------------------------------
-describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed', () => {
+describe('T-PAR-3b planted no-rule cases, oracle vs. app, independently recomputed', () => {
   /** Replaces one 1-based CSV line's fields (header = line 1) in raw text, by column edit. */
   function plant(csvText: string, lineNo: number, edit: (fields: string[]) => string[]): string {
     const lines = csvText.split('\n')
@@ -664,7 +664,7 @@ describe('T-PAR-4 web visitors + events', () => {
     expect(expected.size).toBe(10000)
   })
 
-  it('per-subscriber visitors/events/pre-signup: 46 merged subscribers link a visitor (hardest case #4)', () => {
+  it('per-subscriber visitors/events/pre-signup: 46 merged subscribers link a visitor', () => {
     const withVisitor = [...oracle.subscribers.values()].filter(
       (s) => s.web.visitor_hashes.length > 0 && s.merged_count > 1,
     )
@@ -682,7 +682,7 @@ describe('T-PAR-4 web visitors + events', () => {
   // rows would still pass T-PAR-4's row-level diff above. This calls the real GET /api/lookup
   // for every linked subscriber and diffs its per-pkey events/pre_signup count against the
   // oracle, so the 1,930 total comes from the app, not only from the oracle itself.
-  it('GET /api/lookup per linked subscriber: events and pre-signup events match the oracle (M13 guard: lookup.ts:193 strict <)', async () => {
+  it("GET /api/lookup per linked subscriber: events and pre-signup events match the oracle (guards lookup.ts:193's strict <)", async () => {
     // 1,400 real HTTP round trips through the full session + lookup pipeline; vitest's default
     // 5s per-test timeout is tight once `npm test` runs every file's workers concurrently (the
     // budget is 15s for this whole file, measured in isolation at ~2.5s above).
@@ -763,7 +763,7 @@ describe('T-PAR-5 app users', () => {
     expect(oracle.appOnlyProfiles.size).toBe(30)
   })
 
-  it('hardest case #13: app account vs signup order — strict >, 11 same-day are not conversions', () => {
+  it('app account vs signup order: strict >, 11 same-day are not conversions', () => {
     const before = [...oracle.subscribers.values()].filter(
       (s) => s.app.has_app && s.app.created_at_min! < s.signup_date,
     )
@@ -781,7 +781,7 @@ describe('T-PAR-5 app users', () => {
 // T-PAR-6: every seed count, from the oracle alone (plus two read-time checks against
 // the real API/handler, guarding against small changes to the derived-value SQL)
 // -------------------------------------------------------------------------------------------
-describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
+describe('T-PAR-6 the expected counts reproduced by the oracle alone', () => {
   it('subscribers.csv: 2,995 rows, 8 blank, 2 invalid, 85 merged pairs, 2,900 subscribers, 2,610/290 active/unsub', () => {
     const run = oracle.importRuns.find((r) => r.file === 'subscribers')!
     expect(run.rows_in).toBe(2995)
@@ -794,7 +794,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(unsub).toBe(290)
   })
 
-  it('subscribers.csv pre-dedupe rows, over every raw row by its own status/last_open columns (02 §Counts counts these before quarantine or dedupe removes anything): 2,691 active, 296 unsubscribed, 494 with no last open', () => {
+  it('subscribers.csv pre-dedupe rows, over every raw row by its own status/last_open columns (counted before quarantine or dedupe removes anything): 2,691 active, 296 unsubscribed, 494 with no last open', () => {
     const parsed = parseCsvStrict(subscribersCsv, 'subscribers.csv')
     const col = { status: parsed.header.indexOf('status'), open: parsed.header.indexOf('last_open_date') }
     let active = 0,
@@ -811,7 +811,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(noOpen).toBe(494)
   })
 
-  it('subscribers.csv pre-dedupe sources over EVERY raw row incl. quarantined (02 §Counts; G4): 925/567/555/354/236/233/117, blank 8', () => {
+  it('subscribers.csv pre-dedupe sources over EVERY raw row incl. quarantined: 925/567/555/354/236/233/117, blank 8', () => {
     const parsed = parseCsvStrict(subscribersCsv, 'subscribers.csv')
     const srcCol = parsed.header.indexOf('acquisition_source')
     const counts = new Map<string, number>()
@@ -836,7 +836,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(new Set(oracle.events.map((e) => e.page)).size).toBe(16)
   })
 
-  it('web_events.csv: 1,400 /subscribe-linked visitors match a subscriber after the fold (1,190 would match raw) — hardest case #2', () => {
+  it('web_events.csv: 1,400 /subscribe-linked visitors match a subscriber after the fold (1,190 would match raw)', () => {
     const linked = [...oracle.visitors.values()].filter((v) => v.email_norm !== null)
     expect(linked.length).toBe(1400)
     const linkedToSubscriber = linked.filter((v) =>
@@ -873,7 +873,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(rawMatches).toBe(1190)
   })
 
-  it("web_events.csv: the /subscribe date equals signup_date for all 1,400 linked visitors (02 §Counts line 60)", () => {
+  it("web_events.csv: the /subscribe date equals signup_date for all 1,400 linked visitors", () => {
     const linked = [...oracle.subscribers.values()].filter((s) => s.web.signup_ts !== null)
     expect(linked.length).toBe(1400)
     const sameDay = linked.filter((s) => (s.web.signup_ts as string).slice(0, 10) === s.signup_date)
@@ -941,7 +941,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(unsubApp).toBe(98)
   })
 
-  it('D-69 filters at TODAY: new_subscriber 889/95, site-visits-30d 935/82, /shadrachs-picks 366/40, engagement>=50 487/27', () => {
+  it('the newer filters at TODAY: new_subscriber 889/95, site-visits-30d 935/82, /shadrachs-picks 366/40, engagement>=50 487/27', () => {
     const subs = [...oracle.subscribers.values()]
     const bySplit = (pred: (s: (typeof subs)[number]) => boolean) => ({
       active: subs.filter((s) => pred(s) && s.status === 'active').length,
@@ -995,7 +995,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
     expect(subs.filter((s) => wentColdAug(s) && s.status === 'unsubscribed').length).toBe(20)
   })
 
-  it('02 §Counts line 62: 93 is all unsubscribed Instagram subscribers regardless of the 30-day rule; went_cold_in(2026-08) is 66 across all statuses (D-51)', () => {
+  it('93 is all unsubscribed Instagram subscribers regardless of the 30-day rule; went_cold_in(2026-08) is 66 across all statuses', () => {
     const subs = [...oracle.subscribers.values()]
     const igUnsub = subs.filter((s) => s.source === 'instagram' && s.status === 'unsubscribed').length
     expect(igUnsub).toBe(93)
@@ -1043,7 +1043,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
 // quoted fields, a repeated user_id, 2 emails on one visitor and web/app quarantine are already
 // guarded: buildExpected() in beforeAll would have thrown on any of them.
 // -------------------------------------------------------------------------------------------
-describe('T-PAR-6b absent-today guards (21 §3 #17)', () => {
+describe('T-PAR-6b absent-today guards', () => {
   it('plus-addressing and Gmail dot aliases: 0 on this data', () => {
     const subs = [...oracle.subscribers.values()]
     const plusAddressed = subs.filter((s) => s.email_norm.split('@')[0]?.includes('+')).length
@@ -1128,8 +1128,8 @@ describe('T-PAR-6b absent-today guards (21 §3 #17)', () => {
 // T-PAR-6c: the never-opened and TODAY-boundary cases, each a named
 // assertion of every count for that case, from the oracle alone.
 // -------------------------------------------------------------------------------------------
-describe('T-PAR-6c hardest cases #9 and #10 (21 §3)', () => {
-  it('#9 never opened: 470 (155 unsubscribed; 325 cold now; 145 not cold yet); 152 still score > 0 from site visits', () => {
+describe('T-PAR-6c never-opened and TODAY-boundary cases', () => {
+  it('never opened: 470 (155 unsubscribed; 325 cold now; 145 not cold yet); 152 still score > 0 from site visits', () => {
     const neverOpened = [...oracle.subscribers.values()].filter((s) => s.last_open_date === null)
     expect(neverOpened.length).toBe(470)
     expect(neverOpened.filter((s) => s.status === 'unsubscribed').length).toBe(155)
@@ -1138,7 +1138,7 @@ describe('T-PAR-6c hardest cases #9 and #10 (21 §3)', () => {
     expect(neverOpened.filter((s) => s.profile.engagement_score > 0).length).toBe(152)
   })
 
-  it('#10 TODAY boundaries: cold_since = TODAY 15 (cold), = TODAY+1 46 (not); 30 days since open 7; opened TODAY 151; signed up TODAY 41 (9 never opened); new_subscriber edge 2026-08-29 in 37 / 2026-08-28 out 39', () => {
+  it('TODAY boundaries: cold_since = TODAY 15 (cold), = TODAY+1 46 (not); 30 days since open 7; opened TODAY 151; signed up TODAY 41 (9 never opened); new_subscriber edge 2026-08-29 in 37 / 2026-08-28 out 39', () => {
     const subs = [...oracle.subscribers.values()]
     expect(subs.filter((s) => s.cold_since === TODAY).length).toBe(15)
     expect(subs.filter((s) => s.cold_since === addDays(TODAY, 1)).length).toBe(46)
@@ -1159,25 +1159,25 @@ describe('T-PAR-6c hardest cases #9 and #10 (21 §3)', () => {
 // a matching app_users.user_id prefix (grp 2); "fuzzy" is its own damerauLevenshtein, the same
 // metric the fixtures were first computed with.
 // -------------------------------------------------------------------------------------------
-describe('T-PAR-6d partial/fuzzy lookup fixtures (21 §4.1 item 3)', () => {
+describe('T-PAR-6d partial/fuzzy lookup fixtures', () => {
   function profileEmails(): string[] {
     const subscriberEmails = [...oracle.subscribers.values()].map((s) => s.email_norm)
     const appOnlyEmails = [...oracle.appOnlyProfiles.values()].map((p) => p.email_norm)
     return [...subscriberEmails, ...appOnlyEmails]
   }
 
-  it("joy.hall -> 3 profiles; hall -> 52 profiles (09 D-52)", () => {
+  it("joy.hall -> 3 profiles; hall -> 52 profiles", () => {
     const emails = profileEmails()
     expect(emails.filter((e) => e.includes('joy.hall')).length).toBe(3)
     expect(emails.filter((e) => e.includes('hall')).length).toBe(52)
   })
 
-  it('u_2b64 -> 1 app account (u_2b6447a3, julia.evans230; 09 D-52)', () => {
+  it('u_2b64 -> 1 app account (u_2b6447a3, julia.evans230)', () => {
     const matches = oracle.appUsers.filter((u) => u.user_id.startsWith('u_2b64'))
     expect(matches.length).toBe(1)
   })
 
-  it('appser17 -> 13 profiles within Damerau-Levenshtein distance 2 (09 D-59)', () => {
+  it('appser17 -> 13 profiles within Damerau-Levenshtein distance 2', () => {
     const emails = profileEmails()
     const query = 'appser17'
     const within2 = emails.filter((e) => {
@@ -1187,7 +1187,7 @@ describe('T-PAR-6d partial/fuzzy lookup fixtures (21 §4.1 item 3)', () => {
     expect(within2.length).toBe(13)
   })
 
-  it('appuser1 -> 11 partial matches, no suggestions needed (09 D-59)', () => {
+  it('appuser1 -> 11 partial matches, no suggestions needed', () => {
     const emails = profileEmails()
     const matches = emails.filter((e) => e.includes('appuser1'))
     expect(matches.length).toBe(11) // appuser1, appuser10..appuser19
@@ -1197,7 +1197,7 @@ describe('T-PAR-6d partial/fuzzy lookup fixtures (21 §4.1 item 3)', () => {
 // -------------------------------------------------------------------------------------------
 // T-PAR-7: the possible-duplicates table equals GET /api/duplicates
 // -------------------------------------------------------------------------------------------
-describe('T-PAR-7 D-62 possible duplicates', () => {
+describe('T-PAR-7 possible duplicates', () => {
   it('1,704 candidate pairs over 788 stems (1,977 emails); 0 auto, 16 review (each 76); the chance check (≈17 by chance, ≈97 without the device weight, the device weight itself ≈ -3.32)', async () => {
     const readers: ExpectedPairInput[] = [...oracle.subscribers.values()].map((s) => ({
       pkey: s.pkey,
@@ -1357,7 +1357,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       : [...oracle.subscribers.values()].find((s) => s.email_norm === emailNorm)
   }
 
-  it("julia.evans230's engagement recomputes exactly (hardest case #1, the .5-tie formula) after one signed read_story: 28 -> 31 (02 §Counts)", async () => {
+  it("julia.evans230's engagement recomputes exactly (the .5-tie formula) after one signed read_story: 28 -> 31", async () => {
     // Real app_users.csv row: u_2b6447a3, no web history.
     const userId = 'u_2b6447a3'
     const subscriber = subscriberForUserId(userId)
@@ -1399,7 +1399,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(activeLast7FromOracle()).toBe(1)
   })
 
-  it('F1 repro (hardest case #1, ranked first): emily.green827 at exactly 24 days since open, 0 site visits, scores the exact half-up 13 after one app event, never the float-rounded 12', async () => {
+  it('the .5 tie: emily.green827 at exactly 24 days since open, 0 site visits, scores the exact half-up 13 after one app event, never the float-rounded 12', async () => {
     // Real app_users.csv line 12: u_ffe05a36, last_open_date 2026-09-04 (24 days
     // before TODAY), 0 web history: the .5-tie case's own example data point.
     const userId = 'u_ffe05a36'
@@ -1429,7 +1429,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(after?.engagement_score, `pkey ${subscriber.pkey}`).toBe(expectedAfter)
   })
 
-  it('T-PAR-8 app-events cap (M A2 guard): 11 real signed webhooks for one real linked subscriber store the exact capped-at-10 score, never an 11th-event score', async () => {
+  it('T-PAR-8 app-events cap: 11 real signed webhooks for one real linked subscriber store the exact capped-at-10 score, never an 11th-event score', async () => {
     // Real app_users.csv line 568: u_9ecb49d6, hope.hall130@gmail.com — a
     // different real linked subscriber than julia.evans230's test above.
     const userId = 'u_9ecb49d6'
@@ -1468,7 +1468,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(after?.engagement_score, `pkey ${subscriber.pkey}`).toBe(expectedAfter)
   })
 
-  it('an unknown webhook user_id creates a stub profile with no email and a pkey the oracle can reproduce (hardest case #14/#16)', async () => {
+  it('an unknown webhook user_id creates a stub profile with no email and a pkey the oracle can reproduce', async () => {
     // A real id (app_users.csv u_3380b6e6) with its last character removed: never occurs in the CSVs.
     const unknownUserId = 'u_3380b6e'
     const res = await sendWebhook(
@@ -1498,7 +1498,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(stubViewRows).toEqual([{ event: 'app_open' }])
   })
 
-  it('v_app_events: a second stub in the store, and the WHOLE view independently rebuilt and diffed (M5b guard: a stub join must match by user_id, never fan out to every stub)', async () => {
+  it('v_app_events: a second stub in the store, and the WHOLE view independently rebuilt and diffed (a stub join must match by user_id, never fan out to every stub)', async () => {
     // A second, distinct unknown user_id: app_users.csv:7's real u_c0d06d19 with its last
     // character removed, unused anywhere earlier in this file.
     const secondUnknown = 'u_c0d06d1'
@@ -1563,7 +1563,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(stubRows).toEqual([{ pkey: secondStubPkey, event: 'login', event_ts: `${TODAY}T10:06:00Z` }])
   })
 
-  it('hardest case #16, the stitch: an anonymous app_open then a login on one device, then an anonymous read_story, all resolve to the logged-in user', async () => {
+  it('the stitch: an anonymous app_open then a login on one device, then an anonymous read_story, all resolve to the logged-in user', async () => {
     // Real app_users.csv row: u_baba14aa, daniel.hill389@gmail.com. Never referenced earlier in
     // this file, so this device carries no prior events.
     const userId = 'u_baba14aa'
@@ -1610,7 +1610,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(resolved.countByUserId.get(userId)).toBe(3)
   })
 
-  it('a shared app device (mark.mitchell424 / mark.mitchell662, 0 soft-field agreement) scores >= 90 and matches GET /api/duplicates (hardest case #12)', async () => {
+  it('a shared app device (mark.mitchell424 / mark.mitchell662, 0 soft-field agreement) scores >= 90 and matches GET /api/duplicates', async () => {
     const MARK_A = { user: 'u_a6ac1f6c', email: 'mark.mitchell424@gmail.com' }
     const MARK_B = { user: 'u_b9e9a984', email: 'mark.mitchell662@outlook.com' }
     const device = 'd_a6ac1f6c'
@@ -1680,7 +1680,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(resolved.deviceOwner.size).toBe(storedOwners.size)
   })
 
-  it('every one of the 2,930 subscriber/app_only profiles, plus every unknown_user_stub, recomputes exactly after every webhook above (21 §2.6 "diff again"); guards M19 (site visits zeroed on recompute) and M20 (resolve.ts drops a login-stitched anonymous event)', async () => {
+  it('every one of the 2,930 subscriber/app_only profiles, plus every unknown_user_stub, recomputes exactly after every webhook above (diff again); guards against site visits zeroed on recompute and resolve.ts dropping a login-stitched anonymous event', async () => {
     // profilesTable() reads app_events_last_30d fresh from the store (appEventsByEmail), so
     // calling it here — after every T-PAR-8 webhook — re-diffs the subscriber + app_only half
     // of profiles exactly as T-PAR-2 did on the seed, now against the post-webhook state.
