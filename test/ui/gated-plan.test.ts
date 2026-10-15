@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES, type Feature, type FeatureId } from '../../shared/features'
 import { literalOccursIn } from '../helpers/gated-assertions'
 
-// T-GATE-1 and T-GATE-5 (00-plan.md §4), read from source/docs/notes.md text (no DOM, no typescript
+// T-GATE-1 and T-GATE-5, read from source/docs/notes.md text (no DOM, no typescript
 // package — tests run inside workerd; see one-home.test.ts for the same import.meta.glob pattern).
 
 const SRC = import.meta.glob<string>(['../../src/**/*.tsx'], { query: '?raw', import: 'default', eager: true })
@@ -16,7 +16,7 @@ function placementCount(id: FeatureId): number {
   return n
 }
 
-// 00-plan.md §1: one placement per flag, except the two flags whose control ships in two spots —
+// One placement per flag, except the two flags whose control ships in two spots —
 // schedules_and_digests (the board header's Send the board + a tile's Set an alert) and
 // work_sign_in (the /login button + the top bar's Your account) — which both have two.
 const TWO_PLACEMENTS = new Set<FeatureId>(['schedules_and_digests', 'work_sign_in'])

@@ -3,7 +3,7 @@ import { FILTER_KEYS, type FilterKey, type SegmentFilters } from '../../shared/s
 import { segmentLabel } from '../../src/labels'
 import { BRIEF_EXAMPLE, searchKey } from '../../src/previous-searches'
 
-// T-SEG-5 (08; 19-segments-spec §2 "Label", 09 D-69): segmentLabel is the one home of segment
+// T-SEG-5 (08; 09 D-69): segmentLabel is the one home of segment
 // names. Every filter object here is canonical, the shape POST /api/segments/preview echoes
 // (shared/segment-filters.ts: status and source sorted, has_app present, include_never_opened
 // false without days, engagement 0 and 100 dropped). Values are real (09 D-47): sources from

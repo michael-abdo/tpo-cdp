@@ -13,7 +13,7 @@ import { FEATURES } from '../../shared/features'
 //     `X.onKeyDown` — a bare reference, never a wrapping arrow function that could call anything
 //     else first. This rule reads EVERY `on[A-Z]\w*=` attribute on the tag, not only
 //     onClick/onChange/onKeyDown, so a second, unrelated handler bolted onto the same element
-//     (the review's P6: `onPointerDown={startUpload}` beside `onClick={upload.activate}`, where
+//     (e.g. `onPointerDown={startUpload}` beside `onClick={upload.activate}`, where
 //     `startUpload` is a module-level function that calls fetch) is caught as an attribute the
 //     allow-list never names — not missed outright because the scan never looked for it.
 //  2. The component function that declares `useGated(...)` contains no `fetch(`, `postJson(`,
@@ -149,7 +149,7 @@ function attributeBraceValue(body: string, attrStart: number): string {
  * walk back to the nearest `<` and forward to this tag's real closing `>` (`tagEnd`, brace-depth
  * aware), then read every `on[A-Z]\w*={…}` inside it with `attributeBraceValue` — EVERY `on*`
  * attribute, not only `onClick`/`onChange`/`onKeyDown`, so a tag that also wires an unrelated
- * handler (the review's P6: `onPointerDown={startUpload}` bolted onto the same button) is
+ * handler (e.g. `onPointerDown={startUpload}` bolted onto the same button) is
  * returned here too and falls through to the caller's exhaustive allow-list, rather than never
  * being seen at all. */
 function bindTagActivationAttrs(body: string): { tag: string; attr: string; value: string }[] {

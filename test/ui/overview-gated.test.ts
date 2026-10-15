@@ -6,9 +6,9 @@ import { LoadBar, SettingsButton } from '../../src/pages/OverviewPage'
 import type { CsvSource } from '../../src/types'
 import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 
-// Overview's gated future features (09 D-80, 22-pages/overview.md): Upload a new file + Run
-// again (csv_upload), Automatic daily sync (daily_sync, beehiiv and App accounts only — 00-plan.md
-// D3 overrides the page spec's "beehiiv and Website"), and Settings for definitions
+// Overview's gated future features (09 D-80): Upload a new file + Run
+// again (csv_upload), Automatic daily sync (daily_sync, beehiiv and App accounts only — not
+// Website, whose GA4 data carries no email to link by), and Settings for definitions
 // (definition_settings, the header's action slot, every state). T-GATE-OVR-1.
 
 function csv(id: string, name: string): CsvSource {

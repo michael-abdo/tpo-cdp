@@ -40,7 +40,7 @@ describe('shared/features.ts', () => {
     }
   })
 
-  // 00-plan.md §2 D-72 copy rule / §3 D1: the "Coming soon" chip (ComingSoonTag) is the only place
+  // D-72 copy rule: the "Coming soon" chip (ComingSoonTag) is the only place
   // that phrase appears; the note says only what the feature will do, and never retypes this
   // entry's own `label` or any of its `controls` at its very start.
   it('no note says "coming soon" (that is the chip\'s own, only, job)', () => {
@@ -52,7 +52,7 @@ describe('shared/features.ts', () => {
       for (const words of [f.label, ...(f.controls ?? [])]) expect(f.note.startsWith(words), `${key}: "${f.note}"`).toBe(false)
   })
 
-  // D7 (00-plan.md §3): delete_person must say it needs per-person sign-in, not just name a blocker.
+  // delete_person must say it needs per-person sign-in, not just name a blocker.
   it("delete_person's note says it needs per-person sign-in first (D7)", () => {
     expect(FEATURES.delete_person.note).toMatch(/sign(s|ed)? in|sign-in/i)
     expect(FEATURES.delete_person.note).toMatch(/each|their own|per.person/i)
