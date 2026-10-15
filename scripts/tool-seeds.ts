@@ -157,7 +157,9 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
       'v_source_app_conversion (columns in the system prompt). Subjects appear only as pk_… keys. Use only when ' +
       'segment and aggregate cannot answer. The server refuses the query unless: it starts with SELECT; it is one ' +
       'statement with no ";"; it has no WITH, PRAGMA, ATTACH or comments; it reads only those views and their columns, ' +
-      'written plainly without quotes; every computed column is named with AS; dates are literals counted from TODAY ' +
+      'written plainly without quotes; two views are read together only with JOIN … ON a.pkey = b.pkey (or ' +
+      'visitor_hash), never a comma list, never another column, and never a view joined to itself; ' +
+      'every computed column is named with AS; dates are literals counted from TODAY ' +
       '(never \'now\' or CURRENT_DATE); date(), datetime(), julianday() and strftime() take a \'YYYY-MM-DD\' literal or a ' +
       'date column (signup_date, last_open_date, cold_since, app_created_at, event_ts) as their time value, never ' +
       `nothing or an expression. "Cold" is the stored ${DEFINITIONS.cold.formula} and engagement is the stored ` +

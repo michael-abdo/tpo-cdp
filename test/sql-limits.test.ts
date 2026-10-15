@@ -7,6 +7,7 @@ import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { MODEL } from '../worker/assistant/build-request'
 import {
   GateDenied,
+  JOIN_KEYS,
   raceTimeout,
   readOnlySelect,
   runReadOnlySelect,
@@ -592,5 +593,60 @@ describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset 
       "SELECT source, count(*) FROM v_profiles WHERE status = 'active' GROUP BY source",
       'SELECT count(*) FROM v_profiles WHERE pkey IN (SELECT pkey FROM v_web_events)',
     ]) expect(() => readOnlySelect(sql), sql).not.toThrow()
+  })
+
+  // A join may match only on the person or visitor key, and never pair a view with itself. The
+  // reviewer's probe below passed every gate before (the aliases differed and the plan showed one
+  // driving scan) and pairs about 15 million rows on the seed.
+  const SELF_JOIN_ON_PAGE = 'SELECT count(*) AS n FROM v_web_events a JOIN v_web_events b ON a.page = b.page'
+
+  it('a view joined to itself, or two views joined on anything but pkey / visitor_hash, is refused', () => {
+    expect(JOIN_KEYS).toEqual(['pkey', 'visitor_hash'])
+    const refused: [sql: string, problem: RegExp][] = [
+      [SELF_JOIN_ON_PAGE, /joined to itself \(v_web_events is read twice/],
+      [SELF_JOIN_ON_PAGE, /column equality of pkey or visitor_hash/],
+      ['SELECT count(*) AS n FROM v_web_events a JOIN v_web_events b ON a.pkey = b.pkey', /joined to itself/],
+      ['SELECT count(*) AS n FROM v_web_events a JOIN v_web_events b ON a.visitor_hash = b.visitor_hash', /joined to itself/],
+      ['SELECT count(*) AS n FROM V_WEB_EVENTS a JOIN v_web_events b ON a.pkey = b.pkey', /joined to itself \(v_web_events/],
+      ['SELECT count(*) AS n FROM v_web_events a JOIN (SELECT pkey, page FROM v_web_events) b ON a.pkey = b.pkey', /joined to itself/],
+      ['SELECT count(*) AS n FROM (SELECT pkey FROM v_profiles) a JOIN v_profiles b ON a.pkey = b.pkey', /joined to itself/],
+      ['SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON p.source = w.utm_source', /column equality of pkey or visitor_hash/],
+      ['SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON p.first_page = w.page', /column equality of pkey or visitor_hash/],
+      ['SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON p.pkey = w.visitor_hash', /column equality of pkey or visitor_hash/],
+      ['SELECT count(*) AS n FROM v_app_events e JOIN v_web_events w ON e.event_ts = w.event_ts AND e.pkey = w.pkey OR 1 = 1', /column equality/],
+      ['SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w USING (page)', /USING may name only pkey or visitor_hash/],
+      ['SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w USING (pkey, page)', /USING may name only pkey or visitor_hash/],
+    ]
+    for (const [sql, problem] of refused) {
+      let denied: unknown
+      try {
+        readOnlySelect(sql)
+      } catch (err) {
+        denied = err
+      }
+      expect(denied, sql).toBeInstanceOf(GateDenied)
+      expect((denied as GateDenied).problems.join(' | '), sql).toMatch(problem)
+    }
+  })
+
+  it('a join on the person key across different views still passes, including three views and USING (pkey)', () => {
+    for (const sql of [
+      'SELECT p.pkey, w.page FROM v_profiles p JOIN v_web_events w ON p.pkey = w.pkey',
+      'SELECT count(*) AS n FROM v_profiles P JOIN v_web_events W ON P.PKEY = W.PKEY',
+      "SELECT e.page, count(*) AS views FROM v_web_events e JOIN v_profiles p ON p.pkey = e.pkey WHERE p.source = 'instagram' GROUP BY e.page ORDER BY views DESC",
+      'SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON p.pkey = w.pkey JOIN v_app_events e ON e.pkey = p.pkey',
+      'SELECT count(*) AS n FROM v_profiles p JOIN (SELECT pkey, count(*) AS visits FROM v_web_events GROUP BY pkey) w ON w.pkey = p.pkey',
+      'SELECT count(*) AS n FROM v_profiles JOIN v_app_events USING (pkey)',
+      "SELECT count(*) AS n FROM v_profiles WHERE pkey IN (SELECT pkey FROM v_profiles WHERE status = 'active')",
+    ]) expect(() => readOnlySelect(sql), sql).not.toThrow()
+  })
+
+  it('the self-join is refused before D1 sees anything, and the person-key join runs', async () => {
+    const { db, prepared } = recordingDb()
+    await expect(runReadOnlySelect(db, SELF_JOIN_ON_PAGE)).rejects.toThrow(GateDenied)
+    expect(prepared).toEqual([]) // not even EXPLAIN QUERY PLAN
+    const ok = await runReadOnlySelect(env.DB, 'SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON p.pkey = w.pkey')
+    expect(ok.columns).toEqual(['n'])
+    expect(Number(ok.rows[0]![0])).toBeGreaterThan(0)
   })
 })
