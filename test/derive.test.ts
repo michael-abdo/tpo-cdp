@@ -218,6 +218,16 @@ describe('time windows and the DEFINITIONS object (02 §Derived "One runtime sou
     expect(() => lastNDays(-1)).toThrow(/non-negative/)
   })
 
+  it('the "last N days" words count the same N + 1 days lastNDays returns', () => {
+    for (const n of [0, 7, 30]) {
+      const { from, to } = lastNDays(n)
+      expect(daysBetween(from, to) + 1).toBe(n + 1)
+    }
+    // The old words, "The N days up to and including today", read as N days and dropped one.
+    expect(DEFINITIONS.last_n_days.doc).toBe('From N days before today through today, both days counted: N + 1 calendar days.')
+    expect(DEFINITIONS.last_n_days.formula).toBe('TODAY − N .. TODAY')
+  })
+
   it('has one entry per row of 02 §Derived, each with name, doc, formula and fn', () => {
     expect(Object.keys(DEFINITIONS)).toEqual([
       'days_since_open',

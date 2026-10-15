@@ -288,7 +288,7 @@ export const DEFINITIONS = {
   },
   last_n_days: {
     name: 'last N days',
-    doc: 'The N days up to and including today.',
+    doc: 'From N days before today through today, both days counted: N + 1 calendar days.',
     formula: 'TODAY − N .. TODAY',
     fn: lastNDays,
   },

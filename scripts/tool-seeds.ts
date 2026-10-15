@@ -70,7 +70,7 @@ const FILTER_DESCRIPTIONS: { readonly [K in FilterKey]: string } = {
   days_since_open_gte: 'No email open in at least this many days (the "no open in N days" definition).',
   include_never_opened: 'With days_since_open_gte, also include everyone who never opened. Default false.',
   went_cold: `"any" = cold now (the cold definition); "YYYY-MM" = went cold in that month (went_cold_in), no month after ${TODAY.slice(0, 7)}.`,
-  signed_up_within_days: 'Signed up in the last N days including today (30 = the new_subscriber definition).',
+  signed_up_within_days: 'Signed up from N days before today through today, both days counted (30 = the new_subscriber definition).',
   engagement_gte: 'Stored engagement_score at least this (0–100).',
   engagement_lte: 'Stored engagement_score at most this (0–100); not below engagement_gte.',
   has_app: 'true = has an app account, false = has none, null or absent = either.',

@@ -275,6 +275,17 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
     }
     expect(() => toLoadedTools([], [])).toThrow(expect.objectContaining({ code: 'no_tools', status: 500 }))
   })
+
+  it('the no_tools message names seed commands that run: the script refuses to start without --local or --remote', () => {
+    let message = ''
+    try {
+      toLoadedTools([], [])
+    } catch (err) {
+      message = (err as Error).message
+    }
+    const commands = [...message.matchAll(/`(npm run tools:seed[^`]*)`/g)].map((m) => m[1])
+    expect(commands).toEqual(['npm run tools:seed -- --remote', 'npm run tools:seed -- --local'])
+  })
 })
 
 describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; request_json has no "@"', () => {
