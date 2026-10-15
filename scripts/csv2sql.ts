@@ -1,5 +1,5 @@
 /**
- * The seed step (11 §Seed, R1.1): data/*.csv → seed/*.sql as literal-value SQL that
+ * The seed step: data/*.csv → seed/*.sql as literal-value SQL that
  * `wrangler d1 execute --file` loads after the migrations (`npm run db:seed:local`).
  *
  * Fail fast: every file is parsed and its header checked before anything is built, and a
@@ -9,8 +9,9 @@
  * reads and writes files. PII_KEY_SECRET comes from the environment or, failing that, from
  * the one PII_KEY_SECRET line of .dev.vars; its value is never printed.
  *
- * import_runs.ran_at is the one wall-clock read here: when this script ran, which 02 §Time's
- * allow-list permits (09 D-48). Business dates use TODAY via shared/derive.ts.
+ * import_runs.ran_at is the one wall-clock read here: it records when this script ran, which is
+ * bookkeeping, not a business date (stamping it with TODAY would record a run that never
+ * happened). Business dates use TODAY via shared/derive.ts.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -67,7 +68,7 @@ async function main(): Promise<void> {
 
   const secret = piiKeySecret()
   const seed = await buildSeed(csvs, secret)
-  // Wall clock for import_runs.ran_at only (02 §Time allow-list, 09 D-48).
+  // Wall clock for import_runs.ran_at only: when the seed ran, not a business date.
   const ranAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   const files = seedSql(seed, ranAt)
 

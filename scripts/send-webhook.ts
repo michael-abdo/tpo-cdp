@@ -1,25 +1,27 @@
 /**
- * Sends one signed app event to POST /webhooks/app (11 §Scripts `webhook:send`, §Verify; 04
- * §Webhook). The terminal sender for demos and checks: it goes through the real endpoint, never
- * around it (CLAUDE.md).
+ * Sends one signed app event to POST /webhooks/app (`npm run webhook:send`). The terminal sender
+ * for demos and checks: it goes through the real endpoint, never around it, so a demo exercises
+ * exactly what a real sender would.
  *
  *   npm run webhook:send -- --event app_open                       anonymous, on a new device
  *   npm run webhook:send -- --event login --user u_2b6447a3 --same-device
  *   npm run webhook:send -- --again                                the last event, same event_id
- *   npm run webhook:send -- --event app_open --again               the same, as 11 §Verify writes it
+ *   npm run webhook:send -- --event app_open --again               the same, naming the event
  *   npm run webhook:send -- --event app_open --url https://…       another deployment
  *
  * Flags: --event <name> (sent as given; the server validates it, so a bad name shows its 400) ·
  * --user <u_…> (absent = anonymous, user_id null) · --device <d_…> · --same-device (the last
  * event's device) · --again (re-send the last body byte for byte, so the server answers 200
- * duplicate; an --event given with it must match the last event) · --url <base> (default http://localhost:5173, the `npm run dev` address in 11
- * §Local run). A new event gets a fresh event_id and, without --device/--same-device, a fresh
- * device_id. Its timestamp is TODAY (shared/config.ts) at the current UTC time of day: 02 §Time
- * says demo events default to TODAY, and the time of day keeps successive events in send order.
+ * duplicate; an --event given with it must match the last event) · --url <base> (default
+ * http://localhost:5173, the `npm run dev` address). A new event gets a fresh event_id and,
+ * without --device/--same-device, a fresh device_id. Its timestamp is TODAY (shared/config.ts) at
+ * the current UTC time of day: demo events use the fixed TODAY like all business dates, and the
+ * time of day keeps successive events in send order.
  *
- * Signing (04 §Webhook headers): X-Webhook-Timestamp = unix seconds now, X-Webhook-Signature =
+ * Signing: X-Webhook-Timestamp = unix seconds now, X-Webhook-Signature =
  * `v1=` + hex HMAC-SHA256(WEBHOOK_SECRET, `<timestamp>.<raw body>`). --again re-signs with a fresh
- * header timestamp, as a retry must (09 D-37). WEBHOOK_SECRET is read from its one line of
+ * header timestamp, as a retry must: the server rejects a stale header timestamp (replay window),
+ * but the body itself may be any age. WEBHOOK_SECRET is read from its one line of
  * .dev.vars and never printed. The last body is kept in .wrangler/ (gitignored) for --again and
  * --same-device. Prints the HTTP status and the response body; exits 1 on anything but 2xx.
  */
@@ -71,7 +73,7 @@ function readLast(flag: string): LastEvent {
 }
 
 /**
- * The last body for --again. `--event` may name the event being re-sent, as 11 §Verify writes
+ * The last body for --again. `--event` may name the event being re-sent, as in
  * `--event app_open --again`; it must match the recorded event, because --again never changes the
  * body (a different event under the same event_id would still answer 200 duplicate and hide it).
  */
