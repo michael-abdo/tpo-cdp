@@ -4,7 +4,7 @@ A mini customer data platform built for The Pour Over's Full-Stack Developer ass
 
 ## Run locally
 
-Needs Node 20 or newer and npm. No Cloudflare account: `wrangler` runs workerd and a local D1 file under `.wrangler/`.
+Needs Node 22.22 or newer (`.nvmrc`; `wrangler` needs Node 22 and `react-router` 8.4 needs 22.22) and npm. No Cloudflare account: `wrangler` runs workerd and a local D1 file under `.wrangler/`.
 
 ```bash
 git clone https://github.com/michael-abdo/tpo-cdp && cd tpo-cdp
