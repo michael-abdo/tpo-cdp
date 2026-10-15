@@ -862,3 +862,80 @@ describe('user and device ids: trimmed like the CSV import, then letters, digits
     expect((await resolvedOf(anonymous.event_id as string)).user_id).toBe('u_2b6447a3')
   })
 })
+
+describe('a retry of a stored event is 200 duplicate before any rule runs; event_id is trimmed and charset-checked too', () => {
+  // Rows "stored before a rule existed" are written straight to app_events, the way the live
+  // database still holds them; every value is a real id or the hosted URL with a real local part.
+  async function storeLegacy(fields: { event_id: string; user_id: string | null; device_id: string; properties?: Body }): Promise<void> {
+    await env.DB.prepare(
+      'INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at, properties) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    )
+      .bind(fields.event_id, 'link_click', fields.user_id, fields.device_id, BRIEF_TS, BRIEF_TS, fields.properties === undefined ? null : JSON.stringify(fields.properties))
+      .run()
+  }
+
+  it('a sender retry of an event stored before today\'s rules (a link with a local part, a padded user_id) is 200 duplicate, not 400', async () => {
+    const withLocalPart = { event_id: nextEventId(), user_id: 'u_2b6447a3', device_id: 'd_2b6447a3', properties: { link: `${HOSTED_URL}/u/julia.evans230` } }
+    const withPaddedUser = { event_id: nextEventId(), user_id: ' u_2b6447a3 ', device_id: 'd_2b6447a3' }
+    await storeLegacy(withLocalPart)
+    await storeLegacy(withPaddedUser)
+    // The padded id was an unknown user then, so it got its own stub account and profile.
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO app_users (user_id, email_norm, created_at, from_csv) VALUES (?, NULL, ?, 0)").bind(withPaddedUser.user_id, BRIEF_TS),
+      env.DB.prepare("INSERT INTO profiles (pkey, email_norm, user_id, kind, engagement_score, created_at) VALUES (?, NULL, ?, 'unknown_user_stub', 3, ?)").bind(
+        await pkeyForUnknownUser(piiKeySecret(), withPaddedUser.user_id),
+        withPaddedUser.user_id,
+        BRIEF_TS,
+      ),
+    ])
+    const rows = await count('app_events')
+    for (const stored of [withLocalPart, withPaddedUser]) {
+      // As fresh events these bodies are refused (the first by the personal-data check, the second
+      // would be stored trimmed), but their event_ids are already stored: the first write wins.
+      const { status, json } = await post({ ...stored, event: 'link_click', timestamp: BRIEF_TS })
+      expect(status, stored.event_id).toBe(200)
+      expect(json).toEqual({ accepted: true, duplicate: true })
+    }
+    expect(await count('app_events')).toBe(rows)
+    // The same link under a new event_id is still refused.
+    const fresh = await post(event({ event: 'link_click', user_id: 'u_2b6447a3', device_id: 'd_2b6447a3', properties: withLocalPart.properties }))
+    expect(fresh.status).toBe(400)
+  })
+
+  it('event_id is trimmed: " <id> " stores as <id>, and a later " <id> " or "<id>" is the duplicate', async () => {
+    const id = nextEventId()
+    const first = await post({ ...event({ user_id: 'u_2b6447a3', device_id: 'd_2b6447a3' }), event_id: ` ${id}\t` })
+    expect(first.status).toBe(202)
+    expect(first.json).toEqual({ accepted: true, event_id: id })
+    expect(await stored(id)).not.toBeNull()
+    const rows = await count('app_events')
+    for (const retry of [id, `  ${id} `]) {
+      const again = await post({ ...event({ user_id: 'u_2b6447a3', device_id: 'd_2b6447a3' }), event_id: retry })
+      expect(again.status, JSON.stringify(retry)).toBe(200)
+      expect(again.json).toEqual({ accepted: true, duplicate: true })
+    }
+    expect(await count('app_events')).toBe(rows)
+  })
+
+  it('a stored event_id that still holds its padding (written before the trim) is matched as sent', async () => {
+    const padded = ` ${nextEventId()} `
+    await storeLegacy({ event_id: padded, user_id: 'u_2b6447a3', device_id: 'd_2b6447a3' })
+    const { status } = await post({ ...event({ user_id: 'u_2b6447a3', device_id: 'd_2b6447a3' }), event_id: padded })
+    expect(status).toBe(200)
+  })
+
+  it('a blank or odd event_id is 400 naming event_id, and stores nothing', async () => {
+    const rows = await count('app_events')
+    const id = nextEventId()
+    for (const [eventId, issue] of [
+      ['   ', 'event_id must not be empty or only spaces'],
+      [`${id};`, 'event_id must be 1 to 64 letters, digits, "_" or "-"'],
+      [`${id.slice(0, 6)} ${id.slice(6)}`, 'event_id must be 1 to 64 letters, digits, "_" or "-"'],
+    ]) {
+      const { status, json } = await post({ ...event({ user_id: 'u_2b6447a3', device_id: 'd_2b6447a3' }), event_id: eventId })
+      expect(status, eventId).toBe(400)
+      expect(json.details).toEqual([{ field: 'event_id', issue }])
+    }
+    expect(await count('app_events')).toBe(rows)
+  })
+})

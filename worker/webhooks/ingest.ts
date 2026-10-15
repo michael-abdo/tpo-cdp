@@ -47,6 +47,32 @@ interface ResolvedRow {
   device_id: string
 }
 
+/** Who a stored event resolves to, by the read-time identity rule; the caller adds the WHERE. */
+const RESOLUTION_SQL = `SELECT COALESCE(e.user_id, d.user_id) AS user_id, u.email_norm, p.pkey AS email_pkey,
+                e.user_id AS event_user_id, e.device_id
+           FROM app_events e
+           LEFT JOIN device_identity d ON e.user_id IS NULL AND d.device_id = e.device_id
+           LEFT JOIN app_users u ON u.user_id = COALESCE(e.user_id, d.user_id)
+           LEFT JOIN profiles p ON p.email_norm = u.email_norm`
+
+/**
+ * A retry of an event already stored, answered before any validation: true when one of
+ * `eventIds` (as sent, and trimmed) is in app_events. Then nothing is written but the scores the
+ * stored event can change, recomputed exactly as a duplicate through ingestEvent recomputes them,
+ * so a failed recompute still heals on the retry. A body that would fail today's rules still gets
+ * its 200 duplicate when its event_id was stored before those rules existed: the first write wins.
+ */
+export async function replayStoredEvent(db: D1Database, piiKeySecret: string, eventIds: readonly string[]): Promise<boolean> {
+  if (eventIds.length === 0) return false
+  const row = await db
+    .prepare(`${RESOLUTION_SQL} WHERE e.event_id IN (${eventIds.map(() => '?').join(', ')}) ORDER BY e.event_id LIMIT 1`)
+    .bind(...eventIds)
+    .first<ResolvedRow>()
+  if (row === null) return false
+  await recomputeEngagement(db, piiKeySecret, await duplicateAffected(db, row))
+  return true
+}
+
 /**
  * The score a new stub profile is created with: no email means no opens and no site visits, and
  * its one app event is the event that creates it. Device-stitched events are added by the
@@ -136,19 +162,7 @@ export async function ingestEvent(
         ),
     )
   }
-  statements.push(
-    db
-      .prepare(
-        `SELECT COALESCE(e.user_id, d.user_id) AS user_id, u.email_norm, p.pkey AS email_pkey,
-                e.user_id AS event_user_id, e.device_id
-           FROM app_events e
-           LEFT JOIN device_identity d ON e.user_id IS NULL AND d.device_id = e.device_id
-           LEFT JOIN app_users u ON u.user_id = COALESCE(e.user_id, d.user_id)
-           LEFT JOIN profiles p ON p.email_norm = u.email_norm
-          WHERE e.event_id = ?1`,
-      )
-      .bind(event.event_id),
-  )
+  statements.push(db.prepare(`${RESOLUTION_SQL} WHERE e.event_id = ?1`).bind(event.event_id))
 
   const results = await db.batch(statements)
   const inserted = results[0].meta.changes

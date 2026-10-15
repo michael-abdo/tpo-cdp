@@ -107,26 +107,20 @@ function propertiesProblem(properties: Record<string, unknown>): string | null {
   return null
 }
 
-const id = (field: string) =>
-  z
-    .string({
-      error: (iss) => (iss.input === undefined ? `${field} is required` : `${field} must be a string`),
-    })
-    .min(1, { error: `${field} must not be empty` })
-    .max(ID_MAX_CHARS, { error: `${field} must be at most ${ID_MAX_CHARS} characters` })
+/**
+ * The characters an event, user or device id may hold once trimmed: letters, digits, "_" and
+ * "-", 1 to ID_MAX_CHARS of them. The brief's sample (`evt_9f3a1c`, `u_2b6447a3`, `d_4b21e8`)
+ * and the CSV ids fit.
+ */
+export const ID_PATTERN = new RegExp(`^[A-Za-z0-9_-]{1,${ID_MAX_CHARS}}$`)
 
 /**
- * The characters a user or device id may hold once trimmed: letters, digits, "_" and "-", 1 to
- * ID_MAX_CHARS of them. The CSV ids (`u_2b6447a3`) and the brief's device (`d_4b21e8`) fit.
+ * event_id, user_id and device_id: trimmed, the same as the CSV import trims ids, then held to
+ * ID_PATTERN. Without the trim, " u_2b6447a3 " would be a new, unknown user with its own stub
+ * profile, and " evt_9f3a1c " a second copy of an event already stored. A blank id is refused,
+ * never stored as empty.
  */
-export const PERSON_ID_PATTERN = new RegExp(`^[A-Za-z0-9_-]{1,${ID_MAX_CHARS}}$`)
-
-/**
- * user_id and device_id: trimmed, the same as the CSV import trims them, then held to
- * PERSON_ID_PATTERN. Without the trim, " u_2b6447a3 " would be a new, unknown user with its own
- * stub profile. A blank id is refused, never stored as empty.
- */
-const personId = (field: string) =>
+const trimmedId = (field: string) =>
   z
     .string({
       error: (iss) => (iss.input === undefined ? `${field} is required` : `${field} must be a string`),
@@ -137,7 +131,7 @@ const personId = (field: string) =>
         ctx.addIssue({ code: 'custom', message: `${field} must not be empty or only spaces` })
         return z.NEVER
       }
-      if (!PERSON_ID_PATTERN.test(trimmed)) {
+      if (!ID_PATTERN.test(trimmed)) {
         ctx.addIssue({
           code: 'custom',
           message: `${field} must be 1 to ${ID_MAX_CHARS} letters, digits, "_" or "-"`,
@@ -149,11 +143,11 @@ const personId = (field: string) =>
 
 /** The schema for a request received at `nowMs` (wall clock, for the future-time bound). */
 const eventSchema = (nowMs: number) => z.object({
-  event_id: id('event_id'),
+  event_id: trimmedId('event_id'),
   event: z.enum(APP_EVENTS, { error: `event must be one of ${APP_EVENTS.join(', ')}` }),
   // A string, null, or absent (the brief allows an anonymous event). Empty is rejected: no app user has an empty id.
-  user_id: personId('user_id').nullable().optional(),
-  device_id: personId('device_id'),
+  user_id: trimmedId('user_id').nullable().optional(),
+  device_id: trimmedId('device_id'),
   timestamp: z
     .string({
       error: (iss) => (iss.input === undefined ? 'timestamp is required' : 'timestamp must be a string'),
@@ -192,7 +186,7 @@ const eventSchema = (nowMs: number) => z.object({
     .optional(),
 })
 
-/** A validated event: user and device ids trimmed, `user_id` null when absent, `timestamp` normalized UTC. */
+/** A validated event: ids trimmed, `user_id` null when absent, `timestamp` normalized UTC. */
 export interface WebhookEvent {
   event_id: string
   event: AppEventName
@@ -211,6 +205,17 @@ export interface SchemaIssue {
 }
 
 export type ParseResult = { ok: true; event: WebhookEvent } | { ok: false; details: SchemaIssue[] }
+
+/**
+ * The event_id a parsed body names, as sent and trimmed, for the duplicate lookup that runs before
+ * any other rule: an empty list when the body names none (the schema then refuses it).
+ */
+export function eventIdCandidates(body: unknown): string[] {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return []
+  const value = (body as Record<string, unknown>).event_id
+  if (typeof value !== 'string' || value.trim() === '') return []
+  return [...new Set([value, value.trim()])]
+}
 
 /** The names a `properties` issue may carry: our own keys only, never a sender's (see the header). */
 const NAMED_PROPERTIES = ['story', 'link']

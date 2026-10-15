@@ -3,17 +3,18 @@
 // detector, for story and link.
 //
 // Order, cheapest refusal first: rate limit (429) → JSON content type (415) → body ≤ 64 KB (413)
-// → signature over the raw bytes, before any parsing (401) → JSON parse + schema (400) → personal
-// data in properties.story or properties.link (400) → store (202 {accepted, event_id}; 200
-// {accepted, duplicate} for an event_id already stored). Every refusal is logged with its reason
-// and no header or body values (fail loud, but never log what a sender wrote).
+// → signature over the raw bytes, before any parsing (401) → JSON parse (400) → an event_id
+// already stored (200 {accepted, duplicate}, before every rule below) → schema (400) → personal
+// data in properties.story or properties.link (400) → store (202 {accepted, event_id}). Every
+// refusal is logged with its reason and no header or body values (fail loud, but never log what
+// a sender wrote).
 
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { ApiError, requireJson } from '../auth/middleware'
 import { type AppEnv, requireSecret } from '../env'
 import { exposedPropertyProblems } from '../webhooks/exposed-properties'
-import { ingestEvent } from '../webhooks/ingest'
-import { APP_EVENTS, parseWebhookEvent, type SchemaIssue } from '../webhooks/schema'
+import { ingestEvent, replayStoredEvent } from '../webhooks/ingest'
+import { APP_EVENTS, eventIdCandidates, parseWebhookEvent, type SchemaIssue } from '../webhooks/schema'
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, verifyWebhook } from '../webhooks/verify'
 
 /** The body cap: 64 KB, far above one event, so an oversized body is refused before it is read. */
@@ -71,6 +72,12 @@ function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
 
+/** 200 duplicate: the event_id is already stored and the first write wins. */
+function duplicateAnswer(c: Context<AppEnv>): Response {
+  console.info(JSON.stringify({ at: 'webhook', outcome: 'duplicate', status: 200 }))
+  return c.json({ accepted: true, duplicate: true }, 200)
+}
+
 /** Mounted at /webhooks by worker/index.ts. */
 export const webhookRoutes = new Hono<AppEnv>()
 
@@ -122,6 +129,11 @@ webhookRoutes.post('/app', async (c) => {
       { field: 'body', issue: 'body must be UTF-8 JSON' },
     ])
   }
+  // A retry of an event already stored is 200 duplicate before any rule below runs, so an event
+  // stored before a rule existed (or re-sent by the panel's "Send again") still gets its duplicate
+  // answer on a retry, never a new 400. Looked up as sent and trimmed.
+  if (await replayStoredEvent(c.env.DB, piiKeySecret, eventIdCandidates(body))) return duplicateAnswer(c)
+
   // Wall clock: the bound on how far an event time may run ahead of it, beside the
   // replay window and received_at; none of them is a business date.
   const parsed = parseWebhookEvent(body, nowSeconds() * 1000)
@@ -135,10 +147,8 @@ webhookRoutes.post('/app', async (c) => {
 
   const receivedAt = new Date(nowSeconds() * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
   const result = await ingestEvent(c.env.DB, piiKeySecret, parsed.event, receivedAt)
-  if (result.duplicate) {
-    console.info(JSON.stringify({ at: 'webhook', outcome: 'duplicate', status: 200 }))
-    return c.json({ accepted: true, duplicate: true }, 200)
-  }
+  // Still possible here: two copies of a new event racing in; the insert keeps the first.
+  if (result.duplicate) return duplicateAnswer(c)
   console.info(JSON.stringify({ at: 'webhook', outcome: 'stored', status: 202, event: parsed.event.event }))
   // Only what the sender already knows. Which person a device resolves to is never told to a
   // caller of this open URL; /events and its "Send a test event" panel read it behind the session.

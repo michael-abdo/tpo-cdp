@@ -410,12 +410,11 @@ describe('T-WH-PANEL-10: the panel reuses verify and ingest, it never re-impleme
   })
 })
 
-describe('T-WH-PANEL-11: fails loud when the inner webhook refuses a self-built resend', () => {
-  it('a resend whose stored event_ts now lies beyond the 24h future bound (09 D-70 #3) is a 500 internal_error, logged with the inner status', async () => {
-    // A real app_users id (09 D-47), a fresh row with only the timestamp edited to break the
-    // webhook's own future bound: storedEventBody() rebuilds the body from this row unchanged,
-    // so the inner POST /webhooks/app now refuses it with 400, and this route must not swallow
-    // that refusal as a success.
+describe('T-WH-PANEL-11: a stored event always resends as a duplicate; a refused self-built event fails loud', () => {
+  it('"Send again" of a stored event whose body breaks a rule added later (a time past the 24h future bound) is 200 duplicate, not a refusal', async () => {
+    // A real app_users id with only the stored time moved out of bounds: the body storedEventBody()
+    // rebuilds would fail today's schema, but the event_id is already stored, so the webhook answers
+    // 200 duplicate before any rule runs, exactly as for a sender's own retry.
     const futureTs = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
     await env.DB.prepare(
       `INSERT INTO app_events (event_id, event, user_id, device_id, event_ts, received_at)
@@ -423,21 +422,35 @@ describe('T-WH-PANEL-11: fails loud when the inner webhook refuses a self-built 
     )
       .bind(KNOWN_USER, futureTs, new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'))
       .run()
+    const before = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+    const res = await sendTest({ resend: 'evt_panel11_future' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ status: 200, outcome: 'duplicate', event: { event_id: 'evt_panel11_future' } })
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')).toBe(before)
+  })
 
+  it('a new test event for an app account whose stored id the webhook now refuses is a 500 internal_error, logged with the inner status', async () => {
+    // An app account stored before ids were held to letters, digits, "_" and "-": the real
+    // u_2b6447a3 with one ";" added. The panel finds it, builds its event, and the real webhook
+    // refuses that event; this route must not pass that off as a success.
+    const legacyUser = `${KNOWN_USER};`
+    await env.DB.prepare("INSERT INTO app_users (user_id, email_norm, created_at, from_csv) VALUES (?, NULL, '2026-09-28T00:00:00Z', 0)")
+      .bind(legacyUser)
+      .run()
     const logged: string[] = []
     const origError = console.error
+    const origWarn = console.warn
     console.error = (...args: unknown[]) => logged.push(args.map(String).join(' '))
+    console.warn = () => {}
     try {
-      const res = await sendTest({ resend: 'evt_panel11_future' })
+      const res = await sendTest({ user_id: legacyUser, event: 'app_open' })
       expect(res.status).toBe(500)
       expect(await res.json()).toEqual({ error: 'internal_error', message: 'Something went wrong on the server. The error has been logged.' })
-      expect(
-        logged.some(
-          (l) => l.includes('"at":"unhandled"') && l.includes('events/test: POST /webhooks/app answered'),
-        ),
-      ).toBe(true)
+      expect(logged.some((l) => l.includes('"at":"unhandled"') && l.includes('events/test: POST /webhooks/app answered'))).toBe(true)
     } finally {
       console.error = origError
+      console.warn = origWarn
+      await env.DB.prepare('DELETE FROM app_users WHERE user_id = ?').bind(legacyUser).run()
     }
   })
 })
