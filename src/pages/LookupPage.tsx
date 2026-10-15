@@ -1,23 +1,24 @@
-// /lookup (06 §/lookup, R2): one search box, then one profile in three columns: newsletter,
-// website, app. The raw input goes to GET /api/lookup?q= unchanged; the server normalizes it
-// (02 §Normalization). Absent sections render the labelled empty states from 06.
-// Partial lookup (06 §/lookup, 09 D-52): after QUERY_FRAGMENT_MIN_LENGTH typed characters the
-// box lists GET /api/lookup/search suggestions (debounced); Find goes to the exact lookup and
-// falls back to the suggestions on 404. The raw input is sent unchanged and the server alone
-// folds it (02 §Normalization: the browser never normalizes): this file never trims or
-// lowercases, a 400 query_too_short just means "no list yet" (test/lookup-search.test.ts pins it).
-// Fuzzy lookup (06 §/lookup, 09 D-59): when the list is empty the API may send did_you_mean,
-// shown as "Did you mean …?" links under the no-match text. Find also takes a pk_, d_ or v_ id
-// (04 §/api/lookup); level 1 names only email and app id, the rest sits in a collapsed note.
-// Disclosure (06 §UI principles 2): level 1 = who, status, signup, last open and one summary per
+// /lookup: one search box, then one profile in three columns: newsletter, website, app. The raw
+// input goes to GET /api/lookup?q= unchanged; the server normalizes it. Absent sections render
+// labelled empty states.
+// Partial lookup (staff rarely type a full address): after QUERY_FRAGMENT_MIN_LENGTH typed
+// characters the box lists GET /api/lookup/search suggestions (debounced); Find goes to the exact
+// lookup and falls back to the suggestions on 404. The raw input is sent unchanged and the server
+// alone folds it (the browser never normalizes, so the fold rule has one home): this file never
+// trims or lowercases, a 400 query_too_short just means "no list yet" (test/lookup-search.test.ts
+// pins it).
+// Fuzzy lookup: when the list is empty the API may send did_you_mean,
+// shown as "Did you mean …?" links under the no-match text. Find also takes a pk_, d_ or v_ id;
+// level 1 names only email and app id, the rest sits in a collapsed note.
+// Disclosure, at most two levels: level 1 = who, status, signup, last open and one summary per
 // column; "Details" per column = visit / event lists; "Technical details" = ids, keys, merge
 // counts, second-precise UTC times, raw field values and formulas.
-// One thing in one place (09 D-72): the demo subject is the placeholder only (no "Try an example"
+// One thing in one place: the demo subject is the placeholder only (no "Try an example"
 // button), the hint adds only what the label and placeholder do not say, and an app account's
 // user ID is in the App activity column's Technical details, not the header's.
-// Several app accounts or website visitors on one profile (09 D-70 item 4, 04 `app.accounts`,
-// `web.visitors`): level 1 counts across all of them and says how many; Details and Technical
-// details list each one under its own heading, earliest first.
+// Several app accounts or website visitors on one profile (`app.accounts`, `web.visitors`; one
+// email on two accounts or two browsers is normal): level 1 counts across all of them and says
+// how many; Details and Technical details list each one under its own heading, earliest first.
 
 import {
   type FocusEvent,
@@ -60,13 +61,13 @@ import type { Lookup, LookupAppAccount, LookupSearch, LookupVisitor } from '../t
 /** Wait after the last keystroke before asking for suggestions (06: ~250 ms). */
 const SUGGEST_DEBOUNCE_MS = 250
 const NO_MATCH = 'No profile matches — try part of the email'
-/** After a 404 or a no-match, the lead-in to the suggestion list, said once (09 D-72). */
+/** After a 404 or a no-match, the lead-in to the suggestion list, said once. */
 const ONE_OF_THESE = 'Did you mean one of these?'
-/** The page's one-line purpose, the brief's own words for it (06 §Vocabulary, 09 D-66). */
+/** The page's one-line purpose, the brief's own words for it. */
 const PURPOSE = 'Finds anyone: newsletter info, site visits and app activity in one view.'
 const LISTBOX_ID = 'lookup-suggestions'
 const HINT_ID = 'lookup-hint'
-/** A demo subject from 02 §Counts, shown as the placeholder: the one place the example lives (09 D-72). */
+/** A real subscriber from the seed data, shown as the placeholder: the one place the example lives. */
 const EXAMPLE = 'joy.hall830@protonmail.com'
 
 const KIND_LABEL: Record<Lookup['profile']['kind'], string> = {
@@ -101,7 +102,7 @@ function ScoreMeter({ score }: { score: number }) {
 
 /**
  * A column of the profile: an h3, one or two summary lines, then its level-2 Disclosure. `gated`
- * (09 D-80, 22-pages/lookup.md §2.1) mutes the card (`bg-surface-2`, no shadow, subtle title and
+ * (coming soon) mutes the card (`bg-surface-2`, no shadow, subtle title and
  * icon) for a feature that is not built yet, with no summary lines (there is no fact to show).
  */
 function Column({
@@ -136,7 +137,7 @@ function Column({
 }
 
 /**
- * The gated "App revenue" column (09 D-80, 22-pages/lookup.md §2): a fourth column, last, right
+ * The gated "App revenue" column (coming soon): a fourth column, last, right
  * after App activity. Level 1 shows only the title and the gated "Details" toggle with its chip —
  * no summary lines, no fake "$0" or sample plan (the CDP does not know this fact yet). Activating
  * the toggle (it is not a <details>, so it cannot open) only reveals and announces the note.
@@ -161,7 +162,7 @@ function AppRevenue() {
 }
 
 /**
- * The gated "Delete this person" row (09 D-80, 22-pages/lookup.md §3): a quiet row at the very end
+ * The gated "Delete this person" row (coming soon): a quiet row at the very end
  * of the profile, split off by a thin rule, away from everyday controls. Muted grey, never red — a
  * gated button has no real consequence yet. Activation only reveals and announces the note.
  */
@@ -188,7 +189,7 @@ function DeletePerson() {
 
 function Header({ data }: { data: Lookup }) {
   const { profile, newsletter } = data
-  // A profile with no email is named in words; the raw app id lives in Technical details (06 §UI principles 2, 4).
+  // A profile with no email is named in words; the raw app id lives in Technical details.
   const identity = profile.email ?? 'App account with no email on file'
   const facts: string[] = []
   // The kind word only when it says something the columns don't (principle 5).
@@ -366,7 +367,7 @@ function Website({ data, hasNewsletter }: { data: Lookup['web']; hasNewsletter: 
   )
 }
 
-/** When the app account came relative to the newsletter signup, in words (02 §Linking 6). */
+/** When the app account came relative to the newsletter signup, in words (only after counts as a conversion). */
 function joinedWhen(
   app: LookupAppAccount,
   newsletter: Lookup['newsletter'],
@@ -457,7 +458,7 @@ function AppActivity({
   const several = all.length > 1
   const events = all.flatMap((a) => a.events)
   const last = latest(events.map((e) => e.event_ts))
-  // `data` is the earliest account (04), the one has_app and app_after_signup read.
+  // `data` is the earliest account, the one has_app and app_after_signup read.
   const joined = `${humanDate(data.created_at)}${joinedWhen(data, newsletter, afterSignup)}`
   const summary = (
     <>
@@ -508,7 +509,7 @@ function AppActivity({
 
 /**
  * One looked-up profile: the header, then the four columns — newsletter, site, app, and the gated
- * App revenue (09 D-80) — then the gated Delete this person row (exported for
+ * App revenue — then the gated Delete this person row (exported for
  * test/ui/lookup-profile.test.ts).
  */
 export function Profile({ data }: { data: Lookup }) {
@@ -599,7 +600,7 @@ function useSuggestions(path: string | null): SuggestState | null {
   return settled.state
 }
 
-/** The listbox of matches (06 keyboard contract: ↑/↓ moves, Enter picks, Esc closes; ../listbox). */
+/** The listbox of matches (keyboard contract: ↑/↓ moves, Enter picks, Esc closes; ../listbox). */
 function SuggestionList({
   matches,
   truncated,
@@ -626,8 +627,8 @@ function SuggestionList({
             id={optionId(LISTBOX_ID, i)}
             active={isActive}
             onPick={() => onPick(m)}
-            // The active row's bar-and-fill treatment (principle 7) lives in the shared
-            // ListboxOption now, not here (D-72).
+            // The active row's bar-and-fill treatment (its contrast) lives in the shared
+            // ListboxOption, not here, so the two lists cannot drift apart.
             className="flex cursor-pointer flex-wrap gap-x-3 px-3 py-2 hover:bg-gray-50"
           >
             <span className="break-all font-medium text-gray-900">{m.email ?? m.user_id}</span>
@@ -652,7 +653,7 @@ function plainClick(e: MouseEvent): boolean {
 }
 
 /**
- * The "Did you mean …?" links (06 §/lookup, 09 D-59). Real links, so they open in a new tab too.
+ * The "Did you mean …?" links. Real links, so they open in a new tab too.
  * mousedown keeps focus in the search box, so its blur never closes the list under the pointer.
  */
 function DidYouMean({ suggestions, onPick }: { suggestions: Suggestion[]; onPick: (email: string) => void }) {
@@ -767,7 +768,7 @@ export default function LookupPage() {
   const suggested = suggestions?.status === 'ok' ? suggestions.data : null
   const listboxShown = suggested !== null && suggested.matches.length > 0
   const zeroMatches = suggested !== null && suggested.matches.length === 0
-  // The API sends did_you_mean only with no matches (04); the guard keeps the UI to 06 regardless.
+  // The API sends did_you_mean only with no matches; the guard keeps the UI to that rule regardless.
   const nearby = zeroMatches ? suggested.did_you_mean : []
   // A 404 with no list to fall back to (fragment too short) means nothing was searched.
   const noFallback = !searchable(q ?? '') || suggestions?.status === 'too_short'

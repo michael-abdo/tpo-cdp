@@ -1,24 +1,24 @@
-// /events (06 §/events; R4.10): the last 20 app events from GET /api/events/recent (04), newest
-// first, fetched on load, then every 5 seconds while the tab is visible (16 §If time remains item
-// 2): the poll stops when the tab is hidden (document.hidden) and fetches at once when it is shown
+// /events: the last 20 app events from GET /api/events/recent, newest first, fetched on load,
+// then every 5 seconds while the tab is visible, so a new webhook event shows with no reload or
+// restart: the poll stops when the tab is hidden (document.hidden) and fetches at once when it is shown
 // again. "Refresh" fetches on demand. A poll never cuts across a fetch still running, and an answer
-// older than the newest request is dropped. The live region (06 §UI principles 7) says how many
+// older than the newest request is dropped. The live region says how many
 // events the first load shows, then only how many new ones arrived; a poll with nothing new says
 // nothing, a Refresh with nothing new says so. A failed fetch keeps the last list on screen under
-// the error, and the next poll tries again. Level 1 per event (06 §UI
-// principles 2, 4, 5): when it arrived (received_at, shown only here), the event name as the brief
-// writes it with a plain gloss in an InfoTip (06 §Vocabulary), and the profile it belongs to: the
+// the error, and the next poll tries again. Level 1 per event: when it arrived (received_at,
+// shown only here), the event name as the brief
+// writes it with a plain gloss in an InfoTip, and the profile it belongs to: the
 // email, "anonymous device" when no identified event has named the device yet, or "Unknown app
-// account (no email on file)" for a webhook-created user with no email (06 sketches
-// "unknown user u_…"; principle 2 moves the u_ id to Technical details), plus a "Linked after login"
-// tag (06's "stitched") when an anonymous event is attached through its device's login
+// account (no email on file)" for a webhook-created user with no email (the raw u_ id sits in
+// Technical details), plus a "Linked after login"
+// tag (the "stitched" case) when an anonymous event is attached through its device's login
 // (attached_via login_stitch), explained once above the table. Level 2 (row Details): when it
 // happened in the app; Technical details: device id, second-precise UTC times, raw ids and pk_
-// keys (the event name and the link are in the row already, 09 D-72). Events arrive from the
-// app's real webhook, from the terminal (`npm run webhook:send`, 11 §Verify), or
-// from the "Send a test event" panel just below the header (09 D-73): either way the list picks
+// keys (the event name and the link are in the row already). Events arrive from the
+// app's real webhook, from the terminal (`npm run webhook:send`), or
+// from the "Send a test event" panel just below the header: either way the list picks
 // a new row up at once (events-poll.ts FetchKind 'sent' says nothing extra here, since the
-// panel's own result line already names the outcome, D-72).
+// panel's own result line already names the outcome).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
@@ -147,7 +147,7 @@ function columns(now: number): Column<RecentEvent>[] {
 }
 
 const POLL_SECONDS = POLL_MS / 1000
-/** The next step under a failed fetch; how often the page tries is said once, under "How this list updates" (09 D-72). */
+/** The next step under a failed fetch; how often the page tries is said once, under "How this list updates". */
 const KEEPS_TRYING = 'The page keeps trying on its own.'
 
 /** The page's lists: the last good one (kept through a failed fetch) and the latest error. */
@@ -161,7 +161,7 @@ interface Shown {
 export default function EventsPage() {
   const [shown, setShown] = useState<Shown | null>(null)
   const [refreshing, setRefreshing] = useState(false)
-  // The main action is the single most prominent control (06 §UI principles 1): while the panel
+  // The main action is the single most prominent control: while the panel
   // is open, Send is it, so Refresh steps down to secondary; closed, Refresh is the page's own
   // main action again.
   const [testPanelOpen, setTestPanelOpen] = useState(false)
