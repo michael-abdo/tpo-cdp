@@ -225,6 +225,58 @@ export function lexSql(sql: string): SqlToken[] {
 /** Statement words refused anywhere outside a string (03 row 8). */
 const FORBIDDEN_WORDS = new Set(['PRAGMA', 'ATTACH', 'DETACH', 'WITH'])
 
+/** Words that end a FROM clause at its own depth. */
+const FROM_CLAUSE_END = new Set(['WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'WINDOW', 'UNION', 'INTERSECT', 'EXCEPT'])
+
+/**
+ * The join-shape rule (09 D-81 #1, live finding 2026-10-14): two views may be read together only
+ * through an explicit `JOIN … ON a.col = b.col` (or `USING (col)`). A comma list, a JOIN with no
+ * ON/USING (so `CROSS JOIN` and `NATURAL JOIN` too), or an ON with no column equality between two
+ * different views is refused before anything runs. The plan check cannot catch every cross join (a filter on
+ * one side turns its scan into an indexed search), and a timed-out D1 query is never cancelled: on
+ * the live database `SELECT COUNT(*) FROM v_profiles, v_web_events WHERE v_profiles.status =
+ * 'active'` ran past D1's own CPU limit and reset the database. Pure; checked at every depth.
+ */
+function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
+  const problems = new Set<string>()
+  const word = (t: SqlToken | undefined) => (t !== undefined && t.kind === 'word' ? t.text.toUpperCase() : '')
+  tokens.forEach((from, at) => {
+    if (word(from) !== 'FROM') return
+    const depth = from.depth
+    let end = tokens.length
+    for (let i = at + 1; i < tokens.length; i += 1) {
+      const t = tokens[i]
+      if (t.depth < depth || (t.depth === depth && t.kind === 'punct' && t.text === ')')) { end = i; break }
+      if (t.depth === depth && FROM_CLAUSE_END.has(word(t))) { end = i; break }
+    }
+    const clause = tokens.slice(at + 1, end).filter((t) => t.depth === depth)
+    if (clause.some((t) => t.kind === 'punct' && t.text === ',')) {
+      problems.add('read two views together only with JOIN … ON a.column = b.column, never a comma list (a cross join)')
+    }
+    clause.forEach((t, i) => {
+      if (word(t) !== 'JOIN') return
+      let next = clause.length
+      for (let j = i + 1; j < clause.length; j += 1) if (word(clause[j]) === 'JOIN') { next = j; break }
+      const condition = clause.slice(i + 1, next)
+      const kind = condition.find((c) => word(c) === 'ON' || word(c) === 'USING')
+      if (kind === undefined) { problems.add('every JOIN needs ON a.column = b.column or USING (column)'); return }
+      if (word(kind) === 'USING') return
+      const onAt = tokens.indexOf(kind)
+      const onEnd = next < clause.length ? tokens.indexOf(clause[next]) : end
+      const on = tokens.slice(onAt + 1, onEnd)
+      const linked = on.some((_, k) => {
+        const [a, d1, c1, eq, b, d2, c2] = on.slice(k, k + 7)
+        return (
+          a?.kind === 'word' && d1?.text === '.' && c1?.kind === 'word' && eq?.text === '=' &&
+          b?.kind === 'word' && d2?.text === '.' && c2?.kind === 'word' && a.text.toUpperCase() !== b.text.toUpperCase()
+        )
+      })
+      if (!linked) problems.add('a JOIN must link the two views on a column equality, e.g. ON p.pkey = w.pkey')
+    })
+  })
+  return [...problems]
+}
+
 const INTEGER = /^\d+$/
 
 export interface ReadOnlySelect {
@@ -286,6 +338,7 @@ export function readOnlySelect(sql: string, paramCount = 0): ReadOnlySelect {
   for (const word of forbidden) problems.push(`${word} is not allowed`)
   const markers = tokens.filter((t) => t.kind === 'param').length
   if (markers !== paramCount) problems.push(`the query has ${markers} "?" marker(s) but ${paramCount} value(s) are bound`)
+  problems.push(...joinShapeProblems(tokens))
   const forced = forceLimit(sql, tokens, problems)
   if (problems.length > 0) throw new GateDenied('gate3', problems, sql)
   return forced

@@ -8,6 +8,7 @@ import { MODEL } from '../worker/assistant/build-request'
 import {
   GateDenied,
   raceTimeout,
+  readOnlySelect,
   runReadOnlySelect,
   SQL_ROWS_READ_CAP,
   SqlTooHeavyError,
@@ -48,6 +49,9 @@ const CARTESIAN_IN_SCALAR_SUBQUERY = 'SELECT (SELECT count(*) FROM v_profiles p,
 // Not a cartesian group (one SCAN in its own scope), but an unindexed scan run once per outer row:
 // read 1,096,962 rows when actually run against the seed (self-audit case A).
 const CORRELATED_UNINDEXED_SCAN = "SELECT p.pkey, (SELECT count(*) FROM v_web_events w WHERE w.utm_source = p.source) AS n FROM v_profiles p"
+// The same correlated scan with only aggregates selected: passes the join-shape rule and a tile's
+// key-projection guard, so a board run reaches the plan check itself.
+const CORRELATED_UNINDEXED_SCAN_AGG = "SELECT count(*) AS n, sum((SELECT count(*) FROM v_web_events w WHERE w.utm_source = p.source)) AS visits FROM v_profiles p"
 // A genuine syntax error: EXPLAIN QUERY PLAN fails on it the same way the real run would.
 const SYNTAX_ERROR_SQL = 'SELECT source, count(*) AS n FROM v_profiles GROUP BY'
 
@@ -217,6 +221,12 @@ async function askOnce(sql: string): Promise<string> {
 const insightCount = async () => (await env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')) ?? 0
 const toolCount = async () => (await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')) ?? 0
 
+
+// A cross join is refused before it runs by one of two checks: the join-shape rule in Gate 3's
+// pure checks (a comma list, CROSS JOIN, or a JOIN with no column equality; 2026-10-14 live
+// finding) or, for a shape that passes it, the plan check (09 D-81 #1).
+const CROSS_JOIN_REFUSAL = /unindexed table scans|JOIN … ON a\.column = b\.column|column equality|comma list/
+
 describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan before it runs', () => {
   it('a comma cross join of two views is refused; nothing runs', async () => {
     const { db, prepared } = recordingDb()
@@ -224,7 +234,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     // Only the EXPLAIN was prepared (a different text); the real cartesian SQL (with its forced
     // LIMIT) was never prepared at all.
     expect(prepared.some((q) => q.startsWith('SELECT p.pkey, w.pkey FROM v_profiles p, v_web_events w LIMIT'))).toBe(false)
-    expect(prepared.some((q) => q.startsWith('EXPLAIN QUERY PLAN'))).toBe(true)
+    expect(prepared.every((q) => q.startsWith('EXPLAIN QUERY PLAN'))).toBe(true)
   })
 
   it('a JOIN … ON 1 = 1 cross join is refused the same way, naming the scan in the problem', async () => {
@@ -235,8 +245,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
       expect(err).toBeInstanceOf(GateDenied)
       const denied = err as GateDenied
       expect(denied.gate).toBe('gate3')
-      expect(denied.problems[0]).toContain('unindexed table scans')
-      expect(denied.problems[0]).toContain('SCAN')
+      expect(denied.problems[0]).toMatch(CROSS_JOIN_REFUSAL)
     }
   })
 
@@ -272,11 +281,11 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
       expect(err, sql).toBeInstanceOf(GateDenied)
       const denied = err as GateDenied
       expect(denied.gate, sql).toBe('gate3')
-      expect(denied.problems[0], sql).toContain('unindexed table scans')
+      expect(denied.problems[0], sql).toMatch(CROSS_JOIN_REFUSAL)
     }
     // Nothing beyond EXPLAIN reached D1 with this SQL's own text.
     expect(prepared.some((q) => q.includes(sql) && !q.startsWith('EXPLAIN')), sql).toBe(false)
-    expect(prepared.some((q) => q.startsWith('EXPLAIN QUERY PLAN')), sql).toBe(true)
+    expect(prepared.every((q) => q.startsWith('EXPLAIN QUERY PLAN')), sql).toBe(true)
   })
 
   // Case A of the self-audit: not a cartesian group (one SCAN in its own scope), but a correlated
@@ -315,10 +324,10 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
       expect(err, sql).toBeInstanceOf(GateDenied)
       const denied = err as GateDenied
       expect(denied.gate, sql).toBe('gate3')
-      expect(denied.problems[0], sql).toContain('unindexed table scans')
+      expect(denied.problems[0], sql).toMatch(CROSS_JOIN_REFUSAL)
     }
     expect(prepared.some((q) => q.includes(sql) && !q.startsWith('EXPLAIN')), sql).toBe(false)
-    expect(prepared.some((q) => q.startsWith('EXPLAIN QUERY PLAN')), sql).toBe(true)
+    expect(prepared.every((q) => q.startsWith('EXPLAIN QUERY PLAN')), sql).toBe(true)
   })
 
   // Case A's own range-bound twin (K26): the correlated subquery reaches its relation by an
@@ -368,7 +377,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     expect(audit).toHaveLength(1)
     expect(audit[0]).toMatchObject({ kind: 'blocked', status: 'blocked', tool_name: 'query_sql', row_count: null })
     expect(audit[0].error).toMatch(/^gate3_denied: /)
-    expect(audit[0].error).toContain('unindexed table scans')
+    expect(audit[0].error).toMatch(CROSS_JOIN_REFUSAL)
 
     // query_sql never writes a successful tool_call row, so there is nothing for a pin to keep.
     await expect(pinFromTrace(env.DB, { audit_id: traceId })).rejects.toMatchObject({ code: 'nothing_to_pin' })
@@ -376,12 +385,12 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
 
   it('the same plan check protects a `query`-type tool row too, not only query_sql (one shared function, no second copy)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    await withRow(queryRow('bad_cartesian_probe', CARTESIAN_JOIN_1_1), async () => {
+    await withRow(queryRow('bad_cartesian_probe', CORRELATED_UNINDEXED_SCAN), async () => {
       const { executed, audit } = await runTool('bad_cartesian_probe', {})
       expect(executed.output).toBeNull()
       expect(audit[0]).toMatchObject({ kind: 'blocked', status: 'blocked', tool_name: 'bad_cartesian_probe' })
       expect(audit[0].error).toMatch(/^gate3_denied: /)
-      expect(audit[0].error).toContain('unindexed table scans')
+      expect(audit[0].error).toMatch(CROSS_JOIN_REFUSAL)
     })
   })
 
@@ -486,10 +495,10 @@ describe('09 D-81 #4: one shared function protects every path that runs model/sa
   it('a pinned query-type tile whose stored SQL is a cartesian is refused on every board run, not just at pin time; nothing is stored or left behind', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const toolName = 'board_cartesian_probe'
-    // Not CARTESIAN_COMMA: a tile's own key-projection guard (keyProjectionProblems) would refuse
-    // its bare `pkey` columns before the call ever reaches the executor/Gate 3. This shape
-    // selects only an aggregate, so it passes that guard and reaches the plan check below.
-    await withRow(queryRow(toolName, CARTESIAN_IN_FROM_SUBQUERY), async () => {
+    // Not a comma/JOIN cartesian: the join-shape rule now refuses those when the row loads. This
+    // correlated scan selects only aggregates, so it passes that rule and the tile's key-projection
+    // guard (keyProjectionProblems) and reaches the plan check below.
+    await withRow(queryRow(toolName, CORRELATED_UNINDEXED_SCAN_AGG), async () => {
       const insightId = crypto.randomUUID()
       const insightsBefore = await insightCount()
       const toolsBefore = await toolCount()
@@ -504,7 +513,7 @@ describe('09 D-81 #4: one shared function protects every path that runs model/sa
         const tile = tiles.find((t) => t.id === insightId)
         expect(tile).toBeDefined()
         expect(tile!.status).toBe('error')
-        expect(tile!.error_details).toContain('unindexed table scans')
+        expect(tile!.error_details).toMatch(CROSS_JOIN_REFUSAL)
 
         const audit = await lastAuditRowFor(toolName)
         expect(audit).toMatchObject({ kind: 'blocked', status: 'blocked', tool_name: toolName })
@@ -550,5 +559,33 @@ describe('09 D-81 #4: one shared function protects every path that runs model/sa
       await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
       await env.DB.prepare('DELETE FROM assistant_tools WHERE name = ?').bind(tile.tool).run()
     }
+  })
+})
+
+describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset the live D1)', () => {
+  const LIVE_SQL = "SELECT COUNT(*) AS profile_visit_combinations FROM v_profiles, v_web_events WHERE v_profiles.status = 'active'"
+  it('the exact query the model wrote live is refused before anything runs', () => {
+    expect(() => readOnlySelect(LIVE_SQL)).toThrow(GateDenied)
+    try { readOnlySelect(LIVE_SQL) } catch (err) { expect((err as GateDenied).problems.join(' ')).toMatch(/comma list/) }
+  })
+  it('CROSS JOIN, NATURAL JOIN, a JOIN with no ON, and ON with no column equality are refused', () => {
+    for (const sql of [
+      'SELECT count(*) FROM v_profiles p CROSS JOIN v_web_events w',
+      'SELECT count(*) FROM v_profiles p NATURAL JOIN v_web_events w',
+      'SELECT count(*) FROM v_profiles p JOIN v_web_events w',
+      "SELECT count(*) FROM v_profiles p JOIN v_web_events w ON p.status = 'active'",
+      'SELECT count(*) FROM v_profiles p JOIN v_web_events w ON 1 = 1',
+      'SELECT count(*) FROM v_web_events a JOIN v_web_events b ON a.page = a.page',
+      'SELECT count(*) FROM v_profiles WHERE pkey IN (SELECT w.pkey FROM v_web_events w, v_app_events e)',
+    ]) expect(() => readOnlySelect(sql), sql).toThrow(GateDenied)
+  })
+  it('a real join on a column equality, USING, a single view and subqueries still pass', () => {
+    for (const sql of [
+      'SELECT count(*) FROM v_profiles p JOIN v_web_events w ON w.pkey = p.pkey',
+      'SELECT count(*) FROM v_profiles p LEFT JOIN v_web_events w ON p.pkey = w.pkey AND w.page = \'/\'',
+      'SELECT count(*) FROM v_profiles JOIN v_web_events USING (pkey)',
+      "SELECT source, count(*) FROM v_profiles WHERE status = 'active' GROUP BY source",
+      'SELECT count(*) FROM v_profiles WHERE pkey IN (SELECT pkey FROM v_web_events)',
+    ]) expect(() => readOnlySelect(sql), sql).not.toThrow()
   })
 })
