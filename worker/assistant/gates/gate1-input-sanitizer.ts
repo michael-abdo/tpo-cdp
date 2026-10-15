@@ -3,7 +3,8 @@
 // plus a length cap. The \b word boundaries matter: without them "migrant story" hits
 // (GRANT|REVOKE)\s+\w and "impact as" hits "act as".
 //   - email redaction to `[email]`: user text with an email is redacted and continues; so is the
-//     local part of a known email typed on its own (`joy.hall830`), as a whole token
+//     local part of a known email typed on its own (`joy.hall830`), as a whole token or as whole
+//     words with spaces between them (`joy hall 830`)
 //   - a pattern hit or an over-long question is a 400 `invalid_question` with a loud log line and
 //     an ai_audit row kind=blocked, never a quiet 200 that would hide the block
 //   - there is no conversation-length check: the assistant is single-shot, so there is no
