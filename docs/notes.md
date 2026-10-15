@@ -475,7 +475,7 @@ The other concern I would address next: **prompt injection through event data.**
 
 - **Me:** I wrote the specs (the design notes, kept outside this repo) and made the design calls. The ones that shaped the product are in the table below and under [Assumptions](#assumptions).
 - **Builder agents** (Claude Code) built each unit from those specs.
-- **Reviewer and fixer agents** then worked on it without me watching: reviewers tried to break it (against the spec, the process rules and the tests), a fixer closed what they found, and the review ran again. Most units needed one or two rounds; [`docs/ai-log.md`](ai-log.md) records rounds up to 6 ("Fixer round 6").
+- **Reviewer and fixer agents** then worked on it without me watching: reviewers tried to break it (against the spec, the process rules and the tests), a fixer closed what they found, and the review ran again, as many rounds as it took; [`docs/ai-log.md`](ai-log.md) records rounds up to 6 ("Fixer round 6").
 - **An orchestrating Claude Code session** merged a unit once its tests and its review passed. A unit still blocked went to that session, which either fixed it with a mutation-checked test or brought me a design call (logged as a decision).
 - **Every deploy** waited for my explicit go-ahead and was followed by a live check ([Deploy](#deploy)).
 
