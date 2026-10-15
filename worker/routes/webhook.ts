@@ -139,7 +139,7 @@ webhookRoutes.post('/app', async (c) => {
   const parsed = parseWebhookEvent(body, nowSeconds() * 1000)
   if (!parsed.ok) throw invalidEvent('schema validation failed', parsed.details)
   // story and link reach the assistant through v_app_events, so personal data in them is refused
-  // here, in any spelling the outbound scanner reads (worker/webhooks/exposed-properties.ts).
+  // here, in every spelling the outbound scanner reads (worker/webhooks/exposed-properties.ts).
   const personal = await exposedPropertyProblems(c.env.DB, parsed.event)
   if (personal.issues.length > 0) {
     throw invalidEvent(`personal data in properties (${personal.checks.join(', ')})`, personal.issues)

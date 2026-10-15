@@ -23,7 +23,7 @@ export interface ExposedPropertyProblems {
 
 /** The refusal sentence for one key. */
 export function personalDataIssue(key: (typeof EXPOSED_PROPERTIES)[number]): string {
-  return `properties.${key} must not hold an email address, the name part of one, or an account id, in any spelling`
+  return `properties.${key} must not hold an email address, the name part of one, or an account id`
 }
 
 /** The exposed values of `event` that carry personal data; empty when there are none. */

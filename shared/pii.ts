@@ -31,13 +31,35 @@ export const EMAIL_REGEX = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 export const LOCAL_PART_TOKEN = /[a-z0-9._%+-]+/i
 
 /**
- * For membership checks only (a stored email, a stored local part): "-" and "_" read as ".", on
- * both the stored value and the text, so "joy-hall830" and "joy_hall830" match a stored
- * "joy.hall830". Only a real subscriber's address can match, so ordinary slugs such as
- * "first-page" are not affected; the email-shape pattern never sees this fold.
+ * The characters membership checks read as ".": every Unicode dash (`\p{Pd}`, the ASCII "-"
+ * included, so U+2010 and the en and em dashes too), "_", the middle dot U+00B7, the hyphenation
+ * point U+2027 and the ideographic full stops U+3002 and U+FF61.
+ */
+const SEPARATOR_CHARS = /[\p{Pd}_\u00B7\u2027\u3002\uFF61]/gu
+
+/** Every Unicode dash, for reading a raw id written with one ("u‐2b6447a3") as "u-2b6447a3". */
+export const UNICODE_DASHES = /\p{Pd}/gu
+
+/**
+ * For membership checks only (a stored email, a stored local part): every SEPARATOR_CHARS
+ * character reads as ".", on both the stored value and the text, so "joy-hall830", "joy_hall830"
+ * and "joy·hall830" match a stored "joy.hall830". Only a real subscriber's address can match, so
+ * ordinary slugs such as "first-page" are not affected; the email-shape pattern never sees this
+ * fold.
  */
 export function foldSeparators(value: string): string {
-  return value.replace(/[-_]/g, '.')
+  return value.replace(SEPARATOR_CHARS, '.')
+}
+
+/**
+ * For membership checks only: the letters and digits of an already lower-cased value, every other
+ * character dropped, so "juliaevans230", "julia--evans230" and "julia.evans230" are all
+ * "juliaevans230". Every stored local part holds digits (name, dot, surname, digits), so this form
+ * still names one subscriber; KnownEmails compares it only for local parts that hold a letter and
+ * a digit.
+ */
+export function lettersAndDigits(value: string): string {
+  return value.replace(/[^a-z0-9]/g, '')
 }
 
 /**
@@ -49,10 +71,15 @@ export const LOCAL_PART_MIN_CHARS = 6
 /**
  * A raw app user, device or web visitor id (`u_`, `d_`, `v_` followed by hex; data/*.csv has
  * `u_2b6447a3` and `v_c9e136fd6d`, the brief's sample webhook has device `d_4b21e8`, the
- * shortest seen). At least 6 hex chars and word-bounded, so
- * ordinary words and `pk_` keys do not match. No `g` flag, as above.
+ * shortest seen, and the test panel's devices have 16 hex digits), at least 6 hex chars ending at
+ * a word boundary. Two shapes:
+ * - starting a word, with "_" or "-": "u_2b6447a3", "u-2b6447a3". A word that ends in u, d or v
+ *   before a hyphen ("and-decade", "build-20261015") does not start one, so it stays prose.
+ * - glued to the word before it with "_" ("xu_2b6447a3"), 6 to 16 hex digits only, so a name of
+ *   our own such as a pinned tool's `pinned_<32 hex>` is not read as an id.
+ * `pk_` keys do not match. No `g` flag, as above.
  */
-export const RAW_ID_REGEX = /\b[udv]_[0-9a-f]{6,}\b/i
+export const RAW_ID_REGEX = /\b[udv][-_][0-9a-f]{6,}\b|(?<=[a-z0-9_])[udv]_[0-9a-f]{6,16}\b/i
 
 /** Non-global copy of `INVISIBLE_CHARS` for a stateless single-character `.test()` (a global regex keeps `lastIndex` between calls). */
 const INVISIBLE_CHAR_TEST = new RegExp(INVISIBLE_CHARS.source, 'u')
@@ -400,15 +427,24 @@ export function normalizeForScan(raw: string): NormalizedScan {
   return scanOf(raw, applyAtShape(foldDisguises(decodePercent(foldChars(raw)))))
 }
 
+/** foldSeparators for one token, with a fast path for the usual one plain ASCII character. */
+function foldTokenSeparators(out: string): string {
+  if (out.length === 1 && out.charCodeAt(0) < 128) return out === '-' || out === '_' ? '.' : out
+  return foldSeparators(out)
+}
+
 /**
- * Pure. The same normalized text with every whitespace run next to a "." or "@" dropped
- * ("joy .hall830@protonmail .com" → "joy.hall830@protonmail.com"). Used ONLY for membership
- * checks against stored values (a known email, a known local part), which can match nothing but
- * a real subscriber's address, so this aggressive fold adds no false positive; the email-shape
- * pattern keeps running on normalizeForScan's conservative text.
+ * Pure. The same normalized text with every separator read as "." (foldSeparators) and every
+ * whitespace run next to a "." or "@" dropped ("joy .hall830@protonmail .com" →
+ * "joy.hall830@protonmail.com"). Used ONLY for membership checks against stored values (a known
+ * email, a known local part), which can match nothing but a real subscriber's address, so this
+ * aggressive fold adds no false positive; the email-shape pattern keeps running on
+ * normalizeForScan's conservative text.
  */
 export function normalizeForMembership(raw: string): NormalizedScan {
-  const tokens = applyAtShape(foldDisguises(decodePercent(foldChars(raw))))
+  // Separators read as "." first (foldSeparators), so "julia·evans230" is one token, then the
+  // whitespace next to a "." or "@" goes.
+  const tokens = applyAtShape(foldDisguises(decodePercent(foldChars(raw)))).map((t) => ({ ...t, out: foldTokenSeparators(t.out) }))
   const isSpace = (t: ScanToken | undefined) => t !== undefined && /^\s+$/u.test(t.out)
   const isSep = (t: ScanToken | undefined) => t !== undefined && (t.out === '.' || t.out === '@')
   const kept: ScanToken[] = []

@@ -4,18 +4,31 @@
 // `assertNoPII` serializes a payload, normalizes it once (shared/pii.ts normalizeForScan: NFKC,
 // zero-width/soft-hyphen stripped, every %XX escape decoded, every disguised "@"/"." folded to
 // the real character) and checks four things against the normalized text, in this
-// order (the two membership checks also read "-" and "_" as ".", shared/pii.ts foldSeparators):
+// order (the two membership checks also read every dash, "_", "·" and "。" as ".",
+// shared/pii.ts foldSeparators):
 //   1. known_email      — membership against every email_norm in the database (loaded per request)
 //   2. email_pattern    — the case-insensitive email regex (shared/pii.ts EMAIL_REGEX)
-//   3. raw_id           — raw app user, device or web visitor ids (shared/pii.ts RAW_ID_REGEX)
-//   4. known_local_part — a known email's local part with no "@" at all (this closes the path a
-//                         stored email's local part can take through a tool result,
-//                         e.g. a webhook `link` such as "…/u/joy.hall830")
+//   3. raw_id           — raw app user, device or web visitor ids, with "_" or a dash (shared/pii.ts RAW_ID_REGEX)
+//   4. known_local_part — a known email's local part with no "@" at all, also letter for letter
+//                         with its dots dropped ("joyhall830"); this closes the path a stored
+//                         email's local part can take through a tool result, e.g. a webhook
+//                         `link` such as "…/u/joy.hall830"
 // A hit throws `PiiBlockedError` (500 `blocked_pii`). It never redacts
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
 import { normalizeEmail, normalizeQueryFragment } from '../../../shared/normalize'
-import { EMAIL_REGEX, foldSeparators, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, type NormalizedScan, normalizeForMembership, normalizeForScan, RAW_ID_REGEX } from '../../../shared/pii'
+import {
+  EMAIL_REGEX,
+  foldSeparators,
+  lettersAndDigits,
+  LOCAL_PART_MIN_CHARS,
+  LOCAL_PART_TOKEN,
+  type NormalizedScan,
+  normalizeForMembership,
+  normalizeForScan,
+  RAW_ID_REGEX,
+  UNICODE_DASHES,
+} from '../../../shared/pii'
 import { ApiError } from '../../auth/middleware'
 import type { AuditTrace } from '../audit/ai-audit'
 
@@ -35,18 +48,29 @@ export type PiiSite = 'model_request' | 'tool_result' | 'model_output' | 'log' |
  */
 export class KnownEmails {
   readonly size: number
-  /** Every known email with "-" and "_" read as "." (shared/pii.ts foldSeparators). */
+  /** Every known email with its separators read as "." (shared/pii.ts foldSeparators). */
   private readonly emails: ReadonlySet<string>
   private readonly shapes: ReadonlyMap<number, readonly number[]>
   /** The local part of every known email with at least LOCAL_PART_MIN_CHARS characters, separators folded as above. */
   private readonly localParts: ReadonlySet<string>
-  /** The longest known local part: bounds the search in redactKnownLocalParts. */
+  /**
+   * The same local parts as letters and digits only (shared/pii.ts lettersAndDigits), for those
+   * that hold a letter and a digit: "juliaevans230" and "julia--evans230" are julia.evans230.
+   */
+  private readonly localPartLetters: ReadonlySet<string>
+  /** The longest known local part. */
   readonly maxLocalPartLength: number
+  /**
+   * How long a typed form of a local part may run: twice the longest one, room for a separator
+   * after every character ("j.u.l.i.a…"). Bounds the search in findLocalPartSpans.
+   */
+  readonly maxLocalPartSpan: number
 
   constructor(emails: Iterable<string>) {
     const set = new Set<string>()
     const shapes = new Map<number, Set<number>>()
     const localParts = new Set<string>()
+    const localPartLetters = new Set<string>()
     for (const email of emails) {
       const at = email.indexOf('@')
       if (at <= 0 || at !== email.lastIndexOf('@') || normalizeEmail(email) !== email) {
@@ -54,7 +78,11 @@ export class KnownEmails {
         throw new Error('pii-guard: a known email is not a normalized address with exactly one "@"')
       }
       set.add(foldSeparators(email))
-      if (at >= LOCAL_PART_MIN_CHARS) localParts.add(foldSeparators(email.slice(0, at)))
+      if (at >= LOCAL_PART_MIN_CHARS) {
+        localParts.add(foldSeparators(email.slice(0, at)))
+        const letters = lettersAndDigits(email.slice(0, at))
+        if (letters.length >= LOCAL_PART_MIN_CHARS && /[a-z]/.test(letters) && /[0-9]/.test(letters)) localPartLetters.add(letters)
+      }
       let lengths = shapes.get(at)
       if (lengths === undefined) shapes.set(at, (lengths = new Set()))
       lengths.add(email.length)
@@ -63,15 +91,23 @@ export class KnownEmails {
     this.size = set.size
     this.shapes = new Map([...shapes].map(([local, lengths]) => [local, [...lengths]]))
     this.localParts = localParts
+    this.localPartLetters = localPartLetters
     this.maxLocalPartLength = Math.max(0, ...[...localParts].map((l) => l.length))
+    this.maxLocalPartSpan = 2 * this.maxLocalPartLength
   }
 
   /**
-   * True when `token`, folded as a lookup fragment is and with "-"/"_" read as ".", is the local
-   * part of a known email: "joy-hall830" in a story slug is "joy.hall830".
+   * True when `token`, folded as a lookup fragment is, is the local part of a known email with its
+   * separators read as "." ("joy-hall830" in a story slug is "joy.hall830") or, for a local part
+   * holding a letter and a digit, letter for letter with every other character dropped
+   * ("joyhall830", "joy--hall830").
    */
   isLocalPart(token: string): boolean {
-    return this.localParts.has(foldSeparators(normalizeQueryFragment(token)))
+    const folded = normalizeQueryFragment(token)
+    if (this.localParts.has(foldSeparators(folded))) return true
+    // Letters only when the token starts and ends on one, so a sentence dash after the name
+    // ("joy.hall830-") stays outside the match, as a sentence dot does.
+    return ALNUM_EDGES.test(folded) && this.localPartLetters.has(lettersAndDigits(folded))
   }
 
   /**
@@ -141,7 +177,7 @@ function findLocalPartSpans(text: string, known: KnownEmails): Array<readonly [n
     while (i < token.length) {
       let end = -1
       if (ALNUM.test(token[i]) && (i === 0 || !ALNUM.test(token[i - 1]))) {
-        const last = Math.min(token.length, i + known.maxLocalPartLength)
+        const last = Math.min(token.length, i + known.maxLocalPartSpan)
         for (let e = last; e >= i + LOCAL_PART_MIN_CHARS; e--) {
           if (e < token.length && ALNUM.test(token[e])) continue
           if (known.isLocalPart(token.slice(i, e))) {
@@ -197,7 +233,7 @@ function checkText(raw: string, known: KnownEmails): PiiCheck | null {
   const member = normalizeForMembership(raw).text
   if (known.occursIn(member)) return 'known_email'
   if (EMAIL_REGEX.test(shape)) return 'email_pattern'
-  if (RAW_ID_REGEX.test(shape)) return 'raw_id'
+  if (RAW_ID_REGEX.test(shape) || RAW_ID_REGEX.test(shape.replace(UNICODE_DASHES, '-'))) return 'raw_id'
   if (findLocalPartSpans(member, known).length > 0) return 'known_local_part'
   return null
 }
@@ -371,3 +407,6 @@ export function redactDetail(text: string): string {
 }
 
 const ALNUM = /[a-z0-9]/i
+
+/** A token that starts and ends with a letter or digit. */
+const ALNUM_EDGES = /^[a-z0-9](?:.*[a-z0-9])?$/is

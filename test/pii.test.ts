@@ -928,7 +928,8 @@ describe('every %XX escape is decoded, and "-"/"_" read as "." for stored addres
   it('the separator fold is for stored values only: it never turns a slug into an email shape', () => {
     expect(foldSeparators('joy-hall830_x')).toBe('joy.hall830.x')
     expect(normalizeForScan(JOY_SLUG).text).toBe(JOY_SLUG)
-    expect(normalizeForMembership(JOY_SLUG).text).toBe(JOY_SLUG)
+    // The membership text reads the dashes as dots, and still holds no "@".
+    expect(normalizeForMembership(JOY_SLUG).text).toBe('joy.hall830.protonmail.com')
   })
 
   it('the webhook refuses the escaped link and the slug with 400 invalid_event, storing nothing', async () => {
@@ -963,5 +964,84 @@ describe('every %XX escape is decoded, and "-"/"_" read as "." for stored addres
       { story: 'supreme-court-ruling-explained', link },
     ])
     expect(await rows('SELECT event_id FROM app_events WHERE event_id = ?', eventId)).toHaveLength(1)
+  })
+})
+
+// More spellings of a stored local part or a raw id: the letters alone, doubled or extra
+// separators, Unicode dashes and dots, and an id written with "-" or glued to a letter. The
+// values are JULIA's real local part and her real app user id with only the separators changed;
+// reordered parts ("evans230-julia") are not covered.
+describe('a local part letter for letter, Unicode separators and dashed or glued raw ids', () => {
+  const BRIEF_TS = '2026-09-28T14:22:05Z'
+  const JULIA_USER = 'u_2b6447a3'
+  const STORIES = ['juliaevans230', 'julia-evans-230', 'julia--evans230', 'u-2b6447a3']
+  const LINKS = [
+    `${HOSTED_URL}/u/julia%E2%80%90evans230`,
+    `${HOSTED_URL}/u/julia%C2%B7evans230`,
+    `${HOSTED_URL}/u/julia%E3%80%82evans230`,
+    `${HOSTED_URL}/u/u-2b6447a3`,
+    `${HOSTED_URL}/u/xu_2b6447a3`,
+  ]
+
+  async function send(properties: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown>; eventId: string }> {
+    const eventId = nextEventId()
+    const res = await sendWebhook(
+      JSON.stringify({ event_id: eventId, event: 'link_click', user_id: JULIA_USER, device_id: 'd_2b6447a3', timestamp: BRIEF_TS, properties }),
+    )
+    return { status: res.status, body: await res.json(), eventId }
+  }
+
+  it('the scanner finds every one of them, and a raw id written with a Unicode dash', async () => {
+    const known = await loadKnownEmails(env.DB)
+    for (const story of STORIES) expect(findPII(story, known), story).not.toBeNull()
+    for (const link of LINKS) expect(findPII(link, known), link).not.toBeNull()
+    expect(findPII('juliaevans230', known)).toBe('known_local_part')
+    expect(findPII(`${HOSTED_URL}/u/julia%C2%B7evans230`, known)).toBe('known_local_part')
+    expect(findPII('u-2b6447a3', known)).toBe('raw_id')
+    expect(findPII(`${HOSTED_URL}/u/xu_2b6447a3`, known)).toBe('raw_id')
+    expect(findPII('see u‐2b6447a3', known)).toBe('raw_id')
+    // Gate 1 redacts the letters-only form a teammate types, and keeps the sentence dash outside.
+    const question = await enforceGate1(await startTrace(env.DB), 'how engaged is juliaevans230-?')
+    expect(question.text).toBe('how engaged is [email]-?')
+  })
+
+  it('the webhook refuses each with 400 invalid_event, storing nothing; the message no longer promises "any spelling"', async () => {
+    expect(personalDataIssue('story')).toBe('properties.story must not hold an email address, the name part of one, or an account id')
+    for (const [key, value] of [...STORIES.map((v) => ['story', v] as const), ...LINKS.map((v) => ['link', v] as const)]) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { status, body, eventId } = await send({ [key]: value })
+      warn.mockRestore()
+      expect(status, value).toBe(400)
+      expect(body, value).toEqual({ error: 'invalid_event', message: expect.any(String), details: [{ field: `properties.${key}`, issue: personalDataIssue(key) }] })
+      expect(await rows('SELECT event_id FROM app_events WHERE event_id = ?', eventId)).toHaveLength(0)
+    }
+  })
+
+  it('stays clean: every real page path, the brief\'s story slug, our own long ids and ordinary prose with dashes and dots', async () => {
+    const known = await loadKnownEmails(env.DB)
+    const csv = parseCsv(webCsv)
+    const pages = [...new Set(csv.rows.map((r) => r[csv.header.indexOf('page')].trim()))]
+    for (const page of pages) {
+      expect(findPII(page, known), page).toBeNull()
+      expect(findPII(page.slice(1).replaceAll('/', '-'), known), page).toBeNull()
+      expect(findPII(page.replaceAll('-', '').replaceAll('/', ''), known), page).toBeNull()
+    }
+    for (const text of [
+      'supreme-court-ruling-explained',
+      'evt_9f3a1c',
+      `pinned_${'504aa5f34fff4ab095e47178adfe311d'}`,
+      'a decade-long trend: and-decade, build-20261015, end-to-end',
+      'Open rates rose — up 12% · down 3% 。 flat ｡ again',
+      'Revenue for 2026–2027 rose by 230 readers in the first-page test.',
+      'toolu_01A09q90qw90lq917835lq9',
+    ]) {
+      expect(findPII(text, known), text).toBeNull()
+      expect(redactKnownLocalParts(text, known), text).toEqual({ text, count: 0 })
+    }
+  })
+
+  it('a clean story and link are still stored', async () => {
+    const { status } = await send({ story: 'supreme-court-ruling-explained', link: `${HOSTED_URL}/news/supreme-court-ruling-explained` })
+    expect(status).toBe(202)
   })
 })
