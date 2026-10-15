@@ -1,10 +1,10 @@
-// Signed session cookie (04 §Auth, 09 D-05). Origin: palisade site-auth.ts L50-96 (14 §3.1, §7),
-// ported to WebCrypto: cdp_session = base64url(JSON{sub, exp}) "." base64url(HMAC-SHA256(SESSION_SECRET, payload)).
+// Signed session cookie, WebCrypto only: cdp_session = base64url(JSON{sub, exp}) "."
+// base64url(HMAC-SHA256(SESSION_SECRET, payload)). Stateless, so no session table is needed.
 
 import { timingSafeEqual } from './constant-time'
 
 export const SESSION_COOKIE = 'cdp_session'
-/** 12 hours, the cookie Max-Age and the signed exp (04 §Auth). */
+/** 12 hours, the cookie Max-Age and the signed exp. */
 export const SESSION_TTL_SECONDS = 12 * 60 * 60
 
 export type Session = { sub: string; exp: number }
@@ -37,7 +37,7 @@ async function hmac(secret: string, payload: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(payload)))
 }
 
-/** Current Unix time in seconds. Wall clock is allowed for session expiry (02 §Time). */
+/** Current Unix time in seconds. Wall clock is right for session expiry (bookkeeping, not a business date). */
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
