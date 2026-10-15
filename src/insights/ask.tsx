@@ -292,7 +292,7 @@ export function AnswerCard({
               <span className="font-mono break-all">{filters.raw}</span>
             ) : (
               <>
-                hidden, D-58 sign <span className="font-mono">{filters.sign}</span>
+                hidden, sign of SQL: <span className="font-mono">{filters.sign}</span>
               </>
             )}
           </p>

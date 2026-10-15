@@ -723,7 +723,7 @@ function DuplicateTechnicalDetails({ data, pairs }: { data: Duplicates; pairs: D
       <p>
         candidates: {data.candidates} pairs of profiles sharing a name stem (email local part without trailing
         digits). score = round(100 × 2^W / (1 + 2^W)), W = sum of the field weights; agree weight log2(m/u),
-        disagree weight log2((1−m)/(1−u)); u measured from the candidates, m assumed (09 D-62).
+        disagree weight log2((1−m)/(1−u)); u measured from the candidates, m assumed (no labelled pairs to measure it).
       </p>
       {data.weights === null ? (
         <p>No candidate pairs, so no weights.</p>

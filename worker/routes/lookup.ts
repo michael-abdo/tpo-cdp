@@ -363,7 +363,7 @@ lookupRoutes.get('/lookup/search', async (c) => {
     matches.push({ pkey, email: row.email, kind, user_id: row.user_id, status: row.status })
   }
   if (new Set(matches.map((m) => m.pkey)).size !== matches.length) {
-    throw new Error('lookup/search: one profile matched twice; the 04 shape lists each profile once')
+    throw new Error('lookup/search: one profile matched twice; the response lists each profile once')
   }
   // Suggestions only when nothing matched a long enough fragment; `[]` otherwise.
   let didYouMean: { pkey: string; email: string; kind: ProfileRow['kind']; distance: number }[] = []

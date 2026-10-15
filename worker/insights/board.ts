@@ -303,7 +303,7 @@ function pinRefusal(tools: BoardTools, tool: string, sql: string | null = null):
  */
 function boardRefusal(board: BoardTools, row: InsightRow): string | null {
   if (row.tool === INSIGHT_PANEL_TOOL) return row.built_in === 1 ? null : `${INSIGHT_PANEL_TOOL} runs only on a built-in tile`
-  return pinRefusal(board, row.tool) === null ? null : `${row.tool} is not a tool a tile may run: only segment, aggregate and query rows are pinnable (09 D-64a)`
+  return pinRefusal(board, row.tool) === null ? null : `${row.tool} is not a tool a tile may run: only segment, aggregate and query rows are pinnable`
 }
 
 // ── params and windows ───────────────────────────────────────────────────────────────────
@@ -892,7 +892,7 @@ async function wrapQuerySql(db: D1Database, traceId: string, sql: string): Promi
     .bind(
       id,
       name,
-      'A free-form query pinned to the board: its SQL passed the D-64b positive grammar at pin time.',
+      'A free-form query pinned to the board: its SQL matched an allowed shape (a total, or a plain list of people) at pin time.',
       JSON.stringify({ type: 'object', properties: {} }),
       JSON.stringify({ sql, param_mapping: {} }),
       JSON.stringify({ board_only: true, wrapped_from_trace: traceId }),

@@ -49,7 +49,7 @@ function serialized(value: unknown): string | null {
 function checkShape(entry: AuditEntry): void {
   const toolName = entry.tool_name ?? null
   if (entry.kind === 'model_request' && toolName !== null) {
-    throw new AuditWriteError('ai_audit: a model_request row has no tool_name (01)')
+    throw new AuditWriteError('ai_audit: a model_request row has no tool_name')
   }
   if (entry.kind === 'model_request' && (entry.request_json === undefined || entry.request_json === null)) {
     throw new AuditWriteError('ai_audit: a model_request row must store the payload that was sent')
@@ -58,7 +58,7 @@ function checkShape(entry: AuditEntry): void {
     throw new AuditWriteError('ai_audit: a tool_call row must name its tool')
   }
   if ((entry.kind === 'blocked') !== (entry.status === 'blocked')) {
-    throw new AuditWriteError('ai_audit: kind=blocked and status=blocked go together (03 row 11)')
+    throw new AuditWriteError('ai_audit: kind=blocked and status=blocked go together')
   }
 }
 
