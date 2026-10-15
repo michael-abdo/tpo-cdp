@@ -1,13 +1,13 @@
 /**
- * The window of a pinned insight tile (design 09 D-64; 01 §insights `params.window`; 04
- * §/api/insights board). A tile stores either a rolling preset, re-resolved against `today` on
- * every run, or a fixed pair of dates. `today` is always `TODAY` from shared/config.ts in the
- * Worker (02 §Time); it is a parameter so the functions stay pure and the UI can label a preset.
+ * The window of a pinned insight tile (`params.window` on an insights row). A tile stores either
+ * a rolling preset, re-resolved against `today` on every run, or a fixed pair of dates. `today`
+ * is always `TODAY` from shared/config.ts in the Worker; it is a parameter so the functions stay
+ * pure and the UI can label a preset.
  *
- * The presets call 02 §Derived in shared/derive.ts, never a second formula:
- *   - last_month    lastMonth(today): the previous calendar month (09 D-10)
+ * The presets call the definitions in shared/derive.ts, never a second formula:
+ *   - last_month    lastMonth(today): the previous calendar month
  *   - last_30_days  lastNDays(30, today): today − 30 .. today, the `new_subscriber` window
- *   - this_month    the first day of today's month .. today (no 02 §Derived row)
+ *   - this_month    the first day of today's month .. today (derive.ts has no such definition)
  * T-INS-5 checks both reused presets against derive.ts on several days, month ends included.
  * All ends are inclusive `YYYY-MM-DD` calendar dates.
  */
@@ -65,7 +65,7 @@ export function resolveWindow(w: InsightWindow, today: string): ResolvedWindow {
 }
 
 /**
- * The window to store for a tool input's `from`..`to` (09 D-64): the first preset that resolves
+ * The window to store for a tool input's `from`..`to`: the first preset that resolves
  * to exactly those dates on `today` is stored rolling, anything else fixed. Pure.
  */
 export function detectWindow(from: string, to: string, today: string): InsightWindow {

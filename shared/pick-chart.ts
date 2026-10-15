@@ -1,11 +1,11 @@
 /**
- * Which chart a result is drawn as (design 09 D-64; the rule table is 06 §/insights). Pure: it
+ * Which chart a result is drawn as. Pure: it
  * reads only the result's shape, never a tool name or a title, so a tile, an Ask answer and a
  * test all pick the same chart for the same rows. The UI draws the kind with its own SVG
  * components (no chart library).
  *
  * The rules, first match wins:
- *   1. an override (the tile's `chart` column, 01 §insights) wins
+ *   1. an override (the tile's `chart` column) wins
  *   2. a segment result (`segment` present)                      → segment (count + "Open segment")
  *   3. no rows or no columns                                     → table (its empty state)
  *   4. one row, one column, and that cell is a number            → number (one big number)
@@ -21,11 +21,11 @@
 
 export type ChartKind = 'number' | 'bar' | 'line' | 'table' | 'segment'
 
-/** The kinds a tile's chart override may name (01 §insights `chart`); segment comes only from the result. */
+/** The kinds a tile's chart override may name (insights.chart); segment comes only from the result. */
 export const CHART_OVERRIDES = ['number', 'bar', 'line', 'table'] as const
 export type ChartOverride = (typeof CHART_OVERRIDES)[number]
 
-/** A bar chart shows this many categories, then one "Other" bar (06 §/insights). */
+/** A bar chart shows this many categories, then one "Other" bar, so a long tail stays readable. */
 export const BAR_TOP_CATEGORIES = 20
 
 export interface ChartInput {

@@ -1,18 +1,20 @@
 /**
- * The one normalization implementation (design 02 §Normalization, 09 D-26, A2).
+ * The one normalization implementation.
  *
- * Every place that folds an email or a source value imports from here; the list of
- * callers is kept in 02 §Normalization, and T-NORM-3 fails if anything else lowercases
- * an email or if SQL does it with LOWER(. SQL and the browser never normalize.
+ * Every place that folds an email or a source value imports from here, and T-NORM-3 fails
+ * if anything else lowercases an email or if SQL does it with LOWER(. SQL and the browser
+ * never normalize, so one address can never be stored or matched under two spellings.
  */
 
-/** Pattern an email must match after folding; anything else is quarantined (02 §Quarantine). */
+/** Pattern an email must match after folding; anything else is quarantined. */
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 /**
- * The one email fold (09 D-70 item 8): `trim()` then `toLowerCase()`, nothing else: no
- * plus-stripping, no Gmail dot removal (D-26). Private, so an address and a fragment of one can
- * only be folded through the two exports below, and both fold exactly as `email_norm` was stored.
+ * The one email fold: `trim()` then `toLowerCase()`, nothing else: no plus-stripping, no Gmail
+ * dot removal, because folding aliases would be guessing that two addresses are one person.
+ * Case folding alone is what lets 1,400 web visitors match a subscriber instead of 1,190.
+ * Private, so an address and a fragment of one can only be folded through the two exports
+ * below, and both fold exactly as `email_norm` was stored.
  */
 function foldEmail(raw: string): string {
   return raw.trim().toLowerCase()
@@ -24,7 +26,7 @@ export function normalizeEmail(raw: string): string | null {
   return EMAIL_PATTERN.test(email) ? email : null
 }
 
-/** The canonical source names (02 §Normalization). `twitter` folds to `x`. */
+/** The canonical source names. `twitter` folds to `x`. */
 export const CANONICAL_SOURCES = [
   'instagram',
   'facebook',
@@ -48,8 +50,8 @@ export function canonicalSource(raw: string): string | null {
 }
 
 /**
- * A partial-lookup query fragment (09 D-52, 04 §/api/lookup/search): the same fold as
- * `normalizeEmail` (D-70 item 8), so a fragment of a stored address still matches it. No
+ * A partial-lookup query fragment (GET /api/lookup/search): the same fold as
+ * `normalizeEmail`, so a fragment of a stored address still matches it. No
  * validation: a fragment is not an address.
  */
 export function normalizeQueryFragment(raw: string): string {
