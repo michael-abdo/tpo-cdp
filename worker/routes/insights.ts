@@ -6,9 +6,9 @@
 //   - the four panel routes stay: pre-aggregated JSON for the former /growth panels, the
 //     same functions the board's insight_panel tool calls; every number the assistant can
 //     reproduce carries an `explain` question.
-//   - there is no approval queue: a free-form query_sql pin that
-//     fails the pin grammar is refused outright (worker/insights/board.ts), so
-//     /insights/approvals/* routes no longer exist (404 like any unknown route).
+//   - there is no approval queue: a free-form query_sql pin that fails the pin grammar is
+//     refused outright (worker/insights/board.ts), so there are no /insights/approvals/* routes
+//     (404 like any unknown route).
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'

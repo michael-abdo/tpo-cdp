@@ -282,8 +282,8 @@ async function boardTools(db: D1Database): Promise<BoardTools> {
  * `pin_refusal`) and at the actual pin, since there is nothing to queue either time.
  * Callers that already know they are past that step (pin() after wrapping the SQL as its own tool
  * row, or a stored board row, which is never literally `query_sql`) call with no `sql` and get the
- * old hard refusal, same as a builtin row that merely aliases query_sql's handler under another
- * name (handled below, unaffected).
+ * plain refusal (NOT_PINNABLE_MESSAGE), same as a builtin row that merely aliases query_sql's
+ * handler under another name (handled below).
  */
 function pinRefusal(tools: BoardTools, tool: string, sql: string | null = null): string | null {
   if (tool === 'query_sql') {
