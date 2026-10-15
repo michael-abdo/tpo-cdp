@@ -1,26 +1,26 @@
-// GET /api/lookup?q= (04 §/api/lookup, 06 §/lookup; R2, R1.2, R4.9).
-// q is an id when it starts with u_, pk_, d_ or v_ (resolveQuery), otherwise an email, normalized here and
-// only here (02 §Normalization lists this file; the browser sends raw input). The ids (16 §If
-// time remains 3): `u_…` an app user; `pk_…` a profile key (a stub's user is found by deriving
-// each email-less user's key, 02 §Linking 4); `d_…` a device, which names its current user
-// through device_identity (01 §Identity resolution: the most recent user by event_ts, 09 D-43);
-// `v_…` a website visitor, which names the profile its /subscribe email linked (02 §Linking 2).
+// GET /api/lookup?q=: one person's whole profile for the Look up page.
+// q is an id when it starts with u_, pk_, d_ or v_ (resolveQuery), otherwise an email, normalized
+// here and only here (the browser sends raw input). The ids: `u_…` an app user; `pk_…` a profile
+// key (a stub's user is found by deriving each email-less user's key); `d_…` a device, which
+// names its current user through device_identity (the most recent user by event_ts, so a late
+// event cannot roll it back); `v_…` a website visitor, which names the profile its /subscribe
+// email linked.
 // One profile, four sections, each null when absent. A profile can hold several app accounts or
-// several website visitors (09 D-70 item 4: one email on two accounts or two browsers is normal):
+// several website visitors (one email on two accounts or two browsers is normal, not an error):
 // `app.accounts` and `web.visitors` list every one, first = earliest (the order v_profiles reads:
 // app by created_at, visitor by first_seen_ts then visitor_hash), and the single-object fields of
-// `app` and `web` repeat that first one. Stored derived columns are read as stored
-// (09 D-46); app_after_signup comes from shared/derive.ts, never from SQL. Identity resolution
-// for app events is worker/identity/resolve.ts. Nothing is cached (03 §No-restart). 04 defines
-// one error for this route: any q that names no profile (blank, missing, neither an id nor a
+// `app` and `web` repeat that first one. Stored derived columns are read as stored;
+// app_after_signup comes from shared/derive.ts, never from SQL. Identity resolution
+// for app events is worker/identity/resolve.ts. Nothing is cached. The route has
+// one error: any q that names no profile (blank, missing, neither an id nor a
 // valid email, simply unknown, an anonymous visitor or a device no identified event has named)
 // is 404 not_found.
 //
-// GET /api/lookup/search?q= (04 §/api/lookup/search, 06 §/lookup Partial lookup; 09 D-52) is
-// the search box's candidate list. The fragment is folded by normalizeQueryFragment, the one
+// GET /api/lookup/search?q= is the search box's candidate list, since staff rarely type a full
+// address. The fragment is folded by normalizeQueryFragment, the one
 // home for query normalization; SQL compares it with the stored email_norm and never folds
-// (no SQL case folding). It returns emails, so it is never an assistant tool (05). When it finds
-// nothing for a long enough fragment it adds `did_you_mean` (09 D-59), computed in the Worker by
+// (no SQL case folding). It returns emails, so it is never an assistant tool. When it finds
+// nothing for a long enough fragment it adds `did_you_mean`, computed in the Worker by
 // worker/lookup/fuzzy.ts over every stored email_norm (no SQL extension).
 
 import { Hono } from 'hono'
@@ -109,7 +109,7 @@ async function foundForUser(env: AppEnv['Bindings'], userId: string): Promise<Fo
     if (profile === null) throw new Error('lookup: an app user with an email has no profile')
     return { profile, appUser }
   }
-  // A webhook-created user with no email: its stub profile is keyed by the user id (02 §Linking 4).
+  // A webhook-created user with no email: its stub profile is keyed by the user id.
   const pkey = await pkeyForUnknownUser(requireSecret(env, 'PII_KEY_SECRET'), appUser.user_id)
   const profile = await db.prepare(`${PROFILE_COLUMNS} WHERE pkey = ?`).bind(pkey).first<ProfileRow>()
   if (profile === null) throw new Error('lookup: an app user without an email has no stub profile')
@@ -131,7 +131,7 @@ async function foundForProfileKey(env: AppEnv['Bindings'], pkey: string): Promis
   return { profile, appUser }
 }
 
-/** A device's current user (01 §Identity resolution); null when no identified event has named one. */
+/** A device's current user (the most recent by event_ts); null when no identified event has named one. */
 async function foundForDevice(env: AppEnv['Bindings'], deviceId: string): Promise<Found | null> {
   const userId = await env.DB.prepare('SELECT user_id FROM device_identity WHERE device_id = ?')
     .bind(deviceId)
@@ -142,7 +142,7 @@ async function foundForDevice(env: AppEnv['Bindings'], deviceId: string): Promis
   return found
 }
 
-/** The profile a visitor's /subscribe email linked (02 §Linking 2); null for an unknown or anonymous visitor. */
+/** The profile a visitor's /subscribe email linked; null for an unknown or anonymous visitor. */
 async function foundForVisitor(env: AppEnv['Bindings'], visitorId: string): Promise<Found | null> {
   const db = env.DB
   const visitor = await db.prepare('SELECT email_norm FROM web_visitors WHERE visitor_id = ?')
@@ -172,7 +172,7 @@ async function resolveQuery(env: AppEnv['Bindings'], raw: string): Promise<Found
 /** Mounted at /api by worker/index.ts, behind requireSession. */
 export const lookupRoutes = new Hono<AppEnv>()
 
-/** One website visitor of a profile, as 04 shows it. */
+/** One website visitor of a profile, as the response shows it. */
 async function webVisitor(db: D1Database, visitor: VisitorRow) {
   const signupTs = visitor.signup_ts
   if (signupTs === null) {
@@ -195,7 +195,7 @@ async function webVisitor(db: D1Database, visitor: VisitorRow) {
   }
 }
 
-/** One app account of a profile, as 04 shows it; its events resolved by worker/identity/resolve.ts. */
+/** One app account of a profile, as the response shows it; its events resolved by worker/identity/resolve.ts. */
 async function appAccount(db: D1Database, appUser: AppUserRow) {
   const [devices, events] = await Promise.all([
     devicesForUser(db, appUser.user_id),
@@ -215,7 +215,7 @@ async function appAccount(db: D1Database, appUser: AppUserRow) {
   }
 }
 
-/** The first item's fields plus the whole list under `key` (04: today's single object, then every one). */
+/** The first item's fields plus the whole list under `key` (the single object, then every one). */
 function firstWithAll<T extends object, K extends string>(items: T[], key: K): (T & Record<K, T[]>) | null {
   if (items.length === 0) return null
   return { ...items[0], [key]: items } as T & Record<K, T[]>
@@ -285,7 +285,7 @@ lookupRoutes.get('/lookup', async (c) => {
   })
 })
 
-/** At most this many candidates; `truncated` says more exist (04 §/api/lookup/search). */
+/** At most this many candidates; `truncated` says more exist. */
 export const SEARCH_LIMIT = 20
 
 interface SearchRow {
@@ -303,10 +303,10 @@ function escapeLike(fragment: string): string {
   return fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`)
 }
 
-// Three groups, each alphabetical (04): 0 = email starts with q, 1 = email contains q elsewhere,
+// Three groups, each alphabetical: 0 = email starts with q, 1 = email contains q elsewhere,
 // 2 = app user_id starts with q and the user was not already listed by its email. The groups
 // are disjoint and each lists a profile once, so one LIMIT of SEARCH_LIMIT + 1 tells whether
-// more than SEARCH_LIMIT exist. A profile with several app accounts (09 D-70 item 4) names one:
+// more than SEARCH_LIMIT exist. A profile with several app accounts names one:
 // in groups 0/1 its earliest (created_at, then user_id; the first of /api/lookup's
 // app.accounts), in group 2 the lowest matching user_id (GROUP BY its email; a stub has none and
 // stands alone).
@@ -351,7 +351,7 @@ lookupRoutes.get('/lookup/search', async (c) => {
     let { pkey, kind } = row
     if (pkey === null) {
       // No profile joined: only a stub user (no email) may lack one; its pkey comes from the
-      // user id (02 §Linking 4), as in the exact lookup above.
+      // user id, as in the exact lookup above.
       if (row.email !== null || row.user_id === null) {
         throw new Error('lookup/search: an app user with an email has no profile')
       }
@@ -365,7 +365,7 @@ lookupRoutes.get('/lookup/search', async (c) => {
   if (new Set(matches.map((m) => m.pkey)).size !== matches.length) {
     throw new Error('lookup/search: one profile matched twice; the 04 shape lists each profile once')
   }
-  // 09 D-59: suggestions only when nothing matched a long enough fragment; `[]` otherwise (04).
+  // Suggestions only when nothing matched a long enough fragment; `[]` otherwise.
   let didYouMean: { pkey: string; email: string; kind: ProfileRow['kind']; distance: number }[] = []
   if (wantsSuggestions(q, matches.length)) {
     const { results: emails } = await db
