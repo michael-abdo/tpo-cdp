@@ -1,4 +1,4 @@
-// Response shapes the UI reads, as 04 §Endpoints defines them (the worker routes are the producers).
+// Response shapes the UI reads (the worker routes are the producers).
 
 import type { DefinitionKey } from '../shared/derive'
 import type { SegmentFilters } from '../shared/segment-filters'
@@ -19,7 +19,7 @@ export interface Overview {
 }
 
 /**
- * GET /api/sources (09 D-63), in registry order. Restated here rather than imported from
+ * GET /api/sources, in registry order. Restated here rather than imported from
  * worker/routes/sources.ts, which types D1Database (absent from the browser project).
  */
 export interface Sources {
@@ -34,12 +34,12 @@ interface SourceCommon {
   unit: string
   /** The registry's record unit, singular. */
   unit_one: string
-  /** The checks the registry declares for this source, with their counts (09 D-65); [] when none. */
+  /** The checks the registry declares for this source, with their counts; [] when none. */
   checks: SourceCheck[]
   records: number
 }
 
-/** One source check (09 D-65): rows a person can fix, or possible duplicates without a decision. */
+/** One source check: rows a person can fix, or possible duplicates without a decision. */
 export interface SourceCheck {
   kind: CheckKind
   count: number
@@ -78,7 +78,7 @@ export interface SourceRun {
   needs_review: number
 }
 
-/** GET /api/quarantine?reason=&file= (09 D-61, D-63): rows the import set aside, oldest file order. */
+/** GET /api/quarantine?reason=&file=: rows the import set aside, oldest file order. */
 export interface QuarantineList {
   rows: {
     file: CsvSourceId
@@ -90,7 +90,7 @@ export interface QuarantineList {
   }[]
 }
 
-/** A reviewer's decision on a possible-duplicate pair (01 §duplicate_reviews). */
+/** A reviewer's decision on a possible-duplicate pair (duplicate_reviews). */
 export interface DuplicateDecision {
   verdict: 'same_person' | 'different_people'
   /** UTC, `YYYY-MM-DDTHH:MM:SSZ`. */
@@ -98,7 +98,7 @@ export interface DuplicateDecision {
 }
 
 /**
- * GET /api/duplicates (09 D-62). Restated here rather than imported from worker/routes/duplicates.ts,
+ * GET /api/duplicates. Restated here rather than imported from worker/routes/duplicates.ts,
  * which types D1Database (absent from the browser project); the reason and weight shapes come from
  * the pure worker/dedupe/score.ts.
  */
@@ -119,7 +119,7 @@ export interface Duplicates {
     decision: DuplicateDecision | null
   }[]
   hidden_below_review: number
-  /** The D-62 band edges from worker/dedupe/score.ts: auto_min and up = auto, review_min..auto_min − 1 = review. */
+  /** The score band edges from worker/dedupe/score.ts: auto_min and up = auto, review_min..auto_min − 1 = review. */
   bands: { auto_min: number; review_min: number }
   /** m, u and the two log2 weights per scored field; null when there are no candidates. */
   weights: Record<ScoredField, FieldWeight> | null
@@ -140,7 +140,7 @@ export interface DuplicateReview extends DuplicateDecision {
   score: number
 }
 
-/** GET /api/lookup/search?q= (09 D-52) */
+/** GET /api/lookup/search?q= */
 export interface LookupSearch {
   /** The fragment as the server normalized it. */
   q: string
@@ -152,7 +152,7 @@ export interface LookupSearch {
     status: SubscriberStatus | null
   }[]
   truncated: boolean
-  /** Near spellings (09 D-59), only when `matches` is empty; `[]` otherwise. */
+  /** Near spellings, only when `matches` is empty; `[]` otherwise. */
   did_you_mean: {
     pkey: string
     email: string
@@ -180,9 +180,9 @@ export interface Lookup {
     last_open_date: string | null
     merged_count: number
   } | null
-  /** The earliest visitor's fields, plus every visitor of the profile (09 D-70 item 4), earliest first. */
+  /** The earliest visitor's fields, plus every visitor of the profile, earliest first. */
   web: (LookupVisitor & { visitors: LookupVisitor[] }) | null
-  /** The earliest app account's fields, plus every account of the profile (09 D-70 item 4), earliest first. */
+  /** The earliest app account's fields, plus every account of the profile, earliest first. */
   app: (LookupAppAccount & { accounts: LookupAppAccount[] }) | null
 }
 
@@ -203,7 +203,7 @@ export interface LookupAppAccount {
   events: { event: string; event_ts: string; properties: unknown; attached_via: 'direct' | 'login_stitch' }[]
 }
 
-/** One row of GET /api/events/recent, resolved at read time (01 §Identity resolution). */
+/** One row of GET /api/events/recent, resolved at read time (worker/identity/resolve.ts). */
 export interface RecentEvent {
   event_id: string
   event: string
@@ -221,14 +221,14 @@ export interface RecentEvents {
   events: RecentEvent[]
 }
 
-/** POST /api/events/test (04, 09 D-73): the "Send a test event" panel's result. */
+/** POST /api/events/test: the "Send a test event" panel's result. */
 export interface TestEventResult {
   status: 202 | 200
   outcome: 'received' | 'duplicate'
   event: RecentEvent
 }
 
-/** The filters object of POST /api/segments/preview and export.csv: one home, shared/segment-filters.ts (09 D-69). */
+/** The filters object of POST /api/segments/preview and export.csv: one home, shared/segment-filters.ts. */
 export type { SegmentFilters } from '../shared/segment-filters'
 
 export interface SegmentRow {
@@ -251,7 +251,7 @@ export interface SegmentPreview {
   filters: SegmentFilters
 }
 
-/** GET /api/segments/options (19-segments-spec §5): the pages the Page filter offers, most visited first. */
+/** GET /api/segments/options: the pages the Page filter offers, most visited first. */
 export interface SegmentOptions {
   pages: string[]
 }
@@ -259,7 +259,7 @@ export interface SegmentOptions {
 /** A cell of an assistant table (worker/assistant/tools/builtin-handlers.ts Cell). */
 export type AssistantCell = string | number | boolean | null
 
-/** POST /api/assistant (04 §POST /api/assistant), after server-side re-hydration. */
+/** POST /api/assistant, after server-side re-hydration. */
 export interface AssistantResponse {
   type: 'answer' | 'table' | 'segment'
   text: string
@@ -271,11 +271,11 @@ export interface AssistantResponse {
   partial: boolean
   /** The trace_id of the request's ai_audit rows (GET /api/audit/:trace_id). */
   audit_id: string
-  /** The time period "Pin to board" would store, or null when the lookup has none (04, 09 D-64). */
+  /** The time period "Pin to board" would store, or null when the lookup has none. */
   pin_window: { from: string; to: string } | null
   /** The dates the pinned lookup sets itself when it takes no time period; the tile's footer shows them too. */
   pin_own_dates: { from: string; to: string } | null
-  /** Why this answer cannot be pinned, one plain sentence (09 D-64a), or null; the card then offers no Pin. */
+  /** Why this answer cannot be pinned, one plain sentence, or null; the card then offers no Pin. */
   pin_refusal: string | null
 }
 
@@ -307,7 +307,7 @@ export interface AuditList {
   traces: AuditTraceSummary[]
 }
 
-/** One ai_audit row as stored (01; worker/routes/audit.ts AuditRowOut). */
+/** One ai_audit row as stored (worker/routes/audit.ts AuditRowOut). */
 export interface AuditRow {
   id: string
   kind: 'model_request' | 'tool_call' | 'blocked'
@@ -331,10 +331,10 @@ export interface AuditTrace {
   rows: AuditRow[]
 }
 
-/** The chart kinds a person can pick for a tile; `segment` follows from the result and is never picked (01 §insights). */
+/** The chart kinds a person can pick for a tile; `segment` follows from the result and is never picked. */
 export type ChartChoice = ChartOverride
 
-/** One tile of GET /api/insights (04 §/api/insights board, 09 D-64), re-run on this request. */
+/** One tile of GET /api/insights, re-run on this request. */
 export interface InsightTile {
   id: string
   title: string
@@ -357,7 +357,7 @@ export interface InsightTile {
   status: 'ok' | 'error'
   /** Why the tile did not run, in plain words; null when ok. */
   error: string | null
-  /** Technical details of a failed run (the gates' or the database's problems); never shown at level 1 (09 D-64a). */
+  /** Technical details of a failed run (the gates' or the database's problems); never shown at level 1. */
   error_details: string | null
   /** UTC, when this request re-ran the tile. */
   ran_at: string
@@ -383,7 +383,7 @@ export interface InsightPatch {
   sort_order?: number
 }
 
-/** The counts every insight panel shares (worker/insights/*.ts; the built-in tiles, 09 D-64). */
+/** The counts every insight panel shares (worker/insights/*.ts; the built-in tiles). */
 interface Explained {
   /** Share as a fraction, 4 decimals; null when the group is empty. */
   rate: number | null
@@ -397,7 +397,7 @@ export interface SourceAppCounts extends Explained {
   with_app_after_signup: number
 }
 
-/** GET /api/insights/source-app-conversion (04; the built-in tile of 06 §/insights, 09 D-64). */
+/** GET /api/insights/source-app-conversion (a built-in tile). */
 export interface SourceAppConversion {
   total: SourceAppCounts
   by_source: (SourceAppCounts & { source: string | null })[]
@@ -410,7 +410,7 @@ export interface FunnelCounts extends Explained {
   subscribed: number
 }
 
-/** GET /api/insights/funnel (04; the built-in tile of 06 §/insights, 09 D-64; v_funnel). */
+/** GET /api/insights/funnel (a built-in tile; v_funnel). */
 export interface Funnel {
   total: FunnelCounts
   by_first_page: (FunnelCounts & { first_page: string })[]
@@ -423,10 +423,10 @@ export interface GoingColdCounts extends Explained {
   at_risk: number
 }
 
-/** GET /api/insights/going-cold (04; the built-in tile of 06 §/insights, 09 D-64; going_cold_risk, 02 §Derived). */
+/** GET /api/insights/going-cold (a built-in tile; going_cold_risk in shared/derive.ts). */
 export interface GoingCold {
   total: GoingColdCounts
-  /** Unsubscribed readers at risk, left out of every count above (02 §Defaults). */
+  /** Unsubscribed readers at risk, left out of every count above but never silently. */
   hidden_unsubscribed: { count: number; explain: string }
   by_source: (GoingColdCounts & { source: string | null })[]
   definitions_used: DefinitionKey[]
@@ -444,7 +444,7 @@ export type DataQualityCheckKey =
   | 'page_views_unexpected_utm'
   | 'app_users_not_on_list'
 
-/** GET /api/insights/data-quality (04; the built-in tile of 06 §/insights, 09 D-64; T-INS-3). */
+/** GET /api/insights/data-quality (a built-in tile; T-INS-3). */
 export interface DataQuality {
   /** Sums over import_runs, and the quarantine table by file and reason. */
   import: {

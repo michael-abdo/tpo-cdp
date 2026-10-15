@@ -1,10 +1,10 @@
-// "Send a test event" on /events (06 §/events panel, 09 D-73; D-55 levels: collapsed = one
-// button, reusing <Disclosure>). Expanded: pick a real app account (suggestions from
-// GET /api/lookup/search, filtered to rows with a user_id — D-11/D-47, no invented accounts),
-// pick one of the four APP_EVENTS, press Send. POST /api/events/test (04) builds, signs and
+// "Send a test event" on /events, so a non-technical reviewer can prove live events work without
+// a terminal (collapsed = one button, reusing <Disclosure>). Expanded: pick a real app account
+// (suggestions from GET /api/lookup/search, filtered to rows with a user_id — no invented
+// accounts), pick one of the four APP_EVENTS, press Send. POST /api/events/test builds, signs and
 // ingests the event through the real webhook path and returns the stored row shaped like
 // GET /api/events/recent; the result line says what happened in plain words (the one home for
-// that sentence, D-72) and offers "Send again" for the identical event. `onSent` tells the page
+// that sentence) and offers "Send again" for the identical event. `onSent` tells the page
 // to refresh its list at once (src/events-poll.ts FetchKind 'sent'), without waiting on the 5 s
 // poll.
 
@@ -35,7 +35,7 @@ type Suggestions =
   | { status: 'ok'; matches: AccountMatch[]; truncated: boolean }
 
 /**
- * Debounced GET /api/lookup/search?q= (09 D-52's endpoint, reused as the brief asks), kept to
+ * Debounced GET /api/lookup/search?q= (Look up's own search, reused rather than a second one), kept to
  * matches with a real user_id: a subscriber with no app account cannot receive a test event.
  * `active` is false once an account is picked, so editing stops re-searching a filled-in value.
  */
@@ -52,8 +52,8 @@ function useAccountSuggestions(fragment: string, active: boolean): Suggestions {
           const matches: AccountMatch[] = data.matches
             .filter((m) => m.user_id !== null)
             .map((m) => ({ user_id: m.user_id as string, email: m.email }))
-          // 06 §/lookup's "+ more — keep typing" (truncated) is the suggestion list's own line,
-          // not this panel's to reword (D-72): passed through from GET /api/lookup/search
+          // Look up's "+ more — keep typing" (truncated) is the suggestion list's own line,
+          // not this panel's to reword: passed through from GET /api/lookup/search
           // unchanged, exactly whenever the server's own list hit its cap — this panel filters
           // out non-account rows for display, but never reinterprets `truncated` itself.
           setSettled({ fragment, state: { status: 'ok', matches, truncated: data.truncated } })
@@ -81,7 +81,7 @@ export function TestEventPanel({
 }: {
   onSent: (event: RecentEvent) => void
   /** Told whenever the panel opens or closes, so the page can keep one primary button on
-   *  screen (06 §UI principles 1): Send while this panel is open, Refresh while it is not. */
+   *  screen: Send while this panel is open, Refresh while it is not. */
   onOpenChange?: (open: boolean) => void
 }) {
   const [panelOpen, setPanelOpenState] = useState(false)
@@ -100,7 +100,7 @@ export function TestEventPanel({
   const [said, setSaid] = useState({ text: '', n: 0 })
   const [error, setError] = useState<string | null>(null)
   // Esc dismisses the open list without discarding the typed fragment or re-querying; typing
-  // again (onInput) reopens it. (06 keyboard contract, WCAG 2.2 AA 4.1.2 via ../listbox.)
+  // again (onInput) reopens it. (The shared keyboard contract, WCAG 2.2 AA 4.1.2 via ../listbox.)
   const [dismissed, setDismissed] = useState(false)
   const nav = useListNav()
   const suggestions = useAccountSuggestions(fragment, userId === null)
@@ -210,7 +210,7 @@ export function TestEventPanel({
                     active={i === nav.active}
                     onPick={() => pick(m)}
                     // The active row's bar-and-fill treatment lives in the shared ListboxOption
-                    // (D-72, 06 §UI principles 7), not a tint duplicated here.
+                    // (one home, with its contrast checked there), not a tint duplicated here.
                     className="flex min-h-8 items-center gap-2 px-2 py-1 text-sm"
                   >
                     <span className="shrink-0 font-mono text-xs text-gray-600">{m.user_id}</span>
