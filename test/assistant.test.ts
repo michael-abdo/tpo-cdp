@@ -613,8 +613,8 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(pkeys).toHaveLength(100)
 
     // After: the UI payload carries subscribers of the builder's segment, as emails. Both lists
-    // come most engaged first (09 D-56); ties break by pkey in the tool and by email in the
-    // builder, so the check is membership in the builder's 177, not position.
+    // come most engaged first; ties break by pkey in the tool and by email in the builder, so the
+    // check is membership in the builder's 177, not position.
     const hydrated = rehydrate(result, await loadEmailsByPkey(env.DB, pkeys))
     expect(hydrated.table?.columns[0]).toBe('email')
     const all = new Set((await preview(cookie, PRESET, 1000)).rows.map((r) => r.email))
@@ -776,7 +776,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     )
   })
 
-  it('"our most engaged readers": 487 active subscribers with engagement 50 or more, highest scores first, the same list "Open segment" shows (09 D-56)', async () => {
+  it('"our most engaged readers": 487 active subscribers with engagement 50 or more, highest scores first, the same list "Open segment" shows', async () => {
     const cookie = await loginCookie()
     const filters = { engagement_gte: MOST_ENGAGED_MIN }
     // Independent of the tool's SQL: the scores of active subscribers at 50 or more, from the tables, highest first.
@@ -818,7 +818,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     }>()
     expect(body.type).toBe('segment')
     expect(body.partial).toBe(false)
-    expect(body.segment.count).toBe(487) // 02 §Counts / T-SEG-9: engagement >= 50, active
+    expect(body.segment.count).toBe(487) // active subscribers with engagement >= 50 on the seed
     const builder = await preview(cookie, filters)
     expect(builder.count).toBe(body.segment.count) // opens in the builder as the same segment
     expect(builder.hidden_unsubscribed).toBe(27)

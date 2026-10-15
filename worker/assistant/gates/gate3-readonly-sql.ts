@@ -229,7 +229,7 @@ const FORBIDDEN_WORDS = new Set(['PRAGMA', 'ATTACH', 'DETACH', 'WITH'])
 const FROM_CLAUSE_END = new Set(['WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'WINDOW', 'UNION', 'INTERSECT', 'EXCEPT'])
 
 /**
- * The only columns a JOIN may match on: the person key and the visitor key (05 §Pseudonymous key).
+ * The only columns a JOIN may match on: the person key and the visitor key (both pk_ hashes).
  * Each is one person or one visitor, so a join on it pairs a person's rows with that same
  * person's rows. A join on any other column (a page, a source, a date) pairs every row with every
  * other row that shares the value: `v_web_events a JOIN v_web_events b ON a.page = b.page` is

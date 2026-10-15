@@ -12,7 +12,7 @@ import { eventIdPool, signedRequest } from './helpers/webhook'
 // Production hardening seen from outside: the security headers and no-store on every Worker
 // response, the same security headers for the static SPA (public/_headers), 405 on a non-POST to
 // the webhook URL, and https only for the deployed host. Real requests through the real Worker
-// (SELF); the brief's sample event for the webhook (09 D-11).
+// (SELF); the brief's sample event for the webhook.
 
 const BRIEF_SAMPLE_FIELDS = { event: 'read_story', user_id: 'u_2b6447a3', device_id: 'd_4b21e8', timestamp: '2026-09-28T14:22:05Z' }
 const nextEventId = eventIdPool()

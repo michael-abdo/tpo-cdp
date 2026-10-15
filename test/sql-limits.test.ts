@@ -596,8 +596,8 @@ describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset 
   })
 
   // A join may match only on the person or visitor key, and never pair a view with itself. The
-  // reviewer's probe below passed every gate before (the aliases differed and the plan showed one
-  // driving scan) and pairs about 15 million rows on the seed.
+  // query below used to pass every gate (the aliases differed and the plan showed one driving
+  // scan) and pairs about 15 million rows on the seed.
   const SELF_JOIN_ON_PAGE = 'SELECT count(*) AS n FROM v_web_events a JOIN v_web_events b ON a.page = b.page'
 
   it('a view joined to itself, or two views joined on anything but pkey / visitor_hash, is refused', () => {

@@ -809,7 +809,7 @@ describe('T-WH-12 size and content-type caps', () => {
 
 describe('user and device ids: trimmed like the CSV import, then letters, digits, "_" and "-" only', () => {
   // Inputs are the real u_2b6447a3 / d_4b21e8 (the brief's sample) with spaces or one character
-  // added (09 D-47), never an invented id. Kept last in the file: the event-id pool is shared, so
+  // added, never an invented id. Kept last in the file: the event-id pool is shared, so
   // a block placed earlier would shift the ids (and the tie order) of every test after it.
   it('a padded id is stored trimmed and resolves to the real user, with no phantom stub', async () => {
     const users = await count('app_users')

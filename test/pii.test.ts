@@ -595,10 +595,10 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
   })
 
   it('a webhook link holding JOY\u2019s bare local part is refused at ingest, and the outbound scan still blocks it in a tool result', async () => {
-    // 09 D-70 #2: an http(s) link with no "@" passed the schema, so a bare local part in a path (no
-    // email shape, no raw id) reached v_app_events. The webhook now runs the same detector on story
+    // An http(s) link with no "@" passes the schema, so a bare local part in a path (no email
+    // shape, no raw id) used to reach v_app_events. The webhook now runs the same detector on story
     // and link before storing (worker/webhooks/exposed-properties.ts). Sent through the real signed
-    // webhook path (09 D-11).
+    // webhook path.
     const link = `${HOSTED_URL}/u/${JOY_LOCAL}`
     const eventId = nextEventId()
     const res = await sendWebhook(
@@ -842,12 +842,12 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
   })
 })
 
-// T-PII-7: an address hidden behind any %XX escape, or behind "-"/"_" in place of its dots. The
-// reviewer's probe was a webhook link `…/joy%2Ehall830%20at%20protonmail%2Ecom` and a story slug
-// `joy-hall830-protonmail-com`: both passed the schema and the scanner. Real values only (09
-// D-47): JOY and JULIA, their app user ids, the hosted URL and real page paths; only the escaping
-// and the separators are changed. new.person@example.com is the stand-in address T-PII-5 uses.
-describe('T-PII-7: every %XX escape is decoded, and "-"/"_" read as "." for stored addresses', () => {
+// An address hidden behind any %XX escape, or behind "-"/"_" in place of its dots. A webhook link
+// `…/joy%2Ehall830%20at%20protonmail%2Ecom` and a story slug `joy-hall830-protonmail-com` both
+// used to pass the schema and the scanner. Real values only: JOY and JULIA, their app user ids,
+// the hosted URL and real page paths; only the escaping and the separators are changed.
+// new.person@example.com is the stand-in address the disguise tests above use.
+describe('every %XX escape is decoded, and "-"/"_" read as "." for stored addresses', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
   const JOY_DEVICE = 'd_ceed5f12'
   const BRIEF_TS = '2026-09-28T14:22:05Z'

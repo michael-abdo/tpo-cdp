@@ -74,7 +74,7 @@ export interface SegmentSortKey {
  * engagement_score, highest first), so "our most engaged readers" comes out as a ranked list;
  * email breaks ties, so the order is the same on every run. The order changes no count.
  * worker/segments/compile.ts compileSegment builds its ORDER BY from this, and the /segments
- * "Sorted by" sentence reads it, so the two can never name a different order (09 D-76).
+ * "Sorted by" sentence reads it, so the two can never name a different order.
  */
 export const SEGMENT_SORT: readonly SegmentSortKey[] = [
   { column: 'engagement_score', direction: 'desc', words: 'highest first' },

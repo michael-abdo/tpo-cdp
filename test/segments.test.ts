@@ -198,7 +198,7 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect(allRows.filter((r) => r[1] === 'unsubscribed')).toHaveLength(independentCount(['unsubscribed']))
   })
 
-  it('rows come back most engaged first, email A to Z within a score, in the preview and the export alike (09 D-76)', async () => {
+  it('rows come back most engaged first, email A to Z within a score, in the preview and the export alike', async () => {
     expect(SEGMENT_SORT.map((k) => [k.column, k.direction])).toEqual([
       ['engagement_score', 'desc'],
       ['email', 'asc'],
