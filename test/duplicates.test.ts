@@ -245,7 +245,7 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
     expect(Math.min(...top.map((p) => p.score))).toBeGreaterThan(Math.max(...rest.map((p) => p.score)))
   })
 
-  it('review and auto bands say just the verdict; "only the name matches" is reserved for the no-other-match (hidden) case (09 D-72)', () => {
+  it('review and auto bands say just the verdict; "only the name matches" is reserved for the no-other-match (hidden) case', () => {
     const none = { domain: false, signup_gap: false, source: false, shared_device: false }
     expect(suggestionFor('hidden', none)).toBe('Probably different people — only the name matches')
     expect(suggestionFor('review', none)).toBe('Could be the same person')
@@ -257,7 +257,7 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
       expect(suggestionFor(band, { domain: true, signup_gap: true, source: true, shared_device: true })).not.toMatch(/domain|signup|source|device/)
   })
 
-  it('the band edges are D-62\'s: auto ≥ 90, review 50–89, hidden < 50', () => {
+  it('the band edges: auto ≥ 90, review 50–89, hidden < 50', () => {
     expect(AUTO_MIN_SCORE).toBe(90)
     expect(REVIEW_MIN_SCORE).toBe(50)
     expect(bandOf(100)).toBe('auto')
@@ -268,7 +268,7 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
     expect(bandOf(0)).toBe('hidden')
   })
 
-  it('a pair id does not depend on the order of its two pkeys (04)', async () => {
+  it('a pair id does not depend on the order of its two pkeys', async () => {
     const [x, y] = await pkeysOf({ a: { email: JOY_HALL[0] }, b: { email: JOY_HALL[1] } })
     expect(x).not.toBe(y)
     expect(await pairId(x, y)).toBe(await pairId(y, x))

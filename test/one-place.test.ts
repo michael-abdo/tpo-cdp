@@ -104,7 +104,7 @@ function offences(screens: Record<string, ScreenFacts>): string[] {
   return out
 }
 
-describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
+describe('T-UI-ONE say one thing in one place', () => {
   it('scans every screen file ONE_PLACE_SCAN names: each page (the Segments page included), the Insights pieces, the shell, the components and the sentence modules', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.onePlace)
     for (const file of ONE_PLACE_SCAN.files) expect(scanned).toContain(file)

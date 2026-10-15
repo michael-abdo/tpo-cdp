@@ -37,7 +37,7 @@ function offences(files: Record<string, readonly string[]>): string[] {
 const attributeValues = (code: string, tag: string, attribute: string) =>
   [...code.matchAll(new RegExp(`<${tag}\\s+${attribute}="([^"]+)"`, 'g'))].map((m) => m[1])
 
-describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () => {
+describe('T-VOC-1 the brief\'s words everywhere', () => {
   it('scans every file it names: all of src/ (the Segments page too), the glossary, the registry, the definitions and the server sentences', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
     for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
@@ -91,7 +91,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(offences({ 'README.md': readme.split('\n'), 'docs/notes.md': notes.split('\n') })).toEqual([])
   })
 
-  it('nav labels are the 06 words (D-67, D-71): Look up, Segments and Insights in place of AI assistant and Growth (D-64); App events and AI audit log fold into "Techy", last', () => {
+  it('nav labels use the agreed words: Look up, Segments and Insights in place of AI assistant and Growth; App events and AI audit log fold into "Techy", last', () => {
     const nav = navArrayText(navSource)
     // Every label in document order: the four top-level pages, then Techy, then its two children.
     expect([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])).toEqual([
@@ -122,7 +122,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     ])
   })
 
-  it("Look up: title, purpose and the four column titles are the brief's (App revenue gated, 09 D-80)", () => {
+  it("Look up: title, purpose and the four column titles are the brief's (App revenue gated)", () => {
     expect(lookupSource).toContain('title="Look up a subscriber"')
     expect(lookupSource).toContain(
       "'Finds anyone: newsletter info, site visits and app activity in one view.'",
@@ -185,7 +185,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(GLOSSARY.merged.term).toBe('Deduped')
   })
 
-  it('field labels equal the 06 table: subscriber, web and app fields', () => {
+  it("field labels are the brief's words: subscriber, web and app fields", () => {
     const shown = (file: keyof typeof FILES) => FILES[file].columns.map((c) => c.label)
     expect(shown('subscribers')).toEqual(['Email', 'Signup date', 'Status', 'Acquisition source'])
     expect(shown('web_events')).toEqual(['Visitor ID', 'Page', 'Timestamp', 'UTM source', 'Email'])

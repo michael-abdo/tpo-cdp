@@ -94,7 +94,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     ;({ ranAt } = await seedDatabase())
   })
 
-  it('4 sources in registry order with the 02 §Counts runs; names, kinds and units from shared/sources.ts', async () => {
+  it('4 sources in registry order with the seed runs; names, kinds and units from shared/sources.ts', async () => {
     const list = await sources()
     expect(list.map((s) => s.id)).toEqual(['subscribers', 'web_events', 'app_users', 'app_events'])
     expect(list.map((s) => s.id)).toEqual(SOURCES.map((s) => s.id))
@@ -162,7 +162,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     expect(TODAY).toBe(BRIEF_TS.slice(0, 10))
   })
 
-  it('a run whose set-aside rows are all blank has 0 rows to fix; the 16 possible duplicates keep it needs_review (09 D-47: the 2 real invalid-email rows relabelled)', async () => {
+  it('a run whose set-aside rows are all blank has 0 rows to fix; the 16 possible duplicates keep it needs_review (the 2 real invalid-email rows relabelled)', async () => {
     const relabel = (from: string, to: string) =>
       env.DB.prepare('UPDATE quarantine SET reason = ?2 WHERE reason = ?1').bind(from, to).run()
     const ids = await env.DB.prepare("SELECT id FROM quarantine WHERE reason = 'invalid_email'").all<{ id: number }>()
@@ -182,7 +182,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     expect((await sources())[0]).toMatchObject({ status: 'needs_review' })
   })
 
-  it('needs_review counts every non-blank reason: bad_date and missing_field too (09 D-61, D-63)', async () => {
+  it('needs_review counts every non-blank reason: bad_date and missing_field too', async () => {
     // Real quarantine rows keep their raw_row; only the reason code moves to another
     // quarantine code. The seed holds blank_row and invalid_email only, so this is the one way
     // the route ever sees the other two reasons.
@@ -316,7 +316,7 @@ async function review(pairId: string): Promise<void> {
 
 // Runs after T-SRC-1 on the same seeded D1. Each test puts back what it changed (reviews, reasons,
 // run counts), so the file's later tests see the plain seed.
-describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
+describe('GET /api/sources checks (T-SRC-3)', () => {
   it('subscribers = [rows_to_fix 2, possible_duplicates 16] and needs_review; web_events, app_users = [rows_to_fix 0]; app_events none', async () => {
     const list = await sources()
     expect(list.map((s) => [s.id, s.checks])).toEqual([
@@ -361,7 +361,7 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
     expect((await sources())[0]?.checks).toEqual(subscriberChecks(2, 16))
   })
 
-  it('status is ok only when every check counts 0: all 16 pairs reviewed and the 2 invalid emails relabelled blank (09 D-47)', async () => {
+  it('status is ok only when every check counts 0: all 16 pairs reviewed and the 2 invalid emails relabelled blank', async () => {
     const pairs = (await getDuplicates()).review
     expect(pairs).toHaveLength(16)
     const ids = await env.DB.prepare("SELECT id FROM quarantine WHERE reason = 'invalid_email'").all<{ id: number }>()
@@ -547,7 +547,7 @@ describe('Overview terms and source text (T-SRC-2)', () => {
 // app_users.csv rows u_a6ac1f6c (line 113, mark.mitchell424@gmail.com) and u_b9e9a984 (line 432,
 // mark.mitchell662@outlook.com) log in on one device, `d_` + the hex of the first user id, through
 // the real signed POST /webhooks/app; event ids from eventIdPool(); times on TODAY.
-describe('GET /api/sources checks count auto-band pairs too (T-SRC-3, 09 D-65)', () => {
+describe('GET /api/sources checks count auto-band pairs too (T-SRC-3)', () => {
   const MARK_A = { user: 'u_a6ac1f6c', email: 'mark.mitchell424@gmail.com' }
   const MARK_B = { user: 'u_b9e9a984', email: 'mark.mitchell662@outlook.com' }
   const SHARED_DEVICE = 'd_a6ac1f6c'

@@ -69,7 +69,7 @@ describe('required headers fail fast', () => {
   })
 })
 
-describe('T-ING-2 quarantine (02 §Quarantine, §Counts)', () => {
+describe('T-ING-2 quarantine', () => {
   it('quarantines exactly the 8 blank rows and 2 invalid emails, by line', () => {
     const { result } = real()
     expect(result.quarantined).toHaveLength(10)
@@ -107,7 +107,7 @@ describe('T-ING-2 quarantine (02 §Quarantine, §Counts)', () => {
   })
 })
 
-describe('T-ING-3 dedupe (02 §Dedupe, §Counts)', () => {
+describe('T-ING-3 dedupe', () => {
   it('collapses Chloe.Reed603@Yahoo.Com and its lowercase spelling into one entry', () => {
     expect(rowAt(2269)[0]).toBe('Chloe.Reed603@Yahoo.Com')
     expect(real().result.subscribers.get('chloe.reed603@yahoo.com')).toEqual({
@@ -121,7 +121,7 @@ describe('T-ING-3 dedupe (02 §Dedupe, §Counts)', () => {
     })
   })
 
-  it('merged_count sums every collapsed row: real line 70 fed three times gives 3 (D-47)', () => {
+  it('merged_count sums every collapsed row: real line 70 fed three times gives 3', () => {
     // The data has no triple, so the real counts cannot tell a sum from a constant 2.
     const merged = ingestSubscribers({
       header: real().parsed.header,
@@ -149,7 +149,7 @@ describe('T-ING-3 dedupe (02 §Dedupe, §Counts)', () => {
   })
 })
 
-describe('T-ING-4 merge precedence on a conflicting pair built from real rows (D-27)', () => {
+describe('T-ING-4 merge precedence on a conflicting pair built from real rows', () => {
   const ingestPair = (first: string[], second: string[]) =>
     ingestSubscribers({
       header: real().parsed.header,

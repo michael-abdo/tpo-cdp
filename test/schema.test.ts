@@ -65,19 +65,19 @@ async function relationsOfType(type: 'table' | 'view'): Promise<string[]> {
   return results.map((row) => row.name)
 }
 
-describe('schema (01 §Tables)', () => {
-  it('every table in 01 exists, and there is no sessions table', async () => {
+describe('schema', () => {
+  it('every expected table exists, and there is no sessions table', async () => {
     const tables = await relationsOfType('table')
     for (const table of TABLES) expect(tables).toContain(table)
     expect(tables).not.toContain('sessions')
   })
 
-  it('the views are exactly the five in 01 §PII-free views', async () => {
+  it('the views are exactly the five PII-free views', async () => {
     expect((await relationsOfType('view')).sort()).toEqual(Object.keys(VIEW_COLUMNS).sort())
   })
 })
 
-describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
+describe('PII-free views', () => {
   it('T-PII-2: no view exposes a PII_COLUMNS column', async () => {
     const pii = new Set<string>(PII_COLUMNS)
     for (const view of Object.keys(VIEW_COLUMNS)) {
@@ -86,7 +86,7 @@ describe('PII-free views (01 §PII-free views, §PII denylist)', () => {
     }
   })
 
-  it('every view has exactly the columns 01 lists, in order', async () => {
+  it('every view has exactly the expected columns, in order', async () => {
     for (const [view, columns] of Object.entries(VIEW_COLUMNS)) {
       expect(await columnsOf(view), view).toEqual(columns)
     }

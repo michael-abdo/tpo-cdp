@@ -22,7 +22,7 @@ import {
 // The derived definitions and TODAY: T-DER-1..3.
 // Rows are the real demo subjects and hand-computed cases.
 
-describe('T-DER-1 derived dates use TODAY (C6)', () => {
+describe('T-DER-1 derived dates use TODAY', () => {
   it('TODAY is the constant the brief fixes', () => {
     expect(TODAY).toBe('2026-09-28')
   })
@@ -46,7 +46,7 @@ describe('T-DER-1 derived dates use TODAY (C6)', () => {
   })
 })
 
-describe('T-DER-2 cold_since / cold / went_cold_in / new_subscriber (02 §Counts rows)', () => {
+describe('T-DER-2 cold_since / cold / went_cold_in / new_subscriber', () => {
   it('joy.hall830: last open 2026-09-22 → cold_since 2026-10-22, not cold', () => {
     const cs = coldSince('2026-09-22', '2026-09-02')
     expect(cs).toBe('2026-10-22')
@@ -82,7 +82,7 @@ describe('T-DER-2 cold_since / cold / went_cold_in / new_subscriber (02 §Counts
     expect(() => wentColdIn(TODAY, '2026-9')).toThrow(/YYYY-MM/)
   })
 
-  it("the brief's filter differs from cold: never-openers count regardless of signup age (D-30)", () => {
+  it("the brief's filter differs from cold: never-openers count regardless of signup age", () => {
     expect(noOpenInDays('2026-08-29', 30, false)).toBe(true)
     expect(noOpenInDays('2026-08-30', 30, false)).toBe(false)
     expect(noOpenInDays(null, 30, true)).toBe(true)
@@ -92,7 +92,7 @@ describe('T-DER-2 cold_since / cold / went_cold_in / new_subscriber (02 §Counts
     expect(noOpenInDays(null, 30, true)).toBe(true)
   })
 
-  it('new_subscriber: signup 2026-09-02 true, 2026-08-11 false (D-36)', () => {
+  it('new_subscriber: signup 2026-09-02 true, 2026-08-11 false', () => {
     expect(isNewSubscriber('2026-09-02')).toBe(true)
     expect(isNewSubscriber('2026-08-11')).toBe(false)
     expect(isNewSubscriber('2026-08-29')).toBe(true)
@@ -108,7 +108,7 @@ describe('T-DER-2 cold_since / cold / went_cold_in / new_subscriber (02 §Counts
     expect(appAfterSignup(null, '2026-09-13')).toBe(false)
   })
 
-  it('going_cold_risk (D-31): opened 15–30 days ago or cold within 7 days; neither demo subject is at risk', () => {
+  it('going_cold_risk: opened 15–30 days ago or cold within 7 days; neither demo subject is at risk', () => {
     expect(goingColdRisk('2026-09-15', coldSince('2026-09-15', '2026-09-13'))).toBe(false) // 13 days: still in the last 14
     expect(goingColdRisk('2026-09-22', coldSince('2026-09-22', '2026-09-02'))).toBe(false)
     expect(goingColdRisk('2026-09-10', coldSince('2026-09-10', '2026-08-01'))).toBe(true) // 18 days ago
@@ -121,7 +121,7 @@ describe('T-DER-2 cold_since / cold / went_cold_in / new_subscriber (02 §Counts
   })
 })
 
-describe('T-DER-3 engagement_score (02 §Derived formula, D-14)', () => {
+describe('T-DER-3 engagement_score', () => {
   const grid = (() => {
     const opens: (string | null)[] = [
       null,
@@ -159,7 +159,7 @@ describe('T-DER-3 engagement_score (02 §Derived formula, D-14)', () => {
     ).toBe(100)
   })
 
-  it('each component caps where 02 says: 30 days, 10 app events, 5 site visits', () => {
+  it('each component caps where the formula says: 30 days, 10 app events, 5 site visits', () => {
     expect(
       engagementScore({ last_open_date: '2026-08-29', app_events_last_30d: 0, site_visits_last_30d: 0 }),
     ).toBe(0)
@@ -174,7 +174,7 @@ describe('T-DER-3 engagement_score (02 §Derived formula, D-14)', () => {
     )
   })
 
-  it('a .5 tie rounds half up exactly, never shaved by float error (21 §hardest case 1)', () => {
+  it('a .5 tie rounds half up exactly, never shaved by float error', () => {
     // 50 × (1 − 24/30) is 9.999… in floating point, so 24 days + 1 app event (12.5) used to store 12.
     expect(engagementScore({ last_open_date: addDays(TODAY, -24), app_events_last_30d: 1, site_visits_last_30d: 0 })).toBe(13)
     expect(engagementScore({ last_open_date: addDays(TODAY, -27), app_events_last_30d: 1, site_visits_last_30d: 0 })).toBe(8)
@@ -207,8 +207,8 @@ describe('T-DER-3 engagement_score (02 §Derived formula, D-14)', () => {
   })
 })
 
-describe('time windows and the DEFINITIONS object (02 §Derived "One runtime source")', () => {
-  it('lastMonth() is August 2026 relative to TODAY (D-10)', () => {
+describe('time windows and the DEFINITIONS object (one runtime source)', () => {
+  it('lastMonth() is August 2026 relative to TODAY', () => {
     expect(lastMonth()).toEqual({ from: '2026-08-01', to: '2026-08-31' })
   })
 
@@ -228,7 +228,7 @@ describe('time windows and the DEFINITIONS object (02 §Derived "One runtime sou
     expect(DEFINITIONS.last_n_days.formula).toBe('TODAY − N .. TODAY')
   })
 
-  it('has one entry per row of 02 §Derived, each with name, doc, formula and fn', () => {
+  it('has one entry per derived value, each with name, doc, formula and fn', () => {
     expect(Object.keys(DEFINITIONS)).toEqual([
       'days_since_open',
       'cold_since',
@@ -251,7 +251,7 @@ describe('time windows and the DEFINITIONS object (02 §Derived "One runtime sou
     }
   })
 
-  it('the SQL fragments compare the stored column against bound dates, never a formula (D-46)', () => {
+  it('the SQL fragments compare the stored column against bound dates, never a formula', () => {
     expect(DEFINITIONS.cold.sql).toBe('cold_since <= :today')
     expect(DEFINITIONS.days_since_open.sql).toBe('julianday(:today) - julianday(last_open_date)')
     // The went-cold month and "signed up in the last N days" bind a window derive.ts computes.

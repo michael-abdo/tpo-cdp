@@ -17,7 +17,7 @@ beforeAll(async () => {
 const overview = (headers: Record<string, string>) => SELF.fetch('http://cdp.test/api/overview', { headers })
 
 describe('GET /api/overview', () => {
-  it('returns exactly the 04 shape with the 02 §Counts numbers', async () => {
+  it('returns exactly the API shape with the expected numbers', async () => {
     const res = await overview({ cookie })
     expect(res.status).toBe(200)
     const body = await res.json<Record<string, unknown>>()

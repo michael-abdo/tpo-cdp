@@ -22,7 +22,7 @@ describe('T-NORM-1 normalizeEmail', () => {
     expect(normalizeEmail('   ')).toBeNull()
   })
 
-  it('pins each clause of the 02 §Normalization regex', () => {
+  it('pins each clause of the email regex', () => {
     // Regex-clause fixtures, not business data: these strings are never presented as real
     // emails and none can pass the regex. Each one fails a weakened pattern:
     expect(normalizeEmail('a@b')).toBeNull() // dropping the required `\.` before the TLD
@@ -35,7 +35,7 @@ describe('T-NORM-1 normalizeEmail', () => {
     expect(normalizeEmail('a@.com')).toBeNull() // allowing an empty domain before the dot (`*` for `+` after the @)
   })
 
-  it('changes nothing but case: plus tags and dots stay (D-26)', () => {
+  it('changes nothing but case: plus tags and dots stay', () => {
     expect(normalizeEmail('a+b@x.com')).toBe('a+b@x.com')
     expect(normalizeEmail('First.Last@gmail.com')).toBe('first.last@gmail.com')
   })
@@ -167,7 +167,7 @@ describe('T-NORM-3 single implementation', () => {
   })
 })
 
-describe('T-HARD-8 one email fold (09 D-70 item 8)', () => {
+describe('T-HARD-8 one email fold', () => {
   it('normalizeEmail and normalizeQueryFragment both call the one private fold; nothing else in the file folds an email', () => {
     expect(normalizeSource).toMatch(/\nfunction foldEmail\(raw: string\): string \{\n  return raw\.trim\(\)\.toLowerCase\(\)\n\}/)
     expect(Object.keys(normalize)).not.toContain('foldEmail')

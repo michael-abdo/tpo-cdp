@@ -84,7 +84,7 @@ describe('GET /api/quarantine (T-OVR-1)', () => {
     }
   })
 
-  it('each reason code filters to its own rows; the seed has none of the other reasons (09 D-78)', async () => {
+  it('each reason code filters to its own rows; the seed has none of the other reasons', async () => {
     const counts: Record<string, number> = {}
     for (const reason of QUARANTINE_REASONS) {
       const res = await quarantine(`?reason=${reason}`)
@@ -125,7 +125,7 @@ describe('GET /api/quarantine (T-OVR-1)', () => {
   })
 })
 
-describe('GET /api/quarantine?file= (09 D-63: each run’s "View rejected rows")', () => {
+describe('GET /api/quarantine?file= (each run’s "View rejected rows")', () => {
   it('file=subscribers → the same 10 rows as no filter; the other sources set nothing aside', async () => {
     const all = await (await quarantine('')).json<QuarantineList>()
     const res = await quarantine('?file=subscribers')
@@ -173,7 +173,7 @@ describe('quarantineFields', () => {
     expect(FILE_HEADERS.app_users.join(',')).toBe(firstLine(appCsv))
   })
 
-  it('fails loud on a stored row whose field count is not the header’s (09 D-47: a real row, last field removed)', () => {
+  it('fails loud on a stored row whose field count is not the header’s (a real row, last field removed)', () => {
     const shortened = subscriberLine(1750).split(',').slice(0, -1).join(',')
     expect(() => quarantineFields('subscribers', shortened)).toThrow(/4 fields, header has 5/)
   })
@@ -213,7 +213,7 @@ describe('Rows to fix tab logic (src/needs-review.ts) on the real answers', () =
   // each group here is built from a synthetic QuarantinedRow whose fields are a minimal edit
   // of a real row (the same edits test/ingest-seed.test.ts T-ING-8 and test/parity.test.ts
   // T-PAR-3b plant), rather than read from the live /api/quarantine answer.
-  it('one group per new D-78 reason: the exact sentence and fix text, never the fallback copy', () => {
+  it('one group per newer quarantine reason: the exact sentence and fix text, never the fallback copy', () => {
     const row = (file: QuarantinedRow['file'], line_no: number, reason: QuarantinedRow['reason'], fields: Record<string, string>): QuarantinedRow => ({ file, line_no, reason, fields })
 
     const unknownStatus = reviewGroups([
