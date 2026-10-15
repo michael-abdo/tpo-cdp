@@ -53,7 +53,7 @@ const SYNTAX_ERROR_SQL = 'SELECT source, count(*) AS n FROM v_profiles GROUP BY'
 
 // One-token variants of the exact comma/`ON 1 = 1` cartesian above, each adding a single indexed
 // range filter that turns the filtered side's driving SCAN into a SEARCH, so a SCAN-only plan
-// check lets every one of these through (09 D-81 #2's self-audit; K-labels match its probes).
+// check lets every one of these through (09 D-81 #1's self-audit; K-labels match its probes).
 // Measured in workerd against the real seed: K2 189,674,521 rows, K3 189,674,521 rows (the `ON 1
 // = 1` shape), K22 (CROSS JOIN) passed the same way, K5 537,660,000 rows (no SCAN row at all —
 // both sides become range SEARCHes), K8 537,677,692 rows, K26 28,891,129 rows. K1 (`w.page =

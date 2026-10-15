@@ -23,6 +23,7 @@ import { assistantRoutes } from '../worker/routes/assistant'
 import { compileModelSegment, MODEL_SEGMENT_COLUMNS, parseFilters } from '../worker/segments/compile'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
+import { eventIdPool, sendWebhook } from './helpers/webhook'
 
 // T-AI-3, T-AI-4, T-AI-5 (08, band A Thu) and the loader/route checks of unit H2. Designs: 03
 // §Gateway layers rows 3, 6, 9, 10, 11 and §No-restart; 04 §POST /api/assistant and
@@ -41,6 +42,9 @@ import { seedDatabase } from './helpers/seed'
 // (subscribers.csv:902) is the email Gate 1 must redact.
 
 const JOY = 'joy.hall830@protonmail.com'
+const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
+const JOY_APP_USER = 'u_ceed5f12' // her own app user id (app_users.csv:303)
+const JOY_DEVICE = 'd_ceed5f12' // her own app user id's hex, reused as a device id (09 D-47)
 const PRESET = { status: ['active'], source: ['instagram'], days_since_open_gte: 30, include_never_opened: true }
 const WENT_COLD_AUGUST = { metric: 'went_cold', status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 
@@ -161,6 +165,37 @@ async function sessionSub(cookie: string): Promise<string> {
 
 async function auditRows(where: string, bind: string): Promise<AuditRow[]> {
   return (await env.DB.prepare(`SELECT * FROM ai_audit WHERE ${where} = ? ORDER BY created_at, rowid`).bind(bind).all<AuditRow>()).results
+}
+
+/**
+ * Shared by every "blocked at exactly this site" test (T-PII-4/5, 05 §Scanner, §Leak paths; 04
+ * §POST /api/assistant errors): asserts the 500 blocked_pii envelope, that every ai_audit row
+ * under this session's trace is exactly `kinds` in order, that the last one is the blocked row
+ * naming `check`/`site`/`toolName`, and that no row anywhere carries an "@".
+ */
+async function expectBlocked(
+  res: Response,
+  sub: string,
+  site: string,
+  kinds: string[],
+  toolName: string | null = null,
+  check = 'known_email',
+) {
+  expect(res.status).toBe(500)
+  const body = await res.json<Record<string, unknown>>()
+  expect(body).toEqual({ error: 'blocked_pii', message: expect.any(String), details: [{ check, site }] })
+  const rows = await auditRows('session_sub', sub)
+  expect(new Set(rows.map((r) => r.trace_id)).size).toBe(1)
+  expect(rows.map((r) => `${r.kind}/${r.status}`)).toEqual(kinds)
+  expect(rows.at(-1)).toMatchObject({
+    kind: 'blocked',
+    status: 'blocked',
+    tool_name: toolName,
+    request_json: null,
+    response_json: null,
+    error: `blocked_pii: ${check} in ${site}`,
+  })
+  expect(rows.every((r) => ![r.request_json, r.response_json, r.error].join(' ').includes('@'))).toBe(true)
 }
 
 async function pkeyOf(email: string): Promise<string> {
@@ -1083,24 +1118,6 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
   // in both the 500 envelope and the audit row, so removing that one scanner call fails that test
   // (an email that slipped past it would be caught later at another site, or by the audit writer).
 
-  async function expectBlocked(res: Response, sub: string, site: string, kinds: string[], toolName: string | null = null) {
-    expect(res.status).toBe(500)
-    const body = await res.json<Record<string, unknown>>()
-    expect(body).toEqual({ error: 'blocked_pii', message: expect.any(String), details: [{ check: 'known_email', site }] })
-    const rows = await auditRows('session_sub', sub)
-    expect(new Set(rows.map((r) => r.trace_id)).size).toBe(1)
-    expect(rows.map((r) => `${r.kind}/${r.status}`)).toEqual(kinds)
-    expect(rows.at(-1)).toMatchObject({
-      kind: 'blocked',
-      status: 'blocked',
-      tool_name: toolName,
-      request_json: null,
-      response_json: null,
-      error: `blocked_pii: known_email in ${site}`,
-    })
-    expect(rows.every((r) => ![r.request_json, r.response_json, r.error].join(' ').includes('@'))).toBe(true)
-  }
-
   it('the model request (loop.ts): an email in an assistant_tools description is never sent', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
@@ -1152,8 +1169,11 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
-    // The block spells "@" as the JSON escape \u0040, so the raw response holds no "@" and passes
-    // the response scan; JSON.parse in respond.ts turns it back into the email.
+    // The block spells "@" as the JSON escape \u0040, so the raw response holds no "@". Her bare
+    // local part (joy.hall830) still sits in that raw text, though, so loop.ts's own scan now
+    // catches it there as known_local_part (09 D-79: the outbound scan checks local parts too,
+    // not only "@"-shapes) — earlier than route.ts's scan on the parsed result, which is the "@"
+    // JSON.parse in respond.ts turns the escape back into, and what this test used to reach.
     const escaped = finalText('Here is the answer.', {
       type: 'answer',
       text: `Write to ${JOY}.`,
@@ -1163,7 +1183,149 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     }).replace('@', '\\u0040')
     expect(escaped).not.toContain('@')
     const { transport } = scripted([() => message([text(escaped)], 'end_turn')])
-    await expectBlocked(await ask(appWith(transport), cookie, 'who should I write to?'), sub, 'model_output', ['model_request/success', 'blocked/blocked'])
+    // Caught before the model_request row is even written as a success (loop.ts scans the raw
+    // response before recording it), unlike the old @-only scan this test used to need the later
+    // route.ts site for.
+    await expectBlocked(
+      await ask(appWith(transport), cookie, 'who should I write to?'),
+      sub,
+      'model_output',
+      ['blocked/blocked'],
+      null,
+      'known_local_part',
+    )
+  })
+
+  it('the final result (route.ts): an email whose local part ALSO decodes only when parsed is blocked at the parsed result (09 D-79 fixer round)', async () => {
+    // Same idea as the test above, but the local part's own "." is escaped too, so the raw model
+    // text holds no literal "@" AND no contiguous known local part: loop.ts's scan of the raw
+    // response.content passes clean, and only respond.ts's JSON.parse of the fenced block
+    // reconstructs the real address, which route.ts:175's own guardPayload call on the parsed
+    // result then blocks. A scratch-worktree mutation of route.ts:175 to a no-op left
+    // test/assistant.test.ts and test/audit.test.ts green until this test was added.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    const atEscape = '\\u0040'
+    const dotEscape = '\\u002e'
+    const escapedLocal = JOY_LOCAL.replace('.', dotEscape)
+    const escaped = finalText('Here is the answer.', {
+      type: 'answer',
+      text: `Write to ${JOY}.`,
+      window: null,
+      filters_applied: {},
+      definitions_used: [],
+    })
+      .replace('@', atEscape)
+      .replace(JOY_LOCAL, escapedLocal)
+    expect(escaped).not.toContain('@')
+    expect(escaped).not.toContain(JOY_LOCAL)
+    const { transport, requests } = scripted([() => message([text(escaped)], 'end_turn')])
+    await expectBlocked(
+      await ask(appWith(transport), cookie, 'who should I write to, fully spelled out?'),
+      sub,
+      'model_output',
+      ['model_request/success', 'blocked/blocked'],
+      null,
+      'known_email',
+    )
+    expect(requests).toHaveLength(1)
+  })
+
+  it('the model request (loop.ts): a known local part with no "@" in an assistant_tools description is blocked (09 D-79: known_local_part, not only email_pattern)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    const before = await env.DB.prepare("SELECT description FROM assistant_tools WHERE name = 'aggregate'").first<string>('description')
+    if (before === null) throw new Error('the aggregate tool row is not seeded')
+    await env.DB.prepare("UPDATE assistant_tools SET description = ? WHERE name = 'aggregate'").bind(`${before} Ask about ${JOY_LOCAL}.`).run()
+    try {
+      const { transport, requests } = scripted([() => message([text('never')], 'end_turn')])
+      await expectBlocked(
+        await ask(appWith(transport), cookie, 'how many subscribers?'),
+        sub,
+        'model_request',
+        ['blocked/blocked'],
+        null,
+        'known_local_part',
+      )
+      expect(requests).toHaveLength(0)
+    } finally {
+      await env.DB.prepare("UPDATE assistant_tools SET description = ? WHERE name = 'aggregate'").bind(before).run()
+    }
+  })
+
+  it('the model response (loop.ts): a disguised email split by a real newline and a real tab is blocked, not only a space-separated one (09 D-79 fixer round)', async () => {
+    // findPII's whole-serialized-JSON pass alone never sees this: JSON.stringify of
+    // response.content turns a real newline/tab inside a text block into the two characters a
+    // backslash and "n"/"t", which the bracket mappings' \s* never matches. The leaf-string pass
+    // (collectLeafStrings in pii-guard.ts) runs each text block's OWN characters through
+    // normalizeForScan instead, so a real newline and tab are seen as whitespace there.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    const disguised = 'Write to press\n[at]\nexample\n[dot]\ncom.'
+    const { transport, requests } = scripted([() => message([text(disguised)], 'end_turn')])
+    await expectBlocked(
+      await ask(appWith(transport), cookie, 'who handles press?'),
+      sub,
+      'model_output',
+      ['blocked/blocked'],
+      null,
+      'email_pattern',
+    )
+    expect(requests).toHaveLength(1)
+  })
+
+  it('the question (Gate 1): a word-joiner (U+2060) inside a known address is still redacted, not only the five older zero-width characters (09 D-79 fixer round)', async () => {
+    // shared/pii.ts normalizeForScan used to drop only five zero-width/soft-hyphen characters; it
+    // now shares shared/sql-sign.ts's full format-character class, which also covers U+2060 WORD
+    // JOINER. A probe against the old five-character list left a question holding
+    // "joy.hall830⁠@protonmail.com" unredacted and reaching the transport; here the request
+    // the model actually receives must hold neither the address nor her bare local part.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const { transport, requests } = scripted([() => message([text('nothing to report')], 'end_turn')])
+    const res = await ask(appWith(transport), cookie, `is ${JOY_LOCAL}⁠@protonmail.com engaged?`)
+    expect(res.status).toBe(200)
+    expect(requests).toHaveLength(1)
+    const sent = JSON.stringify(requests[0])
+    expect(sent).not.toContain('@')
+    expect(sent).not.toContain(JOY_LOCAL)
+    expect(sent).toContain('[email]')
+  })
+})
+
+// 09 D-79 fixer round, item 4: the webhook-link local-part leak proven through the REAL route
+// (tool-executor.ts, not a direct guardPayload/framed() call in test/pii.test.ts), with a real
+// signed webhook (09 D-11) and a recorded query_sql tool call reading v_app_events.
+describe('T-PII-5 at the route: a webhook link holding a known local part is blocked at the tool executor, before the model sees it', () => {
+  it('a recorded query_sql call reading v_app_events.link is blocked (known_local_part, site tool_result), the transport never sees it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cookie = await loginCookie()
+    const sub = await sessionSub(cookie)
+    const link = `${HOSTED_URL}/u/${JOY_LOCAL}`
+    const res = await sendWebhook(
+      JSON.stringify({
+        event_id: eventIdPool()(),
+        event: 'link_click',
+        user_id: JOY_APP_USER,
+        device_id: JOY_DEVICE,
+        timestamp: '2026-09-28T14:22:05Z',
+        properties: { link },
+      }),
+    )
+    expect(res.status).toBe(202)
+
+    const sql = "SELECT link FROM v_app_events WHERE link LIKE '%/u/%'"
+    const { transport, requests } = scripted([
+      () => message([toolUse('toolu_link', 'query_sql', { sql, explanation: 'links shared with a path under /u/' })], 'tool_use'),
+      () => message([text('never')], 'end_turn'),
+    ])
+    const out = await ask(appWith(transport), cookie, 'which links did subscribers share recently?')
+    await expectBlocked(out, sub, 'tool_result', ['model_request/success', 'blocked/blocked'], 'query_sql', 'known_local_part')
+    expect(requests).toHaveLength(1) // the second (post-tool) call never happened
+    expect(JSON.stringify(requests[0])).not.toContain(JOY_LOCAL)
   })
 })
 
@@ -1214,5 +1376,22 @@ describe('T-PII-4 at the tool executor\'s error result (tool-executor.ts)', () =
     expect(failure).toMatchObject({ status: 500, code: 'blocked_pii', details: [{ check: 'known_email', site: 'tool_result' }] })
     const rows = await auditRows('trace_id', trace.traceId)
     expect(rows.map((r) => `${r.kind}/${r.status}/${r.tool_name}/${r.error}`)).toEqual(['blocked/blocked/segment/blocked_pii: known_email in tool_result'])
+  })
+
+  // Same Gate 2 denial path as above, but the invented key is only the local part, with no "@"
+  // anywhere in the denial text (mutation check: tool-executor.ts:77's guardPayload call — a
+  // mutant that scans only text holding "@" would let the JOY case above catch it, then pass
+  // this one through as `known_email`'s weaker cousin was never meant to stand in for).
+  it('a known local part with no "@" echoed in an invalid-input problem → blocked_pii known_local_part, a blocked row, no tool_call row', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const trace = await startTrace(env.DB)
+    const failure = await executeToolCall({ db: env.DB, trace, tools: await loadTools(env.DB) }, { id: 'toolu_local', name: 'segment', input: { [JOY_LOCAL]: true } }).then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(failure).toMatchObject({ status: 500, code: 'blocked_pii', details: [{ check: 'known_local_part', site: 'tool_result' }] })
+    const rows = await auditRows('trace_id', trace.traceId)
+    expect(rows.map((r) => `${r.kind}/${r.status}/${r.tool_name}/${r.error}`)).toEqual(['blocked/blocked/segment/blocked_pii: known_local_part in tool_result'])
   })
 })
