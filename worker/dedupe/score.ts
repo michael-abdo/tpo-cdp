@@ -1,13 +1,16 @@
 /**
- * Scored possible duplicates (design 09 D-62; 02 §Dedupe "Fuzzy duplicates"; R1.3, A3).
+ * Scored possible duplicates. Many subscribers share a name stem, and on the seed the 16 pairs
+ * that agree on all three soft fields are about the 17 that chance alone predicts, with no hard
+ * link at all, so merging on names would join different people. Fuzzy matches are scored for a
+ * person to judge instead.
  *
  * Pure: readers in, scored pairs out. No I/O, no clock. worker/routes/duplicates.ts reads the rows
- * and the decisions; nothing here (or there) merges or writes a profile, subscriber or event (D-13).
+ * and the decisions; nothing here (or there) merges or writes a profile, subscriber or event.
  *
- * Method (Fellegi–Sunter, as Splink, Amperity and dedupe.io do; D-62):
+ * Method (Fellegi–Sunter, as Splink, Amperity and dedupe.io do):
  * 1. Candidates: every pair of subscribers whose normalized emails share a name stem, the local
  *    part with its trailing digits removed (`joy.hall830@…` → `joy.hall`). Profiles merge only on
- *    the exact normalized email (02 §Dedupe); this only finds pairs for a person to look at.
+ *    the exact normalized email; this only finds pairs for a person to look at.
  * 2. Per field, does the pair agree? Email domain; signup dates at most 7 days apart; the same
  *    signup source; one app device seen with both readers' app accounts (the hard link).
  * 3. Weights: agree → log2(m/u), disagree → log2((1−m)/(1−u)). u = the share of candidate pairs
@@ -19,7 +22,7 @@
  */
 import type { SubscriberStatus } from '../ingest/quarantine'
 
-/** One subscriber as the scorer sees it. `email` is `email_norm` (02 §Normalization). */
+/** One subscriber as the scorer sees it. `email` is `email_norm`. */
 export interface DedupeReader {
   pkey: string
   email: string
@@ -35,12 +38,12 @@ export type ScoredField = (typeof SCORED_FIELDS)[number]
 /** The three fields that come from subscribers.csv (the hard link comes from app events). */
 export const SOFT_FIELDS = ['domain', 'signup_gap', 'source'] as const satisfies readonly ScoredField[]
 
-/** Signup dates this many days apart or fewer count as agreeing (D-62). */
+/** Signup dates this many days apart or fewer count as agreeing. */
 export const SIGNUP_GAP_MAX_DAYS = 7
 
 /**
  * m = P(field agrees | the two emails belong to one person). No labelled pairs exist to measure it,
- * so it is a documented assumption (09 D-62: "m-probabilities a documented assumption"):
+ * so it is a documented assumption:
  * - domain 0.8: a person opening a second address mostly stays with their mail provider;
  * - signup_gap 0.5: about half of repeat signups come within a week of the first (a campaign
  *   seen twice), the rest any time later;
@@ -58,11 +61,11 @@ export const M_PROBABILITIES: Readonly<Record<ScoredField, number>> = {
  * A field no candidate pair agrees on would get u = 0 and an infinite agree weight; it is counted as
  * half an agreeing pair instead (u = 0.5 / n), so the weight stays finite and still reflects "never
  * seen". Likewise a field every pair agrees on counts half a pair short (u = (n − 0.5) / n). On the
- * seed this applies only to shared_device (02: 0 hard links); every other u is the plain share.
+ * seed this applies only to shared_device (the seed has 0 hard links); every other u is the plain share.
  */
 export const UNSEEN_AGREEMENT_PAIRS = 0.5
 
-/** Score bands (D-62). */
+/** Score bands (see step 5 above). */
 export const AUTO_MIN_SCORE = 90
 export const REVIEW_MIN_SCORE = 50
 export type Band = 'auto' | 'review' | 'hidden'
@@ -83,7 +86,7 @@ export interface Reason {
   agrees: boolean
   /** The weight this pair received for the field (agree or disagree weight). */
   weight: number
-  /** Plain words for the reason chip (06 §Overview), e.g. "signed up 2 days apart". */
+  /** Plain words for the reason chip on Overview, e.g. "signed up 2 days apart". */
   label: string
 }
 
@@ -107,7 +110,7 @@ export interface DedupeResult {
   pairs: ScoredPair[]
   /** null when there are no candidates (nothing to measure u from). */
   weights: Record<ScoredField, FieldWeight> | null
-  /** The chance check of D-62: pairs agreeing on all three soft fields, observed vs expected if fields were independent. */
+  /** The chance check: pairs agreeing on all three soft fields, observed vs expected if fields were independent. */
   chance: { all_soft_agree: number; expected_by_chance: number }
 }
 
@@ -167,7 +170,7 @@ function pairKey(p: string, q: string): string {
  * Pairs of pkeys that share a first-party id, from (device_id, pkey) rows. A web visitor and an
  * app user each carry one email by schema (web_visitors.email_norm, app_users' primary key), so
  * after ingest the only id two different subscriber emails can share is an app device that sent
- * identified events for both readers' app accounts (01 §Identity resolution).
+ * identified events for both readers' app accounts.
  */
 export function sharedDevicePairs(rows: readonly { device_id: string; pkey: string }[]): Set<string> {
   const byDevice = new Map<string, Set<string>>()
@@ -233,7 +236,7 @@ function gapLabel(gap: number): string {
   return `signed up ${gap.toLocaleString('en-US')} ${gap === 1 ? 'day' : 'days'} apart`
 }
 
-/** Plain words for one reason chip (06 §Overview), in the brief's field names (06 §Vocabulary). */
+/** Plain words for one reason chip on Overview, in the brief's field names. */
 export function reasonLabel(field: ScoredField, agrees: boolean, gap: number): string {
   switch (field) {
     case 'domain':
@@ -253,10 +256,10 @@ function leadFor(band: Band): string {
 }
 
 /**
- * The one-line plain suggestion (06 §Overview): the review and auto bands say only the verdict —
+ * The one-line plain suggestion: the review and auto bands say only the verdict —
  * the reason chips beside it already say which fields match, and the name itself matched every
- * candidate pair, so repeating "the name matches" there would say that fact twice (09 D-72, one
- * thing in one place). "— only the name matches" is reserved for the one case where the name is
+ * candidate pair, so repeating "the name matches" there would say that fact twice (each fact is
+ * said once per screen). "— only the name matches" is reserved for the one case where the name is
  * the sole basis for anything: a hidden-band pair where nothing else agrees either.
  */
 export function suggestionFor(band: Band, agreement: Agreement): string {

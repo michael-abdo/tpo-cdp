@@ -1,15 +1,17 @@
 /**
- * Read-time identity resolution for app events (01 §Identity resolution, 02 §Linking 4–5,
- * 07 §D–F, 09 D-18, D-43). Nothing here writes or caches (03 §No-restart): every call reads D1,
- * and the webhook never rewrites a stored event to name its user. An identified event updates
- * device_identity; anonymous events on that device then resolve through it on the next read, in
- * either arrival order (07 §D anonymous first, 07 §E login first), with no replay.
+ * Read-time identity resolution for app events. Nothing here writes or caches: every call reads
+ * D1, so a new event shows up with no restart, and the webhook never rewrites a stored event to
+ * name its user. An identified event updates device_identity; anonymous events on that device
+ * then resolve through it on the next read, in either arrival order (anonymous first or login
+ * first), with no replay.
  *
  * - `direct`: the event carries the user_id.
- * - `login_stitch` (the UI's "stitched" tag, 06): the event is anonymous (user_id NULL) and its
- *   device's device_identity row names a user, the device's most recent user by event_ts
- *   (D-43), whether that user's identified event is earlier or later than this one. A device
- *   shared by several users gives all its anonymous events to that one user (07 §F, D-18).
+ * - `login_stitch` (the UI's "stitched" tag): the event is anonymous (user_id NULL) and its
+ *   device's device_identity row names a user, the device's most recent user by event_ts (not
+ *   arrival order, so a late event cannot roll the mapping back), whether that user's identified
+ *   event is earlier or later than this one. A device shared by several users gives all its
+ *   anonymous events to that one user: the simplest rule that stitches a login in either order,
+ *   with the shared-device miss stated rather than engineered around.
  * - unresolved (`null`, feed only): anonymous, on a device no identified event has named yet.
  */
 
@@ -76,7 +78,7 @@ export async function devicesForUser(db: D1Database, userId: string): Promise<st
   return results.map((row) => row.device_id)
 }
 
-/** One row of the recent-events feed (04 §GET /api/events/recent), resolved by the rule above. */
+/** One row of the recent-events feed (GET /api/events/recent), resolved by the rule above. */
 export interface FeedEvent {
   event_id: string
   event: string
@@ -85,7 +87,7 @@ export interface FeedEvent {
   received_at: string
   /** The event's own user_id, else its device's most recent user; null when unresolved. */
   user_id: string | null
-  /** null when the event resolves to no user ("anonymous device", 06). */
+  /** null when the event resolves to no user (shown as "anonymous device"). */
   attached_via: AttachedVia | null
   /** The resolved user's profile key: the email profile, or the unknown user's stub. */
   pkey: string | null
@@ -113,9 +115,9 @@ function stubKey(stubKeys: ReadonlyMap<string, string>, userId: string): string 
 }
 
 /**
- * The resolution join shared by recentEvents and feedEventById (one home, D-72, D-73): `where`
+ * The resolution join shared by recentEvents and feedEventById (one home, so the two never differ): `where`
  * is a SQL fragment over `e`/`d`/`u`/`p` and `params` its bound values, in order, before `limit`.
- * An unknown user's stub key is derived with PII_KEY_SECRET (02 §Linking 4) and must exist; a
+ * An unknown user's stub key is derived with PII_KEY_SECRET and must exist; a
  * resolved user without an app_users row or a profile fails loud, since ingest always writes both.
  */
 async function feedRows(
@@ -180,7 +182,7 @@ async function feedRows(
 
 /**
  * The `limit` most recently received app events, newest first by received_at (insertion order
- * breaks ties within one second), each resolved to its user and profile (04 §GET /api/events/recent).
+ * breaks ties within one second), each resolved to its user and profile.
  */
 export async function recentEvents(db: D1Database, piiKeySecret: string, limit: number): Promise<FeedEvent[]> {
   return feedRows(db, piiKeySecret, '1 = 1', [], limit)
@@ -188,7 +190,7 @@ export async function recentEvents(db: D1Database, piiKeySecret: string, limit: 
 
 /**
  * One app event, resolved exactly as recentEvents shapes it; null when no event has this id.
- * The "Send a test event" panel reads its own send this way (09 D-73 `POST /api/events/test`),
+ * The "Send a test event" panel reads its own send this way (`POST /api/events/test`),
  * so the row it shows is never a second, looser copy of the feed's resolution rule.
  */
 export async function feedEventById(db: D1Database, piiKeySecret: string, eventId: string): Promise<FeedEvent | null> {
