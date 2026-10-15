@@ -239,79 +239,121 @@ export const JOIN_KEYS = ['pkey', 'visitor_hash'] as const
 
 const JOIN_KEY_SET: ReadonlySet<string> = new Set(JOIN_KEYS.map((k) => k.toUpperCase()))
 
+/** Words that may follow a FROM source and are not its alias: join operators and the clause's own words. */
+const NOT_AN_ALIAS = new Set(['JOIN', 'LEFT', 'RIGHT', 'FULL', 'INNER', 'OUTER', 'CROSS', 'NATURAL', 'ON', 'USING', ...FROM_CLAUSE_END])
+
+const upperWord = (t: SqlToken | undefined) => (t !== undefined && t.kind === 'word' ? t.text.toUpperCase() : '')
+
+/** One source of a FROM clause: what an ON clause may call it, and which views it reads. */
+interface FromSource {
+  /** The upper-cased name an ON clause refers to it by: its alias, else its view name; null for an unaliased subquery. */
+  ref: string | null
+  /** The view-name tokens it reads: its own name, or the FROM sources of its subquery (not those of a subquery in WHERE). */
+  views: SqlToken[]
+}
+
+/** The token index that ends the FROM clause starting at `at` (its own `)`, a shallower token, or a clause-ending word). */
+function fromClauseEnd(tokens: readonly SqlToken[], at: number): number {
+  const depth = tokens[at].depth
+  let open = 0 // "(" … ")" opened inside this clause (they carry this clause's depth)
+  for (let i = at + 1; i < tokens.length; i += 1) {
+    const t = tokens[i]
+    if (t.depth === depth && t.kind === 'punct' && t.text === '(') open += 1
+    else if (t.depth === depth && t.kind === 'punct' && t.text === ')') {
+      if (open === 0) return i
+      open -= 1
+    } else if (t.depth < depth) return i
+    else if (t.depth === depth && FROM_CLAUSE_END.has(upperWord(t))) return i
+  }
+  return tokens.length
+}
+
 /**
- * The view names one FROM clause reads, one list per source: a plain name after FROM, JOIN or a
- * comma, or every `v_*` name inside a parenthesized source (`JOIN (SELECT … FROM v_web_events) w`).
- * Each name token is kept as written; callers compare them upper-cased, as SQLite does.
+ * The sources of the FROM clause at `at`, in order: one per name or parenthesized subquery after
+ * FROM, a JOIN or a comma, with its alias (`v_web_events w`, `v_web_events AS w`, `(SELECT …) x`).
+ * A subquery source reads the views its own FROM clauses read, followed down through nested
+ * subquery sources; a subquery inside its WHERE (`pkey IN (SELECT …)`, EXISTS) is not a source
+ * and is not counted.
  */
-function fromSources(tokens: readonly SqlToken[], at: number, end: number, depth: number): SqlToken[][] {
-  const word = (t: SqlToken | undefined) => (t !== undefined && t.kind === 'word' ? t.text.toUpperCase() : '')
-  const sources: SqlToken[][] = []
+function fromSources(tokens: readonly SqlToken[], at: number): FromSource[] {
+  const depth = tokens[at].depth
+  const end = fromClauseEnd(tokens, at)
+  const sources: FromSource[] = []
   let startsSource = true // the token right after FROM starts the first source
   for (let i = at + 1; i < end; i += 1) {
     const t = tokens[i]
     if (t.depth !== depth) continue
     if (startsSource) {
-      if (t.kind === 'word') sources.push([t])
-      else if (t.kind === 'punct' && t.text === '(') {
-        const names: SqlToken[] = []
-        for (let j = i + 1; j < end && tokens[j].depth > depth; j += 1) if (/^V_/.test(word(tokens[j]))) names.push(tokens[j])
-        sources.push(names)
+      let last = i // the source's last token at this depth
+      let views: SqlToken[] = []
+      let ref: string | null = null
+      if (t.kind === 'word') {
+        views = [t]
+        ref = upperWord(t)
+      } else if (t.kind === 'punct' && t.text === '(') {
+        let close = i + 1
+        while (close < end && !(tokens[close].depth === depth && tokens[close].text === ')')) close += 1
+        for (let j = i + 1; j < close; j += 1) {
+          if (tokens[j].depth === depth + 1 && upperWord(tokens[j]) === 'FROM') views.push(...fromSources(tokens, j).flatMap((s) => s.views))
+        }
+        last = close
       }
+      // An alias: `AS name`, or a bare name that is not a join or clause word.
+      const next = tokens[last + 1]
+      const afterAs = upperWord(next) === 'AS' ? tokens[last + 2] : next
+      if (afterAs !== undefined && afterAs.depth === depth && afterAs.kind === 'word' && !NOT_AN_ALIAS.has(upperWord(afterAs))) ref = upperWord(afterAs)
+      sources.push({ ref, views })
     }
-    startsSource = word(t) === 'JOIN' || (t.kind === 'punct' && t.text === ',')
+    startsSource = upperWord(t) === 'JOIN' || (t.kind === 'punct' && t.text === ',')
   }
   return sources
 }
 
 /**
- * The join-shape rule: two views may be read together only
- * through an explicit `JOIN … ON a.key = b.key` (or `USING (key)`), where the key is one of
- * JOIN_KEYS. A comma list, a JOIN with no ON/USING (so `CROSS JOIN` and `NATURAL JOIN` too), an ON
- * with no key equality between two different aliases, and a view joined to itself (the same view
- * named by two sources of one FROM, even inside a parenthesized subquery) are refused before
- * anything runs. The plan check cannot catch every cross join (a filter on one side turns its scan
- * into an indexed search), and a timed-out D1 query is never cancelled: on the live database
- * `SELECT COUNT(*) FROM v_profiles, v_web_events WHERE v_profiles.status = 'active'` ran past D1's
- * own CPU limit and reset the database. Pure; checked at every depth.
+ * The join-shape rule: two views may be read together only through an explicit
+ * `JOIN … ON a.key = b.key` (or `USING (key)`), where the key is one of JOIN_KEYS and the equality
+ * links the source this JOIN brings in to a source before it (resolved through the aliases). A
+ * comma list, a JOIN with no ON/USING (so `CROSS JOIN` and `NATURAL JOIN` too), an ON whose key
+ * equality does not link the new source (`… JOIN v_web_events w ON e.pkey = p.pkey` leaves w
+ * unjoined: a cartesian with it), and a view joined to itself (the same view read by two sources
+ * of one FROM, also through a subquery source) are refused before anything runs. The plan check
+ * cannot catch every cross join (a filter on one side turns its scan into an indexed search), and
+ * a timed-out D1 query is never cancelled: on the live database `SELECT COUNT(*) FROM v_profiles,
+ * v_web_events WHERE v_profiles.status = 'active'` ran past D1's own CPU limit and reset the
+ * database. Pure; checked at every depth.
  */
 function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
   const problems = new Set<string>()
-  const word = (t: SqlToken | undefined) => (t !== undefined && t.kind === 'word' ? t.text.toUpperCase() : '')
   tokens.forEach((from, at) => {
-    if (word(from) !== 'FROM') return
+    if (upperWord(from) !== 'FROM') return
     const depth = from.depth
-    let end = tokens.length
-    let open = 0 // "(" … ")" opened inside this clause (they carry this clause's depth)
-    for (let i = at + 1; i < tokens.length; i += 1) {
-      const t = tokens[i]
-      if (t.depth === depth && t.kind === 'punct' && t.text === '(') open += 1
-      else if (t.depth === depth && t.kind === 'punct' && t.text === ')') {
-        if (open === 0) { end = i; break }
-        open -= 1
-      } else if (t.depth < depth) { end = i; break }
-      else if (t.depth === depth && FROM_CLAUSE_END.has(word(t))) { end = i; break }
-    }
+    const end = fromClauseEnd(tokens, at)
     const clause = tokens.slice(at + 1, end).filter((t) => t.depth === depth)
     if (clause.some((t) => t.kind === 'punct' && t.text === ',')) {
       problems.add('read two views together only with JOIN … ON a.column = b.column, never a comma list (a cross join)')
     }
+    const sources = fromSources(tokens, at)
     const seen = new Set<string>()
-    for (const names of fromSources(tokens, at, end, depth)) {
-      const keys = new Map(names.map((t) => [t.text.toUpperCase(), t.text]))
+    for (const { views } of sources) {
+      const keys = new Map(views.map((t) => [t.text.toUpperCase(), t.text]))
       for (const [key, written] of keys) {
         if (seen.has(key)) problems.add(`a view is never joined to itself (${written} is read twice in one FROM); read it once and group it instead`)
         seen.add(key)
       }
     }
+    /** The index of the source an ON clause calls `name`, or -1. */
+    const sourceNamed = (name: string) => sources.findIndex((s) => s.ref === name.toUpperCase())
+    let introduced = 0 // the source the current JOIN (or comma) brings in
     clause.forEach((t, i) => {
-      if (word(t) !== 'JOIN') return
+      if (t.kind === 'punct' && t.text === ',') introduced += 1
+      if (upperWord(t) !== 'JOIN') return
+      introduced += 1
       let next = clause.length
-      for (let j = i + 1; j < clause.length; j += 1) if (word(clause[j]) === 'JOIN') { next = j; break }
+      for (let j = i + 1; j < clause.length; j += 1) if (upperWord(clause[j]) === 'JOIN' || clause[j].text === ',') { next = j; break }
       const condition = clause.slice(i + 1, next)
-      const kind = condition.find((c) => word(c) === 'ON' || word(c) === 'USING')
+      const kind = condition.find((c) => upperWord(c) === 'ON' || upperWord(c) === 'USING')
       if (kind === undefined) { problems.add('every JOIN needs ON a.column = b.column or USING (column)'); return }
-      if (word(kind) === 'USING') {
+      if (upperWord(kind) === 'USING') {
         // USING (col, …): every column in the parentheses must be a join key.
         const usingAt = tokens.indexOf(kind)
         const columns: string[] = []
@@ -328,30 +370,29 @@ function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
       const onAt = tokens.indexOf(kind)
       const onEnd = next < clause.length ? tokens.indexOf(clause[next]) : end
       const on = tokens.slice(onAt + 1, onEnd)
-      // The ON's top-level AND-parts; at least one must be exactly `a.col = b.col` between two
-      // different views. An OR at the top level or around that equality (`ON p.pkey = w.pkey OR
-      // 1 = 1`) leaves no such part, so it is refused here,
-      // not only by the plan check. An OR inside a separate filter part stays allowed.
+      // The ON's top-level AND-parts; at least one must be exactly `a.key = b.key` where one side
+      // is the source this JOIN brings in and the other a source before it. An OR at the top level
+      // or around that equality (`ON p.pkey = w.pkey OR 1 = 1`) leaves no such part, so it is
+      // refused here, not only by the plan check. An OR inside a separate filter part stays allowed.
       const conjuncts: SqlToken[][] = [[]]
       for (const c of on) {
-        if (c.depth === kind.depth && word(c) === 'AND') conjuncts.push([])
+        if (c.depth === kind.depth && upperWord(c) === 'AND') conjuncts.push([])
         else conjuncts[conjuncts.length - 1]!.push(c)
       }
-      const isColumnEquality = (part: readonly SqlToken[]) => {
+      const linksNewSource = (part: readonly SqlToken[]) => {
         let x = part
         while (x.length >= 2 && x[0]!.text === '(' && x[x.length - 1]!.text === ')') x = x.slice(1, -1)
         if (x.length !== 7) return false
         const [a, d1, c1, eq, b, d2, c2] = x
-        return (
-          a!.kind === 'word' && d1!.text === '.' && c1!.kind === 'word' && eq!.text === '=' &&
-          b!.kind === 'word' && d2!.text === '.' && c2!.kind === 'word' && a!.text.toUpperCase() !== b!.text.toUpperCase() &&
-          // The same join key on both sides: pkey = pkey or visitor_hash = visitor_hash.
-          JOIN_KEY_SET.has(c1!.text.toUpperCase()) && c1!.text.toUpperCase() === c2!.text.toUpperCase()
-        )
+        if (!(a!.kind === 'word' && d1!.text === '.' && c1!.kind === 'word' && eq!.text === '=' && b!.kind === 'word' && d2!.text === '.' && c2!.kind === 'word')) return false
+        // The same join key on both sides: pkey = pkey or visitor_hash = visitor_hash.
+        if (!JOIN_KEY_SET.has(c1!.text.toUpperCase()) || c1!.text.toUpperCase() !== c2!.text.toUpperCase()) return false
+        const [left, right] = [sourceNamed(a!.text), sourceNamed(b!.text)]
+        return (left === introduced && right >= 0 && right < introduced) || (right === introduced && left >= 0 && left < introduced)
       }
-      if (!conjuncts.some(isColumnEquality)) {
+      if (!conjuncts.some(linksNewSource)) {
         problems.add(
-          `a JOIN must link the two views on a column equality of ${JOIN_KEYS.join(' or ')} joined with AND (never OR), e.g. ON p.pkey = w.pkey`,
+          `a JOIN must link the view it brings in to one before it on a column equality of ${JOIN_KEYS.join(' or ')} joined with AND (never OR), e.g. FROM v_profiles p JOIN v_web_events w ON w.pkey = p.pkey`,
         )
       }
     })
@@ -543,6 +584,9 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
  *   2. A full scan of a real relation, or a range-only SEARCH, whose enclosing scope is a
  *      `CORRELATED …` subquery: run once per outer row, the same cost as a cartesian even though
  *      it is only ever one such row in its own scope.
+ *   3. Any other SEARCH inside a `CORRELATED …` subquery that does not pin an identity column with
+ *      `=?` (isIdentitySearch): an equality on a shared value such as a page is not a range, so
+ *      rule 2 never saw it, yet per outer row it reads every row with that value.
  * Checked live against every legitimate query_sql/query-row SQL this repo runs (the brief's query
  * row, every grammar-pin SQL test/insights-board.test.ts runs, every T-AI-2/"query_sql through
  * Gates 2 and 3" probe in test/gate2.test.ts including the real `v_profiles JOIN v_web_events ON
@@ -580,7 +624,34 @@ function cartesianScans(rows: readonly PlanRow[]): PlanRow[] {
   const flagged = new Set<PlanRow>()
   for (const group of byParent.values()) if (group.length > 1) for (const scan of group) flagged.add(scan)
   for (const scan of scans) if (hasCorrelatedAncestor(scan, byId)) flagged.add(scan)
+  for (const row of rows) if (/^SEARCH\b/.test(row.detail) && !isIdentitySearch(row) && hasCorrelatedAncestor(row, byId)) flagged.add(row)
   return [...flagged]
+}
+
+/**
+ * Columns that name one person, visitor, account, device or event. A lookup that pins one of them
+ * (`email_norm=?`, `pkey=?`, `visitor_id=?`, a rowid) finds a handful of rows, never a large share
+ * of a table.
+ */
+const IDENTITY_COLUMNS = new Set(['pkey', 'visitor_hash', 'email_norm', 'visitor_id', 'user_id', 'device_id', 'event_id', 'rowid'])
+
+/**
+ * True for a SEARCH whose constraint starts by pinning an identity column with `=?`, whatever the
+ * index (a primary key, `profiles_email`, `web_events_visitor_ts`, an automatic index on
+ * `email_norm`). Inside a correlated subquery, which runs once per outer row, only such a SEARCH
+ * is cheap: one on a shared value (`web_events_page (page=?)`, `subscribers_status_source_open
+ * (status=? …)`) reads every row with that value for every outer row. `SELECT sum((SELECT
+ * count(*) FROM v_web_events b WHERE b.page = a.page)) FROM v_web_events a` read 55.7 million rows
+ * in about 13 s locally before this rule refused it. `v_source_app_conversion`'s own subquery
+ * (`app_users_email (email_norm=?)`) and a per-person count (`(SELECT count(*) FROM v_web_events w
+ * WHERE w.pkey = p.pkey)`, reached through `profiles (pkey=?)`, `web_visitors_email` and
+ * `web_events_visitor_ts`) pass.
+ */
+function isIdentitySearch(row: PlanRow): boolean {
+  const constraint = SEARCH_CONSTRAINT.exec(row.detail)
+  if (constraint === null) return false
+  const first = /^(?:\w+\.)?(\w+)=\?$/.exec(constraint[1].split(/\s+AND\s+/)[0]!.trim())
+  return first !== null && IDENTITY_COLUMNS.has(first[1]!)
 }
 
 /** `plan_check_unavailable`: logged, never swallowed, so a check that could not run is never silent. */

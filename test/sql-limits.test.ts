@@ -648,3 +648,97 @@ describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset 
     expect(Number(ok.rows[0]![0])).toBeGreaterThan(0)
   })
 })
+
+describe('each JOIN must link the view it brings in, through the aliases', () => {
+  // This query passed every gate: its second ON compares two sources that are already joined, so
+  // w is joined to nothing, a cartesian with it (5.37 million rows read on the seed).
+  const UNLINKED_THIRD_VIEW =
+    "SELECT count(*) AS n FROM v_app_events e JOIN v_profiles p ON e.pkey = p.pkey JOIN v_web_events w ON e.pkey = p.pkey WHERE w.page = '/'"
+
+  it('an ON that does not name the view its JOIN brings in, or names an alias that is not there, is refused', () => {
+    for (const sql of [
+      UNLINKED_THIRD_VIEW,
+      'SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON w.pkey = p.pkey JOIN v_app_events e ON w.pkey = p.pkey',
+      'SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON p.pkey = p.pkey',
+      'SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON w.pkey = x.pkey',
+      'SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON e.pkey = w.pkey JOIN v_app_events e ON e.pkey = p.pkey',
+    ]) {
+      let denied: unknown
+      try {
+        readOnlySelect(sql)
+      } catch (err) {
+        denied = err
+      }
+      expect(denied, sql).toBeInstanceOf(GateDenied)
+      expect((denied as GateDenied).problems.join(' | '), sql).toMatch(/link the view it brings in to one before it/)
+    }
+  })
+
+  it('multi-view joins that link every new view still pass: chains, AS aliases, plain view names, LEFT JOIN, USING', () => {
+    for (const sql of [
+      'SELECT count(*) AS n FROM v_app_events e JOIN v_profiles p ON e.pkey = p.pkey JOIN v_web_events w ON w.pkey = p.pkey',
+      'SELECT count(*) AS n FROM v_app_events e JOIN v_profiles p ON p.pkey = e.pkey JOIN v_web_events w ON e.pkey = w.pkey',
+      'SELECT count(*) AS n FROM v_profiles AS p LEFT JOIN v_web_events AS w ON p.pkey = w.pkey',
+      'SELECT count(*) AS n FROM v_profiles JOIN v_web_events ON v_profiles.pkey = v_web_events.pkey',
+      "SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON w.pkey = p.pkey AND w.page = '/' JOIN v_app_events e ON e.pkey = w.pkey",
+      'SELECT count(*) AS n FROM v_profiles JOIN v_app_events USING (pkey)',
+    ]) expect(() => readOnlySelect(sql), sql).not.toThrow()
+  })
+
+  it('the unlinked third view is refused before D1 sees anything; the linked chain runs', async () => {
+    const { db, prepared } = recordingDb()
+    await expect(runReadOnlySelect(db, UNLINKED_THIRD_VIEW)).rejects.toThrow(GateDenied)
+    expect(prepared).toEqual([])
+    const ok = await runReadOnlySelect(env.DB, 'SELECT count(*) AS n FROM v_app_events e JOIN v_profiles p ON e.pkey = p.pkey JOIN v_web_events w ON w.pkey = p.pkey')
+    expect(ok.columns).toEqual(['n'])
+  })
+
+  it('a view read only inside a WHERE subquery of a subquery source is not a self-join; one read as a source is', () => {
+    expect(() =>
+      readOnlySelect("SELECT count(*) AS n FROM v_web_events w JOIN (SELECT pkey FROM v_profiles WHERE pkey IN (SELECT pkey FROM v_web_events WHERE page = '/')) x ON x.pkey = w.pkey"),
+    ).not.toThrow()
+    expect(() =>
+      readOnlySelect('SELECT count(*) AS n FROM v_profiles p JOIN (SELECT pkey FROM v_web_events WHERE EXISTS (SELECT 1 FROM v_profiles q WHERE q.pkey = pkey)) x ON x.pkey = p.pkey'),
+    ).not.toThrow()
+    for (const sql of [
+      'SELECT count(*) AS n FROM v_web_events a JOIN (SELECT pkey FROM (SELECT pkey FROM v_web_events) z) b ON a.pkey = b.pkey',
+      "SELECT count(*) AS n FROM v_profiles p JOIN (SELECT pkey FROM v_profiles WHERE status = 'active') x ON x.pkey = p.pkey",
+    ]) expect(() => readOnlySelect(sql), sql).toThrow(/joined to itself/)
+  })
+})
+
+describe('a correlated subquery may look rows up only by an identity column', () => {
+  // These rebuild the 15 million pair self-join through a correlated subquery: the plan shows
+  // `SEARCH … USING INDEX web_events_page (page=?)` once per outer row (55.7 million rows read,
+  // about 13 s, locally). Each is refused by the plan check before the real query runs.
+  const PER_PAGE = [
+    'SELECT sum((SELECT count(*) FROM v_web_events b WHERE b.page = a.page)) AS n FROM v_web_events a',
+    'SELECT count(*) AS n FROM v_web_events a WHERE (SELECT count(*) FROM v_web_events b WHERE b.page = a.page) > 0',
+    'SELECT count(*) AS n FROM v_web_events a WHERE EXISTS (SELECT 1 FROM v_web_events b WHERE b.page = a.page AND b.event_ts > a.event_ts)',
+    'SELECT count(*) AS n FROM v_profiles p WHERE (SELECT count(*) FROM v_profiles q WHERE q.status = p.status AND q.source = p.source) > 1',
+  ]
+
+  it.each(PER_PAGE)('%s is refused before it runs', async (sql) => {
+    const { db, prepared } = recordingDb()
+    let denied: unknown
+    try {
+      await runReadOnlySelect(db, sql)
+    } catch (err) {
+      denied = err
+    }
+    expect(denied).toBeInstanceOf(GateDenied)
+    expect((denied as GateDenied).problems[0]).toMatch(/correlated subquery/)
+    expect(prepared.every((q) => q.startsWith('EXPLAIN QUERY PLAN'))).toBe(true)
+  })
+
+  it('a per-person correlated count and v_source_app_conversion (both looked up by an identity column) still run', async () => {
+    const perPerson = await runReadOnlySelect(
+      env.DB,
+      "SELECT p.pkey, (SELECT count(*) FROM v_web_events w WHERE w.pkey = p.pkey) AS visits FROM v_profiles p WHERE p.status = 'active' ORDER BY p.pkey LIMIT 20",
+    )
+    expect(perPerson.columns).toEqual(['pkey', 'visits'])
+    expect(perPerson.rows).toHaveLength(20)
+    const conversion = await runReadOnlySelect(env.DB, 'SELECT source, rate FROM v_source_app_conversion ORDER BY rate DESC')
+    expect(conversion.rows.length).toBeGreaterThan(0)
+  })
+})
