@@ -1,11 +1,11 @@
 # TPO Mini CDP — Development Rules
 
-Hiring assessment for The Pour Over. **Source of truth: `../TPO_Developer_Assessment.pdf`** (requirement IDs: `../design/00`). Deadline and submission: `../design/13`. The design docs in `../design/` are kept outside the repo; their final versions become README or docs/notes.md sections (13; README = run it, docs/notes.md = everything else, 09 D-82).
+Hiring assessment for The Pour Over. **Source of truth: the assessment brief.** The design notes and the decision log (09) are kept outside this repo; code comments and commits cite them by number (`02 §Time`, `09 D-24`). Their final versions became README.md (how to run it) and docs/notes.md (everything else) (09 D-82).
 
-This file holds HOW we work. WHAT we build lives in `../design/`, one home per fact — the index of homes is `00 §Document index`. Read the owning doc before touching an area. Never restate a spec here; point to it.
+This file holds HOW we work. WHAT we build lives in the design notes, one home per fact (index: 00 §Document index). Read the owning note before touching an area. Never restate a spec here; point to it.
 
 ## Stack
-Decided in 09 D-02..D-06, D-23 (Claude only, confirmed), D-24 (mirror the consulting repo's gateway; deviations listed there). Canonical module layout: 03 §Module layout. Project lives in the `CDP/` folder of the private workspace repo (see `../design/17`).
+Decided in 09 D-02..D-06 and D-23 (Claude only, confirmed). D-24: the assistant gateway's shape (three gates, tools as rows, a capped tool loop, an audit table) comes from an AI gateway built before this project, rebuilt by hand for Workers and hardened. Canonical module layout: 03 §Module layout.
 
 ## Non-negotiables (rule → home; each has a test in 08)
 - NO MOCK OR DUMMY DATA: only `data/*.csv` and real webhook events; constructed webhook payloads only as 09 D-11 allows, and error-path test inputs derived from real rows only as 09 D-47 allows (never an invented email, name, source, status or date).
@@ -27,10 +27,9 @@ Decided in 09 D-02..D-06, D-23 (Claude only, confirmed), D-24 (mirror the consul
 - **Safe:** remote seed/reset safeguards: 11 §Reset. Seed and runtime write limits: 11 §Seed. Never drop tables outside a migration. No destructive actions in the hosted UI (09 D-13).
 
 ## How to work (S5, A8, A9)
-- Use Claude Code heavily — they ask for it — but understand every line; the Loom and the audit test comprehension.
-- Log every AI mistake as it happens in `docs/ai-log.md` (date, ask, what was wrong, how caught, fix). The Loom cites only real entries.
+- Log every AI mistake as it happens in `docs/ai-log.md` (date, ask, what was wrong, how caught, fix).
 - Small, honest commits, one concern each, never squashed.
 - No TODOs, stubs or mocks in product code; every fixed value (TODAY, limits, weights, bands) is one named constant in its one home, never a bare literal; unfinished → docs/notes.md "Known gaps".
-- `npm test` and `npm run typecheck` before every commit (scripts: 11 §Scripts). Reuse before creating; port origin modules by hand (03), never fork.
+- `npm test` and `npm run typecheck` before every commit (scripts: 11 §Scripts). Reuse before creating; port the earlier gateway's modules by hand (03, D-24), never fork.
 - The repo contains exactly four `.md` files: this one, `README.md` (how to run it), `docs/notes.md` (design, data rules, webhook, PII, tests, known gaps, how it was built), `docs/ai-log.md` (09 D-29, amended by D-82). This file is committed as process evidence; the self-audit runs on the repo exactly as submitted (09 D-29, 11 §Self-audit step).
 - Build only what 16 §MVP scope lists; work in the order of 16 §Day by day; parked items only per 16 §If time remains.
