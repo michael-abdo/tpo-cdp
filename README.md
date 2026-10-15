@@ -32,7 +32,7 @@ What you see without them: with no tool rows, Ask on "Insights" (`/insights`) an
 With `npm run dev` running, send an app event to the local server from a second terminal (signed with `WEBHOOK_SECRET` from `.dev.vars`, which the script never prints):
 
 ```bash
-npm run webhook:send -- --event read_story --user u_2b6447a3   # 202; the body's "resolved" holds u_2b6447a3 and a pk_ key (julia.evans230's profile)
+npm run webhook:send -- --event read_story --user u_2b6447a3   # 202 {"accepted":true,"event_id":"…"}; Look up shows it under julia.evans230
 npm run webhook:send -- --event read_story --again             # 200 {"accepted":true,"duplicate":true}
 ```
 
@@ -63,7 +63,7 @@ Open "Insights" (`/insights`) on the live app, or locally with a real key and th
 | Question | What comes back | Check it against |
 |---|---|---|
 | how many Instagram signups went cold last month? | an answer: active Instagram subscribers whose `cold_since` falls in 2026-08-01..31, from the `aggregate` tool | 46 (66 if you ask to include unsubscribed) |
-| build me a list of our most engaged readers | a segment: active subscribers in stored `engagement_score` order, highest first, with its filters in words, "Open segment" and "Export CSV" | its count equals the same filters on "Segments" |
+| build me a list of our most engaged readers | a segment: the 487 active subscribers with an engagement score of 50 or more, highest first, with its filters in words, "Open segment" and "Export CSV" (both list it in the same order) | its count equals the same filters on "Segments" |
 | which pages do new subscribers hit first? | a table: for subscribers who signed up 2026-08-29..2026-09-28, the first page of their first site visit, counted by page, from the `pages_new_subscribers_hit_first` tool row | a blank first page counts new subscribers with no tracked visit |
 
 Under "Time period · Filters · Definitions", each answer lists the time period, filters and definitions it used, when it used any. "See exactly what the AI saw for this answer" opens the trace on "AI audit log" (`/audit`): every model request and tool call as stored. Search it for `@` and it finds nothing. On the board below, each tile's Options has "Explain this", which fills in a question in the Ask bar and waits for Ask.
