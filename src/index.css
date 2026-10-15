@@ -1,4 +1,4 @@
-/* DIRECTION (09 D-60, 06 §UI principles) — "refined calm"
+/* DIRECTION — "refined calm"
  * Tone: a quiet daily desk for non-technical Growth editors; restraint over noise, one thing per glance.
  * Type: Fraunces (soft optical serif) for page/section titles; Figtree (warm geometric sans) for everything else.
  * Palette: warm paper neutrals, low-glare charcoal at night; ONE accent, deep ink-teal; red only for errors.
@@ -233,7 +233,7 @@
   }
 }
 
-/* The one orchestrated motion (D-60): each page's top-level blocks rise in, 60 ms apart. */
+/* The one orchestrated motion: each page's top-level blocks rise in, 60 ms apart. */
 @keyframes page-enter {
   from {
     opacity: 0;

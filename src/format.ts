@@ -1,5 +1,5 @@
 // Display helpers. Timestamps are stored as `YYYY-MM-DDTHH:MM:SSZ` (worker/ingest) and shown
-// labelled UTC (02 §Time, 06); nothing here converts to the viewer's local zone.
+// labelled UTC; nothing here converts to the viewer's local zone, so every viewer sees the same time.
 
 import { humanDate, MONTHS } from '../shared/date-words'
 

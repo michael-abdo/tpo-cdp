@@ -1,4 +1,4 @@
-// Overview's "Rows to fix" tab (06 §Overview, 09 D-61, D-65): which set-aside rows a person can fix, the
+// Overview's "Rows to fix" tab: which set-aside rows a person can fix, the
 // one plain sentence that says why, the fields to show as written, and what to do. Pure, so
 // test/quarantine.test.ts runs it on the real GET /api/quarantine answer; src/pages/OverviewPage.tsx
 // is the only other caller.
@@ -11,14 +11,14 @@ type SetAsideFile = QuarantinedRow['file']
 
 /**
  * A blank row has nothing to correct, so it stays a count in its run's "View rejected rows";
- * every other reason (02 §Quarantine) names something a person can fix in the source file.
+ * every other quarantine reason names something a person can fix in the source file.
  */
 export function needsReview(reason: string): boolean {
   return reason !== 'blank_row'
 }
 
 /**
- * Per file: the fields shown, labelled with the brief's field names (06 §Vocabulary), and its date format (02 §Quarantine). The file's name and the noun for
+ * Per file: the fields shown, labelled with the brief's field names, and its date format. The file's name and the noun for
  * its rows come from the source registry (shared/sources.ts), their only home.
  */
 export const FILES: Record<SetAsideFile, { columns: { name: string; label: string }[]; dateFormat: string }> = {
@@ -62,7 +62,7 @@ const WHY: Record<Exclude<QuarantinedRow['reason'], 'blank_row'>, string> = {
   duplicate_user_id: 'this user ID is already used by an earlier row',
 }
 
-/** How every fix ends, written once (09 D-72). */
+/** How every fix ends, written once. */
 const THEN_REIMPORT = ', then re-import the file.'
 
 function fixText(file: SetAsideFile, reason: keyof typeof WHY): string {
@@ -83,7 +83,7 @@ export interface ReviewGroup {
   sentence: string
   /** What to do, naming the file. */
   fix: string
-  /** The fields shown for each row, with plain labels (06 §UI principles 4). */
+  /** The fields shown for each row, with plain labels. */
   columns: { name: string; label: string }[]
   rows: QuarantinedRow[]
 }

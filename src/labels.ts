@@ -1,13 +1,14 @@
-// Plain words for stored values, column names and filter keys (06 §UI principles 4). Display maps
+// Plain words for stored values, column names and filter keys: the screens never show a raw code
+// name as a label. Display maps
 // only: the values sent to the API and the raw names shown in Technical details stay as they are.
 // /segments and /insights read the same maps, so a subscriber's fields carry the same words on each.
-// Field words are the brief's own (06 §Vocabulary, 09 D-66): Signup date, Acquisition source, Last open date, UTM source.
+// Field words are the brief's own: Signup date, Acquisition source, Last open date, UTM source.
 
 import type { DefinitionKey } from '../shared/derive'
 import { FILTER_KEYS, type FilterKey, type SegmentFilters } from '../shared/segment-filters'
 import type { DataQualityCheckKey } from './types'
 
-/** Signup sources as stored (02 §Normalization: canonical lowercase) → display words. */
+/** Signup sources as stored (canonical lowercase, shared/normalize.ts) → display words. */
 export const SOURCE_LABEL: Readonly<Record<string, string>> = {
   instagram: 'Instagram',
   facebook: 'Facebook',
@@ -23,10 +24,10 @@ export const sourceLabel = (s: string | null) => (s === null ? 'Unknown' : (SOUR
 export const statusLabel = (s: string) => STATUS_LABEL[s] ?? s
 
 /**
- * Plain headings for the definitions (02 §Derived): the one home of these words (09 D-68).
+ * Plain headings for the definitions (shared/derive.ts DEFINITIONS): the one home of these words.
  * /insights, /segments and every InfoTip on a definition (shared/glossary.ts explain()) read them;
  * the raw names show only in Technical details. COLUMN_LABEL's app_after_signup column reads
- * `app_after_signup` from here rather than retyping it (09 D-72).
+ * `app_after_signup` from here rather than retyping it, so the two can never drift apart.
  */
 export const DEFINITION_LABEL: Record<DefinitionKey, string> = {
   days_since_open: 'Days since last open',
@@ -131,7 +132,7 @@ export function monthLabel(month: string, style: 'long' | 'short' = 'long'): str
 const n = (value: number) => value.toLocaleString('en-US')
 const days = (value: number) => (value === 1 ? '1 day' : `${n(value)} days`)
 
-/** "a", "a and b", "a, b and c" (the label grammar of 19-segments-spec §2). */
+/** "a", "a and b", "a, b and c" (how segment labels join their parts). */
 function joined(items: string[], last: string): string {
   if (items.length <= 1) return items.join('')
   return `${items.slice(0, -1).join(', ')} ${last} ${items[items.length - 1]}`
@@ -181,7 +182,7 @@ const CLAUSE: { readonly [K in FilterKey]: (f: SegmentFilters) => string | null 
 }
 
 /**
- * A segment's filters as one sentence in 06 §Vocabulary words (19-segments-spec §2, 09 D-69): the
+ * A segment's filters as one sentence in the brief's words: the
  * one home of segment names, read by Previous searches and the result line on /segments. Subject
  * (by source and status), then "who" and each key's clause in FILTER_KEYS order. The brief's
  * preset reads "Instagram subscribers who haven't opened in 30 days".

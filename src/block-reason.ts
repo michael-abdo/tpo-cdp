@@ -1,4 +1,4 @@
-// Why a step on /audit was blocked, in words (06 §/audit, §UI principles 4). The worker stores a
+// Why a step on /audit was blocked, in plain words rather than a code. The worker stores a
 // blocked step's error as "<code>: <detail>" (worker/assistant writers); the page shows the sentence
 // for the code it starts with, and the raw error stays in Technical details. Pure, so the test runs
 // it on the errors the worker writes (test/audit.test.ts).

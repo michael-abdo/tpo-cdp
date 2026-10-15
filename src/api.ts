@@ -1,6 +1,7 @@
-// The one HTTP client of the UI (04). Every call sends the session cookie, a 401 from a guarded
+// The one HTTP client of the UI. Every call sends the session cookie, a 401 from a guarded
 // path hands control to the registered sign-in redirect, and any other failure surfaces the
-// 04 §Error envelope's `message`. The browser never normalizes input (02 §Normalization).
+// error envelope's `message`. The browser never normalizes input: shared/normalize.ts on the
+// server is the one place that folds it.
 
 import { TODAY } from '../shared/config'
 import { ApiError, toApiError } from './api-error'
@@ -8,7 +9,7 @@ import type { SegmentFilters } from './types'
 
 export { ApiError }
 
-/** Paths whose 401 is an answer, not an expired session (04 §Auth open paths). */
+/** Paths whose 401 is an answer, not an expired session (the paths open without a session). */
 const OPEN_PATHS = ['/api/login', '/api/logout']
 
 let onUnauthorized: () => void = () => window.location.assign('/login')
@@ -48,8 +49,8 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 /**
- * Export CSV (04 §Segments: POST /api/segments/export.csv) for these filters, saved as a download.
- * One home for /segments and a segment answer on /insights (06 §/insights answer card).
+ * Export CSV (POST /api/segments/export.csv) for these filters, saved as a download.
+ * One home for /segments and a segment answer on /insights (the answer card).
  */
 export async function downloadSegmentCsv(filters: SegmentFilters): Promise<void> {
   const res = await request('/api/segments/export.csv', { method: 'POST', body: { filters } })

@@ -1,4 +1,6 @@
-// The shared "future feature, drawn in place" wiring (09 D-80). Kept out of src/components.tsx
+// The shared "future feature, drawn in place" wiring: a feature saved for later is drawn where it
+// will live, greyed out with a "coming soon" note, so the screen shows where the product is going.
+// Kept out of src/components.tsx
 // (a components-only export, like src/nav.ts: react-refresh's only-export-components rule, oxlint)
 // because this is a hook, not a component. Render the real control with `bind` spread onto it,
 // wire `activate` as its onClick (or `onKeyDown` for a non-button element, such as a gated input),
@@ -8,7 +10,7 @@
 import { useId, useState } from 'react'
 import { FEATURES, type Feature, type FeatureId } from '../shared/features'
 
-/** What `useGated` hands a real-looking control: never the `disabled` attribute (09 D-80). */
+/** What `useGated` hands a real-looking control: never the `disabled` attribute, which would take it out of the Tab order. */
 export interface GatedBind {
   'aria-disabled': true
   'aria-describedby': string
@@ -18,7 +20,7 @@ export interface GatedBind {
  * Whether a keydown activates a gated control: only Enter, Space or a single printable character.
  * Exported (and used by `onKeyDown` below) so a test can check every key in isolation with no
  * React rendering — Tab, the other navigation/modifier keys, and anything else multi-character
- * (Backspace, F1, …) must all read `false` (09 D-80, the Tab-reveals-every-note regression).
+ * (Backspace, F1, …) must all read `false`, or tabbing past a gated control would reveal its note.
  */
 export function isActivatingKey(key: string): boolean {
   return key === 'Enter' || key === ' ' || key.length === 1
@@ -32,8 +34,7 @@ export function isActivatingKey(key: string): boolean {
  * than that click); `onKeyDown` is for an element that is not a button (a gated `<input>`), where
  * Enter must never submit a form and a keystroke still counts as activation. `activate` takes no
  * argument and calls nothing outside this hook's own state, so a control wired to it can never
- * reach a fetch, a navigation or a route. A second activation changes nothing (09 D-80's own "does
- * nothing new").
+ * reach a fetch, a navigation or a route. A second activation changes nothing.
  */
 export function useGated(feature: FeatureId): {
   readonly feature: Feature
@@ -52,7 +53,7 @@ export function useGated(feature: FeatureId): {
     // Only Enter, Space or a printable character (one code unit: `e.key.length === 1`) counts as
     // activation. Every other key — Tab, Shift, Alt, Control, Meta, Escape, the arrows, Home/End,
     // PageUp/PageDown, function keys, Backspace… — passes through untouched: a sighted-free Tab
-    // sweep through a form (09 D-80's own "activating it does nothing but reveal…") must not
+    // sweep through a form (activating a gated control only reveals its note) must not
     // activate every gated input it lands on, which would flood the polite live regions. Enter
     // must also never submit an enclosing <form> (segments.md B.0, ask.tsx's follow-up).
     if (!isActivatingKey(e.key)) return

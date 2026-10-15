@@ -1,8 +1,8 @@
-// The /segments form as data (06 §/segments, 09 D-69, 19-segments-spec §2): the form's state, the
-// two conversions between it and the 04 filters (toFilters, toForm), and the server's 400
+// The /segments form as data: the form's state, the
+// two conversions between it and the API's filters (toFilters, toForm), and the server's 400
 // problems turned into plain words for the field they name (filterProblems). Pure: no React, no
 // fetch, no storage, so test/ui/segment-form.test.ts checks every filter key without a browser.
-// The browser never normalizes or range-checks a value (02 §Normalization): a number box is sent
+// The browser never normalizes or range-checks a value: a number box is sent
 // as typed and the server's `invalid_filters` details say what is wrong. The limits in those
 // sentences are read from the server's own words, so the page never writes a second copy of them
 // (their one home is shared/segment-filters.ts).
@@ -12,7 +12,7 @@ import { FILTER_KEYS, type FilterKey, type SegmentFilters } from '../shared/segm
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../worker/ingest/quarantine'
 import { monthLabel } from './labels'
 
-/** The form's state: strings and flags as the inputs hold them, turned into 04 filters on submit. */
+/** The form's state: strings and flags as the inputs hold them, turned into API filters on submit. */
 export interface Form {
   /** One status, or 'all' for every status. */
   status: SubscriberStatus | 'all'
@@ -107,7 +107,7 @@ const DAY_FIELDS: readonly FormField[] = ['days', 'signedUpDays', 'siteDays', 'a
 
 const text = (n: number | undefined) => (n === undefined ? '' : String(n))
 
-/** 04 filters as the form holds them; toFilters(toForm(f)) previews the same subscribers as f. */
+/** API filters as the form holds them; toFilters(toForm(f)) previews the same subscribers as f. */
 export function toForm(f: SegmentFilters): Form {
   return {
     status: f.status.length === 1 ? f.status[0] : 'all',
@@ -132,7 +132,7 @@ function num(value: string): number | undefined {
   return v === '' ? undefined : Number(v)
 }
 
-/** The 04 filters object; only set keys are sent, so an empty More filters adds nothing. */
+/** The API's filters object; only set keys are sent, so an empty More filters adds nothing. */
 export function toFilters(form: Form): SegmentFilters {
   const days = num(form.days)
   const more: Partial<SegmentFilters> = {
@@ -207,8 +207,8 @@ function problem(line: string): FilterProblem {
 }
 
 /**
- * The problems of a rejected preview, in the order the server listed them. `details` is the 04
- * §Error envelope's list as received; anything that is not a string is skipped (fail safe: an
+ * The problems of a rejected preview, in the order the server listed them. `details` is the
+ * error envelope's list as received; anything that is not a string is skipped (fail safe: an
  * unexpected shape shows the envelope's message alone).
  */
 export function filterProblems(details: readonly unknown[]): FilterProblem[] {

@@ -1,7 +1,7 @@
-// Previous searches on /segments (19-segments-spec §2, 09 D-69): the last 5 filter objects this
+// Previous searches on /segments: the last 5 filter objects this
 // browser previewed, newest first, exactly as the server echoed them (the canonical `filters` of
 // the preview response). Only the filters are kept: never rows, emails, counts or timestamps, so a
-// count shown later always comes from a fresh preview (03 §No-restart). Stored as
+// count shown later always comes from a fresh preview, never a stale copy. Stored as
 // `{"v":1,"items":[{"filters":{…}}]}` under one localStorage key. Storage can throw (private
 // mode, blocked site data), so every read and write is guarded the way src/theme.ts guards the
 // theme, and the page works without it. Bad JSON or another `v` reads as empty; an item with a
@@ -17,7 +17,7 @@ export const STORAGE_KEY = 'tpo-cdp-previous-searches'
 /** How many previewed filter objects are kept (the example row may add a sixth visible row). */
 export const MAX_PREVIOUS_SEARCHES = 5
 
-/** The brief's R3 example (02 §Counts, 177 active): Instagram, active, no open in 30 days including never-opened. */
+/** The brief's segment example (177 active on the seed): Instagram, active, no open in 30 days including never-opened. */
 export const BRIEF_EXAMPLE: SegmentFilters = {
   status: ['active'],
   source: ['instagram'],
@@ -60,7 +60,7 @@ const isFilterKey = (k: string): k is FilterKey => (FILTER_KEYS as readonly stri
 
 /**
  * A value meets every rule FILTER_SCHEMA declares for its key: JSON type, enum, items.enum,
- * pattern, minimum and maximum (09 D-69 #6). Every string key is an enum or a pattern, so a stored
+ * pattern, minimum and maximum. Every string key is an enum or a pattern, so a stored
  * or recorded copy can never hold an email, a `%40` one, a raw id or any free text, whichever key
  * it sits in; the server enforces the same schema before it echoes.
  */
