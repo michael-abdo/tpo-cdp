@@ -1,17 +1,16 @@
-// GET /api/events/recent (04 §GET /api/events/recent, 06 §/events; R4.10). Mounted at /api by
-// worker/index.ts, behind requireSession. The last 20 app events, newest first by received_at,
-// each resolved at read time by worker/identity/resolve.ts (01 §Identity resolution): its
-// pkey, email and attached_via. /events fetches it on page load, every 5 seconds while its tab is
-// visible (src/events-poll.ts POLL_MS) and on Refresh. Nothing is cached (03 §No-restart), so an
-// event stored a moment ago is in the next response.
+// GET /api/events/recent. Mounted at /api by worker/index.ts, behind requireSession. The last 20
+// app events, newest first by received_at, each resolved at read time by
+// worker/identity/resolve.ts: its pkey, email and attached_via. /events fetches it on page load,
+// every 5 seconds while its tab is visible (src/events-poll.ts POLL_MS) and on Refresh. Nothing
+// is cached, so an event stored a moment ago is in the next response, with no restart.
 //
-// POST /api/events/test (04 §POST /api/events/test, 06 §/events panel, 09 D-73; T-WH-PANEL-*):
-// the "Send a test event" panel behind /events. Session, CSRF and body rules come from the
-// requireJson + requireSession mount on /api/* in worker/index.ts, the same as every other
-// session POST; this route adds its own TEST_EVENT_LIMITER (09 D-70 #6 style: keyed by client,
-// not session). Two bodies: `{user_id, event}` builds a fresh event for a real app account
-// (user_id must exist in app_users, event one of APP_EVENTS, timestamp = demoTimestamp(), a
-// fresh `d_` device id on every send — D-73 amended 2026-10-14, so a test event can never
+// POST /api/events/test (T-WH-PANEL-*): the "Send a test event" panel behind /events, so a
+// reviewer can prove live events work without a terminal. Session, CSRF and body rules come from
+// the requireJson + requireSession mount on /api/* in worker/index.ts, the same as every other
+// session POST; this route adds its own TEST_EVENT_LIMITER (keyed by client, not session, so a
+// new sign-in does not reset it). Two bodies: `{user_id, event}` builds a fresh event for a real
+// app account (user_id must exist in app_users, event one of APP_EVENTS, timestamp =
+// demoTimestamp(), a fresh `d_` device id on every send, so a test event can never
 // touch a real device's identity); `{resend: event_id}` re-sends an already-stored event's
 // exact body unchanged, device_id included, so a resend keeps the stored device. Either way
 // the event is signed with WEBHOOK_SECRET exactly as a client would and run through
@@ -28,7 +27,7 @@ import { feedEventById, recentEvents } from '../identity/resolve'
 import { webhookMac } from '../webhooks/verify'
 import { webhookRoutes } from './webhook'
 
-/** 04 §GET /api/events/recent: "the last 20 app events". */
+/** GET /api/events/recent returns the last 20 app events. */
 export const RECENT_EVENTS_LIMIT = 20
 
 export const eventRoutes = new Hono<AppEnv>()
@@ -116,7 +115,7 @@ function freshId(prefix: string, bytes: number): string {
 }
 
 eventRoutes.post('/events/test', async (c) => {
-  // Its own limit (09 D-70 #6 style), independent of WEBHOOK_LIMITER inside POST /webhooks/app.
+  // Its own per-client limit, independent of WEBHOOK_LIMITER inside POST /webhooks/app.
   const clientKey = c.req.header('cf-connecting-ip') ?? 'local'
   const { success } = await c.env.TEST_EVENT_LIMITER.limit({ key: clientKey })
   if (!success) {
@@ -142,7 +141,7 @@ eventRoutes.post('/events/test', async (c) => {
       event_id: freshId('evt_', 8),
       event: body.event,
       user_id: body.user_id,
-      // Always fresh (09 D-73 amended 2026-10-14): a test send must never re-point an
+      // Always fresh: a test send must never re-point an
       // existing device's identity, real or anonymous, at this account or any other.
       // 8 bytes (64 bits), not 4: a fresh id must not collide with an existing device and
       // silently stitch that device's events to this account.
@@ -151,8 +150,8 @@ eventRoutes.post('/events/test', async (c) => {
     })
   }
 
-  // Signed exactly as a client would (04 §Webhook headers), then run through the real
-  // POST /webhooks/app in process: no second copy of verify or ingest (09 D-73).
+  // Signed exactly as a client would, then run through the real
+  // POST /webhooks/app in process: no second copy of verify or ingest, so the panel proves the real path.
   const timestamp = String(Math.floor(Date.now() / 1000))
   const mac = await webhookMac(requireSecret(c.env, 'WEBHOOK_SECRET'), timestamp, new TextEncoder().encode(bodyText))
   const signature = 'v1=' + [...mac].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -173,7 +172,7 @@ eventRoutes.post('/events/test', async (c) => {
 
   if (webhookRes.status !== 202 && webhookRes.status !== 200) {
     // This route builds and signs the event itself, so any other answer is a server bug, not a
-    // client mistake (CLAUDE.md fail loud); never surface the webhook's own body, which may
+    // client mistake (fail loud); never surface the webhook's own body, which may
     // carry none of our secrets but is not this route's documented shape.
     throw new Error(`events/test: POST /webhooks/app answered ${webhookRes.status} for a self-built event`)
   }

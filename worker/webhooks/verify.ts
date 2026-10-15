@@ -1,18 +1,18 @@
-// Webhook signature check (04 §Webhook headers, 09 D-37; 10 §Controls by surface, webhook).
-// Origin: palisade lib/webhooks/adapters/zoom.ts L19-39 + types.ts L36-53 (14 §3.10, §7): HMAC over
-// timestamp + raw body, prefixed hex, constant-time compare. Two changes from the origin: the
-// signature is checked on the raw bytes before any JSON parsing, and the header timestamp must be
-// fresh (the origin had no freshness check).
+// Webhook signature check: HMAC over the header timestamp + the raw body, prefixed hex,
+// constant-time compare. The signature is checked on the raw bytes before any JSON parsing, so
+// nothing an unauthenticated sender wrote is parsed, and the header timestamp must be fresh, so a
+// captured request cannot be replayed later. A retry re-signs with a fresh timestamp; the event's
+// own body timestamp may be any age.
 
 import { timingSafeEqual } from '../auth/constant-time'
 
 export const TIMESTAMP_HEADER = 'x-webhook-timestamp'
 export const SIGNATURE_HEADER = 'x-webhook-signature'
 export const SIGNATURE_PREFIX = 'v1='
-/** ±300 s between the header timestamp and the server's wall clock (04 §Webhook headers). */
+/** ±300 s between the header timestamp and the server's wall clock (the replay window). */
 export const SIGNATURE_WINDOW_SECONDS = 300
 
-/** The three 401 codes of 04 §Webhook responses. */
+/** The three 401 codes the webhook answers. */
 export type VerifyError = 'missing_headers' | 'bad_signature' | 'stale_timestamp'
 
 export type VerifyResult =
@@ -54,9 +54,10 @@ function fromHex(hex: string): Uint8Array {
 /**
  * Checks the two auth headers against the raw body. Order: both headers present, signature
  * (`v1=` + 64 hex, constant-time compare), then freshness of the header timestamp against
- * `nowSeconds` (the caller's wall clock, which 02 §Time allows for the replay window). The
+ * `nowSeconds` (the caller's wall clock; the replay window is bookkeeping, not a business date). The
  * signature goes first so only a holder of the secret can learn anything about the window.
- * The body's own `timestamp` is never read here: it is the event time and may be any age (R4.7).
+ * The body's own `timestamp` is never read here: it is the event time and may be any age, since
+ * events can arrive late.
  */
 export async function verifyWebhook(
   secret: string,
