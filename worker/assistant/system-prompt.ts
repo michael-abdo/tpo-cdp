@@ -1,20 +1,19 @@
-// The system prompt (design 05 §Exactly what the model receives item 1; 03 §Gateway layers row 4).
-// Origin: palisade app/api/chat/route.ts L104-150 DEFAULT_SYSTEM_PROMPT (14 §1.3, §7), with the
-// D-24 changes: "today" is the TODAY constant, not the wall clock (14 §6 #7); the schema lists
-// only the PII-free views, never a table or an email column (14 §6 #3); tool results are framed
-// as data (14 §5.6); SQL is never shown (14 §6 #6); no write actions exist to confirm.
+// The system prompt. "today" is the TODAY constant, not the wall clock, so answers use the same
+// fixed date as every screen; the schema lists only the PII-free views, never a table or an email
+// column; tool results are framed as data, not instructions; SQL is never shown; the tools only
+// read, so there are no write actions to confirm.
 //
-// Wording follows the brief's own vocabulary (06 §Vocabulary, 09 D-66), and the model is asked to
-// answer in it too.
+// Wording follows the brief's own vocabulary, and the model is asked to answer in it too, so the
+// Growth team reads its own words.
 //
 // Pure: the same views give the same text. Definitions are rendered from shared/derive.ts
-// DEFINITIONS, the one runtime source (02 §Derived), never restated here.
+// DEFINITIONS, the one runtime source, never restated here.
 
 import { TODAY } from '../../shared/config'
 import { DEFINITIONS } from '../../shared/derive'
 import type { ViewSchema } from './schema-context'
 
-/** The result shapes the model may choose (04 §POST /api/assistant `type`; 09 D-42). */
+/** The result shapes the model may choose (the response's `type`). */
 export const OUTPUT_TYPES = ['answer', 'table', 'segment'] as const
 
 function renderViews(views: readonly ViewSchema[]): string {

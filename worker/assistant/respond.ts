@@ -1,16 +1,16 @@
-// The typed result (design 03 §Gateway layers row 10; 04 §POST /api/assistant; 09 D-42).
+// The typed result of POST /api/assistant.
 // The model picks the shape in a final fenced json block (system-prompt.ts "Output"); the server
 // supplies the data:
 //   - the block is zod-validated; a missing or malformed block → `type: answer` with the model's
-//     text and `partial: true` (D-42)
+//     text and `partial: true`
 //   - `table.rows` are always the server-held rows of the last tool result, never model text
 //   - a `segment` answer must name filters that a segment tool call of this request ran with;
 //     its count is that call's count, which is the segment builder's (T-AI-3). Filters the
 //     server never counted make the block malformed, so no count can be invented
-//   - SQL never reaches the teammate (04, 14 §6 #6; T-AI-5): a text with any D-58 sign of SQL
-//     (sqlSign, shared/sql-sign.ts) is discarded whole and replaced by a server sentence built from the typed
+//   - SQL never reaches the teammate (T-AI-5): a text with any sign of SQL (sqlSign,
+//     shared/sql-sign.ts) is discarded whole and replaced by a server sentence built from the typed
 //     result (discardSentence), belt and braces with the system-prompt rule. Nothing is stripped:
-//     every stripping rule that tried to keep prose left a bypass (09 D-58)
+//     every stripping rule that tried to keep prose left a bypass
 //   - the iteration cap → `partial: true` with whatever table exists and a sentence saying so
 //
 // Pure: the model text and the request's tool outputs in, the result out. Re-hydration of pk_
@@ -33,7 +33,7 @@ export interface AssistantTable {
   rows: Record<string, Cell>[]
 }
 
-/** The 04 response body before re-hydration and without `audit_id`. */
+/** The response body before re-hydration and without `audit_id`. */
 export interface AssistantResult {
   type: OutputType
   text: string
@@ -53,14 +53,14 @@ export interface RespondInput {
 
 export interface Responded {
   result: AssistantResult
-  /** Why the result is partial, and which D-58 sign discarded the model text, for the caller's log and ai_audit row. */
+  /** Why the result is partial, and which sign of SQL discarded the model text, for the caller's log and ai_audit row. */
   notes: { malformed: string | null; sqlDiscarded: SqlSign | null }
 }
 
 const DEFINITION_KEYS = Object.keys(DEFINITIONS) as [DefinitionKey, ...DefinitionKey[]]
 const isoDate = z.string().refine(isIsoDate, 'must be YYYY-MM-DD')
 
-/** The final json block (09 D-42). Unknown fields are dropped. */
+/** The final json block the model must end with. Unknown fields are dropped. */
 export const FinalBlock = z
   .object({
     type: z.enum(OUTPUT_TYPES),
@@ -78,13 +78,13 @@ export const FinalBlock = z
 // the block's own "text" value (an SQL fence the model quoted) cannot end the block early.
 const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g
 
-// T-AI-5 by rejection, not stripping (09 D-58): the check itself lives in shared/sql-sign.ts, the
+// T-AI-5 by rejection, not stripping: the check itself lives in shared/sql-sign.ts, the
 // one home the Insights answer card also uses to screen filters_applied. Re-exported for the tests.
 export { type SqlSign, sqlSign }
 
-/** The server's own sentence for a discarded text, built from the typed result (09 D-58). D-58's
- * example "177 readers match." reads "177 subscribers match." in the brief's words (09 D-66); a count
- * of 1 reads "1 subscriber matches." so the sentence stays grammatical. A table result with no table gets the answer sentence (see respond()). */
+/** The server's own sentence for a discarded text, built from the typed result: "177 subscribers
+ * match." in the brief's words; a count of 1 reads "1 subscriber matches." so the sentence stays
+ * grammatical. A table result with no table gets the answer sentence (see respond()). */
 export function discardSentence(type: OutputType, count: number | null): string {
   if (type === 'segment') {
     if (count === null) throw new Error('discardSentence: a segment result has a count')
@@ -103,7 +103,7 @@ function lastJsonBlock(text: string): string | null {
 /**
  * Filters compared by their canonical form: parseFilters returns lists sorted and deduped, every
  * key in FILTER_KEYS order and no-op values dropped (worker/segments/compile.ts), so the order the
- * model lists statuses or sources in does not matter and every filter key counts (09 D-69).
+ * model lists statuses or sources in does not matter and every filter key counts.
  */
 function filterKey(filters: SegmentFilters): string {
   return JSON.stringify(filters)
@@ -117,7 +117,7 @@ function tableOf(output: ToolOutput | undefined): AssistantTable | null {
 const CAPPED_TEXT = `The assistant reached its limit of ${MAX_TOOL_ITERATIONS} tool rounds before it finished, so this answer is incomplete.`
 const EMPTY_TEXT = 'The assistant did not return a usable answer.'
 
-/** The model's text, or the server sentence when it shows a sign of SQL (09 D-58). */
+/** The model's text, or the server sentence when it shows a sign of SQL. */
 function screened(text: string, type: OutputType, count: number | null): { text: string; sqlDiscarded: SqlSign | null } {
   const sign = sqlSign(text)
   if (sign !== null) return { text: discardSentence(type, count), sqlDiscarded: sign }
@@ -126,7 +126,7 @@ function screened(text: string, type: OutputType, count: number | null): { text:
 
 export function respond(input: RespondInput): Responded {
   const last = input.outputs.at(-1)
-  // A partial result is always type answer with no counted segment (09 D-42), so its discard
+  // A partial result is always type answer with no counted segment, so its discard
   // sentence is the answer one, even when the model meant a segment or table.
   const partialResult = (text: string, malformed: string): Responded => {
     const shown = screened(text.replace(JSON_FENCE, ' '), 'answer', null)

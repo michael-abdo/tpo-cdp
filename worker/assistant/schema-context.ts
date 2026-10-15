@@ -1,11 +1,9 @@
-// The PII-free view schema the model is told about (design 03 §Gateway layers row 4; 05 §Exactly
-// what the model receives item 1; 01 §PII-free views). Origin: palisade
-// gateway/schema-discovery.ts L505-529 (14 §4): the Drizzle introspection becomes one
-// sqlite_master query plus PRAGMA table_info per view, and only `v_*` views are listed, never a
-// table.
+// The PII-free view schema the model is told about: one sqlite_master query plus PRAGMA
+// table_info per view. Only `v_*` views are listed, never a table.
 //
-// Cached per isolate (03 §No-restart): the column list changes only with a migration, which is a
-// deploy. The cache holds names and types only, never data, so lookup and segments are unaffected.
+// Cached per isolate: the column list changes only with a migration, which is a deploy. The cache
+// holds names and types only, never data, so new events still show up without a restart and
+// lookup and segments are unaffected.
 
 import { PII_COLUMNS } from '../../shared/pii'
 

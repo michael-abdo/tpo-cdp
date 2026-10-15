@@ -1,17 +1,15 @@
-// The model loop (design 03 §Gateway layers rows 5, 6, 11; 07 §H; 09 D-03, D-54). Origin:
-// palisade app/api/chat/route.ts runAnthropic L242-358 (14 §1.2, §4 "adapt heavily"): a
-// non-streaming messages.create in a loop of at most 5 tool iterations. Changes:
-//   - the transport is a parameter (09 D-54): production passes `anthropicTransport`, the
-//     official SDK against Anthropic's own URL (09 D-03, no AI Gateway in the MVP) with SDK retries
-//     off (fail loud, no silent retries); tests pass a function returning a Messages-API-shaped
-//     response written in the test file
+// The model loop: a non-streaming messages.create in a loop of at most 5 tool iterations.
+//   - the transport is a parameter: production passes `anthropicTransport`, the official SDK
+//     against Anthropic's own URL with SDK retries off (fail loud, no silent retries); tests pass
+//     a function returning a Messages-API-shaped response written in the test file, so the loop
+//     runs in tests with no network and no mock of our own code
 //   - every request is built by the pure buildModelRequest and scanned with assertNoPII before
-//     it is sent; every response is scanned before anything reads it (05 §Scanner)
+//     it is sent; every response is scanned before anything reads it
 //   - every model call writes an awaited ai_audit `model_request` row holding the exact
-//     payload that was sent (03 row 11)
+//     payload that was sent
 //   - after 5 tool rounds a further tool request is not run: the loop stops with `capped`
-//     and respond.ts returns `partial: true` (04)
-//   - one JSON response, no streaming (parked, 16)
+//     and respond.ts returns `partial: true`, which bounds the cost and time of one question
+//   - one JSON response, no streaming (not built)
 
 import Anthropic from '@anthropic-ai/sdk'
 import { ApiError } from '../auth/middleware'
@@ -24,19 +22,19 @@ import type { ToolOutput } from './tools/builtin-handlers'
 import { executeToolCall } from './tools/tool-executor'
 import type { LoadedTools } from './tools/tool-loader'
 
-/** 03 row 6. */
+/** Tool rounds per question; the model asking for a sixth ends the loop with a partial answer. */
 export const MAX_TOOL_ITERATIONS = 5
 
-/** One Messages API call (09 D-54). */
+/** One Messages API call; a parameter so tests can supply the response. */
 export type MessagesTransport = (request: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>
 
-/** Production transport: Anthropic's Messages API, called directly with ANTHROPIC_API_KEY (09 D-03). */
+/** Production transport: Anthropic's Messages API, called directly with ANTHROPIC_API_KEY. */
 export function anthropicTransport(apiKey: string): MessagesTransport {
   const client = new Anthropic({ apiKey, maxRetries: 0 })
   return (request) => client.messages.create(request)
 }
 
-/** 502 model_error (04). The status and the provider's message are logged, never the key. */
+/** 502 model_error. The status and the provider's message are logged, never the key. */
 export class ModelError extends ApiError {
   constructor() {
     super(502, 'model_error', 'The AI model could not be reached or returned an error. The failure has been logged; try again.')
@@ -57,9 +55,9 @@ export interface LoopResult {
   /** The text blocks of the last response, joined; null when the loop was capped. */
   finalText: string | null
   stopReason: Anthropic.StopReason | null
-  /** Every tool result that ran, in call order (the last one feeds table.rows, 09 D-42). */
+  /** Every tool result that ran, in call order (the last one feeds table.rows). */
   outputs: ToolOutput[]
-  /** The model asked for a sixth tool round (03 row 6). */
+  /** The model asked for a sixth tool round. */
   capped: boolean
   modelCalls: number
 }
@@ -95,7 +93,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     const request = buildModelRequest({ views: input.views, tools: input.tools.definitions, question: input.question, rounds })
     await guardPayload(input.trace, request, 'model_request')
 
-    const started = Date.now() // wall clock for ai_audit.latency_ms only (02 §Time allow-list)
+    const started = Date.now() // wall clock for ai_audit.latency_ms only, never a business date
     let response: Anthropic.Message
     try {
       response = await input.transport(request)
@@ -115,8 +113,8 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     }
 
     await guardPayload(input.trace, response.content, 'model_output')
-    // 09 D-74 (design 20 §3 R2): cache_read_input_tokens / cache_creation_input_tokens are prompt
-    // tokens too (R1 put a cache breakpoint in the system block), so tokens_in keeps meaning "the
+    // cache_read_input_tokens / cache_creation_input_tokens are prompt tokens too (build-request.ts
+    // puts a cache breakpoint in the system block), so tokens_in keeps meaning "the
     // total prompt tokens sent" — unchanged on a cold call, where both meters are 0 or absent.
     const cacheRead = response.usage.cache_read_input_tokens ?? 0
     const cacheWrite = response.usage.cache_creation_input_tokens ?? 0

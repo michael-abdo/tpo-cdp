@@ -1,8 +1,7 @@
-// ai_audit writer (design 03 §Gateway layers row 11; table 01 §Tables ai_audit; 05 §Proof surfaces).
-// Origin: palisade gateway/audit-logger.ts L19-87 (14 §4, §7), with the D-24 gaps closed: every
-// write is awaited and a failed write is loud (the origin's `catch {}` swallowed it, 14 §3.8), and
-// the stored payload is the post-scanner one with the question redacted, never the raw prompt
-// (the origin persisted the raw prompt, 14 §6 #11).
+// ai_audit writer: the record of what the model was sent and what it did. Every write is awaited
+// and a failed write is loud, so a call can never happen without its audit row; the stored
+// payload is the one that passed the PII scanner, with the question redacted, never the raw
+// prompt, so the audit table cannot become a second place PII is kept.
 
 import { findPII, type KnownEmails, loadKnownEmails } from '../gates/pii-guard'
 
@@ -13,25 +12,25 @@ export type AuditStatus = 'success' | 'error' | 'blocked'
 export interface AuditEntry {
   kind: AuditKind
   status: AuditStatus
-  /** NULL for model_request rows (01); required for tool_call rows. */
+  /** NULL for model_request rows; required for tool_call rows. */
   tool_name?: string | null
   latency_ms?: number | null
   model?: string | null
   tokens_in?: number | null
   tokens_out?: number | null
-  /** 09 D-74 (migration 0008): the usage meters a prompt-cached call reports; 0 or NULL on a cold call. */
+  /** Migration 0008: the usage meters a prompt-cached call reports; 0 or NULL on a cold call. */
   cache_read_tokens?: number | null
   cache_write_tokens?: number | null
   /** model_request: the exact payload sent, after `assertNoPII`. */
   request_json?: unknown
   response_json?: unknown
-  /** query_sql tool_call rows only (01). */
+  /** query_sql tool_call rows only. */
   sql?: string | null
   row_count?: number | null
   error?: string | null
 }
 
-/** A write that did not happen. Thrown, never swallowed (CLAUDE.md "Loud"); onError renders a 500. */
+/** A write that did not happen. Thrown, never swallowed, so a missing audit row is never silent; onError renders a 500. */
 export class AuditWriteError extends Error {
   constructor(message: string, options?: { cause: unknown }) {
     super(message, options)
@@ -64,16 +63,16 @@ function checkShape(entry: AuditEntry): void {
 }
 
 /**
- * The audit trail of one assistant request: one `trace_id` shared by every row it writes (03
- * row 11), returned to the UI as `audit_id` (04). Holds the request's known-email set so the
- * gates and this writer scan with the same data (05 §Scanner).
+ * The audit trail of one assistant request: one `trace_id` shared by every row it writes,
+ * returned to the UI as `audit_id`. Holds the request's known-email set so the gates and this
+ * writer scan with the same data.
  */
 export class AuditTrace {
   readonly traceId: string
   readonly knownEmails: KnownEmails
-  /** The session's random `sub` (04 §Auth), stored on every row for the per-session limit (09 D-40); null outside a session. */
+  /** The session's random `sub`, stored on every row for the per-session hourly limit; null outside a session. */
   readonly sessionSub: string | null
-  /** The client's keyed network hash (shared/pseudonym.ts clientKeyHash), stored on every row for the per-client hourly count (09 D-70 #6); null outside a request. */
+  /** The client's keyed network hash (shared/pseudonym.ts clientKeyHash), stored on every row for the per-client hourly count, so signing in again does not reset the limit; null outside a request. */
   readonly clientKey: string | null
   private readonly db: D1Database
 
@@ -108,7 +107,7 @@ export class AuditTrace {
       }
     }
     const id = crypto.randomUUID()
-    // Wall clock: ai_audit.created_at is on the 02 §Time allow-list.
+    // Wall clock: created_at records when the call happened; no date rule reads it.
     const createdAt = new Date().toISOString()
     try {
       const result = await this.db
@@ -150,7 +149,7 @@ export class AuditTrace {
   }
 }
 
-/** Opens the trace for one assistant request: loads the request's known-email set (05 §Scanner). */
+/** Opens the trace for one assistant request: loads the request's known-email set for the PII scans. */
 export async function startTrace(db: D1Database, sessionSub: string | null = null, clientKey: string | null = null): Promise<AuditTrace> {
   return new AuditTrace(db, await loadKnownEmails(db), sessionSub, clientKey)
 }

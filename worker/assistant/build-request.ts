@@ -1,30 +1,27 @@
-// The only builder of a model request (design 05 §Exactly what the model receives; 03 §Gateway
-// layers row 4). Origin: palisade app/api/chat/route.ts L53-93 buildSystemPrompt and the request
-// assembly in runAnthropic L242-358 (14 §7), extracted as one pure function (14 §4).
+// The only builder of a model request, so exactly one function decides what the model sees.
 //
 // Pure: no database, no clock, no randomness, no network. It takes typed inputs, never rows:
 //   1. system  — rendered by system-prompt.ts from the view schema
 //   2. messages — the Gate 1 question (a SanitizedQuestion, so raw text cannot be passed), then for
 //      each tool round the model's own content blocks and the framed tool results of this request
-//      (single-shot: no history, 09 D-34)
-//   3. tools   — the enabled assistant_tools rows as Anthropic tool definitions (03 row 3)
-// The caller scans the returned object with assertNoPII before it is sent (03 row 5).
+//      (single-shot: no conversation history, which would be the hardest path to keep PII off)
+//   3. tools   — the enabled assistant_tools rows as Anthropic tool definitions (tools/tool-loader.ts)
+// The caller scans the returned object with assertNoPII before it is sent.
 
 import type Anthropic from '@anthropic-ai/sdk'
 import type { SanitizedQuestion } from './gates/gate1-input-sanitizer'
 import type { ViewSchema } from './schema-context'
 import { renderSystemPrompt } from './system-prompt'
 
-/** 09 D-03: Claude Opus 5.5, called directly. */
+/** Claude Opus 5.5, called directly. */
 export const MODEL = 'claude-opus-5-5'
 
 /**
- * 09 D-57 (amends D-45): the model's thinking counts against max_tokens, and 2,048 could cut an
- * answer short.
+ * The model's thinking counts against max_tokens, and 2,048 could cut an answer short.
  */
 export const MAX_TOKENS = 8192
 
-// 09 D-57: no sampling parameter (temperature, top_p, top_k) and no forced tool_choice is sent,
+// No sampling parameter (temperature, top_p, top_k) and no forced tool_choice is sent,
 // because Claude Opus 5.5 rejects each with a 400; tool_choice stays at its default (auto) and
 // thinking at the model's default, which cannot be disabled. Determinism comes from the tools
 // (fixed SQL, stored definitions), not from sampling.
@@ -35,7 +32,7 @@ export type ModelTool = Pick<Anthropic.Tool, 'name' | 'description' | 'input_sch
 /**
  * One tool round of this request: the model's response content, sent back unchanged (it may
  * hold thinking blocks that must be returned as they came), and one result per tool_use block,
- * already framed as untrusted data by the tool executor (03 row 9).
+ * already framed as untrusted data by the tool executor.
  */
 export interface ToolRound {
   assistant: readonly Anthropic.ContentBlockParam[]
@@ -75,9 +72,10 @@ export function buildModelRequest(input: ModelRequestInput): Anthropic.MessageCr
   return {
     model: MODEL,
     max_tokens: MAX_TOKENS,
-    // 09 D-74 / design 20 §3 R1: the system prompt as one text block with an ephemeral cache
-    // breakpoint, so tools + system (rendered before it, see module header) are served from
-    // Anthropic's prompt cache on every call within the 5-minute TTL. The bytes the model reads
+    // The system prompt as one text block with an ephemeral cache breakpoint, so tools + system
+    // (rendered before it, see module header) are served from Anthropic's prompt cache on every
+    // call within the 5-minute TTL: most input tokens are this same prefix, so caching it is the
+    // one cost cut that changes nothing the model sees. The bytes the model reads
     // are unchanged (pii.test.ts "buildModelRequest is pure"); no marker on a tool (T-AI-1 pins
     // tools verbatim) and no top-level cache_control (it would land on the unique tail and pay a
     // write per call).
