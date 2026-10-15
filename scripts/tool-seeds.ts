@@ -158,7 +158,9 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
       'segment and aggregate cannot answer. The server refuses the query unless: it starts with SELECT; it is one ' +
       'statement with no ";"; it has no WITH, PRAGMA, ATTACH or comments; it reads only those views and their columns, ' +
       'written plainly without quotes; two views are read together only with JOIN … ON a.pkey = b.pkey (or ' +
-      'visitor_hash), never a comma list, never another column, and never a view joined to itself; ' +
+      'visitor_hash), where each JOIN\'s ON names the view it brings in and one before it, never a comma list, never ' +
+      'another column, and never a view joined to itself; a subquery that refers to the outer query matches it only ' +
+      'on pkey or visitor_hash; ' +
       'every computed column is named with AS; dates are literals counted from TODAY ' +
       '(never \'now\' or CURRENT_DATE); date(), datetime(), julianday() and strftime() take a \'YYYY-MM-DD\' literal or a ' +
       'date column (signup_date, last_open_date, cold_since, app_created_at, event_ts) as their time value, never ' +

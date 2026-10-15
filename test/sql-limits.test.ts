@@ -742,3 +742,11 @@ describe('a correlated subquery may look rows up only by an identity column', ()
     expect(conversion.rows.length).toBeGreaterThan(0)
   })
 })
+
+describe('the query_sql row tells the model the rules above, so its first query can pass', () => {
+  it('names the linked-JOIN rule and the identity-only correlation rule', () => {
+    const description = TOOL_SEEDS.find((t) => t.name === 'query_sql')!.description
+    expect(description).toContain("each JOIN's ON names the view it brings in and one before it")
+    expect(description).toContain('a subquery that refers to the outer query matches it only on pkey or visitor_hash')
+  })
+})
