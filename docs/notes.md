@@ -469,9 +469,24 @@ The other concern I would address next: **prompt injection through event data.**
 
 ## How this was built
 
-**Short version:** the code is AI-written; the product decisions are mine. I directed Claude Code, set every requirement and trade-off, and accepted or rejected each change after an automated adversarial review. I wrote no application code by hand.
+**Short version:** the code is AI-written; the product decisions are mine. I wrote no application code by hand.
 
-**The build loop.** Each unit of work went through the same harness: one AI agent implemented it from the design docs, then three AI reviewers tried to break it (spec, process rules, tests), and a fixer closed what they found, up to two rounds. A unit still blocked after two rounds went to the orchestrating Claude session, which either fixed it with a mutation-checked test or brought me a design call (logged as a decision). That is why about half the commits are `fix:` commits: each one closes a defect a reviewer proved with a probe or a code mutation.
+**Who did what.**
+
+- **Me:** I wrote the specs (the design notes, kept outside this repo) and made the design calls. The ones that shaped the product are in the table below and under [Assumptions](#assumptions).
+- **Builder agents** (Claude Code) built each unit from those specs.
+- **Reviewer and fixer agents** then worked on it without me watching: reviewers tried to break it (against the spec, the process rules and the tests), a fixer closed what they found, and the review ran again. Most units needed one or two rounds; [`docs/ai-log.md`](ai-log.md) records rounds up to 6 ("Fixer round 6").
+- **An orchestrating Claude Code session** merged a unit once its tests and its review passed. A unit still blocked went to that session, which either fixed it with a mutation-checked test or brought me a design call (logged as a decision).
+- **Every deploy** waited for my explicit go-ahead and was followed by a live check ([Deploy](#deploy)).
+
+That loop is why about a third of the commits are fixes: 119 of the 356 non-merge commits up to `d6e043c` have a subject that starts with `fix:` or `fix(`.
+
+```bash
+git rev-list --no-merges --count d6e043c                        # 356
+git log --no-merges --format=%s d6e043c | grep -cE '^fix(\(|:)'  # 119
+```
+
+**The self-audit as a check.** The self-audit prompt was also run several times during the build. The commits that fixed what it found say so (`git log -i --grep=self-audit d6e043c`), for example `5ecd5b4` and `6706bab` (a practice run at `af7296e`), `e560cb3`, `46fdc9d` (a run at `1200107`) and `d6e043c` (a run at `3647a5a`). The self-audit handed in with this repo is a fresh session, run on the final commit.
 
 **Where it was wrong.** [`docs/ai-log.md`](ai-log.md) records every AI mistake that was caught: what was asked, what was wrong, how it was caught, and the fix. The ones worth reading first:
 - The SQL-in-answers filter: three stripping rules in a row were bypassed (line breaks, lower case, a keyword per line). The orchestrating session replaced stripping with rejection (the whole text is discarded and replaced by a server sentence).
@@ -492,7 +507,13 @@ The other concern I would address next: **prompt injection through event data.**
 | 2026-10-14 | Segments stays its own page (requirement 3 must work when the model is down) (built on main); previous searches and five more filters (built) |
 | 2026-10-14 | Settings: one home per definition now; a Settings page for the cold window and engagement score later |
 
-**A note on the history.** Every commit is AI-written, and the trailers vary. Most carry `Co-Authored-By: Claude`; some name a model version; some carry a `Claude-Session:` link to the private Claude Code session that wrote them (a tooling default; the link opens only for the account owner), beside or instead of that trailer; and some carry none: four early UI commits (`ee55b54`, `7e95597`, `fb03a8d`, `d9dfbb9`), the Insights review rounds (`b429335` through `aaad21f`), a few others, and every commit from 2026-10-14 evening on, after the tooling stopped adding attribution lines. `git log --format='%h %(trailers:only)'` shows each commit's lines. The history was not rewritten.
+**A note on the history.** Every commit is AI-written, and the trailers vary. The counts below are for the 356 non-merge commits up to `d6e043c`; `git log --no-merges --format='%h %(trailers:only,unfold,separator=;)' d6e043c` shows each commit's lines.
+
+- **257** carry a `Co-Authored-By: Claude` line; 111 of those name a model version.
+- **123** carry a `Claude-Session:` link to the private Claude Code session that wrote them (a tooling default; the link opens only for the account owner). For 21 of them it is the only trailer.
+- **78** carry none: four early UI commits (`ee55b54`, `7e95597`, `fb03a8d`, `d9dfbb9`), nine commits of the Insights review rounds 1–3 (`b429335` to `aaad21f`), `6d5475b`, `41f8cc1`, and 63 commits made on 2026-10-14 between 14:20 and 19:20 (UTC−5), from `5ecd5b4` to `df8385f`. In that window only `19506f6` has a trailer. Every commit from `1200107` (19:42) to `d6e043c` carries `Co-Authored-By: Claude`.
+- **21** have a committer date later than their author date (`git log --format='%h %at %ct' d6e043c | awk '$2 != $3'`): five committed 2026-10-13 at 12:13, five at 19:43, and eleven on 2026-10-14 at 07:41. They were rebased on local branches before they were merged, so four hashes cited in `docs/ai-log.md` changed (its hash map lists them). No pushed commit was force-rewritten.
+- **Tags** `v0-r1-r3`, `v1-r4` and `v2-all` mark plan checkpoints, and each label names the day the plan set for it ("Wed Oct 14", "Fri Oct 16"). All three were made on 2026-10-13, so `v1-r4` and `v2-all` were reached early (`git for-each-ref --format='%(refname:short) %(taggerdate:short) %(contents:subject)' refs/tags`).
 
 **Design references.** Comments and commits cite decision IDs (`D-xx`) and design sections (`02 §Counts`, `06 §UI principles`). Those design documents are kept in a private workspace; the decisions that shape behaviour are summarized under [Assumptions](#assumptions) in these notes.
 
