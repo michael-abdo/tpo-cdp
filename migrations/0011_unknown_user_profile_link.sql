@@ -1,31 +1,27 @@
--- Unknown-user stubs are visible to the assistant (09 D-78(b)). profiles.email_norm stays NULL
--- for an unknown_user_stub profile (01 §Tables), so the old v_app_events join
+-- Unknown-user stubs are visible to the assistant. profiles.email_norm stays NULL
+-- for an unknown_user_stub profile, so the old v_app_events join
 -- (`profiles p ON p.email_norm = u.email_norm`) never matches one: SQL NULL = NULL is unknown,
 -- not true, so a stub's events resolved to pkey NULL in the model's views while Look up and
--- /events (which read app_users/profiles directly, 04) already showed them under the stub.
+-- /events (which read app_users/profiles directly) already showed them under the stub.
 -- worker/webhooks/ingest.ts keys a stub's pkey as HMAC("user:" + user_id) (shared/pseudonym.ts
 -- pkeyForUnknownUser); no existing column joins that pkey back to the app_users row it came
 -- from, so this adds one. `user_id` is already in the PII denylist (shared/pii.ts) by name,
 -- so no view may select this column either; it exists only to be joined on.
---
--- Numbered 0011: another branch already adds 0010_drop_tool_approval.sql (09 D-77) and is not
--- merged into this branch yet; the orchestrator renumbers nothing and merges that branch first,
--- so 0010 is simply absent here and this migration takes the next free number.
 
 -- v_profiles (0002_views.sql) has the identical gap: its `app` CTE joins app_users to a profile
 -- by email_norm only (`WHERE email_norm IS NOT NULL ... app.email_norm = p.email_norm`), so a
 -- stub's has_app/app_created_at came back 0/NULL there while GET /api/lookup (worker/routes/
--- lookup.ts) already answered has_app: true for the same stub. 09 D-78(b) asks for "any other
--- view with the same email-only join to a person", and this is one, so it is recreated below too.
+-- lookup.ts) already answered has_app: true for the same stub. Every view that joins an app user
+-- to a person by email only has this gap, so it is recreated below too.
 ALTER TABLE profiles ADD COLUMN user_id TEXT; -- PII; set only for kind = 'unknown_user_stub'
 
 DROP VIEW v_app_events;
 DROP VIEW v_profiles;
 
--- Resolves an event to a person the same way Look up and /events already do (01 §Identity
--- resolution): the event's own user_id, or for an anonymous event the device's most recent
+-- Resolves an event to a person the same way Look up and /events already do: the event's own
+-- user_id, or for an anonymous event the device's most recent
 -- user; then that user's email profile (pe, by app_users.email_norm = profiles.email_norm); when
--- the user has no email (a stub created by the webhook, 02 §Linking 4) its unknown_user_stub
+-- the user has no email (a stub created by the webhook) its unknown_user_stub
 -- profile instead (pu, by profiles.user_id = app_users.user_id). On the seed (no stubs) and for
 -- any known user, at most one of the two joins fires: a stub's app_users row always has
 -- email_norm NULL, and a known user's profiles row always has user_id NULL (set only on stubs).

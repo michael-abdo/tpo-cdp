@@ -1,16 +1,18 @@
--- Core tables. DDL home: design 01 §Tables and §Indexes; derived columns stored per 09 D-46;
--- assistant_tools and ai_audit translated from 14 §4.1 with 01's enums.
--- Timestamps are ISO-8601 TEXT in UTC (02 §Time). Columns marked PII are in 01 §PII denylist
--- and are never selected by a v_* view (0002_views.sql, T-PII-2).
--- CHECK constraints cover the enums whose home is 01. Sets owned elsewhere (the canonical
--- source set and the quarantine reasons, both 02) are enforced by their single module.
+-- Core tables. Derived values (cold_since, engagement_score) are computed once by
+-- shared/derive.ts when a row is written and then stored, so SQL only compares columns and
+-- never repeats a formula that could drift from the code.
+-- Timestamps are ISO-8601 TEXT in UTC. Columns marked PII are listed in PII_COLUMNS
+-- (shared/pii.ts) and are never selected by a v_* view (0002_views.sql, T-PII-2).
+-- CHECK constraints cover the enums that belong to these tables. Sets owned by code (the
+-- canonical sources in shared/normalize.ts, the quarantine reasons in worker/ingest/quarantine.ts)
+-- are enforced by that one module, so each list has a single home.
 
 CREATE TABLE profiles (
-  pkey             TEXT PRIMARY KEY,                -- 05 §Pseudonymous key (shared/pseudonym.ts)
+  pkey             TEXT PRIMARY KEY,                -- keyed hash, not reversible (shared/pseudonym.ts)
   email_norm       TEXT,                            -- PII; NULL for unknown_user_stub profiles
   kind             TEXT NOT NULL CHECK (kind IN ('subscriber','app_only','unknown_user_stub')),
-  engagement_score INTEGER NOT NULL CHECK (engagement_score BETWEEN 0 AND 100), -- shared/derive.ts, D-46
-  created_at       TEXT NOT NULL                    -- source per 09 D-44
+  engagement_score INTEGER NOT NULL CHECK (engagement_score BETWEEN 0 AND 100), -- stored by shared/derive.ts
+  created_at       TEXT NOT NULL                    -- signup_date, else app created_at; webhook stubs: received_at
 );
 
 CREATE TABLE subscribers (
@@ -18,9 +20,9 @@ CREATE TABLE subscribers (
   email_raw      TEXT NOT NULL,                     -- PII, first spelling seen
   signup_date    TEXT NOT NULL,
   status         TEXT NOT NULL CHECK (status IN ('active','unsubscribed')),
-  source         TEXT,                              -- canonical (02 §Normalization); NULL = blank
+  source         TEXT,                              -- canonical (shared/normalize.ts); NULL = blank
   last_open_date TEXT,                              -- NULL = never opened
-  cold_since     TEXT NOT NULL,                     -- shared/derive.ts, D-46
+  cold_since     TEXT NOT NULL,                     -- stored by shared/derive.ts
   merged_count   INTEGER NOT NULL DEFAULT 1 CHECK (merged_count >= 1)
 );
 
@@ -31,8 +33,8 @@ CREATE TABLE web_visitors (
   first_seen_ts    TEXT NOT NULL,
   first_page       TEXT NOT NULL,
   first_utm_source TEXT,                            -- canonical
-  -- event_ts of the /subscribe row that carried the email (02 §Linking 2): /api/lookup marks
-  -- earlier events pre_signup (04). Not derivable from web_events, where a visitor can have
+  -- event_ts of the /subscribe row that carried the email: /api/lookup marks earlier events
+  -- pre_signup. Not derivable from web_events, where a visitor can have
   -- several /subscribe rows and most carry no email. NULL exactly when email_norm is NULL:
   -- the seed (worker/ingest/web.ts) writes both from the same row and /api/lookup fails loud
   -- on a linked visitor without it.
@@ -55,18 +57,18 @@ CREATE TABLE app_users (
 );
 
 CREATE TABLE app_events (
-  event_id    TEXT PRIMARY KEY,                     -- idempotency key (04 §Webhook)
+  event_id    TEXT PRIMARY KEY,                     -- idempotency key: a resent event is stored once
   event       TEXT NOT NULL CHECK (event IN ('app_open','read_story','link_click','login')),
   user_id     TEXT,                                 -- PII; as sent, NULL when anonymous
   device_id   TEXT NOT NULL,                        -- PII
   event_ts    TEXT NOT NULL,                        -- payload timestamp, the ordering key
-  received_at TEXT NOT NULL,                        -- wall clock (02 §Time)
+  received_at TEXT NOT NULL,                        -- wall clock, when the webhook arrived
   properties  TEXT CHECK (properties IS NULL OR json_valid(properties)) -- PII possible
 );
 
 CREATE TABLE device_identity (
   device_id    TEXT PRIMARY KEY,                    -- PII
-  user_id      TEXT NOT NULL,                       -- PII; most recent user by event_ts (09 D-43)
+  user_id      TEXT NOT NULL,                       -- PII; most recent user by event_ts, not arrival order
   last_seen_ts TEXT NOT NULL
 );
 
@@ -85,7 +87,7 @@ CREATE TABLE quarantine (
   run_id  INTEGER NOT NULL REFERENCES import_runs (id),
   file    TEXT NOT NULL CHECK (file IN ('subscribers','web_events','app_users')),
   line_no INTEGER NOT NULL,
-  reason  TEXT NOT NULL,                            -- enum in 02 §Quarantine
+  reason  TEXT NOT NULL,                            -- enum in worker/ingest/quarantine.ts
   raw_row TEXT NOT NULL                             -- PII possible
 );
 
@@ -118,7 +120,7 @@ CREATE TABLE ai_audit (
   sql           TEXT,
   row_count     INTEGER,
   error         TEXT,
-  created_at    TEXT NOT NULL                       -- wall clock (02 §Time)
+  created_at    TEXT NOT NULL                       -- wall clock, when the call happened
 );
 
 CREATE INDEX subscribers_status_source_open ON subscribers (status, source, last_open_date);
