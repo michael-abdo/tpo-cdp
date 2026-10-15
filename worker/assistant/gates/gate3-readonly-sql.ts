@@ -1,26 +1,26 @@
-// Gate 3, the read-only SQL floor (design 03 §Gateway layers row 8; 14 §3.5, §7 "gate3-readonly-sql.ts
-// ← gateway/query-data.ts L45-136"). Origin: palisade query-data.ts: `^SELECT` only, a single
-// statement, a forced LIMIT 100, the error string to the model. Changes (09 D-24):
-//   - one attempt: a failed query goes back to the model once as a sanitized error, never the
-//     origin's silent 3× retry
+// Gate 3, the read-only SQL floor: `^SELECT` only, a single statement, a forced LIMIT 100, and
+// a sanitized error string back to the model.
+//   - one attempt: a failed query goes back to the model once as a sanitized error, never a
+//     silent retry
 //   - `;` is refused anywhere outside a string, so even a trailing `;` is a second statement
 //   - PRAGMA, ATTACH, DETACH and WITH are refused as words anywhere outside a string
 //   - comments are refused: a `--` at the end would comment out the LIMIT this gate appends
 //   - the LIMIT is an integer ≤ 100: a top-level `LIMIT n` is capped, a non-integer or negative
 //     one (`LIMIT -1` means "no limit" in SQLite) is refused, and a query without one gets
 //     `LIMIT 100` appended
-//   - the D1 role/RLS floor of the origin has no SQLite equivalent; the floor here is this file
-//     plus Gate 2's view allowlist (gate2-tool-authorizer.ts) over views that select no PII (01)
+//   - SQLite has no database roles or row-level security, so the floor is this file plus Gate 2's
+//     view allowlist (gate2-tool-authorizer.ts) over views that select no PII
 //
-// This is the only path in the codebase that runs SQL text it did not write itself (CLAUDE.md
-// "bound params everywhere except Gate 3"): the text comes from the model (query_sql) and is
+// This is the only path in the codebase that runs SQL text it did not write itself (everywhere
+// else every value is a bound parameter): the text comes from the model (query_sql) and is
 // executed as given, after Gate 2 and these checks. Values are still bound when the caller has
 // any (`?` markers, counted here).
 //
 // `lexSql` is shared with Gate 2 so both gates read the same tokens: strings, quoted names and
 // comments are recognised once, here.
 //
-// Three limits on model-run SQL (09 D-81), all enforced inside `runReadOnlySelect` so every
+// Three limits on model-run SQL, so one bad join cannot slow the live database, all enforced
+// inside `runReadOnlySelect` so every
 // caller gets all three with no second copy: the `query_sql` and `query`-row builtin handlers
 // (builtin-handlers.ts) both call it, and the insight board's re-runs and pins reach D1 only
 // through those same handlers (board.ts → tool-executor.ts → builtin-handlers.ts). Fixed-SQL
@@ -40,15 +40,15 @@
 
 import type { SqlValue } from '../../ingest/sql'
 
-/** The most rows one query may return (03 row 8). */
+/** The most rows one query may return. */
 export const SQL_ROW_LIMIT = 100
 
-/** "about 3000 ms" (09 D-81 #2): one named constant, one home. */
+/** The time limit for one model-run query: one named constant, one home. */
 export const SQL_TIME_LIMIT_MS = 3_000
 
 /**
  * 10x the largest `meta.rows_read` D1 reported for any legitimate model-run SQL, measured against
- * the real seed (09 D-81 #3; one named constant, this comment is the measurement). Every query
+ * the real seed (one named constant; this comment is the measurement). Every query
  * below ran as `db.prepare(sql).run()` (D1's own `meta.rows_read`) with Gate 3's forced LIMIT 100
  * applied where the query had none, against the seeded D1 (data/*.csv):
  *   - the brief's "which pages do new subscribers hit first?" query row
@@ -65,7 +65,7 @@ export const SQL_TIME_LIMIT_MS = 3_000
  */
 export const SQL_ROWS_READ_CAP = 453_230
 
-/** The plain sentence for a query that times out or reads too many rows (09 D-81 #2, #3). */
+/** The plain sentence for a query that times out or reads too many rows. */
 export const SQL_TOO_HEAVY_MESSAGE = 'This question is too heavy for the database to run directly; ask a narrower question.'
 
 export type SqlTokenKind = 'word' | 'number' | 'string' | 'quoted' | 'param' | 'punct' | 'comment'
@@ -91,7 +91,7 @@ export class SqlLexError extends Error {
 
 /**
  * A gate refused a tool call. Goes back to the model once as an error result and is audited as
- * `kind=blocked` naming the gate (03 row 11); the request goes on (tool-executor.ts).
+ * `kind=blocked` naming the gate; the request goes on (tool-executor.ts).
  */
 export class GateDenied extends Error {
   readonly gate: 'gate2' | 'gate3'
@@ -122,7 +122,7 @@ export class SqlRunError extends Error {
 
 /**
  * A query that passed both gates and the plan check, but ran out the time limit or read more
- * rows than the cap (09 D-81 #2, #3). Distinct from SqlRunError (a genuine database failure) so
+ * rows than the cap. Distinct from SqlRunError (a genuine database failure) so
  * callers can log a distinguishable reason code; the model/UI message is the same plain sentence
  * either way (SQL_TOO_HEAVY_MESSAGE).
  */
@@ -137,7 +137,7 @@ export class SqlTooHeavyError extends Error {
   }
 }
 
-/** The timer side of the race in runReadOnlySelect; exported only so a test can race it directly against a real pending promise (09 D-81 #2), never thrown past raceTimeout itself. */
+/** The timer side of the race in runReadOnlySelect; exported only so a test can race it directly against a real pending promise, never thrown past raceTimeout itself. */
 export class SqlTimeoutError extends Error {}
 
 const PUNCT = new Set(['(', ')', ',', '.', ';', '+', '-', '*', '/', '%', '<', '>', '=', '!', '|', '&', '~'])
@@ -222,7 +222,7 @@ export function lexSql(sql: string): SqlToken[] {
   return tokens
 }
 
-/** Statement words refused anywhere outside a string (03 row 8). */
+/** Statement words refused anywhere outside a string. */
 const FORBIDDEN_WORDS = new Set(['PRAGMA', 'ATTACH', 'DETACH', 'WITH'])
 
 /** Words that end a FROM clause at its own depth. */
@@ -265,7 +265,7 @@ function fromSources(tokens: readonly SqlToken[], at: number, end: number, depth
 }
 
 /**
- * The join-shape rule (09 D-81 #1, live finding 2026-10-14): two views may be read together only
+ * The join-shape rule: two views may be read together only
  * through an explicit `JOIN … ON a.key = b.key` (or `USING (key)`), where the key is one of
  * JOIN_KEYS. A comma list, a JOIN with no ON/USING (so `CROSS JOIN` and `NATURAL JOIN` too), an ON
  * with no key equality between two different aliases, and a view joined to itself (the same view
@@ -330,7 +330,7 @@ function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
       const on = tokens.slice(onAt + 1, onEnd)
       // The ON's top-level AND-parts; at least one must be exactly `a.col = b.col` between two
       // different views. An OR at the top level or around that equality (`ON p.pkey = w.pkey OR
-      // 1 = 1`, the self-audit's 2026-10-14 probe) leaves no such part, so it is refused here,
+      // 1 = 1`) leaves no such part, so it is refused here,
       // not only by the plan check. An OR inside a separate filter part stays allowed.
       const conjuncts: SqlToken[][] = [[]]
       for (const c of on) {
@@ -400,7 +400,7 @@ function forceLimit(sql: string, tokens: readonly SqlToken[], problems: string[]
 }
 
 /**
- * Gate 3's checks (03 row 8). Pure: returns the SQL to run with its LIMIT forced, or throws
+ * Gate 3's checks. Pure: returns the SQL to run with its LIMIT forced, or throws
  * GateDenied('gate3') listing every problem. `paramCount` is the number of values the caller
  * binds; the SQL must hold exactly that many `?` markers.
  */
@@ -455,7 +455,7 @@ interface PlanRow {
   detail: string
 }
 
-/** `SCAN CONSTANT ROW` never reads a real relation (a UNION branch's literal row, 09 D-81 #1). */
+/** `SCAN CONSTANT ROW` never reads a real relation (a UNION branch's literal row). */
 const SCAN_CONSTANT_ROW = 'SCAN CONSTANT ROW'
 
 /** True for a plan row that scans a real relation: `SCAN …` but not the constant-row placeholder. */
@@ -471,10 +471,10 @@ const RANGE_CONDITION = /^[\w.]+\s*[<>]\?$/
 /**
  * True for a `SEARCH` row whose entire constraint list is range-only: every condition inside its
  * one parenthesized detail bounds a column with `<`/`>` against `?`, never pins one with `=`
- * (09 D-81 #1's self-audit: a cartesian with one indexed range filter added — `w.page > ''`,
+ * (a cartesian with one indexed range filter added — `w.page > ''`,
  * `w.page >= ''`, a `CROSS JOIN … WHERE` with the same filter, or a correlated subquery's own
  * unindexed-looking column reached only by a range bound — answers with a `SEARCH` instead of a
- * `SCAN` on that side, so the plan check's SCAN-only rule missed it even though a range-bound
+ * `SCAN` on that side, which a SCAN-only rule would miss even though a range-bound
  * index walk over an otherwise-unjoined relation pays almost the same full cost). A constraint
  * list holding even one `=?` term — alone (`page=?`, a constant equality filter) or mixed with a
  * range one (`email_norm=? AND created_at>?`, the shape a real equality-joined or
@@ -491,14 +491,14 @@ function isRangeOnlySearch(row: PlanRow): boolean {
   return conditions.length > 0 && conditions.every((c) => RANGE_CONDITION.test(c.trim()))
 }
 
-/** A plan row this check treats as paying for a whole, otherwise-unjoined relation (09 D-81 #1): a real SCAN or a range-only SEARCH. */
+/** A plan row this check treats as paying for a whole, otherwise-unjoined relation: a real SCAN or a range-only SEARCH. */
 function isUnjoinedRelationScan(row: PlanRow): boolean {
   return isRealScan(row) || isRangeOnlySearch(row)
 }
 
 /**
  * True when `row`'s own plan scope — walking its `parent` chain up through EXPLAIN QUERY PLAN's
- * own tree — sits inside a `CORRELATED …` node (09 D-81 #1, the self-audit's case A: a scalar
+ * own tree — sits inside a `CORRELATED …` node (a scalar
  * subquery run once per outer row). `seen` guards a cycle EXPLAIN never actually produces; it
  * only keeps this loop from looping forever if one somehow did.
  */
@@ -516,19 +516,18 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
 }
 
 /**
- * The plan rows that make this SQL a cartesian/unindexed-nested-scan refusal (09 D-81 #1), or an
- * empty array when none do. Two shapes, both found live against the real seed (D1 EXPLAIN QUERY
- * PLAN, 2026-10-14) and both missed by an earlier version of this function that only ever looked
- * at `parent = 0`. Each `v_*` view's own main join is flattened into the scope that uses it, so
+ * The plan rows that make this SQL a cartesian/unindexed-nested-scan refusal, or an
+ * empty array when none do. Two shapes, both seen in real D1 EXPLAIN QUERY PLAN output on the
+ * seed. Each `v_*` view's own main join is flattened into the scope that uses it, so
  * its base tables appear at that scope's own `parent = 0`, not nested under it: `v_profiles`
  * alone puts `SCAN p` plus several SEARCHes (`s`, `abe`, `stub_au`, `fv`) directly at `parent = 0`,
  * and only its two CTEs (`app_by_email`, `first_visit`) sit under their own MATERIALIZE id;
  * `v_web_events` is fully flattened too — `SCAN we`, `SEARCH wv`, `SEARCH p`, all at `parent = 0`.
- * So "more than one SCAN at parent = 0" was both too strict in spirit (a real join already shows
- * one driving SCAN there, with every other relation reached by an indexed SEARCH) and, for a
- * cartesian moved one level down (into a UNION branch or a FROM/IN/scalar subquery), not strict
- * enough: that shape leaves exactly one SCAN at `parent = 0` and puts a second one under some
- * other, non-zero parent, which the old rule never looked at):
+ * So a rule like "more than one SCAN at parent = 0" would be wrong both ways: too strict in spirit
+ * (a real join already shows one driving SCAN there, with every other relation reached by an
+ * indexed SEARCH) and not strict enough for a cartesian moved one level down (into a UNION branch
+ * or a FROM/IN/scalar subquery), which leaves exactly one SCAN at `parent = 0` and puts a second
+ * one under some other, non-zero parent. The two rules look at every scope instead:
  *   1. Two or more rows that each pay for a whole, otherwise-unjoined relation (`isUnjoinedRelationScan`:
  *      a real SCAN, or a SEARCH whose constraint is range-only) sharing one immediate parent
  *      scope — a comma join or `JOIN … ON 1 = 1` of two views, wherever it sits: at the outer
@@ -536,8 +535,8 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
  *      …)`, or inside a scalar `(SELECT …)` — and whether each side shows as a plain SCAN or as a
  *      SEARCH an added indexed range filter (`w.page > ''`, `w.page >= ''`, a `CROSS JOIN …
  *      WHERE` with the same filter) turns it into: one token's difference from the comma/`ON 1 =
- *      1` shape, measured to pass the SCAN-only version of this check while still reading
- *      hundreds of millions of rows (09 D-81 #1's self-audit). A normal nested-loop join (one
+ *      1` shape, which would pass a SCAN-only check while still reading
+ *      hundreds of millions of rows. A normal nested-loop join (one
  *      driving SCAN, every other relation reached by an indexed SEARCH *on the join's own
  *      column*) only ever puts one such row in any one scope; a second one there means a second
  *      relation is driven independently with nothing joining it to the first.
@@ -554,10 +553,10 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
  * comma/`ON 1 = 1` cartesian of two views is refused the same way wherever it is nested (a UNION
  * branch, a FROM/IN/scalar subquery), and a correlated scalar subquery that scans its relation
  * (`SELECT p.pkey, (SELECT count(*) FROM v_web_events w WHERE w.utm_source = p.source) FROM
- * v_profiles p`, which read 1,096,962 rows before the self-audit's forced-run measurement) is
+ * v_profiles p`, which reads 1,096,962 rows when forced to run) is
  * refused by rule 2, as is the same shape with an indexed range bound instead of an unindexed
  * equality one (`WHERE w.page >= p.first_page`, a `SEARCH … (page>?)` under a `CORRELATED SCALAR
- * SUBQUERY` node, read 28,891,129 rows and was not flagged before this rule covered SEARCH too).
+ * SUBQUERY` node, which reads 28,891,129 rows; that is why rule 2 covers range-only SEARCH too).
  * A cartesian with one side filtered by a *constant equality* (`w.page = '/'`) is not caught by
  * either rule — see "Known, accepted gaps" below.
  *
@@ -584,15 +583,15 @@ function cartesianScans(rows: readonly PlanRow[]): PlanRow[] {
   return [...flagged]
 }
 
-/** `plan_check_unavailable` (09 D-81 #1; CLAUDE.md "no empty catch {}"): logged, never swallowed. */
+/** `plan_check_unavailable`: logged, never swallowed, so a check that could not run is never silent. */
 function logPlanCheckUnavailable(sql: string, err: unknown): void {
   console.error(JSON.stringify({ at: 'gate3-readonly-sql', outcome: 'plan_check_unavailable', reason: sanitizeSqlError(err), sql }))
 }
 
 /**
- * EXPLAIN QUERY PLAN on the checked SQL (09 D-81 #1); throws GateDenied('gate3') before the real
+ * EXPLAIN QUERY PLAN on the checked SQL; throws GateDenied('gate3') before the real
  * query runs when `cartesianScans` flags any plan row. When EXPLAIN itself throws, this never
- * swallows it silently (CLAUDE.md "no empty catch {}"): the structured reason is logged
+ * swallows it silently: the structured reason is logged
  * (`plan_check_unavailable`) first. It then lets the real run below happen rather than deny the
  * call, because EXPLAIN QUERY PLAN fails on exactly the SQL shapes the real run would also fail
  * on (a genuine syntax/semantic error the lexer's own checks did not catch, e.g. `GROUP BY` with
@@ -631,7 +630,7 @@ async function checkPlan(db: D1Database, sql: string, params: readonly SqlValue[
  * Rejects `promise` with SqlTimeoutError after `ms` if it has not settled by then. `ms <= 0`
  * rejects immediately with no timer at all (there is nothing to wait for): one way a test can
  * inject a timeout that reliably beats a real query without mocking D1; the other, for exercising
- * the real `ms > 0` timer path (09 D-81 #2), is racing this function directly against a promise
+ * the real `ms > 0` timer path, is racing this function directly against a promise
  * that is genuinely still pending (test/sql-limits.test.ts). `promise` itself is never cancelled
  * either way (D1 has no cancel; it keeps running in the background, docs/notes.md "Known gaps") — and,
  * measured live in workerd against this seed's local D1, a long real query blocks the isolate so
@@ -653,8 +652,8 @@ export async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T
 
 /**
  * Runs one checked SELECT, once. Throws GateDenied('gate3') before running anything it refuses
- * (readOnlySelect's own checks, then the plan check, 09 D-81 #1), SqlTooHeavyError when it times
- * out or reads too many rows (#2, #3), and SqlRunError (sanitized) when the database refuses the
+ * (readOnlySelect's own checks, then the plan check), SqlTooHeavyError when it times
+ * out or reads too many rows, and SqlRunError (sanitized) when the database refuses the
  * query; no retry. `timeoutMs`/`rowsReadCap` default to SQL_TIME_LIMIT_MS/SQL_ROWS_READ_CAP and
  * exist as parameters only so a test can inject a tiny value against a real query.
  */
