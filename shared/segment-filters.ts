@@ -2,7 +2,7 @@
  * The segment filter contract (design 19 §5.5, 04 §/api/segments/preview; 09 D-69): the one home
  * of the filter keys, their order, their TypeScript type, their limits and patterns, and the
  * JSON-schema fragment the assistant's `segment` tool row declares; also the export's column list
- * and sort column (09 D-76). Imported by worker/segments/compile.ts (validation and SQL),
+ * and the order of a segment's rows (09 D-76). Imported by worker/segments/compile.ts (validation and SQL),
  * scripts/tool-seeds.ts (the tool's input_schema) and src/ (the form, the Previous searches label
  * and the export's "What's in the file" disclosure).
  *
@@ -60,12 +60,35 @@ export type FilterKey = (typeof FILTER_KEYS)[number]
  */
 export const SEGMENT_COLUMNS = ['email', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app'] as const
 
+/** One key of a segment's row order, with the plain words /segments says for its direction. */
+export interface SegmentSortKey {
+  readonly column: (typeof SEGMENT_COLUMNS)[number]
+  readonly direction: 'asc' | 'desc'
+  /** How /segments says the direction: "highest first" for the score, "A to Z" for the email. */
+  readonly words: string
+}
+
 /**
- * The export's sort column, ascending (worker/segments/compile.ts compileSegment's ORDER BY; 09
- * D-76): the one home the SQL and the /segments "Sorted by" sentence both read, so they can never
- * name a different order.
+ * The order of a segment's rows wherever they are listed: the preview on /segments, the list
+ * "Open segment" opens there, and the Export CSV file. Most engaged first (the stored
+ * engagement_score, highest first), so "our most engaged readers" comes out as a ranked list;
+ * email breaks ties, so the order is the same on every run. The order changes no count.
+ * worker/segments/compile.ts compileSegment builds its ORDER BY from this, and the /segments
+ * "Sorted by" sentence reads it, so the two can never name a different order.
  */
-export const SEGMENT_SORT_COLUMN: (typeof SEGMENT_COLUMNS)[number] = 'email'
+export const SEGMENT_SORT: readonly SegmentSortKey[] = [
+  { column: 'engagement_score', direction: 'desc', words: 'highest first' },
+  { column: 'email', direction: 'asc', words: 'A to Z' },
+]
+
+/**
+ * What "our most engaged readers" means as a filter: a stored engagement_score of at least this
+ * (`engagement_gte`), half of the 0–100 range. On the seed it keeps 487 active subscribers of
+ * 2,610, with 27 unsubscribed hidden. The assistant's segment tool description names it
+ * (scripts/tool-seeds.ts), so the question gets a short, ranked list rather than every active
+ * subscriber.
+ */
+export const MOST_ENGAGED_MIN = 50
 
 /** The validated, canonical filter object: what POST /api/segments/preview echoes as `filters`. */
 export interface SegmentFilters {

@@ -385,9 +385,16 @@ export function validateToolRow(row: ToolRow, views: readonly ViewSchema[]): Loa
   }
 }
 
+/**
+ * What a teammate sees when assistant_tools has no enabled row. The seed script refuses to run
+ * without a target, so the message names the hosted one and the local one.
+ */
+export const NO_TOOLS_MESSAGE =
+  'The assistant has no enabled tools, so it cannot answer. Run `npm run tools:seed -- --remote` for the hosted app, or `npm run tools:seed -- --local` for local dev.'
+
 /** Validates the enabled rows in order; the first failing row stops the load. Pure. */
 export function toLoadedTools(rows: readonly ToolRow[], views: readonly ViewSchema[]): LoadedTools {
-  if (rows.length === 0) throw new ApiError(500, 'no_tools', 'The assistant has no enabled tools, so it cannot answer. Run `npm run tools:seed`.')
+  if (rows.length === 0) throw new ApiError(500, 'no_tools', NO_TOOLS_MESSAGE)
   const tools = rows.map((row) => validateToolRow(row, views))
   // board_only rows (09 D-64b: a wrapped grammar-pinned query) are runnable (byName), but never
   // part of the Anthropic tools[] the model sees (definitions) — the model cannot call a tool it

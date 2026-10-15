@@ -1,8 +1,10 @@
 /// <reference types="vite/client" />
 import { env, SELF } from 'cloudflare:test'
 import webCsv from '../../data/web_events.csv?raw'
+import { feedEventById } from '../../worker/identity/resolve'
 import { parseCsv } from '../../worker/ingest/csv'
 import { documentationIp } from './auth'
+import { piiKeySecret } from './seed'
 
 // Signs and sends app webhooks the way 04 §Webhook headers specifies, with WEBHOOK_SECRET from
 // .dev.vars (never printed). The HMAC is computed here with WebCrypto, independently of
@@ -94,4 +96,14 @@ export function eventIdPool(): () => string {
     if (next >= hexes.length) throw new Error('webhook helper: the event id pool is exhausted')
     return `evt_${hexes[next++]}`
   }
+}
+
+/**
+ * Who a stored event resolves to right now, read the way /events and its "Send a test event"
+ * panel read it (worker/identity/resolve.ts feedEventById). The public 202 does not say.
+ */
+export async function resolvedOf(eventId: string): Promise<{ user_id: string | null; pkey: string | null }> {
+  const row = await feedEventById(env.DB, piiKeySecret(), eventId)
+  if (row === null) throw new Error('resolvedOf: no stored event has this id')
+  return { user_id: row.user_id, pkey: row.pkey }
 }

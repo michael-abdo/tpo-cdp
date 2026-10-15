@@ -229,13 +229,51 @@ const FORBIDDEN_WORDS = new Set(['PRAGMA', 'ATTACH', 'DETACH', 'WITH'])
 const FROM_CLAUSE_END = new Set(['WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'WINDOW', 'UNION', 'INTERSECT', 'EXCEPT'])
 
 /**
+ * The only columns a JOIN may match on: the person key and the visitor key (both pk_ hashes).
+ * Each is one person or one visitor, so a join on it pairs a person's rows with that same
+ * person's rows. A join on any other column (a page, a source, a date) pairs every row with every
+ * other row that shares the value: `v_web_events a JOIN v_web_events b ON a.page = b.page` is
+ * about 15 million pairs on the seed, which passes the plan check and can exhaust D1.
+ */
+export const JOIN_KEYS = ['pkey', 'visitor_hash'] as const
+
+const JOIN_KEY_SET: ReadonlySet<string> = new Set(JOIN_KEYS.map((k) => k.toUpperCase()))
+
+/**
+ * The view names one FROM clause reads, one list per source: a plain name after FROM, JOIN or a
+ * comma, or every `v_*` name inside a parenthesized source (`JOIN (SELECT … FROM v_web_events) w`).
+ * Each name token is kept as written; callers compare them upper-cased, as SQLite does.
+ */
+function fromSources(tokens: readonly SqlToken[], at: number, end: number, depth: number): SqlToken[][] {
+  const word = (t: SqlToken | undefined) => (t !== undefined && t.kind === 'word' ? t.text.toUpperCase() : '')
+  const sources: SqlToken[][] = []
+  let startsSource = true // the token right after FROM starts the first source
+  for (let i = at + 1; i < end; i += 1) {
+    const t = tokens[i]
+    if (t.depth !== depth) continue
+    if (startsSource) {
+      if (t.kind === 'word') sources.push([t])
+      else if (t.kind === 'punct' && t.text === '(') {
+        const names: SqlToken[] = []
+        for (let j = i + 1; j < end && tokens[j].depth > depth; j += 1) if (/^V_/.test(word(tokens[j]))) names.push(tokens[j])
+        sources.push(names)
+      }
+    }
+    startsSource = word(t) === 'JOIN' || (t.kind === 'punct' && t.text === ',')
+  }
+  return sources
+}
+
+/**
  * The join-shape rule (09 D-81 #1, live finding 2026-10-14): two views may be read together only
- * through an explicit `JOIN … ON a.col = b.col` (or `USING (col)`). A comma list, a JOIN with no
- * ON/USING (so `CROSS JOIN` and `NATURAL JOIN` too), or an ON with no column equality between two
- * different views is refused before anything runs. The plan check cannot catch every cross join (a filter on
- * one side turns its scan into an indexed search), and a timed-out D1 query is never cancelled: on
- * the live database `SELECT COUNT(*) FROM v_profiles, v_web_events WHERE v_profiles.status =
- * 'active'` ran past D1's own CPU limit and reset the database. Pure; checked at every depth.
+ * through an explicit `JOIN … ON a.key = b.key` (or `USING (key)`), where the key is one of
+ * JOIN_KEYS. A comma list, a JOIN with no ON/USING (so `CROSS JOIN` and `NATURAL JOIN` too), an ON
+ * with no key equality between two different aliases, and a view joined to itself (the same view
+ * named by two sources of one FROM, even inside a parenthesized subquery) are refused before
+ * anything runs. The plan check cannot catch every cross join (a filter on one side turns its scan
+ * into an indexed search), and a timed-out D1 query is never cancelled: on the live database
+ * `SELECT COUNT(*) FROM v_profiles, v_web_events WHERE v_profiles.status = 'active'` ran past D1's
+ * own CPU limit and reset the database. Pure; checked at every depth.
  */
 function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
   const problems = new Set<string>()
@@ -258,6 +296,14 @@ function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
     if (clause.some((t) => t.kind === 'punct' && t.text === ',')) {
       problems.add('read two views together only with JOIN … ON a.column = b.column, never a comma list (a cross join)')
     }
+    const seen = new Set<string>()
+    for (const names of fromSources(tokens, at, end, depth)) {
+      const keys = new Map(names.map((t) => [t.text.toUpperCase(), t.text]))
+      for (const [key, written] of keys) {
+        if (seen.has(key)) problems.add(`a view is never joined to itself (${written} is read twice in one FROM); read it once and group it instead`)
+        seen.add(key)
+      }
+    }
     clause.forEach((t, i) => {
       if (word(t) !== 'JOIN') return
       let next = clause.length
@@ -265,7 +311,20 @@ function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
       const condition = clause.slice(i + 1, next)
       const kind = condition.find((c) => word(c) === 'ON' || word(c) === 'USING')
       if (kind === undefined) { problems.add('every JOIN needs ON a.column = b.column or USING (column)'); return }
-      if (word(kind) === 'USING') return
+      if (word(kind) === 'USING') {
+        // USING (col, …): every column in the parentheses must be a join key.
+        const usingAt = tokens.indexOf(kind)
+        const columns: string[] = []
+        if (tokens[usingAt + 1]?.text === '(') {
+          for (let j = usingAt + 2; j < tokens.length && !(tokens[j].depth === kind.depth && tokens[j].text === ')'); j += 1) {
+            if (tokens[j].kind === 'word') columns.push(tokens[j].text.toUpperCase())
+          }
+        }
+        if (columns.length === 0 || columns.some((c) => !JOIN_KEY_SET.has(c))) {
+          problems.add(`USING may name only ${JOIN_KEYS.join(' or ')}, the keys that pair a person's rows with that same person's`)
+        }
+        return
+      }
       const onAt = tokens.indexOf(kind)
       const onEnd = next < clause.length ? tokens.indexOf(clause[next]) : end
       const on = tokens.slice(onAt + 1, onEnd)
@@ -285,11 +344,15 @@ function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
         const [a, d1, c1, eq, b, d2, c2] = x
         return (
           a!.kind === 'word' && d1!.text === '.' && c1!.kind === 'word' && eq!.text === '=' &&
-          b!.kind === 'word' && d2!.text === '.' && c2!.kind === 'word' && a!.text.toUpperCase() !== b!.text.toUpperCase()
+          b!.kind === 'word' && d2!.text === '.' && c2!.kind === 'word' && a!.text.toUpperCase() !== b!.text.toUpperCase() &&
+          // The same join key on both sides: pkey = pkey or visitor_hash = visitor_hash.
+          JOIN_KEY_SET.has(c1!.text.toUpperCase()) && c1!.text.toUpperCase() === c2!.text.toUpperCase()
         )
       }
       if (!conjuncts.some(isColumnEquality)) {
-        problems.add('a JOIN must link the two views on a column equality joined with AND (never OR), e.g. ON p.pkey = w.pkey')
+        problems.add(
+          `a JOIN must link the two views on a column equality of ${JOIN_KEYS.join(' or ')} joined with AND (never OR), e.g. ON p.pkey = w.pkey`,
+        )
       }
     })
   })

@@ -4,7 +4,8 @@ import { Hono } from 'hono'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { HOSTED_URL, TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
-import { normalizeForScan, PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
+import webCsv from '../data/web_events.csv?raw'
+import { foldSeparators, normalizeForMembership, normalizeForScan, PERCENT_DECODE_ROUNDS, PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
 import { AuditTrace, AuditWriteError, startTrace } from '../worker/assistant/audit/ai-audit'
 import { buildModelRequest, MAX_TOKENS, MODEL, type ModelTool } from '../worker/assistant/build-request'
 import { enforceGate1, type SanitizedQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
@@ -22,7 +23,9 @@ import {
 import { discoverViewSchemas, type ViewSchema, viewSchemas } from '../worker/assistant/schema-context'
 import { renderSystemPrompt } from '../worker/assistant/system-prompt'
 import type { AppEnv } from '../worker/env'
+import { parseCsv } from '../worker/ingest/csv'
 import { onError } from '../worker/index'
+import { personalDataIssue } from '../worker/webhooks/exposed-properties'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 import { seedDatabase } from './helpers/seed'
 
@@ -42,6 +45,11 @@ import { seedDatabase } from './helpers/seed'
 //   block is written in the Messages API shape (08: the API is exercised through the builder).
 // - "Planted" values (T-PII-4) put a real email or raw id of the same subject into a real view
 //   row in place of one field (09 D-47: every introduced value occurs in data/*.csv).
+
+// One pool for every webhook send in this file: a fresh `eventIdPool()()` call always starts from
+// the same first hex, so two blocks calling it independently collide on the same event_id
+// ("duplicate", 200) when D1 is not reset between them.
+const nextEventId = eventIdPool()
 
 const JOY = 'joy.hall830@protonmail.com'
 const JULIA = 'julia.evans230@gmail.com'
@@ -496,10 +504,6 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
   const JOY_DEVICE = 'd_ceed5f12' // her own app user id's hex (JOY_APP_USER = u_ceed5f12)
   const BRIEF_TS = '2026-09-28T14:22:05Z'
-  // One shared pool for this describe block's webhook sends: a fresh `eventIdPool()()` call
-  // always starts from the same first hex, so two tests calling it independently collide on the
-  // same event_id ("duplicate", 200) when D1 is not reset between them.
-  const nextEventId = eventIdPool()
 
   describe('Gate 1 redacts every disguise form of a known address, one mapping at a time', () => {
     const disguises: Array<[name: string, typed: string]> = [
@@ -590,10 +594,11 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
     await expect(guardPayload(trace, framed('query_sql', stored), 'tool_result', 'query_sql')).resolves.toBeUndefined()
   })
 
-  it('a webhook link holding JOY\u2019s bare local part is blocked before a tool result reaches the model', async () => {
-    // 09 D-70 #2: an http(s) link with no "@" is accepted and stored as-is, so a bare local part
-    // in a path (no email shape, no raw id) reached the model until the outbound scan checked
-    // local parts too (09 D-79). Sent through the real signed webhook path (09 D-11).
+  it('a webhook link holding JOY\u2019s bare local part is refused at ingest, and the outbound scan still blocks it in a tool result', async () => {
+    // An http(s) link with no "@" passes the schema, so a bare local part in a path (no email
+    // shape, no raw id) used to reach v_app_events. The webhook now runs the same detector on story
+    // and link before storing (worker/webhooks/exposed-properties.ts). Sent through the real signed
+    // webhook path.
     const link = `${HOSTED_URL}/u/${JOY_LOCAL}`
     const eventId = nextEventId()
     const res = await sendWebhook(
@@ -606,12 +611,14 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
         properties: { link },
       }),
     )
-    expect(res.status).toBe(202)
-    const stored = await rows('SELECT link FROM v_app_events WHERE pkey = ? AND link = ?', joyPkey, link)
-    expect(stored).toHaveLength(1) // the schema allowed it: no "@", a plain http(s) URL (04 §Webhook)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: 'invalid_event', details: [{ field: 'properties.link', issue: personalDataIssue('link') }] })
+    expect(await rows('SELECT link FROM v_app_events WHERE link = ?', link)).toHaveLength(0)
 
+    // The second layer, for a row stored before the ingest check existed: the same text as a
+    // query_sql result is still blocked before the model sees it.
     const known = await loadKnownEmails(env.DB)
-    const result = framed('query_sql', stored)
+    const result = framed('query_sql', [{ link }])
     expect(result).not.toContain('@')
     expect(findPII(result, known)).toBe('known_local_part')
 
@@ -835,3 +842,129 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
   })
 })
 
+// An address hidden behind any %XX escape, or behind "-"/"_" in place of its dots. A webhook link
+// `…/joy%2Ehall830%20at%20protonmail%2Ecom` and a story slug `joy-hall830-protonmail-com` both
+// used to pass the schema and the scanner. Real values only: JOY and JULIA, their app user ids,
+// the hosted URL and real page paths; only the escaping and the separators are changed.
+// new.person@example.com is the stand-in address the disguise tests above use.
+describe('every %XX escape is decoded, and "-"/"_" read as "." for stored addresses', () => {
+  const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
+  const JOY_DEVICE = 'd_ceed5f12'
+  const BRIEF_TS = '2026-09-28T14:22:05Z'
+  const ESCAPED_LINK = `${HOSTED_URL}/${JOY_LOCAL.replace('.', '%2E')}%20at%20protonmail%2Ecom`
+  const JOY_SLUG = JOY.replace(/[.@]/g, '-')
+
+  /** Real page paths of data/web_events.csv: links and slugs the scan must leave alone. */
+  function realPages(): string[] {
+    const csv = parseCsv(webCsv)
+    const col = csv.header.indexOf('page')
+    return [...new Set(csv.rows.map((r) => r[col].trim()))]
+  }
+
+  async function send(properties: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown>; eventId: string }> {
+    const eventId = nextEventId()
+    const res = await sendWebhook(
+      JSON.stringify({ event_id: eventId, event: 'link_click', user_id: JOY_APP_USER, device_id: JOY_DEVICE, timestamp: BRIEF_TS, properties }),
+    )
+    return { status: res.status, body: await res.json(), eventId }
+  }
+
+  it('the scanner reads the escaped link and the slug as JOY', async () => {
+    const known = await loadKnownEmails(env.DB)
+    expect(ESCAPED_LINK).not.toMatch(/@|%40/i)
+    expect(normalizeForScan(ESCAPED_LINK).text).toBe(`${HOSTED_URL}/${JOY}`)
+    expect(findPII(ESCAPED_LINK, known)).toBe('known_email')
+    expect(JOY_SLUG).toBe('joy-hall830-protonmail-com')
+    expect(findPII(JOY_SLUG, known)).toBe('known_local_part')
+    expect(findPII({ story: JOY_SLUG }, known)).toBe('known_local_part')
+  })
+
+  it('every escape is decoded, not only %40, including one escaped again and a full-width "＠" as UTF-8 bytes', async () => {
+    const known = await loadKnownEmails(env.DB)
+    expect(normalizeForScan(JOY_LOCAL.replace('.', '%2e')).text).toBe(JOY_LOCAL)
+    expect(findPII(`${HOSTED_URL}/u/${JOY_LOCAL.replace('.', '%2E')}`, known)).toBe('known_local_part')
+    expect(findPII(`${HOSTED_URL}/u/${JOY_LOCAL.replace('.', '%252E')}`, known)).toBe('known_local_part')
+    expect(findPII(`${HOSTED_URL}/u/${JOY_LOCAL.replace('h', '%68')}`, known)).toBe('known_local_part')
+    expect(findPII(JULIA.replace('@', '%EF%BC%A0'), known)).toBe('known_email')
+    expect(findPII(`${HOSTED_URL}/u/${JOY_APP_USER.replace('_', '%5F')}`, known)).toBe('raw_id')
+    expect(findPII(`${HOSTED_URL}/new.person%20at%20example%2Ecom`, known)).toBe('email_pattern')
+    // The limit is named and real: PERCENT_DECODE_ROUNDS layers decode, one more stays escaped.
+    const layered = (layers: number) => `a%${'25'.repeat(layers - 1)}2Eb`
+    expect(PERCENT_DECODE_ROUNDS).toBe(4)
+    expect(normalizeForScan(layered(PERCENT_DECODE_ROUNDS)).text).toBe('a.b')
+    expect(normalizeForScan(layered(PERCENT_DECODE_ROUNDS + 1)).text).toBe('a%2Eb')
+  })
+
+  it('Gate 1 redacts an escaped or hyphenated local part a teammate types, and keeps the rest as typed', async () => {
+    for (const typed of [JOY_LOCAL.replace('.', '%2E'), JOY_LOCAL.replace('.', '-'), JOY_LOCAL.replace('.', '_')]) {
+      const question = await enforceGate1(await startTrace(env.DB), `how engaged is ${typed}?`)
+      expect(question.text, typed).toBe('how engaged is [email]?')
+      expect(question.emailsRedacted, typed).toBe(1)
+    }
+  })
+
+  it('stays clean: real pages, real story slugs, "-"/"_" words and ordinary "%" prose', async () => {
+    const known = await loadKnownEmails(env.DB)
+    const pages = realPages()
+    expect(pages.length).toBeGreaterThan(10)
+    for (const page of pages) {
+      expect(findPII(page, known), page).toBeNull()
+      expect(findPII(`${HOSTED_URL}${page}`, known), page).toBeNull()
+      expect(findPII(page.slice(1).replaceAll('/', '-'), known), page).toBeNull()
+    }
+    for (const text of [
+      'supreme-court-ruling-explained',
+      'church-attendance-study',
+      'first-page',
+      'first_page_seen',
+      `${HOSTED_URL}/news/supreme%2Dcourt-ruling-explained`,
+      'Open rates rose 12% to 48%, and 100%25 of the list was checked.',
+      'Use %20 for a space in a link; %zz and %E9 are left as typed.',
+      'joy-hall8301',
+    ]) {
+      expect(findPII(text, known), text).toBeNull()
+      expect(redactEmails(text), text).toEqual({ text, count: 0 })
+      expect(redactKnownLocalParts(text, known), text).toEqual({ text, count: 0 })
+    }
+  })
+
+  it('the separator fold is for stored values only: it never turns a slug into an email shape', () => {
+    expect(foldSeparators('joy-hall830_x')).toBe('joy.hall830.x')
+    expect(normalizeForScan(JOY_SLUG).text).toBe(JOY_SLUG)
+    expect(normalizeForMembership(JOY_SLUG).text).toBe(JOY_SLUG)
+  })
+
+  it('the webhook refuses the escaped link and the slug with 400 invalid_event, storing nothing', async () => {
+    const before = await rows('SELECT count(*) AS n FROM app_events')
+    for (const [key, value] of [
+      ['link', ESCAPED_LINK],
+      ['story', JOY_SLUG],
+      ['story', JOY_LOCAL.replace('.', '-')],
+      ['link', `${HOSTED_URL}/u/${JOY_LOCAL.replace('.', '_')}`],
+      ['link', `${HOSTED_URL}/new.person%20at%20example%2Ecom`],
+      ['link', `${HOSTED_URL}/u/${JOY_APP_USER}`],
+    ] as const) {
+      const logged: string[] = []
+      const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' ')))
+      const { status, body, eventId } = await send({ [key]: value })
+      warn.mockRestore()
+      expect(status, value).toBe(400)
+      expect(body).toEqual({ error: 'invalid_event', message: expect.any(String), details: [{ field: `properties.${key}`, issue: personalDataIssue(key) }] })
+      expect(JSON.stringify(body)).not.toContain(value)
+      expect(logged.join('\n')).not.toContain(value)
+      expect(logged.join('\n')).toContain('personal data in properties')
+      expect(await rows('SELECT event_id FROM app_events WHERE event_id = ?', eventId)).toHaveLength(0)
+    }
+    expect(await rows('SELECT count(*) AS n FROM app_events')).toEqual(before)
+  })
+
+  it('the webhook still stores clean story and link values, escapes included', async () => {
+    const link = `${HOSTED_URL}/news/supreme%2Dcourt-ruling-explained`
+    const { status, eventId } = await send({ story: 'supreme-court-ruling-explained', link })
+    expect(status).toBe(202)
+    expect(await rows('SELECT story, link FROM v_app_events WHERE pkey = ? AND link = ?', joyPkey, link)).toEqual([
+      { story: 'supreme-court-ruling-explained', link },
+    ])
+    expect(await rows('SELECT event_id FROM app_events WHERE event_id = ?', eventId)).toHaveLength(1)
+  })
+})

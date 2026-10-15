@@ -1,15 +1,18 @@
 // POST /webhooks/app (04 §Webhook; R4.1–R4.8, D3). Mounted outside /api/*, so no session
-// cookie applies; auth is the HMAC headers only (04 §Auth). Never touches the assistant gateway
-// (03 §Other request flows). Origin: palisade app/api/webhooks/[provider]/route.ts L24-98 (14 §7).
+// cookie applies; auth is the HMAC headers only (04 §Auth). Never calls the model or the assistant
+// loop (03 §Other request flows); it borrows only the shared PII detector, for story and link.
+// Origin: palisade app/api/webhooks/[provider]/route.ts L24-98 (14 §7).
 //
 // Order, cheapest refusal first: rate limit (429) → JSON content type (415) → body ≤ 64 KB (413)
-// → signature over the raw bytes, before any parsing (401) → JSON parse + schema (400) → store
-// (202 stored, 200 duplicate). Every refusal is logged with its reason and no header or body
-// values (CLAUDE.md fail loud; 04 §Error envelope).
+// → signature over the raw bytes, before any parsing (401) → JSON parse + schema (400) → personal
+// data in properties.story or properties.link (400) → store (202 {accepted, event_id}; 200
+// {accepted, duplicate} for an event_id already stored). Every refusal is logged with its reason
+// and no header or body values (CLAUDE.md fail loud; 04 §Error envelope).
 
 import { Hono } from 'hono'
 import { ApiError, requireJson } from '../auth/middleware'
 import { type AppEnv, requireSecret } from '../env'
+import { exposedPropertyProblems } from '../webhooks/exposed-properties'
 import { ingestEvent } from '../webhooks/ingest'
 import { APP_EVENTS, parseWebhookEvent, type SchemaIssue } from '../webhooks/schema'
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, verifyWebhook } from '../webhooks/verify'
@@ -124,6 +127,12 @@ webhookRoutes.post('/app', async (c) => {
   // replay window and received_at on the 02 §Time allow-list.
   const parsed = parseWebhookEvent(body, nowSeconds() * 1000)
   if (!parsed.ok) throw invalidEvent('schema validation failed', parsed.details)
+  // story and link reach the assistant through v_app_events, so personal data in them is refused
+  // here, in any spelling the outbound scanner reads (worker/webhooks/exposed-properties.ts).
+  const personal = await exposedPropertyProblems(c.env.DB, parsed.event)
+  if (personal.issues.length > 0) {
+    throw invalidEvent(`personal data in properties (${personal.checks.join(', ')})`, personal.issues)
+  }
 
   const receivedAt = new Date(nowSeconds() * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
   const result = await ingestEvent(c.env.DB, piiKeySecret, parsed.event, receivedAt)
@@ -132,8 +141,18 @@ webhookRoutes.post('/app', async (c) => {
     return c.json({ accepted: true, duplicate: true }, 200)
   }
   console.info(JSON.stringify({ at: 'webhook', outcome: 'stored', status: 202, event: parsed.event.event }))
-  return c.json(
-    { accepted: true, event_id: parsed.event.event_id, duplicate: false, resolved: result.resolved },
-    202,
-  )
+  // Only what the sender already knows. Which person a device resolves to is never told to a
+  // caller of this open URL; /events and its "Send a test event" panel read it behind the session.
+  return c.json({ accepted: true, event_id: parsed.event.event_id }, 202)
+})
+
+/** What a GET (a browser, a link checker) or any other non-POST to the webhook URL is told. */
+export const METHOD_NOT_ALLOWED_MESSAGE =
+  'This URL takes only POST: one signed JSON app event per request, as described in the Webhook section of docs/notes.md.'
+
+// Any other method on the same path: 405 with `Allow: POST`, not the generic 404, so a person
+// who opens the URL in a browser learns it exists and how to use it. HEAD is routed as GET.
+webhookRoutes.all('/app', (c) => {
+  logRefusal(405, 'method_not_allowed', `method ${c.req.method}`)
+  return c.json({ error: 'method_not_allowed', message: METHOD_NOT_ALLOWED_MESSAGE }, 405, { Allow: 'POST' })
 })

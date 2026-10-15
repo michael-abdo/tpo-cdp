@@ -3,6 +3,7 @@ import { TODAY } from '../shared/config'
 import { loginRoutes } from './auth/login'
 import { ApiError, requireJson, requireSession } from './auth/middleware'
 import { type AppEnv, assertBindings, MissingBindingsError } from './env'
+import { httpsOnly, securityHeaders } from './http-hardening'
 import { assistantRoutes } from './routes/assistant'
 import { auditRoutes } from './routes/audit'
 import { duplicateRoutes } from './routes/duplicates'
@@ -35,6 +36,11 @@ export function onError(err: Error, c: Context<AppEnv>): Response {
 
 // Hono app mounted in front of the static assets; routes are added per 03 §Module layout.
 const app = new Hono<AppEnv>()
+
+// Security headers and Cache-Control: no-store on every Worker response, refusals included; then
+// plain http to the deployed host is sent to https before anything else runs (worker/http-hardening.ts).
+app.use('*', securityHeaders)
+app.use('*', httpsOnly)
 
 // Fail fast (11 §Deploy): every request, before routing, names any missing binding or secret.
 app.use('*', async (c, next) => {

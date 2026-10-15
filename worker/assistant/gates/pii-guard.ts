@@ -2,8 +2,9 @@
 // the origin had no model-side PII control at all (14 §3.6, §5.3).
 //
 // `assertNoPII` serializes a payload, normalizes it once (shared/pii.ts normalizeForScan: NFKC,
-// zero-width/soft-hyphen stripped, every disguised "@"/"." folded to the real character — 09
-// D-79) and checks four things against the normalized text, in this order:
+// zero-width/soft-hyphen stripped, every %XX escape decoded, every disguised "@"/"." folded to
+// the real character — 09 D-79) and checks four things against the normalized text, in this
+// order (the two membership checks also read "-" and "_" as ".", shared/pii.ts foldSeparators):
 //   1. known_email      — membership against every email_norm in the database (loaded per request)
 //   2. email_pattern    — the case-insensitive email regex (shared/pii.ts EMAIL_REGEX)
 //   3. raw_id           — raw app user, device or web visitor ids (shared/pii.ts RAW_ID_REGEX)
@@ -14,7 +15,7 @@
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
 import { normalizeEmail, normalizeQueryFragment } from '../../../shared/normalize'
-import { EMAIL_REGEX, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, type NormalizedScan, normalizeForMembership, normalizeForScan, RAW_ID_REGEX } from '../../../shared/pii'
+import { EMAIL_REGEX, foldSeparators, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, type NormalizedScan, normalizeForMembership, normalizeForScan, RAW_ID_REGEX } from '../../../shared/pii'
 import { ApiError } from '../../auth/middleware'
 import type { AuditTrace } from '../audit/ai-audit'
 
@@ -34,9 +35,10 @@ export type PiiSite = 'model_request' | 'tool_result' | 'model_output' | 'log' |
  */
 export class KnownEmails {
   readonly size: number
+  /** Every known email with "-" and "_" read as "." (shared/pii.ts foldSeparators). */
   private readonly emails: ReadonlySet<string>
   private readonly shapes: ReadonlyMap<number, readonly number[]>
-  /** The local part of every known email with at least LOCAL_PART_MIN_CHARS characters (09 D-70 #1). */
+  /** The local part of every known email with at least LOCAL_PART_MIN_CHARS characters (09 D-70 #1), separators folded as above. */
   private readonly localParts: ReadonlySet<string>
   /** The longest known local part: bounds the search in redactKnownLocalParts. */
   readonly maxLocalPartLength: number
@@ -51,8 +53,8 @@ export class KnownEmails {
         // Never echo the value: it is an email or something that should have been one.
         throw new Error('pii-guard: a known email is not a normalized address with exactly one "@"')
       }
-      set.add(email)
-      if (at >= LOCAL_PART_MIN_CHARS) localParts.add(email.slice(0, at))
+      set.add(foldSeparators(email))
+      if (at >= LOCAL_PART_MIN_CHARS) localParts.add(foldSeparators(email.slice(0, at)))
       let lengths = shapes.get(at)
       if (lengths === undefined) shapes.set(at, (lengths = new Set()))
       lengths.add(email.length)
@@ -64,9 +66,12 @@ export class KnownEmails {
     this.maxLocalPartLength = Math.max(0, ...[...localParts].map((l) => l.length))
   }
 
-  /** True when `token`, folded as a lookup fragment is, is the local part of a known email (09 D-70 #1). */
+  /**
+   * True when `token`, folded as a lookup fragment is and with "-"/"_" read as ".", is the local
+   * part of a known email (09 D-70 #1): "joy-hall830" in a story slug is "joy.hall830".
+   */
   isLocalPart(token: string): boolean {
-    return this.localParts.has(normalizeQueryFragment(token))
+    return this.localParts.has(foldSeparators(normalizeQueryFragment(token)))
   }
 
   /**
@@ -90,7 +95,7 @@ export class KnownEmails {
         // must be the address itself, or a redaction would swallow the space next to it.
         if (/^\s|\s$/u.test(slice)) continue
         const candidate = normalizeEmail(slice)
-        if (candidate !== null && this.emails.has(candidate)) return [start, start + length]
+        if (candidate !== null && this.emails.has(foldSeparators(candidate))) return [start, start + length]
       }
     }
     return null

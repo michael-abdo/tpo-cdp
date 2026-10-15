@@ -1341,17 +1341,16 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       expect(tile.status).toBe('ok')
       try {
         const link = `${HOSTED_URL}/u/${LOCAL}`
-        const res = await sendWebhook(
-          JSON.stringify({
-            event_id: nextEventId(),
-            event: 'link_click',
-            user_id: JOY_APP_USER,
-            device_id: JOY_DEVICE,
-            timestamp: BRIEF_TS,
-            properties: { link },
-          }),
-        )
-        expect(res.status).toBe(202) // the schema allows it: no "@", a plain http(s) URL (04 §Webhook)
+        const send = (eventId: string, properties: Record<string, string>) =>
+          sendWebhook(JSON.stringify({ event_id: eventId, event: 'link_click', user_id: JOY_APP_USER, device_id: JOY_DEVICE, timestamp: BRIEF_TS, properties }))
+        // The webhook refuses this link at ingest (worker/webhooks/exposed-properties.ts), so the
+        // row is planted as one stored before that check existed: a real event through the real
+        // path, then its link set to the known local part.
+        expect((await send(nextEventId(), { link })).status).toBe(400)
+        const eventId = nextEventId()
+        expect((await send(eventId, { link: `${HOSTED_URL}/news/supreme-court-ruling-explained` })).status).toBe(202)
+        const planted = await env.DB.prepare("UPDATE app_events SET properties = json_set(properties, '$.link', ?) WHERE event_id = ?").bind(link, eventId).run()
+        expect(planted.meta.changes).toBe(1)
         const stored = await env.DB.prepare("SELECT link FROM v_app_events WHERE link = ?").bind(link).all()
         expect(stored.results).toHaveLength(1)
         const lastRow = await env.DB.prepare('SELECT max(rowid) AS r FROM ai_audit').first<number>('r')

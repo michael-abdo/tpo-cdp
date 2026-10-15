@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, toolSeedInsert } from '../scripts/tool-seeds'
 import { HOSTED_URL } from '../shared/config'
+import { MOST_ENGAGED_MIN } from '../shared/segment-filters'
 import { PII_COLUMNS } from '../shared/pii'
 import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { MODEL } from '../worker/assistant/build-request'
@@ -274,6 +275,17 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
       expect((error as ToolConfigError).message).toContain(problem)
     }
     expect(() => toLoadedTools([], [])).toThrow(expect.objectContaining({ code: 'no_tools', status: 500 }))
+  })
+
+  it('the no_tools message names seed commands that run: the script refuses to start without --local or --remote', () => {
+    let message = ''
+    try {
+      toLoadedTools([], [])
+    } catch (err) {
+      message = (err as Error).message
+    }
+    const commands = [...message.matchAll(/`(npm run tools:seed[^`]*)`/g)].map((m) => m[1])
+    expect(commands).toEqual(['npm run tools:seed -- --remote', 'npm run tools:seed -- --local'])
   })
 })
 
@@ -600,9 +612,9 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     const pkeys = collectPkeys(result)
     expect(pkeys).toHaveLength(100)
 
-    // After: the UI payload carries subscribers of the builder's segment, as emails. The tool's
-    // rows come most engaged first (09 D-56), so they are members of the builder's 177, not its
-    // first 100 in email order.
+    // After: the UI payload carries subscribers of the builder's segment, as emails. Both lists
+    // come most engaged first; ties break by pkey in the tool and by email in the builder, so the
+    // check is membership in the builder's 177, not position.
     const hydrated = rehydrate(result, await loadEmailsByPkey(env.DB, pkeys))
     expect(hydrated.table?.columns[0]).toBe('email')
     const all = new Set((await preview(cookie, PRESET, 1000)).rows.map((r) => r.email))
@@ -753,29 +765,43 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(respond({ modelText: null, outputs: [seg, cold], capped: true }).result.table?.rows).toEqual([{ cold: 147 }])
   })
 
-  it('"our most engaged readers": the segment tool lists the highest stored engagement scores first (09 D-56)', async () => {
+  it('"our most engaged readers": the tool row maps it to engagement_gte 50, not to every active subscriber', () => {
+    const segment = TOOL_SEEDS.find((t) => t.name === 'segment')!
+    expect(MOST_ENGAGED_MIN).toBe(50)
+    expect(segment.description).toContain(`For "most engaged readers" (or "most engaged subscribers") set engagement_gte to ${MOST_ENGAGED_MIN}`)
+    // The old wording sent the model to no filter at all: every active subscriber (2,610).
+    expect(segment.description).not.toMatch(/no extra filters/)
+    expect(String((segment.inputSchema.properties as Record<string, { description: string }>).engagement_gte.description)).toContain(
+      `${MOST_ENGAGED_MIN} = "most engaged readers"`,
+    )
+  })
+
+  it('"our most engaged readers": 487 active subscribers with engagement 50 or more, highest scores first, the same list "Open segment" shows', async () => {
     const cookie = await loginCookie()
-    // Independent of the tool's SQL: the scores of active subscribers, from the tables, highest first.
+    const filters = { engagement_gte: MOST_ENGAGED_MIN }
+    // Independent of the tool's SQL: the scores of active subscribers at 50 or more, from the tables, highest first.
     const { results } = await env.DB.prepare(
-      "SELECT p.engagement_score AS score FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm WHERE s.status = 'active' ORDER BY p.engagement_score DESC LIMIT 100",
-    ).all<{ score: number }>()
+      "SELECT p.engagement_score AS score FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm WHERE s.status = 'active' AND p.engagement_score >= ? ORDER BY p.engagement_score DESC LIMIT 100",
+    )
+      .bind(MOST_ENGAGED_MIN)
+      .all<{ score: number }>()
     const top = results.map((r) => r.score)
     expect(top).toHaveLength(100)
     expect(top[0]).toBeGreaterThan(top[99]) // the data has a spread, so the order is visible
 
     const { transport, requests } = scripted([
-      () => message([toolUse('toolu_top', 'segment', {})], 'tool_use'),
+      () => message([toolUse('toolu_top', 'segment', filters)], 'tool_use'),
       () =>
         message(
           [
             text(
               finalText('Here are the most engaged readers.', {
                 type: 'segment',
-                text: 'Active subscribers, most engaged first by engagement score.',
+                text: 'Active subscribers with an engagement score of 50 or more, most engaged first.',
                 window: null,
-                filters_applied: { status: ['active'] },
+                filters_applied: { status: ['active'], engagement_gte: MOST_ENGAGED_MIN },
                 definitions_used: ['engagement_score'],
-                segment: { filters: {} },
+                segment: { filters },
               }),
             ),
           ],
@@ -792,10 +818,14 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     }>()
     expect(body.type).toBe('segment')
     expect(body.partial).toBe(false)
-    const builder = await preview(cookie, {}, 1)
-    expect(body.segment.count).toBe(builder.count) // opens in the builder as the same segment
+    expect(body.segment.count).toBe(487) // active subscribers with engagement >= 50 on the seed
+    const builder = await preview(cookie, filters)
+    expect(builder.count).toBe(body.segment.count) // opens in the builder as the same segment
+    expect(builder.hidden_unsubscribed).toBe(27)
     expect(body.table.columns[0]).toBe('email')
     expect(body.table.rows.map((r) => r.engagement_score)).toEqual(top)
+    // "Open segment" shows the builder's rows: the same scores in the same order.
+    expect((builder.rows as unknown as { engagement_score: number }[]).map((r) => r.engagement_score)).toEqual(top)
 
     // The model's ten rows are the top ten scores too, as pk_ keys.
     const shown = String(firstToolResult(requests[1]).content)
@@ -1305,17 +1335,19 @@ describe('T-PII-5 at the route: a webhook link holding a known local part is blo
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
     const link = `${HOSTED_URL}/u/${JOY_LOCAL}`
-    const res = await sendWebhook(
-      JSON.stringify({
-        event_id: eventIdPool()(),
-        event: 'link_click',
-        user_id: JOY_APP_USER,
-        device_id: JOY_DEVICE,
-        timestamp: '2026-09-28T14:22:05Z',
-        properties: { link },
-      }),
-    )
-    expect(res.status).toBe(202)
+    const send = (eventId: string, properties: Record<string, string>) =>
+      sendWebhook(
+        JSON.stringify({ event_id: eventId, event: 'link_click', user_id: JOY_APP_USER, device_id: JOY_DEVICE, timestamp: '2026-09-28T14:22:05Z', properties }),
+      )
+    const nextEventId = eventIdPool()
+    // The webhook now refuses this link at ingest (worker/webhooks/exposed-properties.ts) ...
+    expect((await send(nextEventId(), { link })).status).toBe(400)
+    // ... so the row is planted, as one stored before that check existed would be: a real event
+    // through the real path, then its link set to the known local part.
+    const eventId = nextEventId()
+    expect((await send(eventId, { link: `${HOSTED_URL}/news/supreme-court-ruling-explained` })).status).toBe(202)
+    const planted = await env.DB.prepare("UPDATE app_events SET properties = json_set(properties, '$.link', ?) WHERE event_id = ?").bind(link, eventId).run()
+    expect(planted.meta.changes).toBe(1)
 
     const sql = "SELECT link FROM v_app_events WHERE link LIKE '%/u/%'"
     const { transport, requests } = scripted([

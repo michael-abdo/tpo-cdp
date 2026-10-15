@@ -8,6 +8,8 @@
   "observability": { "enabled": true },
 
   // The SPA is served from static assets; the Worker runs first only for API, webhook and health paths.
+  // Static files take their security and cache headers from public/_headers; the Worker sets the
+  // same security headers, no-store and the https rule on its own answers (worker/http-hardening.ts).
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/webhooks/*", "/health"]

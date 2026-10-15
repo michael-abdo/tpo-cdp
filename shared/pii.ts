@@ -31,6 +31,16 @@ export const EMAIL_REGEX = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 export const LOCAL_PART_TOKEN = /[a-z0-9._%+-]+/i
 
 /**
+ * For membership checks only (a stored email, a stored local part): "-" and "_" read as ".", on
+ * both the stored value and the text, so "joy-hall830" and "joy_hall830" match a stored
+ * "joy.hall830". Only a real subscriber's address can match, so ordinary slugs such as
+ * "first-page" are not affected; the email-shape pattern never sees this fold.
+ */
+export function foldSeparators(value: string): string {
+  return value.replace(/[-_]/g, '.')
+}
+
+/**
  * The shortest known local part Gate 1 redacts on its own (09 D-70 #1). Every local part in
  * data/*.csv is longer (name, dot, surname, digits); a shorter one could be an ordinary word.
  */
@@ -63,6 +73,12 @@ const INVISIBLE_CHAR_TEST = new RegExp(INVISIBLE_CHARS.source, 'u')
  *     the middle of a disguise) is dropped, then Unicode NFKC folds what is left (the full-width
  *     `＠` U+FF20 and the small `﹫` U+FE6B to plain "@" on their own, full-width letters to
  *     ASCII, and so on).
+ *  1b. Over the stage-1 text (`decodePercent`): every `%XX` escape is decoded, not only `%40`,
+ *     as UTF-8 where the bytes form a valid character, and each decoded character goes through
+ *     stage 1's fold again (so `%EF%BC%A0` becomes "＠" and then "@"). It repeats while anything
+ *     was decoded, up to PERCENT_DECODE_ROUNDS times, so an escape escaped again (`%252E`) is
+ *     decoded too. An escape that is not valid UTF-8 stays as typed. A "." that came from an
+ *     escape (`%2E`) counts as a disguised dot in stage 2b: nobody escapes "." in a real URL.
  *  2. Over the stage-1 text (`DISGUISE_TOKEN_RE`): every escaped or bracketed form of "@" and
  *     "." folded to the real character — `%40` (any case), `&#64;`, `&#x40;` (any case), the
  *     bracketed words `[at]`/`(at)`/`{at}`/`<at>` and `[dot]`/`(dot)`/`{dot}` (optional spaces
@@ -109,6 +125,17 @@ interface ScanToken {
   readonly origEnd: number
   readonly out: string
 }
+
+/** A stage-1 token: like ScanToken, plus whether `out` came from decoding a `%XX` escape. */
+interface FoldedToken extends ScanToken {
+  readonly escaped: boolean
+}
+
+/**
+ * The most rounds of `%XX` decoding one scan runs (stage 1b). Each round undoes one layer of
+ * escaping, so this reads `%2E`, `%252E`, `%25252E` and `%2525252E`; a fifth layer stays as typed.
+ */
+export const PERCENT_DECODE_ROUNDS = 4
 
 /** A run of plain word characters (letters, digits, "_", "-"), case-insensitive. */
 const LABEL = '[\\p{L}\\p{N}_-]+'
@@ -167,17 +194,120 @@ const DISGUISE_TOKEN_RE = new RegExp(
 // group actually falls, to check it for a disguised "." before folding anything.
 const AT_SHAPE_RE = new RegExp(`\\b(${DOTTED})\\s+at\\s+(${DOTTED_WITH_DOT})\\b(?!\\s+at\\s+${LABEL})`, 'gidu')
 
+/** Stage 1's fold of one character: dropped when invisible, else NFKC. */
+function foldChar(ch: string): string {
+  return INVISIBLE_CHAR_TEST.test(ch) ? '' : ch.normalize('NFKC')
+}
+
 /** Pure. Stage 1: format characters dropped, then NFKC, one original character at a time; keeps each output character's origin span. */
-function foldChars(raw: string): ScanToken[] {
-  const tokens: ScanToken[] = []
+function foldChars(raw: string): FoldedToken[] {
+  const tokens: FoldedToken[] = []
   let i = 0
   for (const ch of raw) {
     const origStart = i
     i += ch.length
     const origEnd = i
-    tokens.push({ origStart, origEnd, out: INVISIBLE_CHAR_TEST.test(ch) ? '' : ch.normalize('NFKC') })
+    tokens.push({ origStart, origEnd, out: foldChar(ch), escaped: false })
   }
   return tokens
+}
+
+const HEX_PAIR = /^[0-9a-f]{2}$/i
+
+/**
+ * The code point that `bytes` encode as one UTF-8 character, or null when they are not exactly
+ * one valid, shortest-form character (RFC 3629: no overlong forms, no surrogates, nothing past
+ * U+10FFFF). Checked by hand, so an invalid escape is a plain "no", never a caught exception.
+ */
+function utf8CodePoint(bytes: readonly number[]): number | null {
+  const [b0, b1, b2, b3] = bytes
+  const cont = (b: number | undefined) => b !== undefined && b >= 0x80 && b <= 0xbf
+  if (bytes.length === 1) return b0! < 0x80 ? b0! : null
+  if (bytes.length === 2) return b0! >= 0xc2 && b0! <= 0xdf && cont(b1) ? ((b0! & 0x1f) << 6) | (b1! & 0x3f) : null
+  if (bytes.length === 3) {
+    if (b0! < 0xe0 || b0! > 0xef || !cont(b1) || !cont(b2)) return null
+    if ((b0 === 0xe0 && b1! < 0xa0) || (b0 === 0xed && b1! > 0x9f)) return null
+    return ((b0! & 0x0f) << 12) | ((b1! & 0x3f) << 6) | (b2! & 0x3f)
+  }
+  if (bytes.length === 4) {
+    if (b0! < 0xf0 || b0! > 0xf4 || !cont(b1) || !cont(b2) || !cont(b3)) return null
+    if ((b0 === 0xf0 && b1! < 0x90) || (b0 === 0xf4 && b1! > 0x8f)) return null
+    return ((b0! & 0x07) << 18) | ((b1! & 0x3f) << 12) | ((b2! & 0x3f) << 6) | (b3! & 0x3f)
+  }
+  return null
+}
+
+/** How many bytes the UTF-8 character starting with `lead` takes; 0 when `lead` starts none. */
+function utf8Length(lead: number): number {
+  if (lead < 0x80) return 1
+  if (lead >= 0xc2 && lead <= 0xdf) return 2
+  if (lead >= 0xe0 && lead <= 0xef) return 3
+  if (lead >= 0xf0 && lead <= 0xf4) return 4
+  return 0
+}
+
+/** One character of the stage-1 text with the original span it came from. */
+interface ScanChar {
+  readonly ch: string
+  readonly origStart: number
+  readonly origEnd: number
+  readonly escaped: boolean
+}
+
+/**
+ * Pure. One round of stage 1b over stage 1's tokens: each run of `%XX` escapes is read as UTF-8
+ * bytes, and every complete, valid character in it becomes one token spanning its escapes in the
+ * original text, folded again as stage 1 folds. Bytes that form no valid character are copied
+ * through as typed. `changed` is false when nothing was decoded.
+ */
+function decodePercentOnce(tokens: readonly FoldedToken[]): { tokens: FoldedToken[]; changed: boolean } {
+  const chars: ScanChar[] = []
+  for (const t of tokens) for (const ch of t.out) chars.push({ ch, origStart: t.origStart, origEnd: t.origEnd, escaped: t.escaped })
+  const isEscapeAt = (i: number) => chars[i]?.ch === '%' && HEX_PAIR.test((chars[i + 1]?.ch ?? '') + (chars[i + 2]?.ch ?? ''))
+  const out: FoldedToken[] = []
+  const copy = (c: ScanChar) => out.push({ origStart: c.origStart, origEnd: c.origEnd, out: c.ch, escaped: c.escaped })
+  let changed = false
+  let i = 0
+  while (i < chars.length) {
+    if (!isEscapeAt(i)) {
+      copy(chars[i]!)
+      i += 1
+      continue
+    }
+    // A run of escapes: each is three characters, "%" and two hex digits.
+    const escapes: number[] = []
+    for (let j = i; isEscapeAt(j); j += 3) escapes.push(j)
+    const byteAt = (k: number) => parseInt(chars[escapes[k]! + 1]!.ch + chars[escapes[k]! + 2]!.ch, 16)
+    let k = 0
+    while (k < escapes.length) {
+      const length = utf8Length(byteAt(k))
+      const bytes = length === 0 || k + length > escapes.length ? [] : Array.from({ length }, (_, n) => byteAt(k + n))
+      const codePoint = bytes.length === 0 ? null : utf8CodePoint(bytes)
+      if (codePoint === null) {
+        for (let n = 0; n < 3; n += 1) copy(chars[escapes[k]! + n]!)
+        k += 1
+        continue
+      }
+      const first = chars[escapes[k]!]!
+      const last = chars[escapes[k + length - 1]! + 2]!
+      out.push({ origStart: first.origStart, origEnd: last.origEnd, out: foldChar(String.fromCodePoint(codePoint)), escaped: true })
+      changed = true
+      k += length
+    }
+    i = escapes[escapes.length - 1]! + 3
+  }
+  return { tokens: out, changed }
+}
+
+/** Pure. Stage 1b: decodePercentOnce, repeated while it decodes anything, at most PERCENT_DECODE_ROUNDS times. */
+function decodePercent(tokens: readonly FoldedToken[]): FoldedToken[] {
+  let current = [...tokens]
+  for (let round = 0; round < PERCENT_DECODE_ROUNDS; round += 1) {
+    const next = decodePercentOnce(current)
+    if (!next.changed) break
+    current = next.tokens
+  }
+  return current
 }
 
 /** A stage-2a token: like ScanToken, plus whether its "." (if any) came from a disguise (bracketed or a bare spelled "dot"), never a "." someone just typed. */
@@ -186,11 +316,15 @@ interface DisguiseToken extends ScanToken {
 }
 
 /** Pure. Stage 2a (see DISGUISE_TOKEN_RE above): folds brackets, escapes and the bare spelled "dot" over stage 1's text; keeps each output character's origin span and whether it is a disguised ".". */
-function foldDisguises(stage1: readonly ScanToken[]): DisguiseToken[] {
+function foldDisguises(stage1: readonly FoldedToken[]): DisguiseToken[] {
   let stage1Text = ''
   const spanAt: Array<readonly [number, number]> = []
+  const escapedAt: boolean[] = []
   for (const t of stage1) {
-    for (let k = 0; k < t.out.length; k += 1) spanAt.push([t.origStart, t.origEnd])
+    for (let k = 0; k < t.out.length; k += 1) {
+      spanAt.push([t.origStart, t.origEnd])
+      escapedAt.push(t.escaped)
+    }
     stage1Text += t.out
   }
   const tokens: DisguiseToken[] = []
@@ -202,8 +336,9 @@ function foldDisguises(stage1: readonly ScanToken[]): DisguiseToken[] {
     const groups = m.groups as Record<string, string | undefined>
     const isDot = groups.dotBr !== undefined || groups.dotSpelled !== undefined || groups.dotSpaced !== undefined
     // A spaced "." folds to "." but never marks a disguise: "signed up at instagram . com" must not
-    // let stage 2b's spelled-"at" fold read it as an address.
-    const disguisedDot = groups.dotBr !== undefined || groups.dotSpelled !== undefined
+    // let stage 2b's spelled-"at" fold read it as an address. A "." decoded from "%2E" does.
+    const escapedDot = groups.ch === '.' && escapedAt[start] === true
+    const disguisedDot = groups.dotBr !== undefined || groups.dotSpelled !== undefined || escapedDot
     const out =
       groups.pct !== undefined || groups.hex !== undefined || groups.dec !== undefined || groups.atBr !== undefined || groups.atSpaced !== undefined
         ? '@'
@@ -261,7 +396,7 @@ function applyAtShape(disguiseTokens: readonly DisguiseToken[]): ScanToken[] {
 
 /** Pure. The one normalizer (see NormalizedScan above). */
 export function normalizeForScan(raw: string): NormalizedScan {
-  return scanOf(raw, applyAtShape(foldDisguises(foldChars(raw))))
+  return scanOf(raw, applyAtShape(foldDisguises(decodePercent(foldChars(raw)))))
 }
 
 /**
@@ -272,7 +407,7 @@ export function normalizeForScan(raw: string): NormalizedScan {
  * pattern keeps running on normalizeForScan's conservative text (09 D-79, self-audit at 1200107).
  */
 export function normalizeForMembership(raw: string): NormalizedScan {
-  const tokens = applyAtShape(foldDisguises(foldChars(raw)))
+  const tokens = applyAtShape(foldDisguises(decodePercent(foldChars(raw))))
   const isSpace = (t: ScanToken | undefined) => t !== undefined && /^\s+$/u.test(t.out)
   const isSep = (t: ScanToken | undefined) => t !== undefined && (t.out === '.' || t.out === '@')
   const kept: ScanToken[] = []

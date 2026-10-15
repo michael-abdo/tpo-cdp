@@ -177,12 +177,13 @@ eventRoutes.post('/events/test', async (c) => {
     // carry none of our secrets but is not this route's documented shape.
     throw new Error(`events/test: POST /webhooks/app answered ${webhookRes.status} for a self-built event`)
   }
-  const webhookBody = await webhookRes.json<{ event_id?: string; duplicate: boolean }>()
-  const eventId = webhookBody.event_id ?? (JSON.parse(bodyText) as { event_id: string }).event_id
+  // The public webhook answer names no person, so who the event resolves to is read here, behind
+  // the session, from the feed (worker/identity/resolve.ts), by the event_id this route built.
+  const eventId = (JSON.parse(bodyText) as { event_id: string }).event_id
   const event = await feedEventById(c.env.DB, requireSecret(c.env, 'PII_KEY_SECRET'), eventId)
   if (event === null) throw new Error('events/test: the event was just stored but is missing from the feed')
 
-  const outcome = webhookBody.duplicate ? 'duplicate' : 'received'
+  const outcome = webhookRes.status === 200 ? 'duplicate' : 'received'
   console.info(JSON.stringify({ at: 'events/test', outcome, status: webhookRes.status }))
   return c.json({ status: webhookRes.status, outcome, event }, webhookRes.status as 202 | 200)
 })

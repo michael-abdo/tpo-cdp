@@ -12,8 +12,9 @@
 // the five Segments "More filters" flags, which docs/notes.md lists once, under one line, per D-80 "one
 // flag per feature, five parts" (segments.md §4 Q4).
 //
-// Ungating a feature is: find its entry here, set `comingSoon: false`, and follow its page spec's
-// "Ungating checklist". Nothing else in this file changes at ungate time.
+// Every entry here is gated, so `comingSoon` is typed as the literal `true`: nothing reads a
+// `false`, and the type refuses one. Ungating a feature is: follow its page spec's "Ungating
+// checklist", which swaps the gated control for the real one, then delete its entry here.
 
 export type FeaturePage = 'overview' | 'lookup' | 'segments' | 'insights' | 'login'
 
@@ -35,6 +36,7 @@ export interface Feature {
    * single rendered control's text is `label` itself.
    */
   readonly controls?: readonly string[]
+  /** Always `true`: an entry exists only while its feature is gated (see the header). */
   readonly comingSoon: true
 }
 
