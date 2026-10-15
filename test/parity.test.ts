@@ -1078,7 +1078,7 @@ describe('T-PAR-6b absent-today guards', () => {
     const accountsByEmail = new Map<string, number>()
     for (const u of oracle.appUsers) accountsByEmail.set(u.email_norm, (accountsByEmail.get(u.email_norm) ?? 0) + 1)
     expect([...accountsByEmail.values()].filter((n) => n > 1).length, 'one email on 2+ app accounts').toBe(0)
-    expect(subs.filter((s) => s.source === null).length, 'blank source on a kept row (G4)').toBe(0)
+    expect(subs.filter((s) => s.source === null).length, 'blank source on a kept row').toBe(0)
   })
 
   it('merged (duplicate) subscriber groups that disagree on signup_date, last_open_date, status or source: 0 (merge precedence never fires on this data)', () => {

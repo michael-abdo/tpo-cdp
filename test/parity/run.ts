@@ -158,15 +158,15 @@ async function main(): Promise<void> {
   const mode = process.argv.slice(2).find((a) => a.startsWith('--'))
   if (mode === '--remote') {
     throw new Error(
-      'mode C (--remote) is out of scope for this unit (21 §2.6, §4.3): it needs production D1 ' +
-        'credentials; this script only runs mode B, a throwaway local store. Use ' +
+      'remote mode (--remote) is out of scope: it needs production D1 ' +
+        'credentials; this script only runs against a throwaway local store. Use ' +
         '`wrangler d1 execute cdp --remote` by hand for a one-off remote parity check.',
     )
   }
   if (mode !== '--local') throw new Error('usage: npm run parity -- --local')
 
   const persistTo = mkdtempSync(join(tmpdir(), 'cdp-parity-'))
-  console.log(`throwaway local D1: ${persistTo} (never the dev database, 21 §0 F5)`)
+  console.log(`throwaway local D1: ${persistTo} (never the dev database)`)
   try {
     run('apply migrations (fresh local D1)', 'npx', [
       'wrangler', 'd1', 'migrations', 'apply', DB, '--local', `--persist-to=${persistTo}`,

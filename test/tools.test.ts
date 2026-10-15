@@ -336,7 +336,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
 
   it('an inserted query row is live on the next load with no deploy; its values are bound, never spliced, and its rows are pk_ keys only', async () => {
     const joy = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(JOY).first<string>('pkey')
-    if (joy === null) throw new Error('no profile for the demo subject (02 §Counts)')
+    if (joy === null) throw new Error('no profile for the demo subject')
     const seed = queryRow(
       'reader_first_page',
       { type: 'object', properties: { reader: { type: 'string', description: 'A pk_ key.' } }, required: ['reader'] },

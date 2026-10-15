@@ -445,7 +445,7 @@ describe('query_sql through Gates 2 and 3', () => {
 describe('T-AI-2 query_sql results contain pk_ keys only', () => {
   it('subjects come back as pk_ keys: the demo subject by her key, visitors and readers by theirs; no email or raw id in any cell', async () => {
     const joy = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(JOY).first<string>('pkey')
-    if (joy === null) throw new Error('no profile for the demo subject (02 §Counts)')
+    if (joy === null) throw new Error('no profile for the demo subject')
     const emails = new Set(
       (await env.DB.prepare('SELECT email_norm FROM profiles WHERE email_norm IS NOT NULL').all<{ email_norm: string }>()).results.map((r) => r.email_norm),
     )

@@ -199,7 +199,7 @@ async function expectBlocked(
 
 async function pkeyOf(email: string): Promise<string> {
   const pkey = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(email).first<string>('pkey')
-  if (pkey === null) throw new Error('no profile for the demo subject (02 §Counts)')
+  if (pkey === null) throw new Error('no profile for the demo subject')
   return pkey
 }
 
@@ -1198,7 +1198,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
     const source = await env.DB.prepare('SELECT source FROM subscribers WHERE email_norm = ?').bind(JOY).first<string>('source')
-    if (source === null) throw new Error('no subscriber row for the demo subject (02 §Counts)')
+    if (source === null) throw new Error('no subscriber row for the demo subject')
     // A leak path: a client-supplied text column that holds an email; here her own, in place of her source.
     await env.DB.prepare('UPDATE subscribers SET source = email_norm WHERE email_norm = ?').bind(JOY).run()
     try {
@@ -1388,7 +1388,7 @@ describe('T-PII-4 at the tool executor\'s success result: the full rows are scan
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const before = await BUILTIN_HANDLERS.segment.run(env.DB, {})
     const eleventh = before.rows[10]
-    if (eleventh === undefined) throw new Error('the default segment lists fewer than 11 rows (02 §Counts)')
+    if (eleventh === undefined) throw new Error('the default segment lists fewer than 11 rows')
     const email = await env.DB.prepare('SELECT email_norm FROM profiles WHERE pkey = ?').bind(eleventh.pkey).first<string>('email_norm')
     if (email === null) throw new Error('no email for the 11th segment row')
     const source = await env.DB.prepare('SELECT source FROM subscribers WHERE email_norm = ?').bind(email).first<string>('source')

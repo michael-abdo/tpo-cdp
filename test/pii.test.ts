@@ -101,7 +101,7 @@ function toolRound(id: string, sql: string, rows: unknown) {
 
 async function pkeyOf(email: string): Promise<string> {
   const pkey = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(email).first<string>('pkey')
-  if (pkey === null) throw new Error(`no profile for a demo subject (02 §Counts)`)
+  if (pkey === null) throw new Error(`no profile for a demo subject`)
   return pkey
 }
 
