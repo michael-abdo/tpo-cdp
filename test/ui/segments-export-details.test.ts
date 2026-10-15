@@ -34,7 +34,7 @@ function cells(filters: SegmentFilters, count: number, tag: string): string[] {
 const BOTH: SegmentFilters = { ...BRIEF_EXAMPLE, status: ['active', 'unsubscribed'] }
 const UNSUBSCRIBED_ONLY: SegmentFilters = { ...BRIEF_EXAMPLE, status: ['unsubscribed'] }
 
-describe('/segments ExportFileDetails: the level-1 line (09 D-76, D-72)', () => {
+describe('/segments ExportFileDetails: the level-1 line', () => {
   it('active only: names the row count and that unsubscribed is not included', () => {
     expect(text(BRIEF_EXAMPLE, 177)).toContain('177 rows. Unsubscribed subscribers are not included.')
   })
@@ -52,7 +52,7 @@ describe('/segments ExportFileDetails: the level-1 line (09 D-76, D-72)', () => 
   })
 })
 
-describe('/segments ExportFileDetails: "What\'s in the file" (09 D-76)', () => {
+describe('/segments ExportFileDetails: "What\'s in the file"', () => {
   it('lists the columns in file order, by their plain word, in SEGMENT_COLUMNS order', () => {
     expect(text(BRIEF_EXAMPLE, 177)).toContain(
       'Columns, in file order: Email, Status, Acquisition source, Signup date, Last open date, Engagement, Uses the app.',
@@ -89,7 +89,7 @@ describe('/segments ExportFileDetails: "What\'s in the file" (09 D-76)', () => {
   })
 })
 
-describe('/segments: ExportFileDetails sits beside Export CSV, only once a result exists (09 D-76)', () => {
+describe('/segments: ExportFileDetails sits beside Export CSV, only once a result exists', () => {
   it('the page renders it right after the Export CSV button, gated the same as the button', () => {
     const buttonAt = segmentsSource.indexOf("{exporting ? 'Preparing download…' : 'Export CSV'}")
     const detailsAt = segmentsSource.indexOf('<ExportFileDetails filters={ok.filters} count={ok.data.count} />')
@@ -98,7 +98,7 @@ describe('/segments: ExportFileDetails sits beside Export CSV, only once a resul
     expect(segmentsSource).toContain('{ok.data.count > 0 && <ExportFileDetails filters={ok.filters} count={ok.data.count} />}')
   })
 
-  it("Technical details' CSV columns sentence was retired, not left as a second copy (09 D-72)", () => {
+  it("Technical details' CSV columns sentence was retired, not left as a second copy", () => {
     expect(segmentsSource).not.toContain('CSV columns:')
     expect(segmentsSource).not.toContain('CSV_COLUMNS')
   })

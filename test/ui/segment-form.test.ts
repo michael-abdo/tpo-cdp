@@ -99,7 +99,7 @@ describe('T-SEG-6 the form round-trips every filter key (toFilters, toForm)', ()
     expect(moreFiltersOn(toForm(CASES['every key at once']))).toBe(5)
   })
 
-  it('moreFiltersOn counts 1 for each More filters field set alone, and 1 (not 2) when both fields of one group are set (kills M34)', () => {
+  it('moreFiltersOn counts 1 for each More filters field set alone, and 1 (not 2) when both fields of one group are set', () => {
     const alone: Record<'engagementFrom' | 'engagementTo' | 'signedUpDays' | 'wentCold' | 'siteDays' | 'sitePage' | 'appDays' | 'appEvent', Form> = {
       engagementFrom: { ...DEFAULT_FORM, engagementFrom: '25' },
       engagementTo: { ...DEFAULT_FORM, engagementTo: '40' },
@@ -117,7 +117,7 @@ describe('T-SEG-6 the form round-trips every filter key (toFilters, toForm)', ()
     expect(moreFiltersOn({ ...DEFAULT_FORM, appDays: '7', appEvent: 'read_story' })).toBe(1)
   })
 
-  it('a box is sent as typed, never range-checked in the browser (02 §Normalization)', () => {
+  it('a box is sent as typed, never range-checked in the browser', () => {
     for (const value of ['0', '-5', '2.5', '99999'])
       expect(toFilters({ ...DEFAULT_FORM, signedUpDays: value }).signed_up_within_days).toBe(Number(value))
   })

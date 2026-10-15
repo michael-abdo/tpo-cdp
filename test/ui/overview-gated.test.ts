@@ -81,7 +81,7 @@ describe('Overview: SettingsButton (definition_settings)', () => {
     expect(describedByResolvesTo(html, FEATURES.definition_settings.note)).toBe(true)
   })
 
-  it('the button\'s own visible text equals shared/features.ts\'s definition_settings.label exactly (the review\'s M6: "Definition settings")', () => {
+  it('the button\'s own visible text equals shared/features.ts\'s definition_settings.label exactly ("Definition settings")', () => {
     const html = renderToString(createElement(SettingsButton))
     expect(elementText(html, 'button')).toBe(FEATURES.definition_settings.label)
   })

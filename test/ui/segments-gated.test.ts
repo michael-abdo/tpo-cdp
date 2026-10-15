@@ -129,7 +129,7 @@ describe('Segments: Send to beehiiv', () => {
     expect(describedByResolvesTo(html, FEATURES.send_to_beehiiv.note)).toBe(true)
   })
 
-  it('the button\'s own VISIBLE text equals shared/features.ts\'s send_to_beehiiv.label exactly (the review\'s M5: "Push to beehiiv")', () => {
+  it('the button\'s own VISIBLE text equals shared/features.ts\'s send_to_beehiiv.label exactly ("Push to beehiiv")', () => {
     const html = renderToString(createElement(SendToBeehiiv))
     expect(elementText(html, 'button')).toBe(FEATURES.send_to_beehiiv.label)
   })

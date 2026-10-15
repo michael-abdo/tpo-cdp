@@ -39,7 +39,7 @@ function rendered(): string {
     .replaceAll('&amp;', '&')
 }
 
-describe('T-UI-ONE /segments: the Cold reconciliation appears exactly once (09 D-72, D-30)', () => {
+describe('T-UI-ONE /segments: the Cold reconciliation appears exactly once', () => {
   const html = rendered()
 
   it('the level-1 hint beside the days field states the reconciliation', () => {

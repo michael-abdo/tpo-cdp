@@ -21,7 +21,7 @@ describe('T-SEG-5 segmentLabel names a segment in the brief\'s words', () => {
     expect(segmentLabel(BRIEF_EXAMPLE)).toBe("Instagram subscribers who haven't opened in 30 days")
   })
 
-  it('reads every key as the spec\'s grammar says', () => {
+  it('reads every key as the label grammar says', () => {
     const rows: Array<[SegmentFilters, string]> = [
       [ACTIVE, 'All active subscribers'],
       [f({ status: ['unsubscribed'] }), 'All unsubscribed subscribers'],

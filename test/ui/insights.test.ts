@@ -105,7 +105,7 @@ function chart(kind: ChartKind, result: ChartResult, segment: ChartSegment | nul
   return render(createElement(InsightChart, { kind, result, segment, caption: BRIEF_Q1 }))
 }
 
-describe('every chart kind renders with a text alternative (06 §UI principles 7, 09 D-64)', () => {
+describe('every chart kind renders with a text alternative', () => {
   it('number: the big number and its label are text', () => {
     const { text } = chart('number', NUMBER)
     expect(text).toContain('46')
@@ -152,7 +152,7 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
   })
 })
 
-describe('bars are sorted largest first, top 20 + "Other" (06 §/insights)', () => {
+describe('bars are sorted largest first, top 20 + "Other"', () => {
   it('rows in any order are drawn largest first; the numbers table keeps the rows as returned', () => {
     // The real UTM counts, smallest first: the order a GROUP BY without ORDER BY may return.
     const ascending: ChartResult = { columns: BAR.columns, rows: [...BAR.rows].reverse() }
@@ -188,7 +188,7 @@ describe('bars are sorted largest first, top 20 + "Other" (06 §/insights)', () 
   })
 })
 
-describe('the answer card offers "Pin to board" (06 §/insights)', () => {
+describe('the answer card offers "Pin to board"', () => {
   it('the recorded answer to the brief\'s first question has the Pin button, which opens a dialog', () => {
     const data: AssistantResponse = {
       type: 'answer',
@@ -294,8 +294,8 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
   })
 })
 
-describe('answers and tiles that cannot be pinned or run say so in plain words (09 D-64a)', () => {
-  it('an answer from free-form SQL has no Pin button; the card says why in the D-64a sentence', () => {
+describe('answers and tiles that cannot be pinned or run say so in plain words', () => {
+  it('an answer from free-form SQL has no Pin button; the card says why in the not-pinnable sentence', () => {
     // The server's sentence (one home, shared/insight-messages.ts), as POST /api/assistant returns it.
     const sentence = NOT_PINNABLE_MESSAGE
     const data: AssistantResponse = {
@@ -320,7 +320,7 @@ describe('answers and tiles that cannot be pinned or run say so in plain words (
     expect(text).not.toContain('Request approval')
   })
 
-  it('a query_sql answer that fails the D-64b grammar has no Pin button; the card says why, with no approval-queue wording (09 D-77)', () => {
+  it('a query_sql answer that fails the pin grammar has no Pin button; the card says why, with no approval-queue wording', () => {
     const data: AssistantResponse = {
       type: 'answer',
       text: 'Here is the table you asked for.',
@@ -413,7 +413,7 @@ function actions(tile: InsightTile) {
   return render(createElement(TileActions, { tile, above: null, below: null, onChanged: () => {}, onRemoved: () => {}, onExplain: () => {}, onClose: () => {} }))
 }
 
-describe('tile options (06 §/insights tile menu)', () => {
+describe('tile options (the tile menu)', () => {
   it('a built-in tile has no Remove; it can still be renamed, moved and explained', () => {
     const { text } = actions(builtIn)
     expect(text).not.toContain('Remove')
@@ -463,7 +463,7 @@ describe('tile options (06 §/insights tile menu)', () => {
   })
 })
 
-describe('an empty first page reads in words (06 §UI principles 4)', () => {
+describe('an empty first page reads in words', () => {
   // julia.evans230@gmail.com has no web history, so a first-page grouping holds
   // her in the null bucket; the bar label and its table must say why, not "None".
   it('a null first_page is "No tracked visit"; "/" is the home page', () => {
@@ -472,7 +472,7 @@ describe('an empty first page reads in words (06 §UI principles 4)', () => {
   })
 })
 
-describe('the pin dialog sends the trace id, and the title only when the person changed it (04 POST /api/insights)', () => {
+describe('the pin dialog sends the trace id, and the title only when the person changed it', () => {
   const ID = 'a3c1d2e4-5b6f-4a7b-8c9d-0e1f2a3b4c5d'
 
   it('an unchanged title is left to the server: the body holds only audit_id', () => {

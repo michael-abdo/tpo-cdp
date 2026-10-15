@@ -86,7 +86,7 @@ function rendered(data: Lookup): string {
   return renderToString(createElement(MemoryRouter, null, createElement(Profile, { data }))).replaceAll('<!-- -->', '')
 }
 
-describe('T-HARD-4 the Look up page shows every app account and web visitor (09 D-70 item 4)', () => {
+describe('T-HARD-4 the Look up page shows every app account and web visitor', () => {
   const data = joyProfile()
 
   it('starts from two of each, earliest first', () => {

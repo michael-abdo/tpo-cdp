@@ -69,7 +69,7 @@ function afterTechyButton(html: string): string {
   return html.slice(from, from + 2000)
 }
 
-describe('"Techy" nav group: the data (09 D-71 requirement 4, single source)', () => {
+describe('"Techy" nav group: the data (single source)', () => {
   it('Overview, Look up, Segments and Insights stay top-level; Techy is last', () => {
     expect(NAV.map((entry) => entry.label)).toEqual(['Overview', 'Look up', 'Segments', 'Insights', 'Techy'])
   })
@@ -91,7 +91,7 @@ describe('"Techy" nav group: the data (09 D-71 requirement 4, single source)', (
   })
 })
 
-describe('"Techy" nav group: the rendered button (09 D-71 requirement 1, 2)', () => {
+describe('"Techy" nav group: the rendered button', () => {
   beforeEach(() => {
     // workerd has no DOM; the shell's theme switch reads document/window while rendering, as
     // test/ui/routes.test.ts already does for the same reason.
@@ -136,7 +136,7 @@ describe('"Techy" nav group: the rendered button (09 D-71 requirement 1, 2)', ()
   )
 })
 
-describe('"Techy" nav group: the panel sits right after the button, not portalled (09 D-71 keyboard reachability)', () => {
+describe('"Techy" nav group: the panel sits right after the button, not portalled (keyboard reachability)', () => {
   beforeEach(() => {
     vi.stubGlobal('document', { documentElement: { dataset: {} } })
     vi.stubGlobal('window', {})
@@ -180,7 +180,7 @@ describe('"Techy" nav group: the panel sits right after the button, not portalle
   })
 })
 
-describe('"Techy" nav group: decision logic (src/nav.ts, 09 D-71) — no DOM needed', () => {
+describe('"Techy" nav group: decision logic (src/nav.ts) — no DOM needed', () => {
   it('nextOpen toggles: closed opens, open closes', () => {
     expect(nextOpen(false)).toBe(true)
     expect(nextOpen(true)).toBe(false)

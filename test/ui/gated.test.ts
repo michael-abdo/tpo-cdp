@@ -53,7 +53,7 @@ describe('shared/features.ts', () => {
   })
 
   // delete_person must say it needs per-person sign-in, not just name a blocker.
-  it("delete_person's note says it needs per-person sign-in first (D7)", () => {
+  it("delete_person's note says it needs per-person sign-in first", () => {
     expect(FEATURES.delete_person.note).toMatch(/sign(s|ed)? in|sign-in/i)
     expect(FEATURES.delete_person.note).toMatch(/each|their own|per.person/i)
   })

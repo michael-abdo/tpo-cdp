@@ -24,8 +24,8 @@ function html(): string {
   return renderToString(createElement(TestEventPanel, { onSent: () => {} }))
 }
 
-describe('"Send a test event" panel: labels (D-55 levels, WCAG 2.2 AA)', () => {
-  it('level 1 is one button labelled "Send a test event" (D-55, D-73)', () => {
+describe('"Send a test event" panel: labels (levels, WCAG 2.2 AA)', () => {
+  it('level 1 is one button labelled "Send a test event"', () => {
     expect(html()).toContain('Send a test event')
   })
 
@@ -64,7 +64,7 @@ describe('"Send a test event" panel: labels (D-55 levels, WCAG 2.2 AA)', () => {
     expect(page.match(/e\.g\. u_/g)).toHaveLength(1)
   })
 
-  it('never sets the native `disabled` attribute on Send or Send again for `sending` (keeps focus; 06 "Refresh stays focusable while it works")', () => {
+  it('never sets the native `disabled` attribute on Send or Send again for `sending` (keeps focus, as Refresh stays focusable while it works)', () => {
     // Native disabled only for userId === null on Send; `sending` must drive aria-disabled instead,
     // exactly like InsightsPage's Refresh button, so a focused button never drops to <body> mid-press.
     // The negative lookbehind keeps this from matching inside "aria-disabled={sending}" itself.
@@ -76,7 +76,7 @@ describe('"Send a test event" panel: labels (D-55 levels, WCAG 2.2 AA)', () => {
   })
 })
 
-describe('the result line\'s words (09 D-73; one home, D-72)', () => {
+describe('the result line\'s words (one home)', () => {
   it('a fresh send: "Received — it\'s the top row below."', () => {
     expect(resultText('received')).toBe("Received — it's the top row below.")
   })
@@ -95,7 +95,7 @@ describe('the account field is the shared listbox contract (../listbox; WCAG 2.2
     expect(lookupSource).toMatch(/<ListboxOption[\s\S]{0,400}?active=\{isActive\}/)
   })
 
-  it('reuses the shared ../listbox + ../list-nav modules rather than re-implementing the keyboard contract (D-72: one home)', () => {
+  it('reuses the shared ../listbox + ../list-nav modules rather than re-implementing the keyboard contract (one home)', () => {
     expect(panelSource).toMatch(/from '\.\/listbox'/)
     expect(panelSource).toMatch(/from '\.\/list-nav'/)
     expect(panelSource).toMatch(/\buseListNav\b/)
@@ -113,7 +113,7 @@ describe('the account field is the shared listbox contract (../listbox; WCAG 2.2
     expect(panelSource).toMatch(/aria-controls=\{listShown \? LISTBOX_ID : undefined\}/)
   })
 
-  it('the active option gets the shared LookupPage treatment — a left bar plus a fill, not a surface tint alone (06 §UI principles 7)', () => {
+  it('the active option gets the shared LookupPage treatment — a left bar plus a fill, not a surface tint alone', () => {
     // Behaviour, not source text: render the real ListboxOption both ways and read its actual
     // class list. This kills a mutant that swaps the ternary branches (active <-> inactive) or
     // that drops the active classes and always renders className unchanged — both would still
@@ -159,7 +159,7 @@ describe('the account field is the shared listbox contract (../listbox; WCAG 2.2
   })
 })
 
-describe('"Send a test event" wires onSent to refresh the list at once (09 D-73)', () => {
+describe('"Send a test event" wires onSent to refresh the list at once', () => {
   it('EventsPage passes a real onSent that loads with FetchKind \'sent\', not a no-op', () => {
     expect(eventsPageSource).toMatch(/<TestEventPanel onSent=\{\(\) => void load\('sent'\)\}/)
   })
@@ -175,13 +175,13 @@ describe('"Send a test event" wires onSent to refresh the list at once (09 D-73)
   })
 })
 
-describe('/events empty state matches 06 §Empty and error states verbatim (D-72, curly quotes)', () => {
+describe('/events empty state matches the agreed wording verbatim (curly quotes)', () => {
   it('"No events yet — send one with “Send a test event” above." — not straight quotes, not a paraphrase', () => {
     expect(eventsPageSource).toContain('No events yet — send one with “Send a test event” above.')
   })
 })
 
-describe('Enter in the account field (06 keyboard contract): an exact single match picks it; otherwise the box says what to do', () => {
+describe('Enter in the account field (the keyboard contract): an exact single match picks it; otherwise the box says what to do', () => {
   it("Enter with nothing highlighted picks the lone match when there's exactly one", () => {
     expect(panelSource).toMatch(/if \(matches\.length === 1\) pick\(matches\[0\]\)/)
   })
@@ -197,7 +197,7 @@ describe('Enter in the account field (06 keyboard contract): an exact single mat
   })
 })
 
-describe('a truncated account search shows the same line /lookup shows (D-72, D-66: one wording)', () => {
+describe('a truncated account search shows the same line /lookup shows (one wording)', () => {
   it('the panel reads LookupSearch.truncated and renders "+ more — keep typing", the exact text ../pages/LookupPage.tsx uses', () => {
     expect(panelSource).toMatch(/\btruncated\b/)
     expect(panelSource).toContain('+ more — keep typing')
@@ -205,7 +205,7 @@ describe('a truncated account search shows the same line /lookup shows (D-72, D-
   })
 })
 
-describe('Send is the only primary button while the panel is open (06 §UI principles 1: one main action per screen)', () => {
+describe('Send is the only primary button while the panel is open (one main action per screen)', () => {
   it('the panel tells the page when it opens/closes, and EventsPage demotes Refresh to secondary while open', () => {
     expect(panelSource).toMatch(/onOpenChange\?\.\(open\)/)
     expect(eventsPageSource).toMatch(/<TestEventPanel onSent=\{\(\) => void load\('sent'\)\} onOpenChange=\{setTestPanelOpen\}/)

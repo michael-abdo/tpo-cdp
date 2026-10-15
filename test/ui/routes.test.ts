@@ -29,7 +29,7 @@ function hrefsRendered(url: string): { hrefs: string[]; html: string } {
   return { hrefs, html }
 }
 
-describe('/assistant and /growth redirect to /insights, keeping the query string (09 D-64)', () => {
+describe('/assistant and /growth redirect to /insights, keeping the query string', () => {
   // workerd has no DOM; the shell's theme switch reads the document and the colour-scheme query while rendering.
   beforeEach(() => {
     vi.stubGlobal('document', { documentElement: { dataset: {} } })

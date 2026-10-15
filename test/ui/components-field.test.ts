@@ -17,7 +17,7 @@ function ddClass(props: { label: string; breakAll?: boolean }, children: string 
   return m[1]
 }
 
-describe('Field: wraps at word boundaries by default, break-all only when asked (09 D-55)', () => {
+describe('Field: wraps at word boundaries by default, break-all only when asked', () => {
   it('plain prose, no breakAll prop: <dd> is break-words, not break-all', () => {
     expect(ddClass({ label: 'x' })).toBe('break-words')
   })
@@ -38,7 +38,7 @@ function fieldTags(source: string, label: string): string[] {
   return [...source.matchAll(re)].map((m) => m[0])
 }
 
-describe('Look up: every id/hash Field passes breakAll (09 D-55, 06 §Vocabulary)', () => {
+describe('Look up: every id/hash Field passes breakAll', () => {
   it.each(['Profile key', 'Visitor ID', 'User ID', 'Device ID', 'Device IDs'])('%s', (label) => {
     const tags = fieldTags(lookupSource, label)
     expect(tags.length).toBeGreaterThan(0)

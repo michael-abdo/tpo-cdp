@@ -49,7 +49,7 @@ function render(data: AssistantResponse): { html: string; text: string } {
   return { html, text }
 }
 
-describe("/insights' answer card renders the model's filters_applied only through the D-58 screen", () => {
+describe("/insights' answer card renders the model's filters_applied only through the SQL-in-text screen", () => {
   it('clean filters show in words under "How this answer was worked out" and as raw JSON in Technical details', () => {
     const { text } = render(answer(REAL))
     expect(text).toContain('Acquisition source')
