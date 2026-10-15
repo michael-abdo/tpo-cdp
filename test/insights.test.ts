@@ -18,10 +18,9 @@ import type { SourceAppConversion } from '../worker/insights/source-app'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// GET /api/insights/source-app-conversion, /funnel, /going-cold and /data-quality (04 §GET
-// /api/insights/…, 06 §/growth; R6). T-INS-1, T-INS-2 and T-INS-3 (08), and going_cold_risk
-// (02 §Derived, 09 D-31) on the seeded rows. The test D1 holds the real seed of data/*.csv
-// (test/helpers/seed.ts) and no webhook events. Expected totals are 02 §Counts; the per-group
+// GET /api/insights/source-app-conversion, /funnel, /going-cold and /data-quality. T-INS-1,
+// T-INS-2 and T-INS-3, and going_cold_risk on the seeded rows. The test D1 holds the real seed of
+// data/*.csv (test/helpers/seed.ts) and no webhook events. Expected totals are the seed's; the per-group
 // numbers are checked against independent tallies of the ?raw CSVs in TypeScript (the one
 // normalization from shared/normalize.ts, then plain loops), never against SQL.
 
@@ -67,7 +66,7 @@ function tallySourceApp() {
   const signupByEmail = new Map<string, { signup: string; source: string | null }>()
   for (const row of subs.rows) {
     const e = normalizeEmail(row[email])
-    // Invalid and blank emails are quarantined; a duplicate pair agrees on every field (02 §Counts).
+    // Invalid and blank emails are quarantined; a duplicate pair agrees on every field.
     if (e !== null && !signupByEmail.has(e)) signupByEmail.set(e, { signup: row[signup].trim(), source: canonicalSource(row[source]) })
   }
   const apps = parseCsv(appCsv)
@@ -96,7 +95,7 @@ function tallySourceApp() {
   return { perSource, split }
 }
 
-/** Per visitor: page and UTM of the earliest event (the earlier line on a tie, 09 D-49), and whether any row carries an email. */
+/** Per visitor: page and UTM of the earliest event (the earlier line on a tie), and whether any row carries an email. */
 function tallyFunnel() {
   const web = parseCsv(webCsv)
   const [visitor, page, ts, utm, email] = ['visitor_id', 'page', 'timestamp', 'utm_source', 'email'].map((n) => column(web, n))
@@ -141,7 +140,7 @@ function expectAskable(explain: string) {
 }
 
 describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
-  it('counts only apps created after signup: 432 of the 900 subscribers with an app (02 §Counts)', async () => {
+  it('counts only apps created after signup: 432 of the 900 subscribers with an app', async () => {
     const res = await get('source-app-conversion')
     expect(res.status).toBe(200)
     const body = await res.json<SourceAppConversion>()
@@ -158,7 +157,7 @@ describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
     expect(body.definitions_used).toEqual(['app_after_signup', 'has_app'])
   })
 
-  it('each source equals an independent tally of the CSVs, and the tally itself matches 02 §Counts', async () => {
+  it('each source equals an independent tally of the CSVs, and the tally itself matches the expected counts', async () => {
     const { perSource, split } = tallySourceApp()
     expect(split).toEqual({ before: APP_CREATED_BEFORE_SIGNUP, after: APP_CREATED_AFTER_SIGNUP, same_day: APP_CREATED_SAME_DAY })
     const body = await (await get('source-app-conversion')).json<SourceAppConversion>()
@@ -191,13 +190,13 @@ describe('T-INS-1 GET /api/insights/source-app-conversion', () => {
     for (const row of body.by_source) {
       expect(row.explain).toContain(row.source === null ? 'no acquisition source recorded' : `"${row.source}"`)
     }
-    // The panel counts every status, so the question must ask the assistant to as well (02 §Defaults).
+    // The panel counts every status, so the question must ask the assistant to as well.
     for (const e of explains) expect(e).toContain('including unsubscribed')
   })
 })
 
 describe('T-INS-2 GET /api/insights/funnel', () => {
-  it('totals equal 02 §Counts: 2,028 visitors, 1,400 subscribed, 628 anonymous', async () => {
+  it('totals equal the expected counts: 2,028 visitors, 1,400 subscribed, 628 anonymous', async () => {
     const res = await get('funnel')
     expect(res.status).toBe(200)
     const body = await res.json<Funnel>()
@@ -257,7 +256,7 @@ const DAY_MS = 86_400_000
 const days = (a: string, b: string) => (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS
 
 /**
- * 02 §Derived going_cold_risk, read literally: "opened in the last 30 days but not in the last 14,
+ * going_cold_risk, read literally: "opened in the last 30 days but not in the last 14,
  * or cold_since within the next 7 days". "Last N days" is TODAY − N .. TODAY; "the next 7 days"
  * is TODAY + 1 .. TODAY + 7.
  */
@@ -276,7 +275,7 @@ interface SeededSubscriber {
   cold_since: string
 }
 
-describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-31)', () => {
+describe('going_cold_risk and GET /api/insights/going-cold', () => {
   async function seeded() {
     const { results } = await env.DB.prepare(
       'SELECT source, status, signup_date, last_open_date, cold_since FROM subscribers',
@@ -285,10 +284,10 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
     return results
   }
 
-  it('goingColdRisk agrees with the 02 §Derived sentence on every seeded subscriber, and both halves occur', async () => {
+  it('goingColdRisk agrees with its definition sentence on every seeded subscriber, and both halves occur', async () => {
     const halves = { opened_15_to_30_days_ago_only: 0, cold_within_7_days_only: 0, both: 0, neither: 0 }
     for (const row of await seeded()) {
-      // The stored cold date is 02's cold_since: 30 days after the last open, else after signup.
+      // The stored cold date is cold_since: 30 days after the last open, else after signup.
       expect(days(row.last_open_date ?? row.signup_date, row.cold_since)).toBe(30)
       const doc = goingColdByTheDoc(row.last_open_date, row.cold_since)
       expect({ row, atRisk: goingColdRisk(row.last_open_date, row.cold_since) }).toEqual({ row, atRisk: doc.atRisk })
@@ -324,7 +323,7 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
     expect(new Map(body.by_source.map((r) => [r.source, { active: r.active, at_risk: r.at_risk }]))).toEqual(perSource)
     for (const r of body.by_source) expect(r.rate).toBe(round4(r.at_risk, r.active))
     const atRisk = [...perSource.values()].reduce((n, t) => n + t.at_risk, 0)
-    // The active total is 02 §Counts' 2,610: the panel's rows cover every active subscriber.
+    // The active total is the seed's 2,610: the panel's rows cover every active subscriber.
     expect(body.total).toEqual({ active: ACTIVE, at_risk: atRisk, rate: round4(atRisk, ACTIVE), explain: body.total.explain })
     expect(body.total.at_risk).toBeGreaterThan(0)
     expect(body.hidden_unsubscribed.count).toBe(hidden)
@@ -339,7 +338,7 @@ describe('going_cold_risk and GET /api/insights/going-cold (02 §Derived, 09 D-3
     const explains = [body.total.explain, body.hidden_unsubscribed.explain, ...body.by_source.map((r) => r.explain)]
     explains.forEach(expectAskable)
     expect(new Set(explains).size).toBe(explains.length)
-    // The rule by what it means, from DEFINITIONS, never its code name (06 §UI principles 4; "Explain this" fills the Ask bar).
+    // The rule by what it means, from DEFINITIONS, never its code name ("Explain this" fills the Ask bar).
     for (const e of explains) {
       expect(e).toContain('at risk of going cold (opened an email in the last 30 days but not in the last 14, or will become cold within the next 7 days)')
       expect(e).not.toContain('going_cold_risk')
@@ -376,7 +375,7 @@ function tallyDataQuality() {
 }
 
 describe('T-INS-3 GET /api/insights/data-quality', () => {
-  it('the import numbers equal import_runs and quarantine, and 02 §Counts', async () => {
+  it('the import numbers equal import_runs and quarantine, and the expected counts', async () => {
     const res = await get('data-quality')
     expect(res.status).toBe(200)
     const body = await res.json<DataQuality>()
@@ -399,7 +398,7 @@ describe('T-INS-3 GET /api/insights/data-quality', () => {
         .map(([key, rows]) => ({ file: key.split(' ')[0], reason: key.split(' ')[1], rows })),
     })
     expect(sum('quarantined')).toBe(quarantined.length)
-    // 02 §Counts: three files, 2,995 + 10,000 + 930 rows in; the subscribers file's 10 set aside
+    // Three files, 2,995 + 10,000 + 930 rows in; the subscribers file's 10 set aside
     // are 8 blank rows and 2 invalid emails, and 85 duplicates merged.
     const subscribers = runs.find((r) => r.file === 'subscribers')
     expect(runs).toHaveLength(3)
@@ -417,7 +416,7 @@ describe('T-INS-3 GET /api/insights/data-quality', () => {
     ])
   })
 
-  it('the record checks equal 02 §Counts and an independent tally of the CSVs', async () => {
+  it('the record checks equal the expected counts and an independent tally of the CSVs', async () => {
     const t = tallyDataQuality()
     expect([t.subscribers, t.page_views, t.without_utm]).toEqual([SUBSCRIBERS, WEB_ROWS, WEB_ROWS_WITHOUT_UTM])
     const body = await (await get('data-quality')).json<DataQuality>()
@@ -449,11 +448,11 @@ describe('T-INS-3 GET /api/insights/data-quality', () => {
   })
 
   // On the seed three checks are 0, so the tests above cannot tell a working check from one that
-  // always says 0. Here each gap is made once by editing real rows (09 D-47): a removed source, the
+  // always says 0. Here each gap is made once by editing real rows: a removed source, the
   // raw spelling `twitter` (it occurs in data/web_events.csv; ingest folds it to `x`) stored as if
   // normalization had been skipped, and a copy of a real page view that has no UTM. Every edit is
   // undone in `finally`, so the seed-count tests keep their numbers.
-  it('each check counts a gap made from real rows, and only its own: +1 each, page views +1 (09 D-47)', async () => {
+  it('each check counts a gap made from real rows, and only its own: +1 each, page views +1', async () => {
     const web = parseCsv(webCsv)
     const utmColumn = column(web, 'utm_source')
     expect(web.rows.some((row) => row[utmColumn] === 'twitter')).toBe(true)

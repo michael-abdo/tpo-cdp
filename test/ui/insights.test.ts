@@ -16,10 +16,10 @@ import type { AssistantResponse, InsightTile } from '../../src/types'
 import { parseCsv } from '../../worker/ingest/csv'
 import { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_SHAPE_MESSAGE } from '../../shared/insight-messages'
 
-// /insights (06 §/insights, 09 D-64) rendered with React's server renderer, the way
+// /insights rendered with React's server renderer, the way
 // test/ui/assistant-result.test.ts renders the answer card: the answer card offers "Pin to board",
 // a built-in tile's options have no Remove, and every chart kind carries its numbers as text.
-// Every number is from 02 §Counts and every row is a real one (09 D-47):
+// Every number is the seed's and every row is a real one:
 //   - 46 = Instagram active went_cold_in(2026-08), the brief's first question, as the aggregate tool
 //     returns it with no grouping (number) and grouped by cold_month (one point in time: line);
 //   - the web_events UTM values (instagram 667, facebook 496, google 393, referral 256, podcast 108,
@@ -29,7 +29,7 @@ import { NOT_PINNABLE_MESSAGE, NOT_PINNABLE_SHAPE_MESSAGE } from '../../shared/i
 //   - the two demo subjects' newsletter fields, without their emails (table);
 //   - the brief's R3 preset, 177 subscribers (segment).
 // The built-in tile is the seeded "Subscribers at risk of going cold" row (migrations/0006_insights.sql);
-// its result is given no rows, since the board's numbers for it are not stated in 02 §Counts.
+// its result is given no rows, since this test does not pin the board's numbers for it.
 
 const BRIEF_Q1 = 'how many Instagram signups went cold last month?'
 const AUGUST = { kind: 'rolling', preset: 'last_month', from: '2026-08-01', to: '2026-08-31' } as const
@@ -65,7 +65,7 @@ const UTM: Array<[string, number]> = [
   ['twitter', 50],
 ]
 const BAR: ChartResult = { columns: ['utm_source', 'page_views'], rows: UTM.map(([utm_source, page_views]) => ({ utm_source, page_views })) }
-// The table shape a tool returns for subjects never carries an email (the scanner refuses it, 05):
+// The table shape a tool returns for subjects never carries an email (the scanner refuses it):
 // the demo subjects' newsletter fields, keyed by nothing that names them.
 const TABLE: ChartResult = {
   columns: ['source', 'signup_date', 'last_open_date', 'status'],
@@ -75,7 +75,7 @@ const TABLE: ChartResult = {
   ],
 }
 
-/** Page views by `page from <utm_source>` over the real web_events.csv rows (09 D-47). */
+/** Page views by `page from <utm_source>` over the real web_events.csv rows. */
 function pageViewsByEntry(): ChartResult {
   const { header, rows } = parseCsv(webCsv)
   const page = header.indexOf('page')
@@ -105,7 +105,7 @@ function chart(kind: ChartKind, result: ChartResult, segment: ChartSegment | nul
   return render(createElement(InsightChart, { kind, result, segment, caption: BRIEF_Q1 }))
 }
 
-describe('every chart kind renders with a text alternative (06 §UI principles 7, 09 D-64)', () => {
+describe('every chart kind renders with a text alternative', () => {
   it('number: the big number and its label are text', () => {
     const { text } = chart('number', NUMBER)
     expect(text).toContain('46')
@@ -152,7 +152,7 @@ describe('every chart kind renders with a text alternative (06 §UI principles 7
   })
 })
 
-describe('bars are sorted largest first, top 20 + "Other" (06 §/insights)', () => {
+describe('bars are sorted largest first, top 20 + "Other"', () => {
   it('rows in any order are drawn largest first; the numbers table keeps the rows as returned', () => {
     // The real UTM counts, smallest first: the order a GROUP BY without ORDER BY may return.
     const ascending: ChartResult = { columns: BAR.columns, rows: [...BAR.rows].reverse() }
@@ -179,7 +179,7 @@ describe('bars are sorted largest first, top 20 + "Other" (06 §/insights)', () 
   })
 
   it('a zero row draws no bar and is counted under the chart; it stays in the numbers table', () => {
-    // The real UTM counts with a sixth row edited to 0 (09 D-47: an edited copy of a real result).
+    // The real UTM counts with a sixth row edited to 0 (an edited copy of a real result).
     const withZero: ChartResult = { columns: BAR.columns, rows: BAR.rows.map((r) => (r.utm_source === 'twitter' ? { ...r, page_views: 0 } : r)) }
     const { html, text } = chart('bar', withZero)
     expect(drawnLabels(html)).not.toContain('twitter')
@@ -188,7 +188,7 @@ describe('bars are sorted largest first, top 20 + "Other" (06 §/insights)', () 
   })
 })
 
-describe('the answer card offers "Pin to board" (06 §/insights)', () => {
+describe('the answer card offers "Pin to board"', () => {
   it('the recorded answer to the brief\'s first question has the Pin button, which opens a dialog', () => {
     const data: AssistantResponse = {
       type: 'answer',
@@ -214,7 +214,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
   it('a segment answer names no dates in the dialog, even when the model’s answer gave a window', () => {
     // The recorded segment answer to "build me a list of our most engaged readers": the model named
     // a 30-day window in its answer, but the segment's filters carry no dates, so the server reports
-    // pin_window and pin_own_dates null (04 POST /api/assistant) and its tile says "As of".
+    // pin_window and pin_own_dates null and its tile says "As of".
     const data: AssistantResponse = {
       type: 'segment',
       text: 'Here are your most engaged active readers.',
@@ -230,7 +230,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
       pin_refusal: null,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: 'build me a list of our most engaged readers', onPinned: () => {} }))
-    // The dialog says what the tile keeps of a segment, and what it does not (06 §/insights, 09 D-64).
+    // The dialog says what the tile keeps of a segment, and what it does not.
     expect(text).toContain('The tile keeps how many subscribers match these filters and a link to the segment. It does not keep their order or names.')
     expect(html).not.toContain('type="radio"')
     expect(html).not.toContain('<fieldset')
@@ -239,7 +239,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
   })
 
   it('a lookup that sets its own dates: the dialog and the tile footer name the same dates in the same words', () => {
-    // The recorded answer to "which pages do new subscribers hit first?" (the query row; 02 §Derived
+    // The recorded answer to "which pages do new subscribers hit first?" (the query row;
     // new_subscriber = TODAY − 30 .. TODAY); the dialog is what is under test, so the table is left out.
     const dates = { from: '2026-08-29', to: '2026-09-28' }
     const data: AssistantResponse = {
@@ -285,7 +285,7 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {}, stale: true }))
     const section = /<section[^>]*>/.exec(html)?.[0] ?? ''
     expect(section).toContain('data-stale')
-    // The card's own classes: no opacity, which lowered every text and control under 4.5:1 (axe, 06 §UI principles 7).
+    // The card's own classes: no opacity, which lowered every text and control under 4.5:1 (axe).
     expect(section).not.toContain('opacity')
     expect(text).toContain('Earlier question')
     expect(text).toContain(`This answer is for your earlier question: “${BRIEF_Q1}”.`)
@@ -294,8 +294,8 @@ describe('the answer card offers "Pin to board" (06 §/insights)', () => {
   })
 })
 
-describe('answers and tiles that cannot be pinned or run say so in plain words (09 D-64a)', () => {
-  it('an answer from free-form SQL has no Pin button; the card says why in the D-64a sentence', () => {
+describe('answers and tiles that cannot be pinned or run say so in plain words', () => {
+  it('an answer from free-form SQL has no Pin button; the card says why in the not-pinnable sentence', () => {
     // The server's sentence (one home, shared/insight-messages.ts), as POST /api/assistant returns it.
     const sentence = NOT_PINNABLE_MESSAGE
     const data: AssistantResponse = {
@@ -320,7 +320,7 @@ describe('answers and tiles that cannot be pinned or run say so in plain words (
     expect(text).not.toContain('Request approval')
   })
 
-  it('a query_sql answer that fails the D-64b grammar has no Pin button; the card says why, with no approval-queue wording (09 D-77)', () => {
+  it('a query_sql answer that fails the pin grammar has no Pin button; the card says why, with no approval-queue wording', () => {
     const data: AssistantResponse = {
       type: 'answer',
       text: 'Here is the table you asked for.',
@@ -413,7 +413,7 @@ function actions(tile: InsightTile) {
   return render(createElement(TileActions, { tile, above: null, below: null, onChanged: () => {}, onRemoved: () => {}, onExplain: () => {}, onClose: () => {} }))
 }
 
-describe('tile options (06 §/insights tile menu)', () => {
+describe('tile options (the tile menu)', () => {
   it('a built-in tile has no Remove; it can still be renamed, moved and explained', () => {
     const { text } = actions(builtIn)
     expect(text).not.toContain('Remove')
@@ -434,7 +434,7 @@ describe('tile options (06 §/insights tile menu)', () => {
       createElement(TileActions, { tile: pinned, above: null, below: null, onChanged: () => {}, onRemoved: () => {}, onExplain: () => {}, onClose: () => {}, initialMode: 'window' }),
     )
     expect(text).toContain('Rolling: last month (Aug 1–31, 2026)')
-    // 02 §Derived "last N days" = TODAY − 30 .. TODAY.
+    // "Last N days" = TODAY − 30 .. TODAY.
     expect(text).toContain('Rolling: last 30 days (Aug 29 – Sep 28, 2026)')
     expect(text).toContain('Rolling: this month (Sep 1–28, 2026)')
     expect(text).toContain('A rolling period moves with today')
@@ -463,8 +463,8 @@ describe('tile options (06 §/insights tile menu)', () => {
   })
 })
 
-describe('an empty first page reads in words (06 §UI principles 4)', () => {
-  // julia.evans230@gmail.com has no web history (02 §Demo subjects), so a first-page grouping holds
+describe('an empty first page reads in words', () => {
+  // julia.evans230@gmail.com has no web history, so a first-page grouping holds
   // her in the null bucket; the bar label and its table must say why, not "None".
   it('a null first_page is "No tracked visit"; "/" is the home page', () => {
     expect(cellText('first_page', null)).toBe('No tracked visit')
@@ -472,7 +472,7 @@ describe('an empty first page reads in words (06 §UI principles 4)', () => {
   })
 })
 
-describe('the pin dialog sends the trace id, and the title only when the person changed it (04 POST /api/insights)', () => {
+describe('the pin dialog sends the trace id, and the title only when the person changed it', () => {
   const ID = 'a3c1d2e4-5b6f-4a7b-8c9d-0e1f2a3b4c5d'
 
   it('an unchanged title is left to the server: the body holds only audit_id', () => {

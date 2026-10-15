@@ -8,7 +8,7 @@ import { SendTheBoardButton } from '../../src/pages/InsightsPage'
 import type { InsightTile } from '../../src/types'
 import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 
-// Insights' gated future features (09 D-80): Schedules and digests (the
+// Insights' gated future features: Schedules and digests (the
 // board header's "Send the board" and a tile's "Set an alert", one shared flag) and Follow-up
 // questions (the foot of the answer card).
 

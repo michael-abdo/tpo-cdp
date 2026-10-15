@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../src/App'
 import { closesOnPointer, escapeAction, NAV, nextOpen } from '../../src/nav'
 
-// "Techy" (06 §Nav, 09 D-71): App events and AI audit log fold into one dropdown, last in the nav,
+// "Techy": App events and AI audit log fold into one dropdown, last in the nav,
 // after the WAI-ARIA disclosure-navigation pattern. Three kinds of check, with different reach:
 // (A) the NAV data itself (src/nav.ts NAV, the single source both the desktop and the phone nav
 // read) — this is what "a link is missing from the group" or "a link reappeared at top level"
@@ -55,7 +55,7 @@ function techyButton(html: string): string {
 
 /**
  * The markup strictly between the Techy button's closing tag and the next real NavLink after the
- * whole group (09 D-71 requirement: the panel's own links sit right after the button in the DOM,
+ * whole group (the panel's own links sit right after the button in the DOM,
  * not at the end of <body> through a portal). Fails the same way `techyButton` does when either
  * boundary is missing, so a regression back to a portal (nothing between the button and whatever
  * unrelated markup follows it) shows up as a missing "AI audit log" link, not a thrown error.
@@ -69,7 +69,7 @@ function afterTechyButton(html: string): string {
   return html.slice(from, from + 2000)
 }
 
-describe('"Techy" nav group: the data (09 D-71 requirement 4, single source)', () => {
+describe('"Techy" nav group: the data (single source)', () => {
   it('Overview, Look up, Segments and Insights stay top-level; Techy is last', () => {
     expect(NAV.map((entry) => entry.label)).toEqual(['Overview', 'Look up', 'Segments', 'Insights', 'Techy'])
   })
@@ -91,7 +91,7 @@ describe('"Techy" nav group: the data (09 D-71 requirement 4, single source)', (
   })
 })
 
-describe('"Techy" nav group: the rendered button (09 D-71 requirement 1, 2)', () => {
+describe('"Techy" nav group: the rendered button', () => {
   beforeEach(() => {
     // workerd has no DOM; the shell's theme switch reads document/window while rendering, as
     // test/ui/routes.test.ts already does for the same reason.
@@ -136,7 +136,7 @@ describe('"Techy" nav group: the rendered button (09 D-71 requirement 1, 2)', ()
   )
 })
 
-describe('"Techy" nav group: the panel sits right after the button, not portalled (09 D-71 keyboard reachability)', () => {
+describe('"Techy" nav group: the panel sits right after the button, not portalled (keyboard reachability)', () => {
   beforeEach(() => {
     vi.stubGlobal('document', { documentElement: { dataset: {} } })
     vi.stubGlobal('window', {})
@@ -180,7 +180,7 @@ describe('"Techy" nav group: the panel sits right after the button, not portalle
   })
 })
 
-describe('"Techy" nav group: decision logic (src/nav.ts, 09 D-71) — no DOM needed', () => {
+describe('"Techy" nav group: decision logic (src/nav.ts) — no DOM needed', () => {
   it('nextOpen toggles: closed opens, open closes', () => {
     expect(nextOpen(false)).toBe(true)
     expect(nextOpen(true)).toBe(false)

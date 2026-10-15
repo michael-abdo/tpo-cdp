@@ -18,12 +18,12 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { navArrayText, retiredIn } from './helpers/vocabulary'
 
-// T-VOC-1 (08; 09 D-66, 06 §Vocabulary) for the Insights work: every word /insights, its board, its
+// T-VOC-1 for the Insights work: every word /insights, its board, its
 // pin dialog and its server sentences can put on screen or hand to Ask is the brief's own. Scope:
 // the files this work owns or changes (src/insights/, the Insights and audit pages, the nav, the
 // labels, the CSV name, the board and panel sentences, the assistant's fallback sentence and system
 // prompt). The pages it does not change (Look up, Segments, Overview, App events), the glossary and
-// the README are the full T-VOC-1 scan's (test/vocabulary.test.ts on the main line, 09 D-66).
+// the README are the full T-VOC-1 scan's (test/vocabulary.test.ts).
 // Inputs: the real seeded board (data/*.csv, scripts/tool-seeds.ts) as GET /api/insights sends it,
 // the server's own sentences, the label maps, and the source text of the page's components with
 // comments removed (their JSX text and literals; test/ui/ renders them). No network.
@@ -69,7 +69,7 @@ beforeAll(async () => {
   cookie = await loginCookie(documentationIp())
 })
 
-describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", () => {
+describe("T-VOC-1 for /insights: the brief's words", () => {
   it('the guard flags each retired term and lets the brief\'s question and "screen reader" through', () => {
     expect(retiredIn('Cold readers')).toEqual(['reader(s)'])
     expect(retiredIn('Find a reader')).toEqual(['reader(s)', 'Find a reader'])
@@ -129,7 +129,7 @@ describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", 
     expect(offences('server', sentences)).toEqual([])
   })
 
-  it("every label a result or a filter shows is the brief's: no retired word, the 06 field names", () => {
+  it("every label a result or a filter shows is the brief's: no retired word, the brief's field names", () => {
     const labels = [
       ...Object.values(COLUMN_LABEL),
       ...Object.values(FILTER_LABEL),
@@ -137,7 +137,7 @@ describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", 
       ...Object.values(DEFINITION_LABEL),
     ]
     expect(offences('labels', labels)).toEqual([])
-    // 06 §Vocabulary subscriber fields (email, signup date, status, acquisition source, last open date) and web field UTM source.
+    // The brief's subscriber fields (email, signup date, status, acquisition source, last open date) and web field UTM source.
     expect({
       email: COLUMN_LABEL.email,
       signup_date: COLUMN_LABEL.signup_date,
@@ -157,7 +157,7 @@ describe("T-VOC-1 for /insights: the brief's words (09 D-66, 06 §Vocabulary)", 
     })
   })
 
-  it('nav labels are the 06 words; "Insights" stays the operator\'s name for the page (09 D-64, 09 D-71)', () => {
+  it('nav labels use the agreed words; "Insights" stays the operator\'s name for the page', () => {
     const nav = navArrayText(SOURCES['../src/nav.ts'])
     expect([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])).toEqual([
       'Overview',

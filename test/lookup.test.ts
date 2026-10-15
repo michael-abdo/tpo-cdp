@@ -6,9 +6,9 @@ import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// GET /api/lookup (04 §/api/lookup, 06 §/lookup; R2, R1.2), T-API-1 and the lookup half of
-// T-ING-5 (08). The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts) and no
-// webhook events, so every app section has events []. Demo subjects and numbers: 02 §Counts.
+// GET /api/lookup, T-API-1 and the lookup half of
+// T-ING-5. The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts) and no
+// webhook events, so every app section has events []. Demo subjects and numbers: the seed's.
 // Inputs and where they come from:
 // - joy.hall830@protonmail.com: subscribers.csv:902, app_users.csv:303 (u_ceed5f12), her
 //   /subscribe row web_events.csv:5421 at 2026-09-02 20:40:04.
@@ -17,19 +17,19 @@ import { eventIdPool, sendWebhook } from './helpers/webhook'
 //   (subscribers.csv:56, its twin is line 1333) and PAUL.GARCIA558@GMAIL.COM (app_users.csv:8,
 //   u_3380b6e6; subscribers.csv:238 has paul.garcia558@gmail.com).
 // - appuser17@gmail.com: app_users.csv:6 (u_09acb8a4), an app-only account.
-// Error-path inputs per 09 D-47, each a removal from a real value: "joy.hall83@protonmail.com"
+// Error-path inputs, each a removal from a real value: "joy.hall83@protonmail.com"
 // and "u_ceed5f1" (last character removed; neither occurs in data/*.csv), and "joy.hall830"
 // (the domain removed, so it is not an email).
-// Lookup by pk_, d_ and v_ (T-API-1, 16 §If time remains 3), in the last describe because it
+// Lookup by pk_, d_ and v_ (T-API-1), in the last describe because it
 // sends webhooks and storage persists across this file's tests:
-// - joy's pk_ key (derived), her visitor v_c9e136fd6d (web_events.csv, 02 §Counts) and the
-//   brief's sample device d_4b21e8 (09 D-11), named by a webhook from u_ceed5f12.
+// - joy's pk_ key (derived), her visitor v_c9e136fd6d (web_events.csv) and the
+//   brief's sample device d_4b21e8, named by a webhook from u_ceed5f12.
 // - the stub u_2b6447a (julia's id with its last character removed, as T-WH-6 uses), sent on
 //   the same device AFTER joy but with an earlier event_ts (2026-06-30 20:45:52,
 //   web_events.csv:3, as T-WH-7 uses), so the device's current user is joy by event_ts
-//   (01 §Identity resolution, 09 D-43), not the stub that arrived last.
+//   (identity resolution), not the stub that arrived last.
 // - v_569d3a387c (web_events.csv:13), an anonymous visitor: no /subscribe email, no profile.
-// - 404 inputs per 09 D-47, each a real id with its last character removed: joy's pk_ key,
+// - 404 inputs, each a real id with its last character removed: joy's pk_ key,
 //   "d_4b21e" and "v_c9e136fd6" (none occurs in data/*.csv or in a sent event).
 
 const JOY = 'joy.hall830@protonmail.com'
@@ -105,7 +105,7 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     expect(byUser).toEqual(byEmail)
   })
 
-  it('joy: exactly the 04 shape, stored derived values, 9 web events with 3 pre-signup', async () => {
+  it('joy: exactly the API shape, stored derived values, 9 web events with 3 pre-signup', async () => {
     const body = await found(JOY)
     expect(Object.keys(body)).toEqual(['profile', 'newsletter', 'web', 'app'])
     expect(body.profile).toEqual({
@@ -143,7 +143,7 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
 
     const web = body.web!
     expect(Object.keys(web)).toEqual(['visitor_id', 'first_page', 'first_utm_source', 'events', 'visitors'])
-    // One visitor: the list holds exactly the single-object fields (09 D-70 item 4).
+    // One visitor: the list holds exactly the single-object fields (T-HARD-4).
     const { visitors, ...first } = web
     expect(visitors).toEqual([first])
     expect(web.visitor_id).toBe('v_c9e136fd6d')
@@ -230,7 +230,7 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     }
   })
 
-  it('404 not_found for a blank or missing q and for one that is neither an email nor u_… (04 lists only 404)', async () => {
+  it('404 not_found for a blank or missing q and for one that is neither an email nor u_… (the API lists only 404)', async () => {
     const notFound = { error: 'not_found', message: 'No profile matches that email or id.' }
     for (const q of ['', '   ', 'joy.hall830']) {
       const res = await lookup(q)
@@ -253,7 +253,7 @@ describe('T-API-1 lookup by pk_, d_ and v_ resolve the same profile as the email
   const SAMPLE_DEVICE = 'd_4b21e8'
   const STUB = 'u_2b6447a'
 
-  // Joy first at the brief's sample time (09 D-11), then the stub on the same device at an
+  // Joy first at the brief's sample time, then the stub on the same device at an
   // earlier real time (web_events.csv:3): arrival order and event_ts order disagree.
   const SENT: [user_id: string, timestamp: string][] = [
     ['u_ceed5f12', '2026-09-28T14:22:05Z'],
@@ -313,7 +313,7 @@ describe('T-API-1 lookup by pk_, d_ and v_ resolve the same profile as the email
   })
 })
 
-describe('T-ING-5 pre-signup views come from the stored signup moment (02 §Linking 2, §Counts)', () => {
+describe('T-ING-5 pre-signup views come from the stored signup moment', () => {
   it('signup_ts is set exactly for the 1,400 linked visitors, on their signup_date', async () => {
     const n = (sql: string) => env.DB.prepare(sql).first<number>('n')
     expect(await n('SELECT count(*) AS n FROM web_visitors WHERE signup_ts IS NOT NULL')).toBe(1400)

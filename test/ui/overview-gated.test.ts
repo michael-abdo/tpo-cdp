@@ -6,7 +6,7 @@ import { LoadBar, SettingsButton } from '../../src/pages/OverviewPage'
 import type { CsvSource } from '../../src/types'
 import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 
-// Overview's gated future features (09 D-80): Upload a new file + Run
+// Overview's gated future features: Upload a new file + Run
 // again (csv_upload), Automatic daily sync (daily_sync, beehiiv and App accounts only — not
 // Website, whose GA4 data carries no email to link by), and Settings for definitions
 // (definition_settings, the header's action slot, every state). T-GATE-OVR-1.
@@ -81,7 +81,7 @@ describe('Overview: SettingsButton (definition_settings)', () => {
     expect(describedByResolvesTo(html, FEATURES.definition_settings.note)).toBe(true)
   })
 
-  it('the button\'s own visible text equals shared/features.ts\'s definition_settings.label exactly (the review\'s M6: "Definition settings")', () => {
+  it('the button\'s own visible text equals shared/features.ts\'s definition_settings.label exactly ("Definition settings")', () => {
     const html = renderToString(createElement(SettingsButton))
     expect(elementText(html, 'button')).toBe(FEATURES.definition_settings.label)
   })

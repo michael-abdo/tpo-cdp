@@ -19,15 +19,15 @@ import {
 } from './helpers/shared-ids'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// 09 D-70 items 4 and 9, tests 08 T-HARD-4 and T-HARD-9 (item 8 is T-HARD-8 in
-// test/normalize.test.ts, beside T-NORM-3; the page half of item 4 is test/ui/lookup-profile.test.ts).
-// 02 §Counts is unchanged by both items: the real seed has no shared identifier, no /subscribe
+// T-HARD-4 and T-HARD-9 (T-HARD-8 is in test/normalize.test.ts, beside T-NORM-3; the page half of
+// T-HARD-4 is test/ui/lookup-profile.test.ts).
+// The seed's counts are unchanged by both: the real seed has no shared identifier, no /subscribe
 // variant and no blank source on a real row, which T-ING-1..6 and the count tests prove on the real
-// files. Inputs, all derived from real rows (09 D-47: every value introduced occurs in data/*.csv
+// files. Inputs, all derived from real rows (every value introduced occurs in data/*.csv
 // or is a removal):
 // - T-HARD-4: joy.hall830 with a second app account and a second web visitor, as
 //   test/helpers/shared-ids.ts derives them, and one app event on her later account u_ceed5f12:
-//   the brief's sample webhook with that user_id (09 D-11), sent through the real webhook.
+//   the brief's sample webhook with that user_id, sent through the real webhook.
 // - T-HARD-9 /subscribe variants: joy's /subscribe row with the page given a query built from
 //   the file's own column name and value (`?utm_source=instagram`) or a trailing slash; every
 //   /subscribe row of the real file rewritten the same way; real pages (/about, /), real pages
@@ -59,7 +59,7 @@ async function get<T>(path: string): Promise<T> {
 
 const lookup = (q: string) => get<Lookup>(`/api/lookup?${new URLSearchParams({ q })}`)
 
-describe('T-HARD-4 lookup returns every app account and web visitor of one profile (09 D-70 item 4)', () => {
+describe('T-HARD-4 lookup returns every app account and web visitor of one profile', () => {
   it('the derived seed holds two app accounts and two linked visitors for joy', async () => {
     const n = (sql: string) => env.DB.prepare(sql).bind(JOY).first<number>('n')
     expect(await n('SELECT count(*) AS n FROM app_users WHERE email_norm = ?')).toBe(2)
@@ -132,7 +132,7 @@ describe('T-HARD-4 lookup returns every app account and web visitor of one profi
     const pkey = await pkeyForEmail(piiKeySecret(), JOY)
     const byEmail = await get<Search>('/api/lookup/search?q=joy.hall830')
     expect(byEmail.matches).toEqual([expect.objectContaining({ pkey, email: JOY, user_id: SECOND_ACCOUNT })])
-    // Both accounts start with u_ceed5f; 04 names the lowest matching user_id for this group.
+    // Both accounts start with u_ceed5f; the search names the lowest matching user_id for this group.
     const byUser = await get<Search>('/api/lookup/search?q=u_ceed5f')
     expect(byUser.matches).toEqual([expect.objectContaining({ pkey, email: JOY, user_id: 'u_ceed5f12' })])
     const bySecond = await get<Search>(`/api/lookup/search?q=${SECOND_ACCOUNT}`)
@@ -140,7 +140,7 @@ describe('T-HARD-4 lookup returns every app account and web visitor of one profi
   })
 })
 
-describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank source wins (09 D-70 item 9)', () => {
+describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank source wins', () => {
   const visitorOf = (rows: string[][]) => {
     const web = realCsvs().web_events
     return ingestWeb({ header: web.header, rows, lineNos: rows.map((_, i) => 5421 + i) })
@@ -155,7 +155,7 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
     }
   })
 
-  it('an email on any other page is quarantined as misplaced_email, never thrown (09 D-78)', () => {
+  it('an email on any other page is quarantined as misplaced_email, never thrown', () => {
     const subscribe = rowAt(realCsvs().web_events, 5421)
     // Real pages, real pages joined under /subscribe, and /subscribe with its last letter removed:
     // only the exact path /subscribe (query string and one trailing slash removed, any letter case) links.
@@ -174,7 +174,7 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
     }
   })
 
-  it('/subscribe matches in any letter case, keeping the query-string and trailing-slash rule (09 D-78)', () => {
+  it('/subscribe matches in any letter case, keeping the query-string and trailing-slash rule', () => {
     const subscribe = rowAt(realCsvs().web_events, 5421)
     for (const page of ['/Subscribe', '/SUBSCRIBE', '/Subscribe/', '/Subscribe?utm_source=instagram']) {
       const result = visitorOf([[subscribe[0], page, ...subscribe.slice(2)]])

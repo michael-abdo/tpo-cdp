@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../../src/App'
 
 // The old paths /assistant and /growth redirect to /insights and keep the query string, so an old
-// "Explain this" link (?q=) still fills the Ask bar (06 §/insights, 09 D-64; src/App.tsx ToInsights).
+// "Explain this" link (?q=) still fills the Ask bar (src/App.tsx ToInsights).
 // A server render never runs <Navigate>'s effect, but it resolves the target while rendering and
 // asks the router's navigator for its href, so a recording navigator reads where each path lands.
 // A path with no route falls to the catch-all, which sends to "/" and renders no page chrome.
@@ -29,7 +29,7 @@ function hrefsRendered(url: string): { hrefs: string[]; html: string } {
   return { hrefs, html }
 }
 
-describe('/assistant and /growth redirect to /insights, keeping the query string (09 D-64)', () => {
+describe('/assistant and /growth redirect to /insights, keeping the query string', () => {
   // workerd has no DOM; the shell's theme switch reads the document and the colour-scheme query while rendering.
   beforeEach(() => {
     vi.stubGlobal('document', { documentElement: { dataset: {} } })

@@ -17,11 +17,11 @@ import { ingestSubscribers, toCsvRecord } from '../worker/ingest/subscribers'
 import { classifyWebRow, csvTimestampToIso, ingestWeb, WEB_COLUMNS } from '../worker/ingest/web'
 import { piiKeySecret, realCsvs, seedDatabase } from './helpers/seed'
 
-// 02 §Linking, §Derived, §Time, §Counts; 11 §Seed; 09 D-08, D-44, D-46. Tests 08 T-ING-1, -5, -6.
+// The seed, linking and derived values: T-ING-1, -5, -6.
 // Input is the three real data/*.csv files and the PII_KEY_SECRET from .dev.vars. The pure
 // pipeline's SQL is executed into the test D1 by test/helpers/seed.ts, then counts are read
-// back from the tables and views. Every expected number is from 02 §Counts.
-// Tests that change real rows (09 D-47), and how:
+// back from the tables and views. Every expected number is the seed's.
+// Tests that change real rows, and how:
 // - missing header: "timestamp" deleted from the real web header, "created_at" from the app header.
 // - web missing_field: the timestamp of real web line 5421 emptied.
 // - web bad_date: the time part removed from that timestamp, leaving 2026-09-02.
@@ -53,7 +53,7 @@ async function count(sql: string, ...params: unknown[]): Promise<number> {
   return row.n
 }
 
-describe('T-ING-1 the emitted seed loads and its counts equal 02 §Counts', () => {
+describe('T-ING-1 the emitted seed loads and its counts equal the expected counts', () => {
   it('table counts', async () => {
     expect(await count('SELECT count(*) AS n FROM subscribers')).toBe(2900)
     expect(await count('SELECT count(*) AS n FROM web_events')).toBe(10000)
@@ -61,9 +61,9 @@ describe('T-ING-1 the emitted seed loads and its counts equal 02 §Counts', () =
     expect(await count('SELECT count(*) AS n FROM app_users')).toBe(930)
     expect(await count('SELECT count(*) AS n FROM profiles')).toBe(2930)
     expect(await count("SELECT count(*) AS n FROM profiles WHERE kind = 'subscriber'")).toBe(2900)
-    // 09 D-78(b): the seed itself creates no unknown_user_stub profiles (those arrive only by
+    // The seed itself creates no unknown_user_stub profiles (those arrive only by
     // webhook), so migrations/0011's new profiles.user_id column and v_app_events join move no
-    // 02 §Counts number on the seed data.
+    // seed count.
     expect(await count("SELECT count(*) AS n FROM profiles WHERE kind = 'unknown_user_stub'")).toBe(0)
     expect(await count('SELECT count(*) AS n FROM profiles WHERE user_id IS NOT NULL')).toBe(0)
   })
@@ -141,7 +141,7 @@ describe('T-ING-1 the emitted seed loads and its counts equal 02 §Counts', () =
     expect(results.map((r) => r.s).filter((v) => !canonical.includes(v))).toEqual([])
   })
 
-  it('first_seen_ts, first_page and first_utm_source all come from the earliest event (09 D-49)', async () => {
+  it('first_seen_ts, first_page and first_utm_source all come from the earliest event', async () => {
     // first_seen_ts is the visitor's earliest event_ts (v_profiles orders first visits by it).
     expect(
       await count(
@@ -171,7 +171,7 @@ describe('T-ING-1 the emitted seed loads and its counts equal 02 §Counts', () =
   })
 })
 
-describe('T-ING-5 web → subscriber linking (02 §Linking 2–3, D-08)', () => {
+describe('T-ING-5 web → subscriber linking', () => {
   it('1,400 visitors carry an email_norm and every one matches a subscriber; 628 are anonymous', async () => {
     expect(await count('SELECT count(*) AS n FROM web_visitors WHERE email_norm IS NOT NULL')).toBe(1400)
     expect(
@@ -275,7 +275,7 @@ describe('T-ING-5 web → subscriber linking (02 §Linking 2–3, D-08)', () => 
   })
 })
 
-describe('T-ING-6 app → subscriber linking and app-only profiles (02 §Linking 1)', () => {
+describe('T-ING-6 app → subscriber linking and app-only profiles', () => {
   it('900 app users link to a subscriber; 30 app_only profiles, all appuserN emails', async () => {
     expect(
       await count('SELECT count(*) AS n FROM app_users a JOIN subscribers s ON s.email_norm = a.email_norm'),
@@ -287,7 +287,7 @@ describe('T-ING-6 app → subscriber linking and app-only profiles (02 §Linking
     expect(await count("SELECT count(*) AS n FROM profiles WHERE kind = 'app_only'")).toBe(30)
     for (const r of results) {
       expect(r.email_norm).toMatch(/^appuser\d+@gmail\.com$/)
-      expect(r.created_at).toBe(r.app_created_at) // 09 D-44
+      expect(r.created_at).toBe(r.app_created_at) // an app-only profile starts with its app account
     }
     expect(await count('SELECT count(*) AS n FROM app_users WHERE from_csv = 1')).toBe(930)
   })
@@ -306,7 +306,7 @@ describe('T-ING-6 app → subscriber linking and app-only profiles (02 §Linking
   })
 })
 
-describe('profiles through v_profiles (02 §Derived, §Counts demo subjects; D-44, D-46)', () => {
+describe('profiles through v_profiles (the demo subjects)', () => {
   it('returns 2,930 rows and no PII column', async () => {
     const { results } = await env.DB.prepare('SELECT * FROM v_profiles').all<Record<string, unknown>>()
     expect(results).toHaveLength(2930)
@@ -340,10 +340,10 @@ describe('profiles through v_profiles (02 §Derived, §Counts demo subjects; D-4
       await env.DB.prepare('SELECT created_at FROM profiles WHERE email_norm = ?')
         .bind(JOY)
         .first('created_at'),
-    ).toBe('2026-09-02') // 09 D-44: signup_date
+    ).toBe('2026-09-02') // signup_date
   })
 
-  it('every subscriber profile is created_at signup_date (09 D-44), whatever the app date', async () => {
+  it('every subscriber profile is created_at signup_date, whatever the app date', async () => {
     expect(
       await count(
         'SELECT count(*) AS n FROM profiles p JOIN subscribers s ON s.email_norm = p.email_norm WHERE p.created_at <> s.signup_date',
@@ -357,7 +357,7 @@ describe('profiles through v_profiles (02 §Derived, §Counts demo subjects; D-4
     ).toBe('2026-09-13')
   })
 
-  it('engagement_score counts only site visits in the last 30 days relative to TODAY (D-46)', async () => {
+  it('engagement_score counts only site visits in the last 30 days relative to TODAY', async () => {
     // An independent oracle: count each profile's events by date inside DEFINITIONS.last_n_days(30)
     // and score them with engagementScore (app events are 0 at seed).
     const window = DEFINITIONS.last_n_days.fn(30)
@@ -409,7 +409,7 @@ describe('profiles through v_profiles (02 §Derived, §Counts demo subjects; D-4
   })
 })
 
-describe('web and app rows fail fast on headers and are quarantined, never dropped (02 §Quarantine)', () => {
+describe('web and app rows fail fast on headers and are quarantined, never dropped', () => {
   const web = () => parseCsv(webCsv)
   const app = () => parseCsv(appCsv)
   const webRowAt = (lineNo: number) => [...web().rows[web().lineNos.indexOf(lineNo)]]
@@ -533,8 +533,8 @@ describe('web and app rows fail fast on headers and are quarantined, never dropp
   })
 })
 
-// 09 D-78(a): a CSV value the ingest has no rule for is quarantined with its own reason, never
-// thrown, and never aborts the seed. Inputs are real rows minimally edited per 09 D-47 — every
+// A CSV value the ingest has no rule for is quarantined with its own reason, never
+// thrown, and never aborts the seed. Inputs are real rows minimally edited — every
 // value introduced already occurs in data/*.csv, or is a removal:
 // - unknown_status: subscribers.csv:2 (aaron.moore592@yahoo.com, unsubscribed) with its status
 //   changed to "unsubscribe" (the real value with its last character removed, as
@@ -544,7 +544,7 @@ describe('web and app rows fail fast on headers and are quarantined, never dropp
 // - conflicting_email: web_events.csv:5421 (joy's real /subscribe row) followed by a second
 //   /subscribe row for the same visitor (v_c9e136fd6d) carrying julia.evans230@gmail.com (a real
 //   subscriber email) and web_events.csv:5440's real timestamp.
-describe('T-ING-7 a row with no rule is quarantined, never fatal (09 D-78)', () => {
+describe('T-ING-7 a row with no rule is quarantined, never fatal', () => {
   it('subscribers: an unknown status is quarantined, not thrown; every other row is unaffected', () => {
     const subs = parseCsv(subscribersCsv)
     const real = [...subs.rows[subs.lineNos.indexOf(2)]]
@@ -588,13 +588,13 @@ describe('T-ING-7 a row with no rule is quarantined, never fatal (09 D-78)', () 
   })
 })
 
-// 09 D-78: the three slice tests above show each classify*/ingest* function in isolation. This
-// block instead runs buildSeed over the FULL real CSVs with exactly one row minimally edited
-// (09 D-47), the same pipeline scripts/csv2sql.ts runs, so "the seed completes" and "every other
-// 02 §Counts number is unchanged" are shown on the real data, not a 1-2 row slice. Each case
+// The three slice tests above show each classify*/ingest* function in isolation. This
+// block instead runs buildSeed over the FULL real CSVs with exactly one row minimally edited,
+// the same pipeline scripts/csv2sql.ts runs, so "the seed completes" and "every other
+// seed count is unchanged" are shown on the real data, not a 1-2 row slice. Each case
 // picks a row whose edit cannot cascade into an unrelated count (confirmed against data/*.csv
 // below), so the only numbers that move are the ones named in each assertion.
-describe('T-ING-8 the five D-78 cases on the full seed (09 D-47)', () => {
+describe('T-ING-8 the five no-rule cases on the full seed', () => {
   const subs = () => realCsvs().subscribers
   const web = () => realCsvs().web_events
   const app = () => realCsvs().app_users
@@ -618,7 +618,7 @@ describe('T-ING-8 the five D-78 cases on the full seed (09 D-47)', () => {
     const run = seed.runs.find((r) => r.file === 'subscribers')!
     expect(run).toMatchObject({ rows_in: 2995, rows_out: 2899, merged: 85 })
     // The new unknown_status row (line 4) alongside the real baseline 10 (8 blank_row, 2
-    // invalid_email, 09 D-78): quarantining never drops a baseline row, it only adds one.
+    // invalid_email): quarantining never drops a baseline row, it only adds one.
     expect(run.quarantined).toEqual([
       {
         line_no: 4,

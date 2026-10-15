@@ -1,6 +1,6 @@
 import type * as TS from 'typescript'
 
-// The text a .tsx file can put on screen, read from the TypeScript AST (08 T-SRC-2). The scan
+// The text a .tsx file can put on screen, read from the TypeScript AST (T-SRC-2). The scan
 // cannot run inside workerd: loading the `typescript` package there makes the test worker exit.
 // So vitest.config.ts runs screenTextBinding() in Node at config time and hands the result to the
 // tests as the SCREEN_TEXTS binding, as it already does with TEST_MIGRATIONS. This module only
@@ -24,8 +24,8 @@ export const SCAN_FIXTURES = {
 export type ScanFixture = keyof typeof SCAN_FIXTURES
 
 /**
- * Where user-facing words live, for the vocabulary guard (08 T-VOC-1, 09 D-66): every .ts/.tsx file
- * under `src/` (the Segments page included since the D-69 merge), the glossary, the source registry, the metric definitions (shared/derive.ts DEFINITIONS:
+ * Where user-facing words live, for the vocabulary guard (T-VOC-1): every .ts/.tsx file
+ * under `src/` (the Segments page included), the glossary, the source registry, the metric definitions (shared/derive.ts DEFINITIONS:
  * the system prompt renders its Definitions section from them at runtime, and the UI footers and
  * Look up show them) and the server-written sentences (dedupe suggestions, assistant fallback
  * sentences, the system prompt, the Insights board's and pin dialog's sentences, and the built-in
@@ -52,7 +52,7 @@ export const VOCABULARY_SCAN = {
 } as const
 
 /**
- * Where one screen's words live, for the one-place guard (08 T-UI-ONE, 09 D-72): every page, the
+ * Where one screen's words live, for the one-place guard (T-UI-ONE): every page, the
  * Insights pieces, the shared components and the shell, plus the modules that write whole sentences
  * a screen shows (the glossary, the board's sentences, the rows-to-fix sentences, the blocked-step
  * sentences and the dedupe suggestions). A file is one screen's text: a sentence it holds twice is
@@ -81,9 +81,9 @@ export const ONE_PLACE_SCAN = {
  * GLOSSARY/DEFINITIONS (shared/glossary.ts) and the other data modules are left out on purpose:
  * their own source holds each entry's text once no matter how many pages read it, so merging them
  * in would over-count a page that reads one entry exactly once; `screenFacts`'s `resolve` already
- * credits that page with it, precisely once per property access (09 D-72).
- * `src/events-poll.ts`/`filters-applied.ts` are the opposite case (09
- * D-72): a page reads their sentences (`FILTERS_HIDDEN_MESSAGE`, the text `eventsAnnouncement`
+ * credits that page with it, precisely once per property access.
+ * `src/events-poll.ts`/`filters-applied.ts` are the opposite case: a page reads their sentences
+ * (`FILTERS_HIDDEN_MESSAGE`, the text `eventsAnnouncement`
  * builds inline) through a return value, never a `MODULE.CONST` property access `resolve` could
  * credit, so without merging them in, a page could retype one of their sentences with nothing to
  * catch it.
@@ -126,7 +126,7 @@ export interface ScreenFacts {
   actions: { text: string; identifiers: string[] }[]
   /** Every other element's direct children, joined into one run, with the identifiers any
    * non-literal child reads: catches a plain hint (not a button, link or summary) that repeats a
-   * placeholder's example, by identifier or by value (09 D-72). */
+   * placeholder's example, by identifier or by value. */
   elements: { text: string; identifiers: string[] }[]
 }
 
@@ -166,7 +166,7 @@ const ACTION_TAGS = new Set(['button', 'Button', 'a', 'Link', 'NavLink', 'summar
 /**
  * TSX snippets the T-UI-ONE rules must flag (`flag_…`) or leave alone (`pass_…`), written the way a
  * real page would: the "Try an example" button beside a placeholder that already shows the example
- * (09 D-72's own case), a sentence said twice, and the shapes that are not duplicates: a class
+ * (the rule's own example), a sentence said twice, and the shapes that are not duplicates: a class
  * string used twice, a short label twice, one sentence held in one constant and used twice, and a
  * placeholder that is a hint in words rather than an example value.
  */
@@ -176,7 +176,7 @@ export const ONE_PLACE_FIXTURES = {
   flag_example_literal:
     '<form><input placeholder="e.g. joy.hall830@protonmail.com" /><button type="button">Try joy.hall830@protonmail.com</button></form>',
   // The button shows no value at all, only identifying the example through its onClick handler
-  // (09 D-72's own case, missed when identifiers came from an action's children only).
+  // (the rule's own example, missed when identifiers came from an action's children only).
   flag_example_button_no_value:
     '<form><input placeholder={`e.g. ${EXAMPLE}`} /><Button onClick={() => go(EXAMPLE)}>Try an example</Button></form>',
   // The placeholder's identifier resolves to a file-level literal; the link repeats that literal
@@ -267,7 +267,7 @@ export function screenTexts(ts: typeof TS, fileName: string, code: string): stri
  * The literal text and the identifiers under `node`: template chunks, string literals, JSX text,
  * names. `consts` (from `fileConsts`) resolves an identifier that is a file-level literal (or an
  * alias of one) to that literal's text too, so `` `e.g. ${EXAMPLE}` `` reads as the value it shows
- * on screen, not just the words around the substitution (09 D-72).
+ * on screen, not just the words around the substitution.
  */
 function textAndIdentifiers(
   ts: typeof TS,
@@ -294,13 +294,13 @@ function textAndIdentifiers(
  * render them: `JsxText` verbatim, a literal (`{' '}`, a template with no substitution) verbatim,
  * and any other child (a dynamic expression, a nested element) as one fixed token plus the
  * identifiers it reads, so a sentence Prettier wrapped across `{' '}` reads as the same run as its
- * unwrapped copy, without merging text across an unrelated child (09 D-72). Whitespace
+ * unwrapped copy, without merging text across an unrelated child. Whitespace
  * (including a source line break around that `{' '}`, which is JSX formatting, not a paragraph
  * break) is collapsed to a single space before the run is compared, so the wrapped copy normalizes
  * exactly like its unwrapped twin. A dynamic child's identifier is tracked, never resolved to its
  * file-level value here: `{NO_MATCH}` reading as literal words would double-count every constant
  * used once as children text against the one occurrence its own `const` declaration already holds
- * (09 D-72, the same "one constant, however many times it's read" rule `pass_hoisted` states); the
+ * (the same "one constant, however many times it's read" rule `pass_hoisted` states); the
  * one case that needs the value — a hint repeating a placeholder's own example — the identifier
  * match already covers (`exampleShownTwice` in test/one-place.test.ts).
  */
@@ -332,7 +332,7 @@ function joinedElementChildren(ts: typeof TS, children: readonly TS.JsxChild[]):
 
 /** Every Identifier's name under `node`, stopping at a nested JSX element, self-closing element or
  * fragment (its own screen text, read separately): used only to keep `joinedElementChildren`'s
- * identifier read scoped to the run it is actually joining (09 D-72). */
+ * identifier read scoped to the run it is actually joining. */
 function identifiersInExpr(ts: typeof TS, node: TS.Node): string[] {
   const out: string[] = []
   const visit = (n: TS.Node): void => {
@@ -358,13 +358,13 @@ function identifiersIn(ts: typeof TS, node: TS.Node): string[] {
 /** A JSX attribute name written as a DOM-style event handler prop (`onClick`, `onSubmit`, …). */
 const HANDLER_ATTRIBUTE = /^on[A-Z]/
 
-/** Attributes that carry a destination, read the same way a handler is (09 D-72): a `<Link
+/** Attributes that carry a destination, read the same way a handler is: a `<Link
  * to={...}>` or `<a href={...}>` can show the same example a handler would go to. */
 const LINK_ATTRIBUTES = new Set(['to', 'href'])
 
 /**
  * File-level `const NAME = (...) => body` / `function NAME(...) { body }` → every identifier in
- * `body`. Resolves a handler identifier one hop (09 D-72): `onClick={tryExample}` where
+ * `body`. Resolves a handler identifier one hop: `onClick={tryExample}` where
  * `const tryExample = () => go(EXAMPLE)` reads as `['go', 'EXAMPLE']`, the same as writing the
  * arrow inline. Only one hop: a name `body` itself calls is not chased into its own definition.
  */
@@ -398,7 +398,7 @@ type ArrayElementRefs = Record<string, ArrayEntryRef>
 /**
  * File-level `const NAME = [ ROOT.KEY, ... ]` or `const NAME = [ { prop: ROOT.KEY, ... }, ... ]`,
  * for `ROOT` in `resolveRoots` (GLOSSARY/DEFINITIONS): resolves the old Segments footer shape,
- * `FOOTER_DEFINITIONS = [{ label: '…', def: DEFINITIONS.x }, …]`, read through `.map` (09 D-72).
+ * `FOOTER_DEFINITIONS = [{ label: '…', def: DEFINITIONS.x }, …]`, read through `.map`.
  */
 function fileArrayConsts(ts: typeof TS, file: TS.SourceFile, resolveRoots: ReadonlySet<string>): Record<string, ArrayElementRefs[]> {
   const asRef = (e: TS.Expression): ArrayEntryRef | null =>
@@ -436,8 +436,8 @@ function fileArrayConsts(ts: typeof TS, file: TS.SourceFile, resolveRoots: Reado
  * duplicates removed. Skips a property read inside a structural attribute (`key`, `id`, …,
  * NON_TEXT_ATTRIBUTES): `key={def.name}` names a React key, not a line this screen shows, so it
  * must not credit `def.name`'s text just because a sibling `.map` call also reads `def.name` to
- * render it (found reviewing the restored Segments footer, which keys both its disclosure and its
- * Technical details `.map` off `def.name`). */
+ * render it (the Segments footer keys both its disclosure and its Technical details `.map` off
+ * `def.name`). */
 function propsReadFrom(ts: typeof TS, file: TS.SourceFile, node: TS.Node, localName: string): string[] {
   const out: string[] = []
   const visit = (n: TS.Node): void => {
@@ -452,7 +452,7 @@ function propsReadFrom(ts: typeof TS, file: TS.SourceFile, node: TS.Node, localN
 /**
  * File-level `const NAME = '<literal>'` (or a no-substitution template) and aliases of one
  * (`const OTHER = NAME`), resolved through a short chain of aliases. Only top-level declarations
- * count as "file-level" (09 D-72): `screenFacts` uses this so a placeholder's or an
+ * count as "file-level": `screenFacts` uses this so a placeholder's or an
  * action's identifier reads as the value it actually shows, not just its name.
  */
 function fileConsts(ts: typeof TS, file: TS.SourceFile): Record<string, string> {
@@ -481,7 +481,7 @@ export type ConstObjectTexts = Readonly<Record<string, Readonly<Record<string, R
  * Reads `export const NAME = { key: { prop: '<literal>', ... }, ... }` from its own source,
  * without executing the module (the compiler cannot load inside workerd, so nothing here may
  * depend on importing `shared/glossary.ts` or `shared/derive.ts` at runtime). Used to resolve a
- * `GLOSSARY.key.prop` / `DEFINITIONS.key.prop` property access to the same text (09 D-72).
+ * `GLOSSARY.key.prop` / `DEFINITIONS.key.prop` property access to the same text.
  */
 function constObjectTexts(ts: typeof TS, fileName: string, code: string, exportName: string): Record<string, Record<string, string>> {
   const file = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -515,7 +515,7 @@ function constObjectTexts(ts: typeof TS, fileName: string, code: string, exportN
   return result
 }
 
-/** `GLOSSARY` and `DEFINITIONS`, read from their own files' source (09 D-63, D-72). */
+/** `GLOSSARY` and `DEFINITIONS`, read from their own files' source. */
 export function glossaryAndDefinitionsTexts(ts: typeof TS, glossarySource: string, derivedSource: string): ConstObjectTexts {
   return {
     GLOSSARY: constObjectTexts(ts, 'shared/glossary.ts', glossarySource, 'GLOSSARY'),
@@ -524,7 +524,7 @@ export function glossaryAndDefinitionsTexts(ts: typeof TS, glossarySource: strin
 }
 
 /** Tags whose `term` attribute names a glossary/DEFINITIONS key the component explains itself
- * (`InfoTip`, and the local components that wrap one: `Chip`, `Metric`) (09 D-72). */
+ * (`InfoTip`, and the local components that wrap one: `Chip`, `Metric`). */
 const TIP_TAGS = new Set(['InfoTip', 'Chip', 'Metric'])
 
 /**
@@ -534,7 +534,7 @@ const TIP_TAGS = new Set(['InfoTip', 'Chip', 'Metric'])
  * Metric, and any DEFINITIONS/GLOSSARY entry reached through a file-level array read by `.map`
  * `resolve` can read), every placeholder, every button, link or summary with what it says and the
  * identifiers its children AND its handler, `to` or `href` attributes show (one hop through a named
- * handler's own body) (09 D-72), and every other element's children, joined into
+ * handler's own body), and every other element's children, joined into
  * one run.
  */
 export function screenFacts(ts: typeof TS, fileName: string, code: string, resolve: ConstObjectTexts = {}): ScreenFacts {
@@ -603,13 +603,13 @@ export function screenFacts(ts: typeof TS, fileName: string, code: string, resol
         text: parts.map((p) => p.text).join(''),
         identifiers: [...new Set([...parts.flatMap((p) => p.identifiers), ...attrIdentifiers])],
       })
-      // A button or link's own JsxText is still screen text (09 D-72): only its direct JsxText
+      // A button or link's own JsxText is still screen text: only its direct JsxText
       // children, the same text the generic walk used to read before an action's children were
       // tracked separately — never a literal nested inside an expression (e.g. a `??` fallback),
       // which the generic StringLiteral read below already counts once on its own.
       for (const child of node.children) if (ts.isJsxText(child) && child.text.trim() !== '') facts.texts.push(child.text)
     } else if (ts.isJsxElement(node) || ts.isJsxFragment(node)) {
-      // The element's own children, joined into one run (09 D-72): this is the only place a
+      // The element's own children, joined into one run: this is the only place a
       // JsxText child's words are read, so a sentence Prettier wraps across a `{' '}` is compared
       // as one run, never as fragments that happen to dodge the duplicate check.
       const joined = joinedElementChildren(ts, node.children)
@@ -654,7 +654,7 @@ function posixJoin(dir: string, spec: string): string {
 /**
  * The repo-relative paths `fileName` imports by a relative specifier, limited to `known` (paths
  * already scanned): a page imports `src/components.tsx`, so a sentence `ErrorLine` already shows
- * is also that page's sentence if the page repeats it (09 D-72, T-UI-ONE "per screen").
+ * is also that page's sentence if the page repeats it (T-UI-ONE "per screen").
  */
 export function importedScreenPaths(ts: typeof TS, fileName: string, code: string, known: ReadonlySet<string>): string[] {
   const file = ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
@@ -674,7 +674,7 @@ export function importedScreenPaths(ts: typeof TS, fileName: string, code: strin
 /**
  * `rawFacts` with each file under one of `screenDirs` (a page, an Insights piece) unioned with the
  * `texts` of the shared UI components it imports, from `mergeableFiles` (also in `rawFacts`), so
- * T-UI-ONE compares what one screen shows, not one file's text in isolation (09 D-72): a strictly
+ * T-UI-ONE compares what one screen shows, not one file's text in isolation: a strictly
  * per-file scan would pass a sentence in `src/components.tsx` repeated on a page.
  * `mergeableFiles` excludes GLOSSARY/DEFINITIONS and other data-only modules: their own
  * source holds every entry's text once regardless of how many pages read it, so merging them in
@@ -717,7 +717,7 @@ const SCREEN_MERGE_FIXTURE = {
  * Runs in Node (vitest.config.ts): the Overview's screen text, each fixture's, each vocabulary
  * file's (`vocabularyCode`: repo-relative path → source, read by the config from VOCABULARY_SCAN)
  * and each screen file's facts (`onePlaceCode`, read from ONE_PLACE_SCAN the same way), merged per
- * screen (09 D-72), plus the GLOSSARY/DEFINITIONS-aware facts of the cross-file merge fixture.
+ * screen, plus the GLOSSARY/DEFINITIONS-aware facts of the cross-file merge fixture.
  */
 export async function screenTextBinding(
   overviewCode: string,

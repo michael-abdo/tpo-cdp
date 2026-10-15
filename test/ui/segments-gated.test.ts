@@ -15,7 +15,7 @@ import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../hel
 import { DEFAULT_FORM, toFilters } from '../../src/segment-form'
 import { recordSearch, type SearchStore } from '../../src/previous-searches'
 
-// Segments' gated future features (09 D-80): Send to beehiiv, and the five
+// Segments' gated future features: Send to beehiiv, and the five
 // "More filters" (one flag each, group: 'more_filters'). None carries state: none has a key in
 // FILTER_KEYS, so none can reach the filters object, Previous searches or the export.
 
@@ -129,7 +129,7 @@ describe('Segments: Send to beehiiv', () => {
     expect(describedByResolvesTo(html, FEATURES.send_to_beehiiv.note)).toBe(true)
   })
 
-  it('the button\'s own VISIBLE text equals shared/features.ts\'s send_to_beehiiv.label exactly (the review\'s M5: "Push to beehiiv")', () => {
+  it('the button\'s own VISIBLE text equals shared/features.ts\'s send_to_beehiiv.label exactly ("Push to beehiiv")', () => {
     const html = renderToString(createElement(SendToBeehiiv))
     expect(elementText(html, 'button')).toBe(FEATURES.send_to_beehiiv.label)
   })

@@ -8,12 +8,12 @@ import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// /events polling (06 §/events, §UI principles 7; 16 §If time remains item 2): what the live
+// /events polling: what the live
 // region says after each fetch. The feeds are real answers of GET /api/events/recent on the
 // seeded worker (SELF), before and after events sent through the real POST /webhooks/app, and
-// the page's own eventsAnnouncement reads them. Inputs as in test/events.test.ts (09 D-11): the
+// the page's own eventsAnnouncement reads them. Inputs as in test/events.test.ts: the
 // user is u_c3a64c0a (app_users.csv line 5), the device `d_` + its hex, event ids from
-// eventIdPool(), times on TODAY (02 §Time).
+// eventIdPool(), times on TODAY.
 
 const nextEventId = eventIdPool()
 let cookie: string
@@ -36,13 +36,13 @@ async function send(event: string, time: string): Promise<void> {
 
 const ids = (events: readonly RecentEvent[]) => new Set(events.map((e) => e.event_id))
 
-describe('/events polls every 5 seconds and announces only new events (06 §/events)', () => {
+describe('/events polls every 5 seconds and announces only new events', () => {
   it('polls every 5 seconds', () => {
     expect(POLL_MS).toBe(5_000)
   })
 
   it('first load says how many are shown; a poll on the full 20-event list says only how many are new; nothing new says nothing', async () => {
-    // The list is normally full (RECENT_EVENTS_LIMIT, 04 §GET /api/events/recent), so new events push
+    // The list is normally full (RECENT_EVENTS_LIMIT), so new events push
     // old ones off the end and the count on screen stays the same: fill it before the first load.
     expect(await feed()).toHaveLength(0)
     for (let i = 0; i < RECENT_EVENTS_LIMIT; i++) await send('read_story', `09:${String(i).padStart(2, '0')}:00`)
@@ -72,7 +72,7 @@ describe('/events polls every 5 seconds and announces only new events (06 §/eve
     expect(eventsAnnouncement(null, [], 'initial')).toBe('0 events shown')
   })
 
-  it("a 'sent' fetch says nothing even with a new row, since the panel's own result line already named the outcome (D-72); 'poll' with the same input still speaks", async () => {
+  it("a 'sent' fetch says nothing even with a new row, since the panel's own result line already named the outcome; 'poll' with the same input still speaks", async () => {
     const shown = await feed()
     await send('app_open', '11:00:00')
     const withNew = await feed()

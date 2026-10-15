@@ -26,7 +26,7 @@ describe('T-GATE-1: every shared/features.ts entry renders on its page exactly o
     expect(Object.keys(SRC).length).toBeGreaterThan(5)
   })
 
-  it('each flag has exactly the placements 00-plan.md §1 names', () => {
+  it('each flag has exactly one placement, or two for the named exceptions', () => {
     for (const id of Object.keys(FEATURES) as FeatureId[]) {
       const expected = TWO_PLACEMENTS.has(id) ? 2 : 1
       expect(placementCount(id), id).toBe(expected)
@@ -136,7 +136,7 @@ describe('T-GATE-5: docs/notes.md\'s Known gaps names every gated feature, and t
   })
 })
 
-describe('T-GATE-6 (D-72, one home): no features.ts label/controls string is hand-typed again in src/**/*.tsx', () => {
+describe('T-GATE-6 (one home): no features.ts label/controls string is hand-typed again in src/**/*.tsx', () => {
   // A component that reads `gated.feature.label` never has that exact string sitting anywhere
   // else in its own JSX (that string only ever shows up as the dynamic reference), so a mutant
   // that swaps the dynamic read for a hardcoded copy of the SAME words — invisible to the
@@ -145,7 +145,7 @@ describe('T-GATE-6 (D-72, one home): no features.ts label/controls string is han
   // literal words sitting in source, not merely what ends up on screen.
   //
   // Two words collide on purpose. `ask.tsx`'s own, pre-existing "Ask" button (AskSection's real,
-  // working submit button, 06 §/insights R5) is not derived from follow_up_questions at all — it
+  // working submit button) is not derived from follow_up_questions at all — it
   // predates that flag and shares the single word by coincidence. "Details" is `components.tsx`'s
   // generic Disclosure default (`detailsLabel = 'Details'`) and the per-row toggles built from it
   // on /audit and three unrelated rows of /lookup (visits, app events, and Disclosure's own

@@ -8,7 +8,7 @@ import { CANONICAL_SOURCES, canonicalSource, normalizeEmail, normalizeQueryFragm
 import normalizeSource from '../shared/normalize.ts?raw'
 import { parseCsv } from '../worker/ingest/csv'
 
-// 02 §Normalization, 09 D-26, tests 08 T-NORM-1..3 (A2); 09 D-70 item 8, test 08 T-HARD-8.
+// The one email and source normalizer: T-NORM-1..3, and the one email fold: T-HARD-8.
 
 describe('T-NORM-1 normalizeEmail', () => {
   it('trims and lowercases', () => {
@@ -22,9 +22,9 @@ describe('T-NORM-1 normalizeEmail', () => {
     expect(normalizeEmail('   ')).toBeNull()
   })
 
-  it('pins each clause of the 02 §Normalization regex', () => {
+  it('pins each clause of the email regex', () => {
     // Regex-clause fixtures, not business data: these strings are never presented as real
-    // emails and none can pass the regex (09 D-47 spirit). Each one fails a weakened pattern:
+    // emails and none can pass the regex. Each one fails a weakened pattern:
     expect(normalizeEmail('a@b')).toBeNull() // dropping the required `\.` before the TLD
     expect(normalizeEmail('a@b@c.com')).toBeNull() // allowing `@` in the local part or the domain before the dot
     expect(normalizeEmail('a b@c.com')).toBeNull() // allowing whitespace inside the local part
@@ -35,7 +35,7 @@ describe('T-NORM-1 normalizeEmail', () => {
     expect(normalizeEmail('a@.com')).toBeNull() // allowing an empty domain before the dot (`*` for `+` after the @)
   })
 
-  it('changes nothing but case: plus tags and dots stay (D-26)', () => {
+  it('changes nothing but case: plus tags and dots stay', () => {
     expect(normalizeEmail('a+b@x.com')).toBe('a+b@x.com')
     expect(normalizeEmail('First.Last@gmail.com')).toBe('first.last@gmail.com')
   })
@@ -93,8 +93,8 @@ describe('T-NORM-3 single implementation', () => {
     expect(Object.keys(migrations)).toContain('../migrations/0002_views.sql')
   })
 
-  // Every file outside shared/normalize.ts that lowercases anything, and what it lowercases (09
-  // D-70 item 8). None is an email; a new caller fails until it is read and listed here, so an
+  // Every file outside shared/normalize.ts that lowercases anything, and what it lowercases
+  // (T-HARD-8). None is an email; a new caller fails until it is read and listed here, so an
   // email folded under another name (`q`, `raw`, `addr`) cannot slip past a word match.
   const LOWERCASES_NO_EMAIL: Record<string, string> = {
     '../worker/assistant/gates/gate2-tool-authorizer.ts': 'SQL tokens and view/column names of model SQL',
@@ -106,8 +106,8 @@ describe('T-NORM-3 single implementation', () => {
     '../src/insights/pin-dialog.tsx': 'a time period preset label',
     '../worker/insights/board.ts': 'pk_ key hex digits, hex runs in result text, SQL column names, a preset label',
     '../worker/insights/going-cold.ts': 'the first letter of a definition sentence',
-    '../worker/insights/pin-grammar.ts': 'SQL column, function and alias names of a pinned query_sql SQL (09 D-64b)',
-    '../worker/ingest/web.ts': 'the /subscribe page path, for case-insensitive linking (09 D-78)',
+    '../worker/insights/pin-grammar.ts': 'SQL column, function and alias names of a pinned query_sql SQL',
+    '../worker/ingest/web.ts': 'the /subscribe page path, for case-insensitive linking',
   }
   const LOWERCASE_CALL = /\.(?:toLowerCase|toLocaleLowerCase)\s*\(/
 
@@ -167,7 +167,7 @@ describe('T-NORM-3 single implementation', () => {
   })
 })
 
-describe('T-HARD-8 one email fold (09 D-70 item 8)', () => {
+describe('T-HARD-8 one email fold', () => {
   it('normalizeEmail and normalizeQueryFragment both call the one private fold; nothing else in the file folds an email', () => {
     expect(normalizeSource).toMatch(/\nfunction foldEmail\(raw: string\): string \{\n  return raw\.trim\(\)\.toLowerCase\(\)\n\}/)
     expect(Object.keys(normalize)).not.toContain('foldEmail')

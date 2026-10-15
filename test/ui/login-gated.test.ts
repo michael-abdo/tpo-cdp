@@ -7,9 +7,9 @@ import { AccountButton } from '../../src/App'
 import LoginPage from '../../src/pages/LoginPage'
 import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
 
-// "Your own sign-in" (work_sign_in, 09 D-80): one flag, two placements — the
+// "Your own sign-in" (work_sign_in): one flag, two placements — the
 // /login button and the top bar's "Your account". Both render the exact same canonical note
-// (shared/features.ts), with no extra fact appended on either page (D-72: one home for the
+// (shared/features.ts), with no extra fact appended on either page (one home for the
 // shared-team-password fact).
 
 function rendered(): string {

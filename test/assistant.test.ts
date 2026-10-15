@@ -26,26 +26,24 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// T-AI-3, T-AI-4, T-AI-5 (08) and the loader/route checks. Designs: 03
-// §Gateway layers rows 3, 6, 9, 10, 11 and §No-restart; 04 §POST /api/assistant and
-// §/api/segments/preview; 05 §Re-hydration, §Leak paths; 07 §H; 09 D-41, D-42, D-54.
+// T-AI-3, T-AI-4, T-AI-5 and the loader/route checks.
 //
-// No test calls the network (08 header, 09 D-54). T-AI-3 and T-AI-5 run the pure respond() and
+// No test calls the network. T-AI-3 and T-AI-5 run the pure respond() and
 // rehydrate() on model output written in this file. T-AI-4 runs the whole request through
 // assistantRoutes() with a transport function defined here that returns Messages-API-shaped
-// responses written in this file: test input like 09 D-11's webhook bodies, not a mock of our
+// responses written in this file: test input like the webhook bodies tests send, not a mock of our
 // code. Everything else is real: the seeded D1 (data/*.csv via test/helpers/seed.ts), the
 // assistant_tools rows from scripts/tool-seeds.ts, the gates, the tools, the audit writer.
-// Expected numbers come from 02 §Counts: the brief's preset 177 with 55 unsubscribed hidden;
+// Expected numbers are the seed's: the brief's preset 177 with 55 unsubscribed hidden;
 // Instagram active went_cold_in(2026-08) = 46, 66 across all statuses; Instagram active cold = 147.
-// The spec numbers 5 (tool rounds, 03 row 6) and claude-opus-5-5 (09 D-03) are pinned as literals.
+// The fixed numbers 5 (tool rounds) and claude-opus-5-5 (the model) are pinned as literals.
 // The demo subject joy.hall830@protonmail.com
 // (subscribers.csv:902) is the email Gate 1 must redact.
 
 const JOY = 'joy.hall830@protonmail.com'
 const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
 const JOY_APP_USER = 'u_ceed5f12' // her own app user id (app_users.csv:303)
-const JOY_DEVICE = 'd_ceed5f12' // her own app user id's hex, reused as a device id (09 D-47)
+const JOY_DEVICE = 'd_ceed5f12' // her own app user id's hex, reused as a device id (a real value)
 const PRESET = { status: ['active'], source: ['instagram'], days_since_open_gte: 30, include_never_opened: true }
 const WENT_COLD_AUGUST = { metric: 'went_cold', status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 
@@ -169,10 +167,10 @@ async function auditRows(where: string, bind: string): Promise<AuditRow[]> {
 }
 
 /**
- * Shared by every "blocked at exactly this site" test (T-PII-4/5, 05 §Scanner, §Leak paths; 04
- * §POST /api/assistant errors): asserts the 500 blocked_pii envelope, that every ai_audit row
- * under this session's trace is exactly `kinds` in order, that the last one is the blocked row
- * naming `check`/`site`/`toolName`, and that no row anywhere carries an "@".
+ * Shared by every "blocked at exactly this site" test (T-PII-4/5): asserts the 500 blocked_pii
+ * envelope, that every ai_audit row under this session's trace is exactly `kinds` in order, that
+ * the last one is the blocked row naming `check`/`site`/`toolName`, and that no row anywhere
+ * carries an "@".
  */
 async function expectBlocked(
   res: Response,
@@ -201,7 +199,7 @@ async function expectBlocked(
 
 async function pkeyOf(email: string): Promise<string> {
   const pkey = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(email).first<string>('pkey')
-  if (pkey === null) throw new Error('no profile for the demo subject (02 §Counts)')
+  if (pkey === null) throw new Error('no profile for the demo subject')
   return pkey
 }
 
@@ -223,7 +221,7 @@ beforeAll(async () => {
   }
 })
 
-describe('tool loader (03 row 3, 09 D-41)', () => {
+describe('tool loader', () => {
   it('loads the seeded rows in sort_order as Anthropic tools, verbatim', async () => {
     const loaded = await loadTools(env.DB)
     expect(loaded.definitions.map((d) => d.name)).toEqual(['segment', 'aggregate', 'query_sql', 'pages_new_subscribers_hit_first', 'describe_schema'])
@@ -290,7 +288,7 @@ describe('tool loader (03 row 3, 09 D-41)', () => {
 })
 
 describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; request_json has no "@"', () => {
-  // Every request goes through the production route with a transport defined in this file (09 D-54).
+  // Every request goes through the production route with a transport defined in this file (no network).
 
   it('a question with an email → aggregate tool → typed answer; model and tool rows share the trace', async () => {
     const cookie = await loginCookie()
@@ -328,7 +326,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     })
     expect(keys).toEqual([env.ANTHROPIC_API_KEY]) // the route hands the transport the configured key
 
-    // The tool result the model received holds 02 §Counts' 46, framed as untrusted data.
+    // The tool result the model received holds the expected 46, framed as untrusted data.
     expect(requests).toHaveLength(2)
     const result = firstToolResult(requests[1])
     expect(result.tool_use_id).toBe('toolu_cold')
@@ -344,12 +342,12 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     expect(new Set(rows.map((r) => r.session_sub))).toEqual(new Set([sub]))
     const models = rows.filter((r) => r.kind === 'model_request')
     expect(models.map((r) => r.request_json)).toEqual(requests.map((r) => JSON.stringify(r)))
-    // 09 D-74 R2: a response with the cache meters absent (null, not 0) still stores 0s, not null.
+    // A response with the cache meters absent (null, not 0) still stores 0s, not null.
     expect(models.map((r) => ({ tokens_in: r.tokens_in, cache_read_tokens: r.cache_read_tokens, cache_write_tokens: r.cache_write_tokens }))).toEqual([
       { tokens_in: 1000, cache_read_tokens: 0, cache_write_tokens: 0 },
       { tokens_in: 1000, cache_read_tokens: 0, cache_write_tokens: 0 },
     ])
-    expect(MODEL).toBe('claude-opus-5-5') // 09 D-03
+    expect(MODEL).toBe('claude-opus-5-5')
     expect(requests.every((r) => r.model === 'claude-opus-5-5')).toBe(true)
     for (const row of models) {
       expect(row.request_json).not.toContain('@')
@@ -358,7 +356,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     expect(rows.find((r) => r.kind === 'tool_call')?.row_count).toBe(1)
   })
 
-  it('09 D-74: cache usage meters are stored; the first call in a window is a cache write, the next a cache read, tokens_in keeps counting every prompt token', async () => {
+  it('cache usage meters are stored; the first call in a window is a cache write, the next a cache read, tokens_in keeps counting every prompt token', async () => {
     const cookie = await loginCookie()
     const cached = (content: Anthropic.ContentBlock[], stop_reason: Anthropic.StopReason, cache: { read: number; write: number }) => {
       const base = message(content, stop_reason)
@@ -396,7 +394,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
   it('the iteration cap: 5 tool rounds run, the sixth request is refused, partial: true, one trace', async () => {
     const cookie = await loginCookie()
     const always = () => message([toolUse(`toolu_${calls}`, 'aggregate', WENT_COLD_AUGUST)], 'tool_use')
-    expect(MAX_TOOL_ITERATIONS).toBe(5) // 03 row 6, 04: "5 tool iterations max"
+    expect(MAX_TOOL_ITERATIONS).toBe(5) // "5 tool iterations max"
     const { transport, requests } = scripted(Array.from({ length: 6 }, () => always))
     const res = await ask(appWith(transport), cookie, 'how many Instagram signups went cold last month?')
     expect(res.status).toBe(200)
@@ -404,7 +402,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     expect(body.partial).toBe(true)
     expect(body.type).toBe('answer')
     expect(body.text).toContain('limit of 5 tool rounds')
-    expect(body.table.rows).toEqual([{ went_cold: 46 }]) // whatever table exists (04)
+    expect(body.table.rows).toEqual([{ went_cold: 46 }]) // whatever table exists
     expect(requests).toHaveLength(6)
     const rows = await auditRows('trace_id', body.audit_id)
     expect(rows.filter((r) => r.kind === 'model_request')).toHaveLength(6)
@@ -421,14 +419,14 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     const res = await ask(appWith(transport), cookie, 'how many went cold?')
     expect(res.status).toBe(200)
     const body = await res.json<{ partial: boolean; text: string; audit_id: string }>()
-    expect(body.partial).toBe(true) // no json block (09 D-42)
+    expect(body.partial).toBe(true) // no json block
     expect(body.text).toBe('I could not compute that.')
     const result = firstToolResult(requests[1])
     expect(result.is_error).toBe(true)
     expect(String(result.content)).toContain('went_cold needs window_from and window_to')
     const rows = await auditRows('trace_id', body.audit_id)
     expect(rows.find((r) => r.kind === 'tool_call')).toMatchObject({ status: 'error', tool_name: 'aggregate' })
-    // A partial answer with no sign of SQL writes no D-58 discard row (09 D-58).
+    // A partial answer with no sign of SQL writes no SQL-in-text discard row.
     expect(rows.filter((r) => r.kind === 'blocked')).toEqual([])
   })
 
@@ -495,7 +493,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
-    expect(ASSISTANT_CALLS_PER_HOUR).toBe(100) // 09 D-40
+    expect(ASSISTANT_CALLS_PER_HOUR).toBe(100)
     await earlierCalls(sub, 100, 'gate1: earlier call')
     const never = scripted([])
     const res = await ask(appWith(never.transport), cookie, 'how many subscribers?')
@@ -550,7 +548,7 @@ describe('T-AI-4: every assistant call writes ai_audit rows under one trace_id; 
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
     await earlierCalls(sub, 100, 'gate1: earlier call')
-    // The test moves its own rows back in time; the wall clock is the one 02 §Time names for this window.
+    // The test moves its own rows back in time; this window runs on the wall clock, not TODAY.
     const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString()
     const moved = await env.DB.prepare('UPDATE ai_audit SET created_at = ? WHERE session_sub = ?').bind(twoHoursAgo, sub).run()
     expect(moved.meta.changes).toBe(100)
@@ -856,7 +854,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(tableLines.map((line) => line.split('|')[1].trim())).toEqual(builderTen)
   })
 
-  it('structural: the segment tool\'s SQL names only v_profiles and selects no PII column (05 "Structural")', () => {
+  it('structural: the segment tool\'s SQL names only v_profiles and selects no PII column', () => {
     expect(MODEL_SEGMENT_COLUMNS.filter((c) => (PII_COLUMNS as readonly string[]).includes(c))).toEqual([])
     const variants = [PRESET, {}, { has_app: true }, { has_app: false, status: ['active', 'unsubscribed'] }, { days_since_open_gte: 7 }]
     for (const input of variants) {
@@ -924,7 +922,7 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
   })
 })
 
-describe('the aggregate tool over v_profiles (02 §Derived cold / went_cold_in, §Defaults, §Counts)', () => {
+describe('the aggregate tool over v_profiles (cold / went_cold_in, the default status, the seed counts)', () => {
   const aggregate = BUILTIN_HANDLERS.aggregate
   const august = { source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 
@@ -953,7 +951,7 @@ describe('the aggregate tool over v_profiles (02 §Derived cold / went_cold_in, 
   })
 })
 
-describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded whole (09 D-58)', () => {
+describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded whole', () => {
   const ANSWER_SENTENCE = "I couldn't phrase that answer safely — see Technical details for the steps."
   const answerBlock = (value: string) => finalText('prose', { type: 'answer', text: value, window: null, filters_applied: {}, definitions_used: [] })
 
@@ -965,7 +963,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     ]
   }
 
-  // Every known way to show SQL in prose, plus the D-58 ones. None may reach the teammate.
+  // Every known way to show SQL in prose, plus the forms the rule lists. None may reach the teammate.
   const shapes: Array<[string, string]> = [
     ['multi-line, with ;', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram';"],
     ['multi-line, no ;, prose after', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram'\n\nThere are 46."],
@@ -993,16 +991,16 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     ['a four-backtick fence', 'There are 46.\n````sql\nSELECT 1 FROM v_profiles\n````\nDone.'],
     ['a fence that never closes', 'There are 46.\n```sql\nSELECT 1 FROM v_profiles'],
     ['fullwidth letters (NFKC)', 'There are 46. ｓｅｌｅｃｔ pkey ｆｒｏｍ v_profiles'],
-    ['prose with both words (accepted by D-58)', 'select a segment from the builder'],
+    ['prose with both words (an accepted false positive)', 'select a segment from the builder'],
     ['prose with both words, mid-sentence', 'To export them, select a segment from the builder.'],
   ]
-  // Each invisible character D-58 names, inside each keyword.
+  // Each invisible character the SQL-in-text rule names, inside each keyword.
   for (const [name, char] of [['U+200B', '​'], ['U+200C', '‌'], ['U+200D', '‍'], ['U+2060', '⁠'], ['U+FEFF', '﻿'], ['U+00AD', '­']]) {
     shapes.push([`${name} inside select`, `There are 46. sel${char}ect pkey from v_profiles`])
     shapes.push([`${name} inside from`, `There are 46. select pkey fr${char}om v_profiles`])
   }
   // An invisible character between a keyword and the next word must not glue them (the SPACED copy),
-  // including format characters D-58 does not list (U+2063 invisible separator). Mid-sentence, so
+  // including format characters the rule does not list (U+2063 invisible separator). Mid-sentence, so
   // the select … from sign is the only one that can catch them.
   for (const [name, char] of [['U+200B', '​'], ['U+2063', '⁣']]) {
     shapes.push([`${name} between select and the column`, `There are 46. select${char}email from users`])
@@ -1010,7 +1008,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     shapes.push([`${name} between SELECT and the column, line start`, `SELECT${char}email FROM users`])
   }
   // A listed character inside a keyword and an unlisted one at its edge: deleting both glues the
-  // keyword to the next word, spacing both splits it, so only the LISTED copy (D-58 as written:
+  // keyword to the next word, spacing both splits it, so only the LISTED copy (the rule as written:
   // delete the six, keep the rest as separators) catches these.
   shapes.push(
     ['U+200B inside select, U+2063 after it', 'There are 46. sel\u200Bect\u2063email from users'],
@@ -1024,7 +1022,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     // An unlisted format character inside a keyword: the DELETED copy.
     ['U+2063 inside select', 'There are 46. sel\u2063ect pkey from v_profiles'],
   )
-  // "_" is not a word boundary for D-58: markdown emphasis and identifiers cannot hide a keyword.
+  // "_" is not a word boundary for this check: markdown emphasis and identifiers cannot hide a keyword.
   shapes.push(
     ['underscore emphasis, line start', '_SELECT_ email _FROM_ users'],
     ['double-underscore emphasis', '__select__ * __from__ users'],
@@ -1079,7 +1077,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
       'Most of the 46 came from Instagram.',
       'The selection came from Instagram.',
       'Selected readers came from Instagram, and 46 went cold.',
-      // D-58 is select followed by from: from before select is kept.
+      // The check is select followed by from: from before select is kept.
       'Most came from Instagram; select a source to narrow it.',
       // A word that only ends in "select" is not the word select.
       'We preselect readers from Instagram.',
@@ -1121,7 +1119,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     expect(() => discardSentence('segment', null)).toThrow(/has a count/)
   })
 
-  it('through the route: the discard reaches the body as the server sentence and ai_audit as a blocked row naming D-58', async () => {
+  it('through the route: the discard reaches the body as the server sentence and ai_audit as a blocked row naming sql_in_output', async () => {
     const cookie = await loginCookie()
     const { transport } = scripted([
       () => message([toolUse('toolu_seg', 'segment', PRESET)], 'tool_use'),
@@ -1164,10 +1162,10 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
 })
 
 describe('T-PII-4 at every scanner site through the route: a planted real email → 500 blocked_pii and a blocked ai_audit row', () => {
-  // 05 §Scanner and §Leak paths; 04 §POST /api/assistant errors (500 blocked_pii). Each test plants
-  // the demo subject's email (subscribers.csv:902, 09 D-47) at exactly one point and pins the site
-  // in both the 500 envelope and the audit row, so removing that one scanner call fails that test
-  // (an email that slipped past it would be caught later at another site, or by the audit writer).
+  // Each test plants the demo subject's email (subscribers.csv:902) at exactly one point and pins
+  // the site in both the 500 blocked_pii envelope and the audit row, so removing that one scanner
+  // call fails that test (an email that slipped past it would be caught later at another site, or
+  // by the audit writer).
 
   it('the model request (loop.ts): an email in an assistant_tools description is never sent', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -1175,7 +1173,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     const sub = await sessionSub(cookie)
     const before = await env.DB.prepare("SELECT description FROM assistant_tools WHERE name = 'aggregate'").first<string>('description')
     if (before === null) throw new Error('the aggregate tool row is not seeded')
-    // Tools are data (09 D-41): a teammate's row edit is the one input to the request no other scan sees.
+    // Tools are data rows: a teammate's row edit is the one input to the request no other scan sees.
     await env.DB.prepare("UPDATE assistant_tools SET description = ? WHERE name = 'aggregate'").bind(`${before} Ask ${JOY}.`).run()
     try {
       const { transport, requests } = scripted([() => message([text('never')], 'end_turn')])
@@ -1200,8 +1198,8 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
     const source = await env.DB.prepare('SELECT source FROM subscribers WHERE email_norm = ?').bind(JOY).first<string>('source')
-    if (source === null) throw new Error('no subscriber row for the demo subject (02 §Counts)')
-    // 05 §Leak paths: a client-supplied text column that holds an email; here her own, in place of her source.
+    if (source === null) throw new Error('no subscriber row for the demo subject')
+    // A leak path: a client-supplied text column that holds an email; here her own, in place of her source.
     await env.DB.prepare('UPDATE subscribers SET source = email_norm WHERE email_norm = ?').bind(JOY).run()
     try {
       const { transport, requests } = scripted([
@@ -1222,7 +1220,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     const sub = await sessionSub(cookie)
     // The block spells "@" as the JSON escape \u0040, so the raw response holds no "@". Her bare
     // local part (joy.hall830) still sits in that raw text, though, so loop.ts's own scan now
-    // catches it there as known_local_part (09 D-79: the outbound scan checks local parts too,
+    // catches it there as known_local_part (the outbound scan checks local parts too,
     // not only "@"-shapes) — earlier than route.ts's scan on the parsed result, which is the "@"
     // JSON.parse in respond.ts turns the escape back into, and what this test used to reach.
     const escaped = finalText('Here is the answer.', {
@@ -1247,7 +1245,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     )
   })
 
-  it('the final result (route.ts): an email whose local part ALSO decodes only when parsed is blocked at the parsed result (09 D-79 fixer round)', async () => {
+  it('the final result (route.ts): an email whose local part ALSO decodes only when parsed is blocked at the parsed result', async () => {
     // Same idea as the test above, but the local part's own "." is escaped too, so the raw model
     // text holds no literal "@" AND no contiguous known local part: loop.ts's scan of the raw
     // response.content passes clean, and only respond.ts's JSON.parse of the fenced block
@@ -1283,7 +1281,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     expect(requests).toHaveLength(1)
   })
 
-  it('the model request (loop.ts): a known local part with no "@" in an assistant_tools description is blocked (09 D-79: known_local_part, not only email_pattern)', async () => {
+  it('the model request (loop.ts): a known local part with no "@" in an assistant_tools description is blocked (known_local_part, not only email_pattern)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
@@ -1306,7 +1304,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     }
   })
 
-  it('the model response (loop.ts): a disguised email split by a real newline and a real tab is blocked, not only a space-separated one (09 D-79 fixer round)', async () => {
+  it('the model response (loop.ts): a disguised email split by a real newline and a real tab is blocked, not only a space-separated one', async () => {
     // findPII's whole-serialized-JSON pass alone never sees this: JSON.stringify of
     // response.content turns a real newline/tab inside a text block into the two characters a
     // backslash and "n"/"t", which the bracket mappings' \s* never matches. The leaf-string pass
@@ -1328,7 +1326,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     expect(requests).toHaveLength(1)
   })
 
-  it('the question (Gate 1): a word-joiner (U+2060) inside a known address is still redacted, not only the five older zero-width characters (09 D-79 fixer round)', async () => {
+  it('the question (Gate 1): a word-joiner (U+2060) inside a known address is still redacted, not only the five older zero-width characters', async () => {
     // shared/pii.ts normalizeForScan used to drop only five zero-width/soft-hyphen characters; it
     // now shares shared/sql-sign.ts's full format-character class, which also covers U+2060 WORD
     // JOINER. A probe against the old five-character list left a question holding
@@ -1347,9 +1345,9 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
   })
 })
 
-// 09 D-79: the webhook-link local-part leak proven through the REAL route
+// The webhook-link local-part leak proven through the REAL route
 // (tool-executor.ts, not a direct guardPayload/framed() call in test/pii.test.ts), with a real
-// signed webhook (09 D-11) and a recorded query_sql tool call reading v_app_events.
+// signed webhook and a recorded query_sql tool call reading v_app_events.
 describe('T-PII-5 at the route: a webhook link holding a known local part is blocked at the tool executor, before the model sees it', () => {
   it('a recorded query_sql call reading v_app_events.link is blocked (known_local_part, site tool_result), the transport never sees it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -1383,14 +1381,14 @@ describe('T-PII-5 at the route: a webhook link holding a known local part is blo
 })
 
 describe('T-PII-4 at the tool executor\'s success result: the full rows are scanned, not only what the model reads', () => {
-  // 05 §Scanner: both the markdown the model reads and the rows kept for the UI must be PII-free.
+  // Both the markdown the model reads and the rows kept for the UI must be PII-free.
   // The model sees the first MODEL_ROW_CAP (10) rows, so an email in the 11th row is only in the
   // kept rows. The 11th most engaged active subscriber's own email is planted in her source.
   it('an email in a row past the tenth → blocked_pii at tool_result, a blocked row, no tool_call row', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const before = await BUILTIN_HANDLERS.segment.run(env.DB, {})
     const eleventh = before.rows[10]
-    if (eleventh === undefined) throw new Error('the default segment lists fewer than 11 rows (02 §Counts)')
+    if (eleventh === undefined) throw new Error('the default segment lists fewer than 11 rows')
     const email = await env.DB.prepare('SELECT email_norm FROM profiles WHERE pkey = ?').bind(eleventh.pkey).first<string>('email_norm')
     if (email === null) throw new Error('no email for the 11th segment row')
     const source = await env.DB.prepare('SELECT source FROM subscribers WHERE email_norm = ?').bind(email).first<string>('source')

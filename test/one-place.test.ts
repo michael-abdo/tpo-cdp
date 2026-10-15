@@ -1,4 +1,4 @@
-// T-UI-ONE (09 D-72, 06 §UI principles): say one thing in one place. Per screen file, no sentence
+// T-UI-ONE: say one thing in one place. Per screen file, no sentence
 // of four or more words is written twice (case, whitespace and punctuation ignored), and no
 // placeholder's example value is shown again as a button's or link's text (the "Try an example"
 // button beside a placeholder that already shows the example). The facts come from the TypeScript
@@ -18,7 +18,7 @@
 // JSX text and a template literal (rather than written whole in either) is read as two different,
 // shorter strings, not one match; and two sentences that say the same fact in different words
 // (paraphrase) never match at all, since the scan only ever compares normalized strings for
-// equality. The real check for all of these is the page-by-page review every round already does.
+// equality. The real check for all of these is a page-by-page review.
 
 import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
@@ -80,7 +80,7 @@ export function exampleValue(placeholder: string): string | null {
 }
 
 /** Each placeholder example that a button, link, summary or any other element on the same screen
- * shows again — not only an action (09 D-72): a plain hint beside the placeholder can read the
+ * shows again — not only an action: a plain hint beside the placeholder can read the
  * same identifier, or spell out the same value, without being a button, link or summary. */
 export function exampleShownTwice(facts: ScreenFacts): string[] {
   const out: string[] = []
@@ -104,14 +104,14 @@ function offences(screens: Record<string, ScreenFacts>): string[] {
   return out
 }
 
-describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
+describe('T-UI-ONE say one thing in one place', () => {
   it('scans every screen file ONE_PLACE_SCAN names: each page (the Segments page included), the Insights pieces, the shell, the components and the sentence modules', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.onePlace)
     for (const file of ONE_PLACE_SCAN.files) expect(scanned).toContain(file)
     for (const page of ['LoginPage', 'OverviewPage', 'LookupPage', 'SegmentsPage', 'EventsPage', 'InsightsPage', 'AuditPage'])
       expect(scanned).toContain(`src/pages/${page}.tsx`)
     for (const piece of ['ask', 'board', 'charts', 'pin-dialog']) expect(scanned).toContain(`src/insights/${piece}.tsx`)
-    // Fixed, not derived from ONE_PLACE_SCAN.files itself (09 D-72): every src/*.ts module that
+    // Fixed, not derived from ONE_PLACE_SCAN.files itself: every src/*.ts module that
     // holds a whole sentence a page shows, so dropping one from the scan fails here, not silently.
     for (const file of ['src/labels.ts', 'src/events-poll.ts', 'src/filters-applied.ts'])
       expect(ONE_PLACE_SCAN.files, file).toContain(file)
@@ -140,7 +140,7 @@ describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
   })
 
   it('the rules flag each flag_ fixture and pass each pass_ fixture', () => {
-    // So an emptied ONE_PLACE_FIXTURES map cannot pass this loop trivially (09 D-72): there must
+    // So an emptied ONE_PLACE_FIXTURES map cannot pass this loop trivially: there must
     // be real cases on both sides for the loop below to actually exercise.
     const keys = Object.keys(ONE_PLACE_FIXTURES)
     expect(keys.filter((k) => k.startsWith('flag_')).length).toBeGreaterThanOrEqual(9)

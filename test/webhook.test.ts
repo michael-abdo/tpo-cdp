@@ -16,30 +16,30 @@ import {
   webhookSecret,
 } from './helpers/webhook'
 
-// POST /webhooks/app (04 §Webhook; 07 §A–C, §G): T-WH-1..8, 11, 12 (08), plus the stored
-// engagement_score recompute on every stored event (09 D-46). The test D1 holds the real seed of
-// data/*.csv (test/helpers/seed.ts). Expected identities: 02 §Counts. Expected scores: the 02
-// §Derived formula, written out in expectedScore() independently of shared/derive.ts, over the
+// POST /webhooks/app: T-WH-1..8, 11, 12, plus the stored
+// engagement_score recompute on every stored event. The test D1 holds the real seed of
+// data/*.csv (test/helpers/seed.ts). Expected identities: the seed's. Expected scores: the
+// engagement formula, written out in expectedScore() independently of shared/derive.ts, over the
 // stored last_open_date and site visits.
-// Inputs and where they come from (09 D-11: brief-shaped payloads built from real ids):
-// - BRIEF_SAMPLE is the brief's payload, byte for byte as 04 §Webhook body quotes it.
+// Inputs and where they come from (brief-shaped payloads built from real ids):
+// - BRIEF_SAMPLE is the brief's payload, byte for byte.
 // - user ids are real app_users.csv rows: u_2b6447a3 (line 2, julia.evans230@gmail.com),
 //   u_ceed5f12 (line 303, joy.hall830@protonmail.com), u_baba14aa (line 3), u_3380b6e6 (line 8),
 //   u_c0d06d19 (line 7), u_f2411d1c (line 9), u_e9edbf48 (line 10), u_38e852b0 (line 11,
 //   sarah.edwards657@gmail.com), u_f1cad5ce (line 15, eli.clark874@icloud.com). The unknown user ids
-//   u_2b6447a and u_3380b6e are real ids with the last character removed (09 D-47); neither
+//   u_2b6447a and u_3380b6e are real ids with the last character removed; neither
 //   occurs in data/*.csv.
 // - device ids: d_4b21e8 is the brief's; the others are `d_` + the hex of a real user id.
 // - event ids: evt_9f3a1c is the brief's; the others come from eventIdPool() (`evt_` + the hex of
 //   a real visitor_id).
 // - event times: the brief's 2026-09-28T14:22:05Z, the same instant written with a -05:00
 //   offset, and real web_events.csv times (lines 2 and 3, 2026-06-30 20:11:42 and 20:45:52).
-//   T-WH-7's "6 hours old" time is taken from the wall clock, as 08 asks.
+//   T-WH-7's "6 hours old" time is taken from the wall clock, as T-WH-7 asks.
 // - property values are real page slugs from web_events.csv (/news/supreme-court-ruling-explained,
 //   /news/church-attendance-study); the over-long value repeats the brief's slug and cuts it. The
 //   keys are `story` (the brief's) and `link`, the two keys v_app_events reads (0002_views.sql),
-//   and `page`, a web_events.csv column, for a key the view does not read. A `link` is a URL (09
-//   D-70 #2): LINK is the hosted app's own URL (shared/config.ts HOSTED_URL) with a real page path.
+//   and `page`, a web_events.csv column, for a key the view does not read. A `link` is a URL
+//   (T-HARD-2): LINK is the hosted app's own URL (shared/config.ts HOSTED_URL) with a real page path.
 //   The size and nesting caps are exercised on `page`, since `story` and `link` have rules of
 //   their own (T-HARD-2). Non-string property values are the brief's slug re-shaped (in an object,
 //   in an array) or removed (null); the nesting-depth cases wrap the brief's slug in empty arrays.
@@ -128,7 +128,7 @@ const days = (from: string, to: string) =>
   (Date.parse(to.slice(0, 10)) - Date.parse(from.slice(0, 10))) / DAY_MS
 
 /**
- * 02 §Derived engagement_score, written out here rather than imported, over the stored inputs of
+ * engagement_score, written out here rather than imported, over the stored inputs of
  * the profile with `email` (null for a stub: no opens, no site visits): recency from
  * subscribers.last_open_date, site visits = the profile's web events dated TODAY − 30 .. TODAY.
  * `appEvents` is what the caller expects to count.
@@ -313,7 +313,7 @@ describe('T-WH-5 a known user_id', () => {
       attached_via: 'direct',
     })
 
-    // 09 D-46: her stored score counts every app event of hers in the last 30 days, this one too.
+    // Her stored score counts every app event of hers in the last 30 days, this one too.
     const recent = profile.app.events.filter((e) => days(e.event_ts, TODAY) <= 30)
     expect(recent.length).toBeGreaterThan(0)
     const score = await storedScore(await pkeyForEmail(piiKeySecret(), JULIA))
@@ -337,8 +337,8 @@ describe('T-WH-6 an unknown user_id', () => {
     const user = await env.DB.prepare('SELECT * FROM app_users WHERE user_id = ?').bind(unknown).first()
     expect(user).toEqual({ user_id: unknown, email_norm: null, created_at: receivedAt, from_csv: 0 })
     const profile = await env.DB.prepare('SELECT * FROM profiles WHERE pkey = ?').bind(stubKey).first()
-    // 09 D-46: the stub's one app event counts: 25 × min(1, 1/10) = 2.5, rounded to 3.
-    // 09 D-78(b): user_id links this stub profile back to its app_users row for v_app_events,
+    // The stub's one app event counts: 25 × min(1, 1/10) = 2.5, rounded to 3.
+    // user_id links this stub profile back to its app_users row for v_app_events,
     // below; it is never set on a subscriber or app_only profile (those resolve by email_norm).
     expect(profile).toEqual({
       pkey: stubKey,
@@ -365,7 +365,7 @@ describe('T-WH-6 an unknown user_id', () => {
     // Two app events: 25 × 2/10 = 5.
     expect(await storedScore(stubKey)).toBe(5)
 
-    // 09 D-78(b): the stub's events resolve to its own pkey in the PII-free view the assistant's
+    // The stub's events resolve to its own pkey in the PII-free view the assistant's
     // app-activity counts read, exactly as Look up and /events already show them below, instead
     // of vanishing under pkey NULL (the old email-only join never matches a stub, whose
     // app_users.email_norm is NULL: SQL NULL = NULL is unknown, not true).
@@ -376,7 +376,7 @@ describe('T-WH-6 an unknown user_id', () => {
       .all<{ event: string }>()
     expect(viewRows.map((r) => r.event)).toEqual(['read_story', 'app_open'])
 
-    // 09 D-78(b): v_profiles has the identical email-only join gap as v_app_events did; migrations/
+    // v_profiles had the same email-only join gap as v_app_events; migrations/
     // 0011 recreates it too, so has_app/app_created_at agree with Look up's has_app: true for this
     // stub (worker/routes/lookup.ts:233), never has_app: 0 / app_created_at: NULL.
     const profileRow = await env.DB.prepare('SELECT has_app, app_created_at FROM v_profiles WHERE pkey = ?')
@@ -384,7 +384,7 @@ describe('T-WH-6 an unknown user_id', () => {
       .first<{ has_app: number; app_created_at: string }>()
     expect(profileRow).toEqual({ has_app: 1, app_created_at: receivedAt })
 
-    // 09 D-78(b): the model's own read-only SQL tool (worker/assistant/tools/builtin-handlers.ts,
+    // The model's own read-only SQL tool (worker/assistant/tools/builtin-handlers.ts,
     // the handler query_sql actually calls) must count the stub's events too, agreeing with
     // v_app_events, /events and Look up — not just a raw SELECT against the view run by the test
     // itself. A mutant that reverts v_app_events' pkey back to `pe.pkey AS pkey` (dropping the
@@ -410,8 +410,8 @@ describe('T-WH-6 an unknown user_id', () => {
   })
 
   it('heals a stub created before migration 0011 (user_id still NULL) on its next event, never IGNOREd', async () => {
-    // u_c0d06d1: data/app_users.csv's real u_c0d06d19 (line 7) with its last character removed
-    // (09 D-47), unused as either a known or an unknown id anywhere else in this file.
+    // u_c0d06d1: data/app_users.csv's real u_c0d06d19 (line 7) with its last character removed,
+    // unused as either a known or an unknown id anywhere else in this file.
     const unknown = 'u_c0d06d1'
     const stubKey = await pkeyForUnknownUser(piiKeySecret(), unknown)
     const first = await post(event({ user_id: unknown, device_id: 'd_c0d06d1' }))
@@ -426,7 +426,7 @@ describe('T-WH-6 an unknown user_id', () => {
     const beforeViewRows = await env.DB.prepare('SELECT count(*) AS n FROM v_app_events WHERE pkey = ?')
       .bind(stubKey)
       .first<{ n: number }>()
-    expect(beforeViewRows?.n).toBe(0) // vanished, the exact D-78(b) bug, until the next event
+    expect(beforeViewRows?.n).toBe(0) // vanished, the stub-join bug, until the next event
 
     const second = await post(
       event({ event: 'app_open', user_id: unknown, device_id: 'd_c0d06d1', timestamp: '2026-09-28T09:22:05-05:00' }),
@@ -443,12 +443,12 @@ describe('T-WH-6 an unknown user_id', () => {
     expect(healed.map((r) => r.event)).toEqual(['read_story', 'app_open'])
   })
 
-  it('never inflates data-quality app_users_not_on_list.of: a stub has no email to count it against (09 D-78(b) regression)', async () => {
-    // u_f2411d1: data/app_users.csv's real u_f2411d1c (line 9) with its last character removed
-    // (09 D-47), unused as either a known or an unknown id anywhere else in this file.
+  it('never inflates data-quality app_users_not_on_list.of: a stub has no email to count it against', async () => {
+    // u_f2411d1: data/app_users.csv's real u_f2411d1c (line 9) with its last character removed,
+    // unused as either a known or an unknown id anywhere else in this file.
     const unknown = 'u_f2411d1'
     expect(await count('app_users WHERE user_id = ?', unknown)).toBe(0)
-    // 02 §Counts: 930 app_users rows load from the CSV, every one with an email (test/insights.
+    // 930 app_users rows load from the CSV, every one with an email (test/insights.
     // test.ts's APP_ACCOUNTS); the two earlier T-WH-6 cases already added stub rows, so this
     // also proves the "of" does not drift per pre-existing stub, not just on a fresh seed.
     const APP_ACCOUNTS_WITH_EMAIL = 930
@@ -477,7 +477,7 @@ describe('T-WH-7 out of order and old events', () => {
     const newer = await post(
       event({ event: 'app_open', user_id: user, device_id: dev, timestamp: '2026-06-30T20:45:52Z' }),
     )
-    // The older one in the CSV's own zone-less form: UTC, stored normalized (02 §Time, 09 D-38).
+    // The older one in the CSV's own zone-less form: UTC, stored normalized.
     const older = await post(
       event({ event: 'read_story', user_id: user, device_id: dev, timestamp: '2026-06-30 20:11:42' }),
     )
@@ -497,7 +497,7 @@ describe('T-WH-7 out of order and old events', () => {
       sixHoursAgo.slice(0, 19) + 'Z',
     ])
 
-    // 09 D-46 with 02 §Time: the June events are more than 30 days before TODAY and do not count;
+    // The June events are more than 30 days before TODAY and do not count;
     // the wall-clock event is after TODAY and counts as 0 days old.
     expect(days(TODAY, sixHoursAgo)).toBeGreaterThan(0)
     const email = 'daniel.hill389@gmail.com' // app_users.csv line 3
@@ -505,7 +505,7 @@ describe('T-WH-7 out of order and old events', () => {
   })
 })
 
-describe('T-WH-7b lenient offsets (09 D-38)', () => {
+describe('T-WH-7b lenient offsets', () => {
   it('accepts an hour-only offset and stores the same UTC instant', async () => {
     // The brief's instant with the -05:00 offset used in T-WH-6, its minutes removed.
     for (const timestamp of [
@@ -520,14 +520,14 @@ describe('T-WH-7b lenient offsets (09 D-38)', () => {
   })
 })
 
-describe('09 D-46 score recompute and 01 identity resolution across one device', () => {
+describe('score recompute and identity resolution across one device', () => {
   it('rescores both users when a device changes hands, and an older event keeps its own user_id', async () => {
     const [x, xEmail] = ['u_38e852b0', 'sarah.edwards657@gmail.com']
     const [y, yEmail] = ['u_f1cad5ce', 'eli.clark874@icloud.com']
     const dev = 'd_38e852b0'
     const xKey = await pkeyForEmail(piiKeySecret(), xEmail)
     const yKey = await pkeyForEmail(piiKeySecret(), yEmail)
-    // The seed's stored scores have no app events (09 D-46).
+    // The seed's stored scores have no app events.
     expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 0))
     expect(await storedScore(yKey)).toBe(await expectedScore(yEmail, 0))
 
@@ -540,7 +540,7 @@ describe('09 D-46 score recompute and 01 identity resolution across one device',
     expect(await resolvedOf(anon.event_id as string)).toEqual({ user_id: x, pkey: xKey })
     expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 2))
 
-    // y logs in on the device at the same event_ts: the later arrival owns it (09 D-43), the
+    // y logs in on the device at the same event_ts: the later arrival owns it, the
     // anonymous event moves to y, and x, the previous owner, is rescored without it.
     const yLogin = event({ event: 'login', user_id: y, device_id: dev })
     expect((await post(yLogin)).status).toBe(202)
@@ -594,8 +594,8 @@ describe('T-WH-8 duplicate delivery', () => {
     expect(await count('app_users WHERE user_id = ?', 'u_3380b6e')).toBe(0)
   })
 
-  it('skips the device_identity update on a duplicate (07 §B), so a replay cannot take a device back', async () => {
-    // Two users on one device at the same event_ts: the later arrival owns it (>=, 09 D-43).
+  it('skips the device_identity update on a duplicate, so a replay cannot take a device back', async () => {
+    // Two users on one device at the same event_ts: the later arrival owns it (>=).
     const dev = 'd_f2411d1c'
     const a = event({ event: 'login', user_id: 'u_f2411d1c', device_id: dev })
     const b = event({ event: 'login', user_id: 'u_e9edbf48', device_id: dev })
@@ -649,7 +649,7 @@ describe('T-WH-11 signature headers', () => {
     )
   })
 
-  it('logs each 401 with its reason and no header or body value (04 §Webhook responses)', async () => {
+  it('logs each 401 with its reason and no header or body value', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
     await unchanged(() => sendWebhook(body, { secret: webhookSecret().slice(0, -1) }), 'bad_signature')
@@ -687,7 +687,7 @@ describe('T-WH-11 signature headers', () => {
     expect(await res.json()).toMatchObject({ error: 'invalid_event', details: [{ field: 'body' }] })
   })
 
-  it("rejects a wrong signature even under the exact header set the events/test panel sends (content-type, timestamp, signature, cf-connecting-ip; 09 D-73): a verify bypass keyed to this route's own header shape would otherwise go undetected", async () => {
+  it("rejects a wrong signature even under the exact header set the events/test panel sends (content-type, timestamp, signature, cf-connecting-ip): a verify bypass keyed to this route's own header shape would otherwise go undetected", async () => {
     const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
     const timestamp = String(nowSeconds())
     const wrongSignature = await signature('not-the-real-secret', timestamp, new TextEncoder().encode(body))
@@ -758,7 +758,7 @@ describe('T-WH-12 size and content-type caps', () => {
     expect(JSON.parse((await stored(atCap.event_id as string))!.properties!).page).toHaveLength(200)
   })
 
-  it('accepts any JSON object as properties and caps strings at any depth (04, 09 D-22)', async () => {
+  it('accepts any JSON object as properties and caps strings at any depth', async () => {
     const slug = 'supreme-court-ruling-explained'
     const base = { user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }
     const accepted = event({

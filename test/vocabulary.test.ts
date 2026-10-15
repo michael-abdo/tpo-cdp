@@ -1,4 +1,4 @@
-// T-VOC-1 (08, 09 D-66): every user-facing word is the brief's own, per the table in 06 §Vocabulary.
+// T-VOC-1: every user-facing word is the brief's own.
 // The scan reads screen text from the TypeScript AST (JSX text, string literals, template chunks;
 // comments are not nodes), handed over by vitest.config.ts as SCREEN_TEXTS.vocabulary for each file
 // test/helpers/screen-text.ts VOCABULARY_SCAN names, plus the README and docs/notes.md as written, plus the system
@@ -37,12 +37,12 @@ function offences(files: Record<string, readonly string[]>): string[] {
 const attributeValues = (code: string, tag: string, attribute: string) =>
   [...code.matchAll(new RegExp(`<${tag}\\s+${attribute}="([^"]+)"`, 'g'))].map((m) => m[1])
 
-describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () => {
+describe('T-VOC-1 the brief\'s words everywhere', () => {
   it('scans every file it names: all of src/ (the Segments page too), the glossary, the registry, the definitions and the server sentences', () => {
     const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
     for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
     // Pinned on their own (not only via VOCABULARY_SCAN, which this would check against itself):
-    // the definitions and the server sentences 08 T-VOC-1 names.
+    // the definitions and the server sentences T-VOC-1 names.
     for (const file of [
       'shared/derive.ts',
       'shared/glossary.ts',
@@ -91,7 +91,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(offences({ 'README.md': readme.split('\n'), 'docs/notes.md': notes.split('\n') })).toEqual([])
   })
 
-  it('nav labels are the 06 words (D-67, D-71): Look up, Segments and Insights in place of AI assistant and Growth (D-64); App events and AI audit log fold into "Techy", last', () => {
+  it('nav labels use the agreed words: Look up, Segments and Insights in place of AI assistant and Growth; App events and AI audit log fold into "Techy", last', () => {
     const nav = navArrayText(navSource)
     // Every label in document order: the four top-level pages, then Techy, then its two children.
     expect([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1])).toEqual([
@@ -122,12 +122,12 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     ])
   })
 
-  it("Look up: title, purpose and the four column titles are the brief's (App revenue gated, 09 D-80)", () => {
+  it("Look up: title, purpose and the four column titles are the brief's (App revenue gated)", () => {
     expect(lookupSource).toContain('title="Look up a subscriber"')
     expect(lookupSource).toContain(
       "'Finds anyone: newsletter info, site visits and app activity in one view.'",
     )
-    // App revenue's title is no longer a literal attribute (09 D-80: it reads shared/features.ts's
+    // App revenue's title is not a literal attribute (it reads shared/features.ts's
     // own label, one home for every gated label and note), so it is pinned there instead of in the
     // literal-attribute scan.
     expect(new Set(attributeValues(lookupSource, 'Column', 'title'))).toEqual(
@@ -135,7 +135,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     )
     expect(FEATURES.profile_revenue.label).toBe('App revenue')
     expect(lookupSource).toContain('title={gated.feature.label}')
-    // Field labels a person reads on the profile (06 §Vocabulary subscriber, web and app fields).
+    // Field labels a person reads on the profile (the brief's subscriber, web and app fields).
     const fields = new Set(attributeValues(lookupSource, 'Field', 'label'))
     for (const label of [
       'Status',
@@ -181,11 +181,11 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
       'events_received',
     ])
     expect(overviewSource).toContain('label={GLOSSARY[h.term].term} term={h.term}')
-    // merged = "deduped" (06 §Vocabulary dedupe + link).
+    // merged = "deduped".
     expect(GLOSSARY.merged.term).toBe('Deduped')
   })
 
-  it('field labels equal the 06 table: subscriber, web and app fields', () => {
+  it("field labels are the brief's words: subscriber, web and app fields", () => {
     const shown = (file: keyof typeof FILES) => FILES[file].columns.map((c) => c.label)
     expect(shown('subscribers')).toEqual(['Email', 'Signup date', 'Status', 'Acquisition source'])
     expect(shown('web_events')).toEqual(['Visitor ID', 'Page', 'Timestamp', 'UTM source', 'Email'])

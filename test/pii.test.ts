@@ -29,22 +29,21 @@ import { personalDataIssue } from '../worker/webhooks/exposed-properties'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 import { seedDatabase } from './helpers/seed'
 
-// T-PII-1, T-PII-2, T-PII-3, T-PII-4 (08) and the parts of T-AI-4 that need no model call, over
-// the real seed (test/helpers/seed.ts loads data/*.csv). Designs: 05 (every section), 03
-// §Gateway layers rows 2, 4, 5, 11, 01 §PII-free views and §PII denylist, 04 §POST /api/assistant.
-// No network call: the Anthropic API is exercised through the pure buildModelRequest (08).
+// T-PII-1, T-PII-2, T-PII-3, T-PII-4 and the parts of T-AI-4 that need no model call, over
+// the real seed (test/helpers/seed.ts loads data/*.csv).
+// No network call: the Anthropic API is exercised through the pure buildModelRequest.
 //
 // Inputs, all real:
-// - Demo subjects (02 §Counts): joy.hall830@protonmail.com (subscribers.csv:902, app u_ceed5f12
+// - Demo subjects: joy.hall830@protonmail.com (subscribers.csv:902, app u_ceed5f12
 //   at app_users.csv:303, visitor v_c9e136fd6d from web_events.csv:5400) and
 //   julia.evans230@gmail.com (subscribers.csv:373, u_2b6447a3 at app_users.csv:2).
 // - The raw spelling PAUL.GARCIA558@GMAIL.COM (app_users.csv:8).
 // - Tool results are rows read from the v_* views of the seeded database.
-// - The two tool definitions are the 14 §4.2 drafts for query_sql and describe_schema, which 03
-//   row 9 names as the drafts until scripts/seed-assistant-tools.ts exists; the model's tool_use
-//   block is written in the Messages API shape (08: the API is exercised through the builder).
+// - The two tool definitions (query_sql and describe_schema) are written here, not read from
+//   scripts/tool-seeds.ts; the model's tool_use
+//   block is written in the Messages API shape (the API is exercised through the builder).
 // - "Planted" values (T-PII-4) put a real email or raw id of the same subject into a real view
-//   row in place of one field (09 D-47: every introduced value occurs in data/*.csv).
+//   row in place of one field (every introduced value occurs in data/*.csv).
 
 // One pool for every webhook send in this file: a fresh `eventIdPool()()` call always starts from
 // the same first hex, so two blocks calling it independently collide on the same event_id
@@ -86,7 +85,7 @@ let allEmails: string[]
 let joyPkey: string
 let juliaPkey: string
 
-/** The executor's data frame (14 §5.6) around a JSON body; the executor itself is a later layer (03 row 9). */
+/** The executor's data frame around a JSON body (worker/assistant/tools/format-results.ts). */
 function framed(tool: string, rows: unknown): string {
   return `<tool_result tool="${tool}" trust="untrusted-data">\n${JSON.stringify(rows)}\n</tool_result>`
 }
@@ -102,7 +101,7 @@ function toolRound(id: string, sql: string, rows: unknown) {
 
 async function pkeyOf(email: string): Promise<string> {
   const pkey = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(email).first<string>('pkey')
-  if (pkey === null) throw new Error(`no profile for a demo subject (02 §Counts)`)
+  if (pkey === null) throw new Error(`no profile for a demo subject`)
   return pkey
 }
 
@@ -129,7 +128,7 @@ async function joyRequest(trace: AuditTrace, question: string) {
   const visits = await rows('SELECT * FROM v_web_events WHERE pkey = ? ORDER BY event_ts', joyPkey)
   const funnel = await rows('SELECT * FROM v_funnel ORDER BY visitors DESC')
   expect(profile).toHaveLength(1)
-  expect(visits).toHaveLength(9) // 02 §Counts: 9 views
+  expect(visits).toHaveLength(9) // 9 views
   return {
     sanitized,
     profile,
@@ -148,7 +147,7 @@ async function joyRequest(trace: AuditTrace, question: string) {
 }
 
 describe('T-PII-2: the views the model is told about (schema-context.ts)', () => {
-  it('lists exactly the five 01 views, none selecting a PII_COLUMNS column', () => {
+  it('lists exactly the five PII-free views, none selecting a PII_COLUMNS column', () => {
     expect(views.map((v) => v.name)).toEqual(['v_app_events', 'v_funnel', 'v_profiles', 'v_source_app_conversion', 'v_web_events'])
     const pii = new Set<string>(PII_COLUMNS)
     for (const view of views) for (const column of view.columns) expect(pii.has(column.name), `${view.name}.${column.name}`).toBe(false)
@@ -175,7 +174,7 @@ describe('T-PII-1: a request built from a real profile question carries no PII',
     const { request } = await joyRequest(trace, `which pages did ${JOY} view before signing up?`)
     const text = JSON.stringify(request)
     // Independent of the scanner: a plain substring check for every email in the database.
-    expect(allEmails.length).toBe(2930) // 02 §Counts: 2,900 subscribers + 30 app-only
+    expect(allEmails.length).toBe(2930) // 2,900 subscribers + 30 app-only
     expect(allEmails.filter((email) => text.toLowerCase().includes(email))).toEqual([])
     expect(text).not.toContain('@')
     expect(RAW_ID_REGEX.test(text)).toBe(false)
@@ -202,15 +201,15 @@ describe('T-PII-1: a request built from a real profile question carries no PII',
     expect(Object.keys(first).sort()).toEqual(['max_tokens', 'messages', 'model', 'system', 'tools'])
     expect(first.model).toBe(MODEL)
     expect(first.max_tokens).toBe(MAX_TOKENS)
-    expect(MAX_TOKENS).toBe(8192) // 09 D-57, pinned as a literal; no temperature/top_p/top_k key (above)
+    expect(MAX_TOKENS).toBe(8192) // pinned as a literal; no temperature/top_p/top_k key (above)
     expect(first.tools).toEqual(TOOLS)
     expect(first.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user'])
-    // 09 D-74 / design 20 §3 R1: the system prompt is one text block with an ephemeral cache
+    // The system prompt is one text block with an ephemeral cache
     // breakpoint, and nothing else about the rendered prompt changes.
     expect(first.system).toEqual([{ type: 'text', text: renderSystemPrompt(views), cache_control: { type: 'ephemeral' } }])
   })
 
-  it('the system prompt holds TODAY, every definition, every view column and the 05 rules', () => {
+  it('the system prompt holds TODAY, every definition, every view column and the PII rules', () => {
     const request = buildModelRequest({ views, tools: TOOLS, question: { text: 'q' } as SanitizedQuestion, rounds: [] })
     if (!Array.isArray(request.system)) throw new Error('system prompt is not the cached text-block array')
     const [block] = request.system
@@ -230,7 +229,7 @@ describe('T-PII-1: a request built from a real profile question carries no PII',
     expect(system).toContain('Every number in an answer must come from a tool result. If no tool returned it, say you cannot answer.')
     expect(system).toContain('including opinions on news stories')
     expect(system).toContain('Never show SQL.')
-    // 09 D-66: the teammate reads plain words; the cold rule names no definition or filter, dates are never ISO in "text".
+    // The teammate reads plain words; the cold rule names no definition or filter, dates are never ISO in "text".
     expect(system).toContain('say what going cold means in plain words, the way the teammate would say it, without naming any definition, filter, column or tool')
     expect(system).toContain('write dates the way people read them, like "Aug 1–31, 2026" or "Sep 28, 2026", never as YYYY-MM-DD')
     expect(system).not.toContain('and the answer says so')
@@ -321,7 +320,7 @@ describe('T-PII-4: a planted email in a tool result is blocked_pii with an audit
   })
 
   it('the email regex fires on its own when the address is not in the known set', async () => {
-    // An empty known set (a removal, 09 D-47): only the pattern check can catch julia now.
+    // An empty known set (a removal): only the pattern check can catch julia now.
     const none = new KnownEmails([])
     const [profile] = await rows('SELECT * FROM v_profiles WHERE pkey = ?', juliaPkey)
     expect(findPII(framed('query_sql', [{ ...profile, source: JULIA }]), none)).toBe('email_pattern')
@@ -392,7 +391,7 @@ describe('T-AI-4 (no model call): ai_audit rows under one trace_id, request_json
     const logged: string[] = []
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' ')))
     const trace = await startTrace(env.DB)
-    // A kind outside the 01 enum gets past the shape check and is refused by the table's CHECK.
+    // A kind outside the schema's enum gets past the shape check and is refused by the table's CHECK.
     const bad = { kind: 'model_response', status: 'success' } as unknown as Parameters<AuditTrace['write']>[0]
     await expect(trace.write(bad)).rejects.toThrow(AuditWriteError)
     expect(logged).toHaveLength(1)
@@ -400,7 +399,7 @@ describe('T-AI-4 (no model call): ai_audit rows under one trace_id, request_json
     expect(logged[0]).toContain(trace.traceId)
   })
 
-  it('refuses rows that break the 01 shape', async () => {
+  it('refuses rows that break the table shape', async () => {
     const trace = await startTrace(env.DB)
     await expect(trace.write({ kind: 'model_request', status: 'success' })).rejects.toThrow('must store the payload')
     await expect(trace.write({ kind: 'tool_call', status: 'success' })).rejects.toThrow('must name its tool')
@@ -433,8 +432,8 @@ async function withAuditOffline<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('T-PII-4 / T-AI-4 review fixes: awaited blocked rows, every scanned field, the 500 envelope', () => {
-  it('a failed blocked-row write rejects guardPayload with AuditWriteError, not blocked_pii (03 row 11: awaited)', async () => {
+describe('T-PII-4 / T-AI-4: awaited blocked rows, every scanned field, the 500 envelope', () => {
+  it('a failed blocked-row write rejects guardPayload with AuditWriteError, not blocked_pii (awaited)', async () => {
     const logged: string[] = []
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(' ')))
     const trace = await startTrace(env.DB)
@@ -474,7 +473,7 @@ describe('T-PII-4 / T-AI-4 review fixes: awaited blocked rows, every scanned fie
     expect(known.occursIn('reply @ noon')).toBe(false)
   })
 
-  it('renders PiiBlockedError as the 04 envelope at HTTP 500, naming no value', async () => {
+  it('renders PiiBlockedError as the error envelope at HTTP 500, naming no value', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const app = new Hono<AppEnv>()
     app.post('/guard', async (c) => {
@@ -496,11 +495,11 @@ describe('T-PII-4 / T-AI-4 review fixes: awaited blocked rows, every scanned fie
   })
 })
 
-// T-PII-5 (08; 09 D-79): the normalizer (shared/pii.ts normalizeForScan) runs before every check,
-// and the outbound scan now also blocks a bare known local part. Real values throughout (09
-// D-47): the demo subject JOY and her own app user id/device, a webhook sent through the real
-// signed path (09 D-11), only the disguise spelling is invented around her real local part.
-describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
+// T-PII-5: the normalizer (shared/pii.ts normalizeForScan) runs before every check,
+// and the outbound scan also blocks a bare known local part. Real values throughout: the demo
+// subject JOY and her own app user id/device, a webhook sent through the real
+// signed path, only the disguise spelling is invented around her real local part.
+describe('T-PII-5: disguised emails and a bare local part', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
   const JOY_DEVICE = 'd_ceed5f12' // her own app user id's hex (JOY_APP_USER = u_ceed5f12)
   const BRIEF_TS = '2026-09-28T14:22:05Z'
@@ -524,7 +523,7 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
       ['spelled, upper case', `${JOY_LOCAL} AT protonmail DOT com`],
       ['zero-width between dot and hall', `joy.​hall830@protonmail.com`],
       ['soft hyphen inside protonmail', `${JOY_LOCAL}@proton­mail.com`],
-      // 09 D-79 (normalizeForScan's two-stage fold): a full-width bracketed disguise,
+      // normalizeForScan's two-stage fold: a full-width bracketed disguise,
       // a zero-width character splitting the bare spelled "at", and a full-width "%" before "40".
       ['full-width bracket "[ａｔ]"/"[ｄｏｔ]"', `${JOY_LOCAL} [ａｔ] protonmail [ｄｏｔ] com`],
       ['zero-width inside bare "at"', `${JOY_LOCAL} a​t protonmail dot com`],
@@ -550,7 +549,7 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
     }
   })
 
-  it('no false positive: a bare "at <domain>" with no spelled "dot" is prose, not an email shape (09 D-79 fixer round)', async () => {
+  it('no false positive: a bare "at <domain>" with no spelled "dot" is prose, not an email shape', async () => {
     // The old mapping folded every lone "at" on its own ("signed up at instagram.com" became
     // "signed up@instagram.com", which EMAIL_REGEX then read as local "up", domain
     // "instagram.com"). The fix only folds the full spoken shape "<local> at <domain> dot <tld>",
@@ -571,8 +570,8 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
     })
   })
 
-  it('no false positive: a webhook link with an "-at-" slug never blocks a real tool_result read of it (09 D-79 fixer round)', async () => {
-    // link_click accepts any http(s) URL with no "@" (04 §Webhook); a slug like "look-at-this"
+  it('no false positive: a webhook link with an "-at-" slug never blocks a real tool_result read of it', async () => {
+    // link_click accepts any http(s) URL with no "@"; a slug like "look-at-this"
     // has "at" next to hyphens, not whitespace, so it must never be read as a spoken "at".
     const link = `${HOSTED_URL}/news/look-at-this.html`
     const res = await sendWebhook(
@@ -662,13 +661,13 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
     it('dropping the spelled-out "at"/"dot" mapping would miss "joy at example dot com"', () => {
       expect(normalizeForScan(`${JOY_LOCAL} at protonmail dot com`).text).toBe(JOY)
       // The mapping only folds the FULL spoken shape "<local> at <domain> dot <tld>" — it requires
-      // a spelled "dot" after "at", so a lone "at" in ordinary prose is left alone (09 D-79;
-      // see the false-positive tests above for "signed up at instagram.com" and the rest).
+      // a spelled "dot" after "at", so a lone "at" in ordinary prose is left alone (see the
+      // false-positive tests above for "signed up at instagram.com" and the rest).
       expect(normalizeForScan('meet at noon').text).toBe('meet at noon')
       expect(normalizeForScan('signed up at instagram.com').text).toBe('signed up at instagram.com')
     })
 
-    it('narrowing the zero-width set back to the old five characters would miss U+2060 WORD JOINER (09 D-79 fixer round)', () => {
+    it('narrowing the zero-width set back to the old five characters would miss U+2060 WORD JOINER', () => {
       // shared/sql-sign.ts's INVISIBLE_CHARS (category Cf plus Default_Ignorable_Code_Point) is
       // the one home for this set; it covers U+2060 WORD JOINER, which the old five-character
       // list (U+200B-200D/FEFF/00AD) did not.
@@ -693,17 +692,17 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
   })
 })
 
-// T-PII-6 (09 D-79): the bare spelled-"dot" fold is unconditional (a dot alone is never an email
+// T-PII-6: the bare spelled-"dot" fold is unconditional (a dot alone is never an email
 // shape), so a disguise that is not itself a spelled "dot" right next to "at" (a bracketed or
 // escaped "@" whose domain's dot is spelled, or vice versa) and a known local part typed with a
 // spelled "dot" ("joy dot hall830", no "at" at all) are still caught; the spelled "at" fold's
 // domain accepts a disguised dot in ANY listed form. The invisible-character set is wider than
 // FORMAT_CHARS (category Cf). Requiring the spelled shape's domain to end in a real TLD keeps
 // ordinary chart prose ("the dot plot", "random dot points") from becoming a manufactured "@".
-describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and more invisible characters are stripped (09 D-79 fixer round 2)', () => {
+describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and more invisible characters are stripped', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
 
-  it('the self-audit\'s exact spelling of a stored address, joy . hall830 @ protonmail . com, is blocked outbound and redacted in a question', async () => {
+  it('a stored address spelled with spaces, joy . hall830 @ protonmail . com, is blocked outbound and redacted in a question', async () => {
     const known = await loadKnownEmails(env.DB)
     const spaced = 'joy . hall830 @ protonmail . com'
     expect(findPII(`is ${spaced} engaged?`, known)).toBe('known_email')
@@ -716,7 +715,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     }
   })
 
-  it('an address padded with spaces around "@" or "." is caught; ordinary sentences and handles are not (self-audit at 1200107)', () => {
+  it('an address padded with spaces around "@" or "." is caught; ordinary sentences and handles are not', () => {
     const none = new KnownEmails([])
     for (const text of ['press . desk @ example . com', 'press.desk @ example.com', 'press@ example . co . uk', 'new.person @ example.de', 'desk2 @ example.com']) {
       expect(findPII(text, none), text).toBe('email_pattern')
@@ -742,7 +741,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     }
   })
 
-  it('a spelled address with any two-letter or common generic TLD is caught, and a spelled dot in the name part counts too (09 D-79 closure)', () => {
+  it('a spelled address with any two-letter or common generic TLD is caught, and a spelled dot in the name part counts too', () => {
     const known = new KnownEmails([])
     for (const text of ['press at example dot de', 'press at example dot ai', 'new.person at example dot ca', 'new dot person at example.com', 'sales at shop dot store']) {
       expect(findPII(text, known), text).toBe('email_pattern')
@@ -752,14 +751,14 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     }
   })
 
-  it('item 1: every string the self-audit found still returning 200 with the address now folds (model answers)', () => {
+  it('every spelled or bracketed disguise of an address folds to it (model answers)', () => {
     for (const text of ['press [at] example dot com', 'press@example dot com', 'press at example [dot] com']) {
       expect(normalizeForScan(text).text, text).toBe('press@example.com')
     }
     expect(normalizeForScan('Write to joy dot hall830.').text).toBe('Write to joy.hall830.')
   })
 
-  it('item 1: the outbound scan blocks every one of those model answers (email_pattern or known_local_part, never null)', async () => {
+  it('the outbound scan blocks every one of those model answers (email_pattern or known_local_part, never null)', async () => {
     const known = await loadKnownEmails(env.DB)
     for (const text of ['press [at] example dot com', 'press@example dot com', 'press at example [dot] com']) {
       expect(findPII({ text: `${text} is a working address.` }, known), text).toBe('email_pattern')
@@ -773,7 +772,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     }
   })
 
-  it('item 1: Gate 1 redacts the same disguised questions, and a spelled known local part with no "@" at all', async () => {
+  it('Gate 1 redacts the same disguised questions, and a spelled known local part with no "@" at all', async () => {
     for (const [question, redacted] of [
       ['is press [at] example dot com engaged?', 'is [email] engaged?'],
       ['is press at example [dot] com engaged?', 'is [email] engaged?'],
@@ -812,7 +811,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     expect(normalizeForScan('press️@example.com').text).toBe('press@example.com')
   })
 
-  it('item 5: ordinary chart prose with a spelled "dot" stays prose — its last word is not a real TLD', async () => {
+  it('ordinary chart prose with a spelled "dot" stays prose — its last word is not a real TLD', async () => {
     const known = await loadKnownEmails(env.DB)
     for (const text of ['Look at the dot plot below.', 'Click at random dot points.', 'The spike at launch dot see the tile.']) {
       expect(normalizeForScan(text).text, text).not.toContain('@')
@@ -825,7 +824,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     })
   })
 
-  it('item 5: a real disguised address with a real TLD still blocks (the TLD check is not a new false negative)', async () => {
+  it('a real disguised address with a real TLD still blocks (the TLD check is not a new false negative)', async () => {
     const known = await loadKnownEmails(env.DB)
     expect(findPII('joy.hall830 at protonmail dot com', known)).toBe('known_email')
     expect(findPII('new.person at example dot com', known)).toBe('email_pattern')

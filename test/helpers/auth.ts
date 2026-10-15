@@ -2,7 +2,7 @@ import { env, SELF } from 'cloudflare:test'
 
 /**
  * A fresh CF-Connecting-IP for one login, so tests that only need a cookie never share a
- * LOGIN_LIMITER budget (10/min per key, 04 §Auth; the limiter is live in the test pool).
+ * LOGIN_LIMITER budget (10/min per key; the limiter is live in the test pool).
  * Addresses come from 2001:db8::/32, the IPv6 range reserved for documentation (RFC 3849).
  */
 export function documentationIp(): string {

@@ -27,12 +27,12 @@ import { assistantRoutes } from '../worker/routes/assistant'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// T-AI-9 (09 D-81): query limits on model-run SQL. Designs: 09 D-81; 03 §Gateway layers rows 8-9.
+// T-AI-9: query limits on model-run SQL.
 //
 // Inputs: the seeded D1 (data/*.csv) and the assistant_tools rows from scripts/tool-seeds.ts.
-// Every SQL string here is either the real seeded query row's own SQL, a real view's columns
-// (01), or a comma/`ON 1 = 1`/nested cartesian of two real views — the exact shapes measured
-// against the seed, never an invented table or column. No test calls the network (09 D-54): the Ask-trace
+// Every SQL string here is either the real seeded query row's own SQL, a real view's columns,
+// or a comma/`ON 1 = 1`/nested cartesian of two real views — the exact shapes measured
+// against the seed, never an invented table or column. No test calls the network: the Ask-trace
 // tests below use a recorded transport, the same pattern test/assistant.test.ts and
 // test/insights-board.test.ts use.
 
@@ -58,7 +58,7 @@ const SYNTAX_ERROR_SQL = 'SELECT source, count(*) AS n FROM v_profiles GROUP BY'
 
 // One-token variants of the exact comma/`ON 1 = 1` cartesian above, each adding a single indexed
 // range filter that turns the filtered side's driving SCAN into a SEARCH, so a SCAN-only plan
-// check lets every one of these through (09 D-81 #1; the K labels match the test names below).
+// check lets every one of these through (the K labels match the test names below).
 // Measured in workerd against the real seed: K2 189,674,521 rows, K3 189,674,521 rows (the `ON 1
 // = 1` shape), K22 (CROSS JOIN) passed the same way, K5 537,660,000 rows (no SCAN row at all —
 // both sides become range SEARCHes), K8 537,677,692 rows, K26 28,891,129 rows. K1 (`w.page =
@@ -146,7 +146,7 @@ function recordingDb(): { db: D1Database; prepared: string[] } {
   return { db, prepared }
 }
 
-// ── a real Ask trace (09 D-54: a recorded transport, never the network) ─────────────────────
+// ── a real Ask trace (a recorded transport, never the network) ──────────────────────────────
 //
 // board.ts's pin path only ever keeps an answer that came from a real model trace (a
 // `model_request` ai_audit row): pinnableCall(db, traceId) returns null, and pinFromTrace throws
@@ -209,7 +209,7 @@ async function askOnce(sql: string): Promise<string> {
     '/api/assistant',
     {
       method: 'POST',
-      // A fresh documentation address per call keeps these asks off one ASSISTANT_LIMITER key (09 D-70 #6).
+      // A fresh documentation address per call keeps these asks off one ASSISTANT_LIMITER key (T-HARD-6).
       headers: { cookie, 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
       body: JSON.stringify({ question: 'sql-limits probe' }),
     },
@@ -224,11 +224,11 @@ const toolCount = async () => (await env.DB.prepare('SELECT count(*) AS n FROM a
 
 
 // A cross join is refused before it runs by one of two checks: the join-shape rule in Gate 3's
-// pure checks (a comma list, CROSS JOIN, or a JOIN with no column equality; 2026-10-14 live
-// finding) or, for a shape that passes it, the plan check (09 D-81 #1).
+// pure checks (a comma list, CROSS JOIN, or a JOIN with no column equality) or, for a shape that
+// passes it, the plan check.
 const CROSS_JOIN_REFUSAL = /unindexed table scans|JOIN … ON a\.column = b\.column|column equality|comma list/
 
-describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan before it runs', () => {
+describe('the plan check refuses a cartesian/unindexed nested scan before it runs', () => {
   it('a comma cross join of two views is refused; nothing runs', async () => {
     const { db, prepared } = recordingDb()
     await expect(runReadOnlySelect(db, CARTESIAN_COMMA)).rejects.toThrow(GateDenied)
@@ -304,7 +304,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     expect(prepared.some((q) => q.includes(CORRELATED_UNINDEXED_SCAN) && !q.startsWith('EXPLAIN'))).toBe(false)
   })
 
-  // 09 D-81 #1: a SCAN-only plan check is a one-token variant of its
+  // A SCAN-only plan check is a one-token variant of its
   // own cartesian example away from passing — add one indexed range filter (`w.page > ''`) to
   // either side and that side's driving SCAN becomes a SEARCH, which `isRealScan` never counted.
   // Each of these is the exact comma/`ON 1 = 1`/nested-subquery/correlated shape already covered
@@ -359,7 +359,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     try {
       const err = await runReadOnlySelect(env.DB, SYNTAX_ERROR_SQL).catch((e: unknown) => e)
       // Not a GateDenied: the plan check logged and stepped aside; the real run reports the
-      // database's own failure (sanitizeSqlError), same as before D-81.
+      // database's own failure (sanitizeSqlError), same as without the plan check.
       expect(err).not.toBeInstanceOf(GateDenied)
       expect(err).toMatchObject({ name: 'SqlRunError' })
       const logged = errorSpy.mock.calls.map((args) => String(args[0]))
@@ -394,7 +394,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     })
   })
 
-  it('the brief\'s seeded query row (pages_new_subscribers_hit_first) still runs with its real result, unaffected by D-81', async () => {
+  it('the brief\'s seeded query row (pages_new_subscribers_hit_first) still runs with its real result, unaffected by the query limits', async () => {
     const { executed } = await runTool('pages_new_subscribers_hit_first', {})
     expect(executed.output).not.toBeNull()
     expect(executed.output!.rows.length).toBeGreaterThan(0)
@@ -402,7 +402,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
   })
 })
 
-describe('09 D-81 #2: the time limit', () => {
+describe('the time limit', () => {
   it('an injected tiny timeout on a real query refuses as SqlTooHeavyError(sql_timeout), not SqlRunError', async () => {
     try {
       await runReadOnlySelect(env.DB, LEGIT_SQL, [], { timeoutMs: 0 })
@@ -454,7 +454,7 @@ describe('09 D-81 #2: the time limit', () => {
   })
 })
 
-describe('09 D-81 #3: the row-scan cap', () => {
+describe('the row-scan cap', () => {
   it('an injected small cap on a real query refuses as SqlTooHeavyError(sql_rows_cap)', async () => {
     try {
       await runReadOnlySelect(env.DB, LEGIT_SQL, [], { rowsReadCap: 10 })
@@ -490,7 +490,7 @@ describe('09 D-81 #3: the row-scan cap', () => {
   })
 })
 
-describe('09 D-81 #4: one shared function protects every path that runs model/saved SQL, including the board and pin paths', () => {
+describe('one shared function protects every path that runs model/saved SQL, including the board and pin paths', () => {
   it('a pinned query-type tile whose stored SQL is a cartesian is refused on every board run, not just at pin time; nothing is stored or left behind', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const toolName = 'board_cartesian_probe'
@@ -561,7 +561,7 @@ describe('09 D-81 #4: one shared function protects every path that runs model/sa
   })
 })
 
-describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset the live D1)', () => {
+describe('join-shape rule (a filtered cross join once reset the live D1)', () => {
   const LIVE_SQL = "SELECT COUNT(*) AS profile_visit_combinations FROM v_profiles, v_web_events WHERE v_profiles.status = 'active'"
   it('the exact query the model wrote live is refused before anything runs', () => {
     expect(() => readOnlySelect(LIVE_SQL)).toThrow(GateDenied)

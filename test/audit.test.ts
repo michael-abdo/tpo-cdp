@@ -24,13 +24,13 @@ import { GateDenied } from '../worker/assistant/gates/gate3-readonly-sql'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// GET /api/audit?limit= and GET /api/audit/:trace_id (04 §GET /api/audit; 05 §Proof
-// surfaces; 06 §/audit; R5.5). The audit routes are reached through the production worker (SELF),
-// so the mount behind requireSession is what is tested. Traces are written by real assistant calls
-// through assistantRoutes() with a transport defined in this file that returns Messages-API-shaped
-// responses, as test/assistant.test.ts does (09 D-54); everything else is real: the seeded D1
-// (data/*.csv), the assistant_tools rows from scripts/tool-seeds.ts, the gates, the tools and the
-// audit writer. 46 = Instagram active went_cold_in(2026-08) (02 §Counts). The demo subject
+// GET /api/audit?limit= and GET /api/audit/:trace_id. The audit routes are reached through the
+// production worker (SELF), so the mount behind requireSession is what is tested. Traces are
+// written by real assistant calls through assistantRoutes() with a transport defined in this file
+// that returns Messages-API-shaped responses, as test/assistant.test.ts does (no network);
+// everything else is real: the seeded D1 (data/*.csv), the assistant_tools rows from
+// scripts/tool-seeds.ts, the gates, the tools and the audit writer. 46 = Instagram active
+// went_cold_in(2026-08) in the seed. The demo subject
 // joy.hall830@protonmail.com (subscribers.csv:902) is the email Gate 1 must redact.
 
 const JOY = 'joy.hall830@protonmail.com'
@@ -145,7 +145,7 @@ function toolUse(id: string, name: string, input: unknown): Anthropic.ContentBlo
   return { type: 'tool_use', id, name, input, caller: { type: 'direct' } }
 }
 
-/** The final turn: a sentence and the 04 json block. */
+/** The final turn: a sentence and the json block. */
 function finalTurn(block: Record<string, unknown>): Turn {
   return () =>
     message(
@@ -215,7 +215,7 @@ beforeAll(async () => {
   }
 })
 
-describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', () => {
+describe('GET /api/audit and /api/audit/:trace_id', () => {
   it('both routes are behind the session: no cookie → 401 unauthorized', async () => {
     for (const path of ['/api/audit', '/api/audit?limit=5', `/api/audit/${crypto.randomUUID()}`]) {
       const res = await get(path)
@@ -235,7 +235,7 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
     expect(answer.status).toBe(200)
     const { audit_id: traceId } = await answer.json<{ audit_id: string }>()
 
-    // The list: the 04 line shape, newest first, with the question as the model received it.
+    // The list: one line per trace, newest first, with the question as the model received it.
     const listRes = await get('/api/audit', cookie)
     expect(listRes.status).toBe(200)
     const listText = await listRes.text()
@@ -381,7 +381,7 @@ describe('GET /api/audit and /api/audit/:trace_id (04, 05 §Proof surfaces)', ()
 
 // The list's two result fields (worker/routes/audit.ts): `outcome` is how the request ended, read
 // from its last row; `status` is the most severe row. They part when a step is blocked or fails
-// and the request still answers 200 (a D-58 discard, an unknown tool), and when the request fails
+// and the request still answers 200 (a SQL-in-text discard, an unknown tool), and when the request fails
 // after a blocked step. Each trace here is written by a real assistant call.
 describe('GET /api/audit: outcome is how the request ended, status is the worst row', () => {
   async function line(traceId: string, cookie: string): Promise<Summary> {
@@ -406,7 +406,7 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
   it('the first AI reply holds an email → blocked before its row is written: no question stored, but reached_ai', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
-    // A real subscriber email (data/subscribers.csv) planted in the model's reply (09 D-47).
+    // A real subscriber email (data/subscribers.csv) planted in the model's reply.
     const { transport } = scripted([
       () => message([{ type: 'text', text: 'Try joy.hall830@protonmail.com.', citations: null }], 'end_turn'),
     ])
@@ -438,7 +438,7 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
     })
   })
 
-  it('a D-58 discard → 200 with the server sentence: outcome answered_text_replaced, status blocked', async () => {
+  it('a SQL-in-text discard → 200 with the server sentence: outcome answered_text_replaced, status blocked', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const cookie = await loginCookie()
     const { transport } = scripted([
@@ -519,7 +519,7 @@ describe('GET /api/audit: outcome is how the request ended, status is the worst 
   })
 })
 
-describe('/assistant shows plain words for every column and filter a tool can return (06 §UI principles 4)', () => {
+describe('/assistant shows plain words for every column and filter a tool can return', () => {
   const aggregateSchema = TOOL_SEEDS.find((t) => t.name === 'aggregate')!.inputSchema as {
     properties: { metric: { enum: string[] }; group_by: { enum: string[] } }
   }
@@ -569,9 +569,9 @@ describe('/assistant shows plain words for every column and filter a tool can re
   })
 })
 
-describe("/assistant screens the model's filters_applied with the D-58 check before showing it (09 D-58)", () => {
+describe("/assistant screens the model's filters_applied with the SQL-in-text check before showing it", () => {
   // The filters the model echoes for the brief's first question (46 = Instagram active went_cold_in
-  // 2026-08, 02 §Counts). The SQL strings are the shapes T-AI-5 discards from the answer text.
+  // 2026-08). The SQL strings are the shapes T-AI-5 discards from the answer text.
   const REAL = { status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
   const SQL = 'SELECT email_norm FROM subscribers'
 
@@ -637,7 +637,7 @@ describe("/assistant screens the model's filters_applied with the D-58 check bef
   })
 })
 
-describe('/audit names every blocked step in words (06 §UI principles 4)', () => {
+describe('/audit names every blocked step in words', () => {
   // Every blocked-row error the worker writes, as "<code>: <detail>": the constants where the writer
   // exports one, the code prefix where it builds the string inline (worker/assistant writers).
   const written: Array<[string, string]> = [

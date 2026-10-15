@@ -12,13 +12,13 @@ import { FIELD_ID, FIELD_LABEL } from '../../src/segment-form'
 import { DaysBox, MatchingRows, NEW_SUBSCRIBERS_HINT, RowDetails, SearchOutcome } from '../../src/pages/SegmentsPage'
 import type { SegmentRow } from '../../src/types'
 
-// /segments rendered (06 §/segments, §Vocabulary, §UI principles 4; 09 D-66, D-69). React's
+// /segments rendered. React's
 // server renderer cannot render the whole
 // page (InfoTip portals to document.body), so this renders its exported parts and reads the
 // page's source for where they sit and which InfoTips it shows.
 // Inputs: julia.evans230's row of subscribers.csv (line 373: signed up 2026-09-13, active,
-// Instagram, last open 2026-09-15) with her seeded engagement_score 28 and app account (02
-// §Counts demo subject); 46 is Instagram went cold in 2026-08 (02 §Counts); the filters are the
+// Instagram, last open 2026-09-15) with her seeded engagement_score 28 and app account (a
+// demo subject); 46 is Instagram went cold in 2026-08; the filters are the
 // brief's example (src/previous-searches.ts) and the same with both statuses.
 
 const JULIA: SegmentRow = {
@@ -46,10 +46,10 @@ function render(element: ReturnType<typeof createElement>): { html: string; text
 /** The text of every element `tag` in `html`, in order. */
 const cells = (html: string, tag: string) => [...html.matchAll(new RegExp(`<${tag}[^>]*>(.*?)</${tag}>`, 'g'))].map((m) => m[1].replace(/<[^>]*>/g, ''))
 
-/** 06 §Vocabulary "subscriber fields": the brief's words, the only labels a subscriber field may have. */
+/** The subscriber fields in the brief's words, the only labels a subscriber field may have. */
 const SUBSCRIBER_FIELDS = ['Email', 'Signup date', 'Status', 'Acquisition source', 'Last open date']
 
-describe('/segments: a search run from Previous searches shows its count beside the list (19 §2)', () => {
+describe('/segments: a search run from Previous searches shows its count beside the list', () => {
   it('SearchOutcome says the count and links to the result heading, from which Tab reaches Export CSV', () => {
     const { html, text } = render(createElement(SearchOutcome, { outcome: { status: 'ok', count: 46 } }))
     expect(text.trim()).toBe('46 subscribers match. See them and export the CSV')
@@ -95,12 +95,12 @@ describe('/segments: a search run from Previous searches shows its count beside 
     expect(select).not.toContain('Any subscriber')
   })
 
-  it('More filters starts open, so the brief\'s Growth filters need no extra click (19 §7 note)', () => {
+  it('More filters starts open, so the brief\'s Growth filters need no extra click', () => {
     expect(segmentsSource).toContain('const [moreOpen, setMoreOpen] = useState(true)')
   })
 })
 
-describe('/segments names "new subscribers" at level 1, beside "Signed up in the last" (19 §3 row 2, 06 §Vocabulary)', () => {
+describe('/segments names "new subscribers" at level 1, beside "Signed up in the last"', () => {
   it('the box renders the hint under it, tied to the input by aria-describedby', () => {
     const { html, text } = render(
       createElement(DaysBox, { id: 'signed-up-days', label: 'Signed up in the last', value: '', onChange: () => {}, hint: NEW_SUBSCRIBERS_HINT }),
@@ -129,7 +129,7 @@ describe('/segments names "new subscribers" at level 1, beside "Signed up in the
   })
 })
 
-describe('/segments: subscriber fields in the brief\'s words (06 §Vocabulary, 09 D-66)', () => {
+describe('/segments: subscriber fields in the brief\'s words', () => {
   it('the table headers and the row Details use the vocabulary\'s subscriber fields', () => {
     const both = render(createElement(MatchingRows, { filters: { ...BRIEF_EXAMPLE, status: ['active', 'unsubscribed'], source: undefined }, rows: [JULIA] }))
     expect(cells(both.html, 'th').filter((h) => h !== 'Details')).toEqual(['Email', 'Status', 'Acquisition source', 'Last open date', 'Engagement'])
@@ -156,7 +156,7 @@ describe('/segments: subscriber fields in the brief\'s words (06 §Vocabulary, 0
   })
 })
 
-describe('/segments InfoTips name each term in plain words, never a raw name (06 §UI principles 4, 09 D-66)', () => {
+describe('/segments InfoTips name each term in plain words, never a raw name', () => {
   it('every InfoTip on /segments names a known term whose words hold no "_", and its accessible name uses those words', () => {
     const all = [...segmentsSource.matchAll(/<InfoTip\b/g)].length
     const terms = [...segmentsSource.matchAll(/<InfoTip term="([a-z_]+)" \/>/g)].map((m) => m[1])

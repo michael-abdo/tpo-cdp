@@ -5,7 +5,7 @@ import { FEATURES, featuresOn, type Feature, type FeatureId } from '../../shared
 import { ComingSoonTag, GatedNote } from '../../src/components'
 import { isActivatingKey, useGated } from '../../src/use-gated'
 
-// Shared gated-feature wiring (09 D-80): the scaffolding every page's gated controls share
+// Shared gated-feature wiring: the scaffolding every page's gated controls share
 // (T-GATE-1..5). A page's own gate test (test/ui/*-gated.test.ts) checks
 // its rendered markup; this file checks the shared hook and note component in isolation, once,
 // so every page inherits the same proof instead of re-deriving it.
@@ -40,7 +40,7 @@ describe('shared/features.ts', () => {
     }
   })
 
-  // D-72 copy rule: the "Coming soon" chip (ComingSoonTag) is the only place
+  // One thing in one place: the "Coming soon" chip (ComingSoonTag) is the only place
   // that phrase appears; the note says only what the feature will do, and never retypes this
   // entry's own `label` or any of its `controls` at its very start.
   it('no note says "coming soon" (that is the chip\'s own, only, job)', () => {
@@ -53,7 +53,7 @@ describe('shared/features.ts', () => {
   })
 
   // delete_person must say it needs per-person sign-in, not just name a blocker.
-  it("delete_person's note says it needs per-person sign-in first (D7)", () => {
+  it("delete_person's note says it needs per-person sign-in first", () => {
     expect(FEATURES.delete_person.note).toMatch(/sign(s|ed)? in|sign-in/i)
     expect(FEATURES.delete_person.note).toMatch(/each|their own|per.person/i)
   })

@@ -17,24 +17,24 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 
-// T-HARD-1..3, 5..7 (08; 09 D-70 items 1, 2, 3, 5, 6, 7): hardening of known local parts, webhook
+// T-HARD-1..3, 5..7: hardening of known local parts, webhook
 // free text, future timestamps, CSV export, rate limits and the score re-run on a duplicate. The
-// test D1 holds the real seed of data/*.csv (test/helpers/seed.ts); no network
-// (09 D-54). Every 02 §Counts number these tests touch stays as 02 states it.
+// test D1 holds the real seed of data/*.csv (test/helpers/seed.ts); no network.
+// Every seed count these tests touch stays as it is.
 // Inputs and where they come from:
 // - T-HARD-1: joy.hall830 and julia.evans230 are the local parts of the demo subjects
 //   joy.hall830@protonmail.com (subscribers.csv:902) and julia.evans230@gmail.com
 //   (subscribers.csv:373); the loop reads every local part from the seeded profiles. The
 //   near-misses are one-character edits of a real local part (removals joy.hall83, oy.hall830;
-//   additions joy.hall8301, xjoy.hall830; 09 D-47) and a real local part joined to the label of
+//   additions joy.hall8301, xjoy.hall830) and a real local part joined to the label of
 //   its own domain (joy.hall830.protonmail) — a known local part glued on a punctuation boundary, now redacted. The
 //   edge-punctuation cases put the local-part characters - + _ % next to joy.hall830.
-// - Webhook bodies (T-HARD-2) are brief-shaped with real ids (09 D-11): event ids from
+// - Webhook bodies (T-HARD-2) are brief-shaped with real ids: event ids from
 //   eventIdPool() (`evt_` + a real visitor_id's hex), user u_ceed5f12 (app_users.csv:303,
 //   joy.hall830) on device `d_` + her id's hex, the brief's event time. Accepted values: the
 //   brief's story slug and LINK, the hosted app's URL (shared/config.ts HOSTED_URL) with a real
 //   page path. Refused values are real data put in the wrong place (a page path, an address, the
-//   address behind https://) or minimal edits of the accepted ones (09 D-47): upper-cased, cut to
+//   address behind https://) or minimal edits of the accepted ones: upper-cased, cut to
 //   nothing, null, repeated past 120 characters, wrapped in an array, the scheme removed or swapped for
 //   ftp/javascript/data, a space in the path, and julia.evans230's address put in the link in the
 //   spellings the outbound scan does not read as an address: percent-encoded once and twice, a
@@ -43,11 +43,11 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 //   URL. The accepted percent-escape is LINK with one of its own hyphens as %2D.
 // - T-HARD-3: users u_f1cad5ce (app_users.csv:15, eli.clark874@icloud.com) and u_38e852b0
 //   (app_users.csv:11, sarah.edwards657@gmail.com) on eli's device `d_f1cad5ce`; event times are
-//   taken from the wall clock (the bound is relative to it, 09 D-70 #3), as T-WH-7 does; the
+//   taken from the wall clock (the bound is relative to it), as T-WH-7 does; the
 //   exact boundary is checked on the parser with the brief's event time as the server clock.
 // - T-HARD-5: segment rows are real rows of the seeded export. The `@` cell is the real
 //   subscribers.csv:1788 address `@gmail.com` (quarantined by the seed, so it is put back into a
-//   real row's email by hand); `=`, `+` and `-` are the other D-70 #5 formula characters put in
+//   real row's email by hand); `=`, `+` and `-` are the other formula characters put in
 //   front of a real address, as injection probes (not business data), one also followed by a
 //   comma and the row's real source to show the RFC 4180 quoting is kept.
 // - T-HARD-7: users u_38e852b0 (app_users.csv:11, sarah.edwards657@gmail.com) and u_f2411d1c
@@ -59,7 +59,7 @@ import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 // - T-HARD-6: client addresses come from 2001:db8::/32, the IPv6 documentation range (RFC 3849;
 //   test/helpers/auth.ts); the question is T-GATE-1's prompt-injection probe, which Gate 1 refuses
 //   with 400 after the limits are checked, so no call reaches a model; the export is the brief's
-//   preset segment (177, 02 §Counts). The limit of 10 a minute is wrangler.jsonc's, read here
+//   preset segment (177 subscribers). The limit of 10 a minute is wrangler.jsonc's, read here
 //   from the config the test pool runs with. The hourly per-client count writes earlier calls as
 //   the audit writer stores them (as assistant.test.ts does for the per-session count), keyed
 //   with the client key the route derives from the same address and the .dev.vars PII_KEY_SECRET.
@@ -83,7 +83,7 @@ async function auditCount(traceId: string): Promise<number> {
   return n
 }
 
-describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own (09 D-70 #1)', () => {
+describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own', () => {
   it('a demo subject typed as joy.hall830 reaches the model as [email], counted like an email, no audit row', async () => {
     const trace = await startTrace(env.DB)
     const question = await enforceGate1(trace, 'is joy.hall830 engaged?')
@@ -95,7 +95,7 @@ describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own (09
 
   it('every known local part of the seed is redacted as a whole token', async () => {
     const emails = await column<string>('SELECT DISTINCT email_norm FROM profiles WHERE email_norm IS NOT NULL', 'email_norm')
-    expect(emails).toHaveLength(2930) // 02 §Counts: 2,900 subscribers + 30 app-only accounts
+    expect(emails).toHaveLength(2930) // 2,900 subscribers + 30 app-only accounts
     const trace = await startTrace(env.DB)
     for (const email of emails) {
       const local = email.slice(0, email.indexOf('@'))
@@ -124,7 +124,7 @@ describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own (09
       expect(question.text).toBe(`how engaged is ${token}?`)
       expect(question.emailsRedacted).toBe(0)
     }
-    expect(LOCAL_PART_MIN_CHARS).toBe(6) // 09 D-70 #1
+    expect(LOCAL_PART_MIN_CHARS).toBe(6)
   })
 
   it('a known local part glued to more text on a punctuation boundary, or a %40-encoded address, is still redacted', async () => {
@@ -187,7 +187,7 @@ async function storedCount(eventId: unknown): Promise<number> {
   return n
 }
 
-describe('T-HARD-2: webhook story and link must be slugs; other strings never reach v_app_events (09 D-70 #2)', () => {
+describe('T-HARD-2: webhook story and link must be slugs; other strings never reach v_app_events', () => {
   it('stores a slug story and an http(s) link, and v_app_events shows them', async () => {
     const body = joyEvent({ properties: { story: SLUG, link: LINK } })
     expect((await post(body)).status).toBe(202)
@@ -274,7 +274,7 @@ function deviceOwner(deviceId: string) {
   return env.DB.prepare('SELECT user_id, last_seen_ts FROM device_identity WHERE device_id = ?').bind(deviceId).first<{ user_id: string; last_seen_ts: string }>()
 }
 
-describe('T-HARD-3: an event time more than 24 h after the server clock is refused (09 D-70 #3)', () => {
+describe('T-HARD-3: an event time more than 24 h after the server clock is refused', () => {
   const ELI = { user_id: 'u_f1cad5ce', email: 'eli.clark874@icloud.com' }
   const SARAH = 'u_38e852b0'
   const DEVICE = 'd_f1cad5ce'
@@ -309,12 +309,12 @@ describe('T-HARD-3: an event time more than 24 h after the server clock is refus
     })
   })
 
-  it('an event 23 h ahead, after TODAY, is stored and counts toward the score (09 D-01)', async () => {
+  it('an event 23 h ahead, after TODAY, is stored and counts toward the score', async () => {
     const before = await scoreOf(ELI.email)
     const ahead = { event_id: nextEventId(), event: 'app_open', user_id: ELI.user_id, device_id: DEVICE, timestamp: fromNow(23 * HOUR_MS) }
     expect((await post(ahead)).status).toBe(202)
     expect(await storedCount(ahead.event_id)).toBe(1)
-    // One more app event in the last 30 days adds 2.5 points before rounding (02 §Derived).
+    // One more app event in the last 30 days adds 2.5 points before rounding.
     const after = await scoreOf(ELI.email)
     expect(after - before).toBeGreaterThanOrEqual(2)
     expect(after - before).toBeLessThanOrEqual(3)
@@ -332,13 +332,13 @@ async function segmentsPost(path: string, body: unknown, cookie: string, ip: str
   })
 }
 
-describe('T-HARD-5: the segment CSV export neutralizes formula cells (09 D-70 #5)', () => {
+describe('T-HARD-5: the segment CSV export neutralizes formula cells', () => {
   it('the real export of all 2,900 subscribers is unchanged: no cell starts with = + - @ or gets a quote', async () => {
     const res = await segmentsPost('export.csv', { filters: { status: ['active', 'unsubscribed'] } }, await loginCookie())
     expect(res.status).toBe(200)
     const text = await res.text()
     const records = text.slice(0, -2).split(CRLF)
-    expect(records).toHaveLength(1 + 2900) // header + 02 §Counts subscribers
+    expect(records).toHaveLength(1 + 2900) // header + the seed's subscribers
     expect(text).not.toContain("'")
     expect(text).not.toContain('"')
   })
@@ -382,7 +382,7 @@ async function withScoresFailing<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('T-HARD-7: a duplicate delivery re-runs the score recompute, so a failed one heals (09 D-70 #7)', () => {
+describe('T-HARD-7: a duplicate delivery re-runs the score recompute, so a failed one heals', () => {
   const SARAH = { user_id: 'u_38e852b0', email: 'sarah.edwards657@gmail.com' }
   const JOHN = { user_id: 'u_f2411d1c', email: 'john.turner61@gmail.com' }
   const DEVICE = 'd_38e852b0'
@@ -480,7 +480,7 @@ async function earlierCalls(sub: string, clientKey: string, n: number): Promise<
   }
 }
 
-describe('T-HARD-6: per-client limits a new session does not reset (09 D-70 #6)', () => {
+describe('T-HARD-6: per-client limits a new session does not reset', () => {
   it('the assistant: past the per-IP limit, signing in again from the same address is still 429', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const limit = bindingLimit('ASSISTANT_LIMITER')
@@ -506,7 +506,7 @@ describe('T-HARD-6: per-client limits a new session does not reset (09 D-70 #6)'
 
   it('the hourly limit: 100 calls from one address across two sessions, then 429 for either; another address is not limited', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    expect(ASSISTANT_CALLS_PER_HOUR).toBe(100) // 09 D-40
+    expect(ASSISTANT_CALLS_PER_HOUR).toBe(100)
     const ip = documentationIp()
     const key = await clientKeyHash(env.PII_KEY_SECRET, ip)
     const [first, relogin] = [await loginCookie(ip), await loginCookie(ip)]
@@ -547,7 +547,7 @@ describe('T-HARD-6: per-client limits a new session does not reset (09 D-70 #6)'
     for (let i = 0; i < limit; i += 1) {
       const res = await segmentsPost('export.csv', { filters: PRESET }, first, ip)
       expect(res.status).toBe(200)
-      expect((await res.text()).slice(0, -2).split(CRLF)).toHaveLength(1 + 177) // 02 §Counts
+      expect((await res.text()).slice(0, -2).split(CRLF)).toHaveLength(1 + 177)
     }
     const limited = await segmentsPost('export.csv', { filters: PRESET }, await loginCookie(ip), ip)
     expect(limited.status).toBe(429)

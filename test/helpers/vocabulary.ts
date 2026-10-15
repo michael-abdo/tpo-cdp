@@ -1,8 +1,8 @@
-// T-VOC-1's retired words and allowed phrases (08; 09 D-66, 06 §Vocabulary), written once: the full scan
+// T-VOC-1's retired words and allowed phrases, written once: the full scan
 // (test/vocabulary.test.ts) and the Insights scan (test/insights-vocabulary.test.ts) both read them here.
 
 /**
- * Retired anywhere user-facing (06 §Vocabulary, last line). "Reader(s)" stays only inside the brief's
+ * Retired anywhere user-facing. "Reader(s)" stays only inside the brief's
  * own example question; "screen reader" names assistive technology, not a person on the list.
  */
 export const RETIRED: readonly { name: string; pattern: RegExp }[] = [
@@ -13,8 +13,8 @@ export const RETIRED: readonly { name: string; pattern: RegExp }[] = [
   { name: 'App users', pattern: /\bapp users?\b/i },
 ]
 /**
- * Phrases that may hold a retired word: the brief's question (R5.2), whole, and assistive technology.
- * Only the full question passes (08 T-VOC-1 "the exact brief question"); "most engaged readers" on its
+ * Phrases that may hold a retired word: the brief's question, whole, and assistive technology.
+ * Only the full question passes (T-VOC-1 "the exact brief question"); "most engaged readers" on its
  * own, as a label or a sentence, is still flagged.
  */
 export const ALLOWED = [/build me a list of our most engaged readers/gi, /screen[- ]readers?/gi]
@@ -25,7 +25,7 @@ export function retiredIn(text: string): string[] {
 }
 
 /**
- * The `export const NAV = [...]` array literal's own source text from src/nav.ts (09 D-71), found
+ * The `export const NAV = [...]` array literal's own source text from src/nav.ts, found
  * by balancing brackets rather than assuming a line shape — the nested Techy group's own `items: […]`
  * closes on an indented line too, which a naive "first ']' at a line start" search would stop at.
  * src/nav.ts imports icons from src/components.tsx, a .tsx module with real JSX; test/vocabulary.test.ts

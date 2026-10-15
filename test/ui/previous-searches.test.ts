@@ -14,10 +14,10 @@ import {
   visibleSearches,
 } from '../../src/previous-searches'
 
-// T-SEG-4 (08; 09 D-69): Previous searches keep the last 5 echoed filter
+// T-SEG-4: Previous searches keep the last 5 echoed filter
 // objects in this browser and nothing else. Each filter object is canonical, the shape POST
-// /api/segments/preview echoes (shared/segment-filters.ts), with real values (09 D-47): sources
-// from subscribers.csv, /shadrachs-picks from web_events.csv, the spec's windows.
+// /api/segments/preview echoes (shared/segment-filters.ts), with real values: sources
+// from subscribers.csv, /shadrachs-picks from web_events.csv, the example filters' windows.
 
 /** An in-memory Storage: the test's stand-in for localStorage, which workerd does not have. */
 class MemoryStore implements SearchStore {
@@ -142,7 +142,7 @@ describe('T-SEG-4 Previous searches', () => {
     expect(visibleSearches(readSearches()).map((r) => r.example)).toEqual([true])
   })
 
-  it('drops a stored item whose integer-typed key holds a non-integer number (M31: Number.isInteger, not typeof value === "number")', () => {
+  it('drops a stored item whose integer-typed key holds a non-integer number (Number.isInteger, not typeof value === "number")', () => {
     const store = new MemoryStore()
     store.setItem(
       STORAGE_KEY,
@@ -158,7 +158,7 @@ describe('T-SEG-4 Previous searches', () => {
     expect(readSearches(store)).toEqual([SEARCHES[3]])
   })
 
-  it('drops a stored item whose source holds a PII-shaped value (email, %40-encoded email or a raw id), and recordSearch never writes one (09 D-69 #6 defense in depth)', () => {
+  it('drops a stored item whose source holds a PII-shaped value (email, %40-encoded email or a raw id), and recordSearch never writes one (defense in depth)', () => {
     const store = new MemoryStore()
     const encodedJoy = JOY.replace('@', '%40')
     store.setItem(
@@ -185,7 +185,7 @@ describe('T-SEG-4 Previous searches', () => {
   it(
     'drops a stored item whose source is non-canonical, whatever shape it spells (a double-%40 email, an id glued ' +
       "to a word char, a bare known local part, or just an ordinary non-canonical word), and recordSearch never " +
-      'writes one (09 D-69 #6: the schema\'s CANONICAL_SOURCES enum, checked by meetsSchema, not pattern ' +
+      'writes one (the schema\'s CANONICAL_SOURCES enum, checked by meetsSchema, not pattern ' +
       "matching each PII shape, is what closes this)",
     () => {
       const store = new MemoryStore()
@@ -211,7 +211,7 @@ describe('T-SEG-4 Previous searches', () => {
     },
   )
 
-  it('every key meets its whole schema rule, not only source: PII or free text in went_cold, site_visit_page, status or app_event, a mixed source list and an out-of-range number are dropped, and recordSearch never writes them (09 D-69 #6)', () => {
+  it('every key meets its whole schema rule, not only source: PII or free text in went_cold, site_visit_page, status or app_event, a mixed source list and an out-of-range number are dropped, and recordSearch never writes them', () => {
     const store = new MemoryStore()
     // Typed loosely on purpose: these are what a hand-edited copy or a bad caller could hold.
     const bad = [

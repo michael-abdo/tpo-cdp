@@ -12,17 +12,16 @@ import { executeToolCall, UNKNOWN_TOOL_ERROR } from '../worker/assistant/tools/t
 import { loadTools, rewritePlaceholders, schemaProblems, type ToolRow, ToolConfigError, validateToolRow } from '../worker/assistant/tools/tool-loader'
 import { seedDatabase } from './helpers/seed'
 
-// T-AI-1 and T-AI-8 (08, band A Fri). Designs: 03 §Gateway layers rows 3 and 9 ("this is what
-// lets Growth add a question type as a row without a deploy"); 09 D-41, D-45; 01 §Tables
-// (assistant_tools); 02 §Derived (new_subscriber, 09 D-36); 14 §2, §4.1, §4.2.
+// T-AI-1 and T-AI-8: tools are assistant_tools rows, so Growth can add a question type as a row
+// without a deploy.
 //
 // Inputs: the seeded D1 (data/*.csv via test/helpers/seed.ts) and the assistant_tools rows from
 // scripts/tool-seeds.ts. The extra `query` rows below are tool configuration a Growth teammate
-// could insert (01 assistant_tools), not data about people; their bound values are values that
+// could insert (an assistant_tools row), not data about people; their bound values are values that
 // occur in data/*.csv ('instagram', 'active') and the demo subject's pk_ key. Expected numbers
-// come from 02 §Counts: Instagram active `cold` = 147; the demo subject joy.hall830 signed up
-// 2026-09-02 with first page "/". The new_subscriber counts by page are not in §Counts, so they
-// are checked against `DEFINITIONS.new_subscriber.fn` (02 §Derived "one runtime source") run over
+// are the seed's: Instagram active `cold` = 147; the demo subject joy.hall830 signed up
+// 2026-09-02 with first page "/". The new_subscriber counts by page are not fixed numbers, so they
+// are checked against `DEFINITIONS.new_subscriber.fn` (the one runtime source) run over
 // the view rows in JavaScript, independently of the row's SQL. No test calls the network.
 
 const JOY = 'joy.hall830@protonmail.com'
@@ -136,7 +135,7 @@ function recordingDb(): { db: D1Database; prepared: string[]; bound: unknown[][]
 
 const NEW_PAGES = 'pages_new_subscribers_hit_first'
 
-describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows fail loud (03 row 3, 09 D-41)', () => {
+describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows fail loud', () => {
   it('every seeded row loads verbatim as an Anthropic tool with a valid JSON Schema, the query row included', async () => {
     const loaded = await loadTools(env.DB)
     expect(loaded.definitions.map((d) => d.name)).toEqual(TOOL_SEEDS.map((s) => s.name))
@@ -193,7 +192,7 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
     expect((await loadTools(env.DB)).definitions.map((d) => d.name)).toEqual(TOOL_SEEDS.map((s) => s.name))
   })
 
-  it('a `pattern` must be a string that compiles with the u flag, or the row is refused at load (09 D-69)', async () => {
+  it('a `pattern` must be a string that compiles with the u flag, or the row is refused at load', async () => {
     // The segment row's patterns (shared/segment-filters.ts) pass; Gate 2 compiles each with `u`.
     expect(schemaProblems({ type: 'string', pattern: '^/[a-z0-9/-]{0,120}$' }, 'p')).toEqual([])
     expect(schemaProblems({ type: 'string', pattern: '(' }, 'p')).toEqual(['p.pattern is not a valid regular expression'])
@@ -225,13 +224,13 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
     }
   })
 
-  it('tools:seed reports a stale seeded row, which the insert keeps and only --update replaces (09 D-69)', async () => {
+  it('tools:seed reports a stale seeded row, which the insert keeps and only --update replaces', async () => {
     const stored = async () =>
       (await env.DB.prepare('SELECT name, description, input_schema, handler_type, execution_config FROM assistant_tools').all<StoredToolRow>()).results
     expect(staleToolRows(await stored())).toEqual([])
     const segment = TOOL_SEEDS[0]
     expect(segment.name).toBe('segment')
-    // The segment row as a D1 seeded before D-69 holds it (scripts/tool-seeds.ts at 16d4d78): no new
+    // The segment row as an older D1 holds it (scripts/tool-seeds.ts at 16d4d78): no new
     // keys, free-text source.
     const preD69 = {
       type: 'object',
@@ -312,7 +311,7 @@ describe('T-AI-1 assistant_tools rows load into valid Anthropic tools; bad rows 
   })
 })
 
-describe('T-AI-8 a query row runs its template with bound params through Gate 2/3 (03 row 9, 09 D-41, D-45)', () => {
+describe('T-AI-8 a query row runs its template with bound params through Gate 2/3', () => {
   it('placeholders become positional "?" in template order; strings, quoted names and comments are left alone', () => {
     expect(rewritePlaceholders("SELECT pkey FROM v_profiles WHERE source = :source AND (status = :status OR :status IS NULL) AND first_page <> ':page'")).toEqual({
       sql: "SELECT pkey FROM v_profiles WHERE source = ? AND (status = ? OR ? IS NULL) AND first_page <> ':page'",
@@ -337,7 +336,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
 
   it('an inserted query row is live on the next load with no deploy; its values are bound, never spliced, and its rows are pk_ keys only', async () => {
     const joy = await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(JOY).first<string>('pkey')
-    if (joy === null) throw new Error('no profile for the demo subject (02 §Counts)')
+    if (joy === null) throw new Error('no profile for the demo subject')
     const seed = queryRow(
       'reader_first_page',
       { type: 'object', properties: { reader: { type: 'string', description: 'A pk_ key.' } }, required: ['reader'] },
@@ -347,7 +346,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
     await withRows([seed], async () => {
       const { db, prepared, bound } = recordingDb()
       const { executed, audit } = await runTool('reader_first_page', { reader: joy }, db)
-      // 02 §Counts demo subject: Instagram, signup 2026-09-02, first page "/".
+      // The demo subject: Instagram, signup 2026-09-02, first page "/".
       expect(executed.output?.rows).toEqual([{ pkey: joy, source: 'instagram', signup_date: '2026-09-02', first_page: '/' }])
       const select = 'SELECT pkey, source, signup_date, first_page FROM v_profiles WHERE pkey = ? LIMIT 100'
       expect(prepared.filter((sql) => sql.startsWith('SELECT pkey'))).toEqual([select])
@@ -356,7 +355,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
     })
   })
 
-  it('Instagram active cold = 147 (02 §Counts) through a query row with three bound inputs', async () => {
+  it('Instagram active cold = 147 through a query row with three bound inputs', async () => {
     const seed = queryRow(
       'cold_count',
       {
@@ -374,7 +373,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
     })
   })
 
-  it('values bind in template order, not param_mapping order; a placeholder used twice is bound twice (Instagram active cold = 147, 02 §Counts)', async () => {
+  it('values bind in template order, not param_mapping order; a placeholder used twice is bound twice (Instagram active cold = 147)', async () => {
     // The mapping lists today, status, source; the template uses source, status, status, today.
     const seed = queryRow(
       'cold_count_reordered',
@@ -406,7 +405,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
     await withRows([seed], async () => {
       const { executed } = await runTool('readers_by_source', { source: 'instagram' })
       const output = executed.output!
-      expect(output.rows).toHaveLength(100) // Gate 3's forced LIMIT (03 row 8)
+      expect(output.rows).toHaveLength(100) // Gate 3's forced LIMIT
       expect(output.summary).toMatchObject({ row_limit: 100, may_have_more_rows: true })
       for (const column of output.columns) expect(PII_COLUMNS).not.toContain(column)
       for (const row of output.rows) {
@@ -419,7 +418,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
   })
 
   it('the query handler runs Gate 2 again at call time: a template that skipped the loader never reaches D1', async () => {
-    // Defence in depth (03 rows 7-8): build the handler directly, so the load-time check never ran.
+    // Defence in depth: build the handler directly, so the load-time check never ran.
     const { db, prepared } = recordingDb()
     const handler = queryHandler('unchecked', { sql: 'SELECT email_norm FROM v_profiles WHERE source = ?', inputs: ['source'] })
     await expect(handler.run(db, { source: 'instagram' })).rejects.toThrow('email_norm is personal data')
@@ -436,7 +435,7 @@ describe('T-AI-8 a query row runs its template with bound params through Gate 2/
   })
 })
 
-describe('the seeded query row pages_new_subscribers_hit_first (02 §Derived new_subscriber, 09 D-36)', () => {
+describe('the seeded query row pages_new_subscribers_hit_first (new_subscriber)', () => {
   /** First page → new subscribers, computed in JavaScript with DEFINITIONS.new_subscriber.fn. */
   async function expected(includeUnsubscribed: boolean): Promise<Map<string | null, number>> {
     const { results } = await env.DB.prepare('SELECT signup_date, status, first_page FROM v_profiles WHERE signup_date IS NOT NULL').all<{
@@ -464,7 +463,7 @@ describe('the seeded query row pages_new_subscribers_hit_first (02 §Derived new
     const { executed, audit } = await runTool(NEW_PAGES, {})
     const active = new Map(executed.output!.rows.map((r) => [r.first_page as string | null, r.new_subscribers as number]))
     expect(active).toEqual(await expected(false))
-    expect(active.get('/')).toBeGreaterThanOrEqual(1) // joy.hall830: new (signup 2026-09-02), first page "/" (02 §Counts)
+    expect(active.get('/')).toBeGreaterThanOrEqual(1) // joy.hall830: new (signup 2026-09-02), first page "/"
     expect(executed.output!.columns).toEqual(['first_page', 'new_subscribers'])
     const counts = executed.output!.rows.map((r) => r.new_subscribers as number)
     expect(counts).toEqual([...counts].sort((a, b) => b - a))

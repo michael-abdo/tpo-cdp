@@ -6,17 +6,17 @@ import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, resolvedOf, sendWebhook } from './helpers/webhook'
 
-// Read-time login stitching (01 §Identity resolution, 07 §D and §E, 09 D-18, D-43): T-WH-9a and
-// T-WH-9b (08). T-WH-9c (07 §F, the shared-device miss) is band P, parked, and not here. Every
+// Read-time login stitching: T-WH-9a (anonymous events first, login later) and T-WH-9b (login
+// first, anonymous events late). T-WH-9c (the shared-device miss) is not built, so not here. Every
 // event goes through the real POST /webhooks/app; every check reads the real GET /api/lookup and
 // GET /api/events/recent. The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts).
-// Inputs and where they come from (09 D-11: brief-shaped payloads built from real ids):
+// Inputs and where they come from (brief-shaped payloads built from real ids):
 // - users are real app_users.csv rows: u_baba14aa (line 3, daniel.hill389@gmail.com) for 9a and
 //   u_3ab82c73 (line 4, faith.wilson277@gmail.com) for 9b; devices are `d_` + the hex of each.
 // - event ids come from eventIdPool() (`evt_` + the hex of a real visitor_id).
-// - event times are the 07 §D/§E times 09:00, 09:05 and 09:10 on TODAY (shared/config.ts; 02
-//   §Time: demo events default to TODAY).
-// - the read_story property is the brief's story slug (04 §Webhook body).
+// - event times are 09:00, 09:05 and 09:10 on TODAY (shared/config.ts; demo events default to
+//   TODAY).
+// - the read_story property is the brief's story slug.
 
 const AT_0900 = `${TODAY}T09:00:00Z`
 const AT_0905 = `${TODAY}T09:05:00Z`
@@ -33,7 +33,7 @@ beforeAll(async () => {
 
 type Body = Record<string, unknown>
 
-/** The three events of 07 §D for one user and device, with fixed event ids. */
+/** The three events (app_open, read_story, login) for one user and device, with fixed event ids. */
 function sequence(userId: string, deviceId: string) {
   const ids = [nextEventId(), nextEventId(), nextEventId()]
   return {
@@ -82,14 +82,14 @@ async function feedRow(eventId: string): Promise<FeedRow> {
   return row
 }
 
-/** The lookup app timeline 07 §D ends with: both anonymous events stitched, the login direct. */
+/** The app timeline after the anonymous-first order: both anonymous events stitched, the login direct. */
 const STITCHED_TIMELINE = [
   { event: 'app_open', event_ts: AT_0900, properties: null, attached_via: 'login_stitch' },
   { event: 'read_story', event_ts: AT_0905, properties: STORY, attached_via: 'login_stitch' },
   { event: 'login', event_ts: AT_0910, properties: null, attached_via: 'direct' },
 ]
 
-describe('T-WH-9a 07 §D: anonymous events first, login later', () => {
+describe('T-WH-9a anonymous events first, login later', () => {
   it('stores the anonymous events unresolved, then attaches both to the user once the login arrives, tagged stitched', async () => {
     const user = 'u_baba14aa'
     const email = 'daniel.hill389@gmail.com'
@@ -137,21 +137,21 @@ describe('T-WH-9a 07 §D: anonymous events first, login later', () => {
   })
 })
 
-describe('T-WH-9b 07 §E: login first, anonymous events late', () => {
-  it('gives lookup output identical to 07 §D for the same user, device and events', async () => {
+describe('T-WH-9b login first, anonymous events late', () => {
+  it('gives lookup output identical to the anonymous-first order for the same user, device and events', async () => {
     const user = 'u_3ab82c73'
     const device = 'd_3ab82c73'
     const s = sequence(user, device)
     const pkey = await pkeyForEmail(piiKeySecret(), 'faith.wilson277@gmail.com')
 
-    // 07 §D order, and its lookup output.
+    // The anonymous-first order, and its lookup output.
     for (const e of [s.appOpen, s.readStory, s.login]) await post(e)
     const fromD = await lookup(user)
     expect((fromD.app as Body).events).toEqual(STITCHED_TIMELINE)
 
-    // Back to the state before 07 §D: these three rows and the device mapping are the only rows
-    // the sequence wrote (the user is a CSV user, so no stub). The stored score stays as 07 §D
-    // left it; 07 §E must recompute it to the same value for the outputs to match.
+    // Back to the state before that order: these three rows and the device mapping are the only rows
+    // the sequence wrote (the user is a CSV user, so no stub). The stored score stays as that order
+    // left it; the login-first order must recompute it to the same value for the outputs to match.
     const cleared = await env.DB.batch([
       env.DB.prepare('DELETE FROM app_events WHERE device_id = ?').bind(device),
       env.DB.prepare('DELETE FROM device_identity WHERE device_id = ?').bind(device),
@@ -159,7 +159,7 @@ describe('T-WH-9b 07 §E: login first, anonymous events late', () => {
     expect(cleared.map((r) => r.meta.changes)).toEqual([3, 1])
     expect((await lookup(user)).app).toMatchObject({ devices: [], events: [] })
 
-    // 07 §E: the login arrives first; each late anonymous event resolves the moment it is stored.
+    // The login arrives first; each late anonymous event resolves the moment it is stored.
     expect(await post(s.login)).toEqual({ user_id: user, pkey })
     expect(await post(s.appOpen)).toEqual({ user_id: user, pkey })
     expect(await post(s.readStory)).toEqual({ user_id: user, pkey })

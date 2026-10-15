@@ -5,10 +5,10 @@ import webCsv from '../../data/web_events.csv?raw'
 import { parseCsv, type ParsedCsv } from '../../worker/ingest/csv'
 import type { SeedCsvs } from '../../worker/ingest/link'
 
-// The real data/*.csv with one profile given two app accounts and two web visitors (09 D-70 item 4,
-// 08 T-HARD-4), for test/hardening-ids.test.ts (the API on a seeded D1) and
+// The real data/*.csv with one profile given two app accounts and two web visitors (T-HARD-4),
+// for test/hardening-ids.test.ts (the API on a seeded D1) and
 // test/ui/lookup-profile.test.ts (the page). Pure, so both test projects can import it. Every
-// value introduced occurs in data/*.csv or is a removal (09 D-47):
+// value introduced occurs in data/*.csv or is a removal:
 // - a second app account for joy.hall830@protonmail.com: her row app_users.csv:303 (u_ceed5f12,
 //   2026-09-03) copied with the user_id's "1" removed (u_ceed5f2) and created_at set to 2026-08-22
 //   (julia.evans230's, app_users.csv:2). The new account is her earliest, yet its id sorts AFTER
@@ -29,7 +29,7 @@ export const OWN_ACCOUNT = 'u_ceed5f12'
 
 /**
  * One app event on joy's later account, so each account's own events and devices are exercised:
- * the brief's sample webhook (04 §Webhook body, 09 D-11) with its user_id set to u_ceed5f12, as
+ * the brief's sample webhook with its user_id set to u_ceed5f12, as
  * test/lookup.test.ts T-API-1 sends it. test/hardening-ids.test.ts sends it through the real
  * webhook; test/ui/lookup-profile.test.ts shows it in the shape GET /api/lookup returns, and the API
  * test pins that shape against the same constant.
