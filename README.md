@@ -14,7 +14,7 @@ npm run db:migrate:local            # the eleven migrations into the local D1
 npm run db:seed:local               # data/*.csv → seed/*.sql → local D1; prints the counts and every quarantined line
 npm run tools:seed -- --local       # the assistant's five tool rows into the local D1 (see below)
 npm test                            # every test in workerd against a local D1; no network (count: [Tests](docs/notes.md#tests))
-npm run parity -- --local           # D-75 parity oracle (21 §2.6 mode B) against a throwaway local D1; never the dev database
+npm run parity -- --local           # the parity oracle against a throwaway local D1; never the dev database
 npm run dev                         # http://localhost:5173 (another port: npm run dev -- --port 5174); sign in with the SITE_PASSWORD you put in .dev.vars
 ```
 
@@ -25,7 +25,7 @@ About `.dev.vars`:
 - `SITE_PASSWORD`, `SESSION_SECRET`, `WEBHOOK_SECRET`, `PII_KEY_SECRET`: any non-empty strings. The first request fails with a message naming any one that is missing.
 - `ANTHROPIC_API_KEY`: a real key only if you want the assistant to answer. For `npm test` any non-empty string works; the tests never call the network, but 71 tests in 4 files that go through the assistant route fail when it is empty (see [Known gaps](docs/notes.md#known-gaps)).
 
-`npm run tools:seed -- --local` writes the assistant's five tool rows (`segment`, `aggregate`, `query_sql`, `pages_new_subscribers_hit_first`, `describe_schema`) into the local D1; run it after the seed. It inserts missing rows and never overwrites one, then fails, naming the row and the fix, if a stored row differs from `scripts/tool-seeds.ts`. A local D1 seeded before 09 D-69 holds the old `segment` row (no new filter keys); replace it with `npm run tools:seed -- --local --update segment`.
+`npm run tools:seed -- --local` writes the assistant's five tool rows (`segment`, `aggregate`, `query_sql`, `pages_new_subscribers_hit_first`, `describe_schema`) into the local D1; run it after the seed. It inserts missing rows and never overwrites one, then fails, naming the row and the fix, if a stored row differs from `scripts/tool-seeds.ts`. A local D1 seeded before the segment tool gained its five new filters (2026-10-14) holds the old `segment` row (no new filter keys); replace it with `npm run tools:seed -- --local --update segment`.
 
 What you see without them: with no tool rows, Ask on "Insights" (`/insights`) answers 500 `no_tools` naming this command; with an empty key, 503 `assistant_unavailable` pointing to the live app; with a key that is not real, 502 `model_error`. The failed call still shows up on the AI audit log page. Everything else works without a key.
 
@@ -73,7 +73,7 @@ Under "Time period · Filters · Definitions", each answer lists the time period
 - App: **https://tpo-cdp.michaelabdo-mail.workers.dev**
 - Webhook: `POST https://tpo-cdp.michaelabdo-mail.workers.dev/webhooks/app` (headers and signing examples under [Webhook](docs/notes.md#webhook))
 
-Open the app and sign in on its login page with the site password. The password and the webhook signing secret come in the submission email; neither is in this repo. A session lasts 12 hours; "Log out" ends it sooner **in that browser** — it only clears that browser's cookie, so a copied cookie stays valid until its own 12-hour expiry (09 D-80 D8; see [Known security gaps](docs/notes.md#known-security-gaps) #1, until per-person sessions ship). More than ten sign-in attempts a minute from one address get a "wait a minute" message.
+Open the app and sign in on its login page with the site password. The password and the webhook signing secret come in the submission email; neither is in this repo. A session lasts 12 hours; "Log out" ends it sooner **in that browser** — it only clears that browser's cookie, so a copied cookie stays valid until its own 12-hour expiry (see [Known security gaps](docs/notes.md#known-security-gaps) #1, until per-person sessions ship). More than ten sign-in attempts a minute from one address get a "wait a minute" message.
 
 ## More
 
