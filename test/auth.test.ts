@@ -9,10 +9,10 @@ import { type AppEnv, assertBindings } from '../worker/env'
 import app, { onError } from '../worker/index'
 import { documentationIp, loginCookie } from './helpers/auth'
 
-// T-AUTH-1, T-AUTH-2 (08) for 04 §Auth and §Error envelope. Secrets come from .dev.vars and are
+// T-AUTH-1, T-AUTH-2: login, sessions and the error envelope. Secrets come from .dev.vars and are
 // never printed: assertions compare against them with includes/equality, so a failure reports
 // "expected true to be false", not the value. Constructed inputs, and why each is allowed:
-// - wrong passwords are the real SITE_PASSWORD with one character changed or appended (09 D-47 spirit);
+// - wrong passwords are the real SITE_PASSWORD with one character changed or appended;
 // - expired and tampered cookies are produced by the real signSession with the real secret;
 // - the wrong-key cookie is signed by the real signSession with the real SESSION_SECRET with its
 //   last character changed (same length, different key);

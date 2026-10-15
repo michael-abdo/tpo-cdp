@@ -20,22 +20,21 @@ import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// GET /api/lookup/search (04 §/api/lookup/search, 06 §/lookup Partial lookup, 09 D-52), T-API-3
-// (08). The test D1 holds the real seed of data/*.csv. Numbers are the 02 §Counts partial
-// lookup fixtures; the 20-row cap is 04's. Inputs and where they come from:
+// GET /api/lookup/search, T-API-3. The test D1 holds the real seed of data/*.csv. Numbers are the
+// seed's partial lookup fixtures; the 20-row cap is the API's. Inputs and where they come from:
 // - joy.hall524 (subscribers.csv:2250), joy.hall830 (subscribers.csv:902, app user u_ceed5f12 at
 //   app_users.csv:303), joy.hall898 (subscribers.csv:1392): the 3 `joy.hall` profiles.
 // - julia.evans230@gmail.com: subscribers.csv:373, app_users.csv:2 (u_2b6447a3, the PDF's sample).
-// - "ell", "hall", "joy.hall", "u_2b64", "2b6447": substrings of the real values above (09 D-47
-//   removals). "2b6447" sits inside u_2b6447a3 without starting it, and no email contains it.
-// - "JOY.HALL ", "  jo  ", "jo", "": "joy.hall" re-cased, padded or cut (09 D-47).
+// - "ell", "hall", "joy.hall", "u_2b64", "2b6447": substrings of the real values above
+//   (removals). "2b6447" sits inside u_2b6447a3 without starting it, and no email contains it.
+// - "JOY.HALL ", "  jo  ", "jo", "": "joy.hall" re-cased, padded or cut.
 //   aaron.bell239@gmail.com (subscribers.csv:2483) contains "ell" without starting with it and
 //   sorts before every "ell…" address, so plain alphabetical order would list it first.
 // - "not-an-email": a real value of subscribers.csv:1750, quarantined (invalid_email), so no
 //   profile holds it: the unknown fragment.
 // - "hall%", "joy_hall", "hall\", "joy\.hall": real fragments with one LIKE metacharacter added
-//   or swapped in for a "."; they test escaping, not data, and introduce no business value (09 D-47).
-// - Fuzzy lookup (09 D-59, T-API-4), each a removal or swap within a real value (09 D-47):
+//   or swapped in for a "."; they test escaping, not data, and introduce no business value.
+// - Fuzzy lookup (T-API-4), each a removal or swap within a real value:
 //   "joy.hal830@protonmail.com" (one "l" removed from joy.hall830's address), "joyhall830" (the
 //   "." removed), "joyhal830" (the "." and one "l" removed: distance 2 with a length gap of exactly
 //   2; no row contains it), "joyh" (a 4-character cut of "joy.hall830" with its "." removed; no email
@@ -46,7 +45,7 @@ import { eventIdPool, sendWebhook } from './helpers/webhook'
 //   The shortest stored local part has 8 characters, so no fragment under 6 characters is within
 //   distance 2 of any address: the 5-character gate is pinned on wantsSuggestions directly.
 // - The stub: u_2b6447a (julia's id with its last character removed, as T-WH-6 uses), sent once
-//   through the real webhook with the brief's sample device d_4b21e8 (09 D-11), in the last
+//   through the real webhook with the brief's sample device d_4b21e8, in the last
 //   describe because storage persists across this file's tests.
 
 const JOY_HALL = ['joy.hall524@protonmail.com', 'joy.hall830@protonmail.com', 'joy.hall898@gmail.com']
@@ -91,7 +90,7 @@ async function found(q: string): Promise<SearchBody> {
 
 describe('normalizeQueryFragment (02 §Normalization)', () => {
   it('trims and lowercases, and nothing else', () => {
-    // The "." stays: no dot stripping, like normalizeEmail (D-26).
+    // The "." stays: no dot stripping, like normalizeEmail.
     expect(normalizeQueryFragment('  JOY.HALL ')).toBe('joy.hall')
     // Not an address and still returned: a fragment is never validated.
     expect(normalizeQueryFragment('Joy.Hall830')).toBe('joy.hall830')
@@ -151,7 +150,7 @@ describe('T-API-3 partial lookup', () => {
     const emails = body.matches.map((m) => m.email)
     expect(emails.every((e) => e !== null && e.includes('hall'))).toBe(true)
     expect(emails).toEqual([...emails].sort())
-    // 02 §Counts: 52 profiles contain "hall"; the first 20 alphabetically are returned.
+    // 52 profiles contain "hall"; the first 20 alphabetically are returned.
     const { results } = await env.DB.prepare(
       "SELECT email_norm FROM profiles WHERE email_norm LIKE '%hall%' ORDER BY email_norm",
     ).all<{ email_norm: string }>()

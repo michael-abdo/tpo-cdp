@@ -23,26 +23,25 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { piiKeySecret, realCsvs, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// POST /api/segments/preview and /api/segments/export.csv (04 §/api/segments/preview,
-// §/api/segments/export.csv; 02 §Defaults, §Derived, §Counts; 09 D-07, D-30, D-46).
-// T-SEG-1..3 (08). The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts).
-// Expected numbers are 02 §Counts: the brief's preset is 177; 93 unsubscribed Instagram (T-SEG-2).
+// POST /api/segments/preview and /api/segments/export.csv.
+// T-SEG-1..3. The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts).
+// Expected numbers are the seed's: the brief's preset is 177; 93 unsubscribed Instagram (T-SEG-2).
 // The independent count re-runs the ingest pipeline over the ?raw CSV (normalize + dedupe) and
 // filters in TypeScript with shared/derive.ts noOpenInDays, not with SQL.
 // Inputs and where they come from:
 // - source "Instagram" is the raw spelling in subscribers.csv (925 rows); the API folds it.
-// - error-path inputs: status "unsubscribe" is a removal from a real value per 09 D-47 (the last
+// - error-path inputs: status "unsubscribe" is a removal from a real value (the last
 //   character of "unsubscribed" removed); filter key "pages_viewed" is not data at all but a
-//   filter key this build must reject: 19 §5.7 dropped it from 04's parked list (site_visit_page
-//   covers it), so it is now simply unknown, like every parked key (signup_between,
+//   filter key this build must reject (site_visit_page covers it), so it is simply unknown, like
+//   every unbuilt key (signup_between,
 //   opened_within_days, site_visits_gte, going_cold_risk, email_domain). Its value 16 is the
-//   "16 distinct pages" of 02 §Counts (web_events.csv); only the key is under test.
-// - the source value "x') OR ('a'='a" is an injection probe string (08 T-SEG-3), not business data:
+//   seed's 16 distinct pages (web_events.csv); only the key is under test.
+// - the source value "x') OR ('a'='a" is an injection probe string (T-SEG-3), not business data:
 //   inlined as IN ('…') it would close the list and match every active subscriber; bound, it
 //   matches nothing and never reaches sql_shape.
 
 const PRESET = { source: ['instagram'], days_since_open_gte: 30, include_never_opened: true } as const
-/** The 04 §/api/segments/export.csv column list, written out here rather than read from the code under test. */
+/** The export CSV's column list, written out here rather than read from the code under test. */
 const EXPORT_HEADER = ['email', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app']
 const PRESET_COUNT = 177
 const UNSUBSCRIBED_INSTAGRAM = 93
@@ -157,13 +156,13 @@ describe('T-SEG-1 the brief preset matches 02 §Counts and an independent count'
 
 describe('T-SEG-2 hidden unsubscribed (02 §Defaults)', () => {
   // hidden_unsubscribed counts unsubscribed rows matching every other filter, so including
-  // unsubscribed raises the count by exactly that number (08 T-SEG-2). On this data that is the
-  // independent count below, not the 93 in 02 §Counts: 93 is every unsubscribed Instagram
+  // unsubscribed raises the count by exactly that number (T-SEG-2). On this data that is the
+  // independent count below, not the seed's 93: 93 is every unsubscribed Instagram
   // subscriber, recency filter ignored (last test). See docs/ai-log.md 2026-10-13 — T3.
   it('equals the independent count of unsubscribed rows matching every other filter', async () => {
     const active = await preview(PRESET)
     expect(active.hidden_unsubscribed).toBe(independentCount(['unsubscribed']))
-    expect(active.hidden_unsubscribed).toBe(55) // 02 §Counts, 09 D-51
+    expect(active.hidden_unsubscribed).toBe(55)
   })
 
   it('adding unsubscribed to status raises the count by exactly hidden_unsubscribed', async () => {
@@ -360,10 +359,9 @@ describe('segment request errors', () => {
   })
 })
 
-// redactDetail unit tests (worker/assistant/gates/pii-guard.ts): both segments.ts call sites now
+// redactDetail unit tests (worker/assistant/gates/pii-guard.ts): both segments.ts call sites
 // feed it only key-less literals ("unknown filter" / "unknown field", above), so these test the
 // function directly — it is still a documented backstop, and must stay correct on its own merits.
-// (segments.ts no longer echoes the key at all, so these no longer go through its call sites.)
 describe('redactDetail (worker/assistant/gates/pii-guard.ts), tested directly', () => {
   it('masks every raw id in a string, not only the first (kills a g->i flag mutant)', () => {
     const text = `${OWN_ACCOUNT} and v_c9e136fd6d both matched`
@@ -383,21 +381,21 @@ describe('redactDetail (worker/assistant/gates/pii-guard.ts), tested directly', 
   })
 })
 
-// ── 09 D-69: the five new filters (19 §3–§6; 08 T-SEG-6..12) ──────────────────────────────
-// Expected numbers are 19 §3 / §6 (to be listed in 02 §Counts). Each one is also computed here
+// ── the five newer filters (T-SEG-6..12) ──────────────────────────────────────────────────
+// Each expected number is also computed here
 // independently of the SQL under test: subscribers come from the ingest pipeline over the ?raw CSV
-// (as T-SEG-1), site visits are read straight from web_events.csv by the 02 §Linking rule (a
+// (as T-SEG-1), site visits are read straight from web_events.csv by the linking rule (a
 // visitor's events belong to the email on its /subscribe row), and the cold date, the new-subscriber
-// window and engagement_score are written out by hand from 02 §Derived rather than imported.
+// window and engagement_score are written out by hand from their definitions rather than imported.
 // Inputs and where they come from:
 // - pages "/shadrachs-picks" and the 16 pages are web_events.csv values; event names are the four
-//   app events (R4.3); months are 2026-08 (02 §Counts "went_cold_in(2026-08)") and 2026-09 (TODAY's).
-// - error-path inputs (09 D-47, edits of real values): "2026-10" is TODAY's month + 1; "August" is
+//   app events; months are 2026-08 ("went_cold_in(2026-08)") and 2026-09 (TODAY's).
+// - error-path inputs (edits of real values): "2026-10" is TODAY's month + 1; "August" is
 //   2026-08 written as the month's name; a page made from a real email (julia.evans230's) or a real
 //   user id (u_2b6447a3) behind "/", and a real page with its leading "/" removed; "purchase" is
-//   04 §Webhook's own example of a rejected event name (T-WH-4 uses it too); 0 and 3651 are one
+//   the webhook's own example of a rejected event name (T-WH-4 uses it too); 0 and 3651 are one
 //   past each end of 1–3650, -1 and 101 of 0–100, and 2.5 a non-whole N (numbers, not business data).
-// - webhooks (09 D-11): signed brief-shaped events for real app_users.csv ids — u_2b6447a3
+// - webhooks: signed brief-shaped events for real app_users.csv ids — u_2b6447a3
 //   (julia.evans230, active), u_ceed5f12 (joy.hall830, active), u_f2411d1c (john.turner61,
 //   active), u_baba14aa (daniel.hill389, unsubscribed). Devices are `d_` + the user id's hex;
 //   event ids come from eventIdPool(). Times: the brief's 2026-09-28T14:22:05Z, and for the "after
@@ -456,10 +454,10 @@ function visitedBy(keep: (v: { page: string; date: string }) => boolean): Set<st
   return new Set(csvVisits().flatMap((v) => (v.email !== null && keep(v) ? [v.email] : [])))
 }
 
-/** 02 §Derived cold_since, by hand: (last_open_date ?? signup_date) + 30 days. */
+/** cold_since, by hand: (last_open_date ?? signup_date) + 30 days. */
 const coldSinceOf = (s: CsvSubscriber) => minusDays(s.last_open_date ?? s.signup_date, -30)
 
-/** 02 §Derived engagement_score, by hand, at seed (no app events): recency 50 + site visits 25. */
+/** engagement_score, by hand, at seed (no app events): recency 50 + site visits 25. */
 function engagementOf(s: CsvSubscriber, visitsLast30: Map<string, number>, appEventsLast30 = 0): number {
   const recency = s.last_open_date === null ? 0 : 50 * Math.max(0, 1 - Math.max(0, daysFrom(s.last_open_date, TODAY)) / 30)
   return Math.round(recency + 25 * Math.min(1, appEventsLast30 / 10) + 25 * Math.min(1, (visitsLast30.get(s.email) ?? 0) / 5))
@@ -694,7 +692,7 @@ describe('T-SEG-10 site visits', () => {
   })
 
   it('GET /api/segments/options fails loud on a stored page the filter would refuse', async () => {
-    // A copy of a real row (09 D-47): web_events.csv line 2's visitor and time, its page with the
+    // A copy of a real row: web_events.csv line 2's visitor and time, its page with the
     // leading "/" removed. The seed never stores such a page; offering it would only 400 later.
     const real = await env.DB.prepare("SELECT visitor_id, event_ts FROM web_events WHERE page = '/news/church-attendance-study' ORDER BY id LIMIT 1").first<{ visitor_id: string; event_ts: string }>()
     if (real === null) throw new Error('web_events has no /news/church-attendance-study row')
@@ -715,7 +713,7 @@ describe('T-SEG-10 site visits', () => {
   })
 
   it('GET /api/segments/options ranks by distinct subscribers: repeat visits by one subscriber move nothing', async () => {
-    // Copies of a real row (09 D-47): one linked visitor's own /our-staff visit (web_events.csv),
+    // Copies of a real row: one linked visitor's own /our-staff visit (web_events.csv),
     // repeated until /our-staff has more visit rows, and more rows with a pkey, than the page
     // ranked just above it. Its distinct subscribers do not change, so neither may its rank; a
     // ranking by count(*) or count(pkey) would move it up.
@@ -758,7 +756,7 @@ describe('T-SEG-10 site visits', () => {
   })
 })
 
-/** The MVP filter examples of 19 §3, each a different segment. */
+/** The MVP filter examples, each a different segment. */
 const MVP_EXAMPLES: Record<string, unknown>[] = [
   { source: ['instagram'], went_cold: '2026-08' },
   { source: ['instagram'], went_cold: 'any' },
@@ -792,7 +790,7 @@ describe('T-SEG-12 every new filter keeps the segment rules', () => {
     const used = async (filters: Record<string, unknown>) => (await BUILTIN_HANDLERS.segment.run(env.DB, filters)).summary.definitions_used
     expect(await used({ source: ['instagram'], went_cold: '2026-08' })).toEqual(['went_cold_in', 'cold_since'])
     expect(await used({ source: ['instagram'], went_cold: 'any' })).toEqual(['cold', 'cold_since'])
-    // 30 days is the new_subscriber window (02 §Derived); 7 days is only a last-N-days window.
+    // 30 days is the new_subscriber window; 7 days is only a last-N-days window.
     expect(await used({ signed_up_within_days: 30 })).toEqual(['new_subscriber', 'last_n_days'])
     expect(await used({ signed_up_within_days: 7 })).toEqual(['last_n_days'])
     expect(await used({ engagement_gte: 50 })).toEqual(['engagement_score'])
@@ -915,7 +913,7 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
   })
 
   it('julia\'s read_story at TODAY: app activity 0 → 1, engagement ≥ 31 rises by exactly 1 (28 → 31)', async () => {
-    // 28 and 31 by the 02 §Derived formula on her CSV row and visits, with 0 and then 1 app event.
+    // 28 and 31 by the engagement formula on her CSV row and visits, with 0 and then 1 app event.
     const csvJulia = csvSubscribers().find((s) => s.email === JULIA)
     if (csvJulia === undefined) throw new Error(`${JULIA} is not in subscribers.csv`)
     const scoreBefore = engagementOf(csvJulia, visitsLast30d())
@@ -938,7 +936,7 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
 
   it('the N of app_active_within_days is the window: an event 8 days before TODAY counts for 8 and 30 days, not 7', async () => {
     // john.turner61 (u_f2411d1c, app_users.csv line 9) reads a story at TODAY − 8 days, BRIEF_TS's
-    // time of day. lastNDays(7) starts 2026-09-21 and lastNDays(8) starts 2026-09-20 (02 §Derived).
+    // time of day. lastNDays(7) starts 2026-09-21 and lastNDays(8) starts 2026-09-20.
     const eightDaysAgo = `${minusDays(TODAY, 8)}${BRIEF_TS.slice(10)}`
     expect(eightDaysAgo).toBe('2026-09-20T14:22:05Z')
     expect(compileSegment(parseFilters({ app_active_within_days: 7 })).params).toEqual(['active', minusDays(TODAY, 7)])
@@ -980,7 +978,7 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
   })
 })
 
-// The page's side of a preview, against the real Worker (09 D-69). previewAndRecord
+// The page's side of a preview, against the real Worker. previewAndRecord
 // (src/segment-preview.ts) is what /segments runs; pagePost is postJson's rule (2xx → JSON, else
 // the envelope as the same ApiError, src/api-error.ts toApiError). The form values are
 // error-path values (0, -5, 2.5, 99999; engagement from above to) and the brief's preset.
@@ -1072,7 +1070,7 @@ describe('T-SEG-7 a rejected days value names the field and its limit in plain w
       expect(await problemsOf({ days: value })).toEqual([
         { field: 'days', message: "Haven't opened an email in at least: enter a whole number of days, 1 or more." },
       ])
-    // No upper limit on "haven't opened in" (09 D-01): 99999 runs.
+    // No upper limit on "haven't opened in": 99999 runs.
     expect((await submitForm({ days: '99999' })).result.status).toBe('ok')
   })
 

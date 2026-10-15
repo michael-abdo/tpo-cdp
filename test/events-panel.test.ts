@@ -9,14 +9,13 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { sendWebhook, signature as independentSignature, webhookSecret } from './helpers/webhook'
 
-// POST /api/events/test (04 §POST /api/events/test, 06 §/events panel, 09 D-73): the "Send a
-// test event" panel's server route. T-WH-PANEL-1..12 (08). The test D1 holds the real seed of
-// data/*.csv (test/helpers/seed.ts); no network.
-// Inputs (09 D-11, D-47: real ids, minimal edits for the refusal paths):
-// - u_2b6447a3 is julia.evans230@gmail.com (app_users.csv:2, 02 §Counts demo subject): a real
+// POST /api/events/test: the "Send a test event" panel's server route. T-WH-PANEL-1..12. The test
+// D1 holds the real seed of data/*.csv (test/helpers/seed.ts); no network.
+// Inputs (real ids, minimal edits for the refusal paths):
+// - u_2b6447a3 is julia.evans230@gmail.com (app_users.csv:2, a demo subject): a real
 //   app account with no app_events rows yet in this file.
-// - u_09acb8a4 is an app-only user (02 §Counts); u_does_not_exist occurs nowhere in data/*.csv
-//   (09 D-47: a real-shaped id that is simply not one of the real ones).
+// - u_09acb8a4 is an app-only user; u_does_not_exist occurs nowhere in data/*.csv
+//   (a real-shaped id that is simply not one of the real ones).
 const KNOWN_USER = 'u_2b6447a3'
 const KNOWN_USER_EMAIL = 'julia.evans230@gmail.com'
 const UNKNOWN_USER_ID = 'u_does_not_exist'
@@ -102,10 +101,10 @@ describe('POST /api/events/test (09 D-73)', () => {
       email: KNOWN_USER_EMAIL,
     })
     expect(body.event.event_id).toMatch(/^evt_[0-9a-f]+$/)
-    // 8 random bytes (16 hex chars), not fewer (09 D-73): a short id can
+    // 8 random bytes (16 hex chars), not fewer: a short id can
     // collide with an existing device (real or anonymous) and silently re-point its identity.
     expect(body.event.device_id).toMatch(/^d_[0-9a-f]{16}$/)
-    // 09 D-01 / 02 §Time: a demo event's timestamp is TODAY (shared/config.ts) plus the current
+    // A demo event's timestamp is TODAY (shared/config.ts) plus the current
     // UTC time of day, never wall-clock "now" — a mutant that used `new Date().toISOString()`
     // directly would date the event after TODAY and fails this. The time-of-day half is also
     // pinned exactly, with a fake clock, in the "demoTimestamp" describe block below.
@@ -176,7 +175,7 @@ describe('POST /api/events/test (09 D-73)', () => {
 
   it('T-WH-PANEL-5c: a resend of an event with non-null properties sends them back unchanged (kills M14: a dropped properties spread)', async () => {
     // A real app account (KNOWN_USER) sending a real-shaped read_story event with a properties
-    // story slug (09 D-11/D-47, 09 D-70 #2's own slug pattern), through the real webhook so the
+    // story slug (T-HARD-2's own slug pattern), through the real webhook so the
     // row is genuinely stored, not constructed by hand.
     const eventId = 'evt_panel5c_props'
     const sentOnce = await sendWebhook(
@@ -283,10 +282,10 @@ describe('POST /api/events/test (09 D-73)', () => {
   it('T-WH-PANEL-9b: never moves device ownership to a different account (D-73 out of scope)', async () => {
     // A then B logs in on the same shared device, then an anonymous event on it resolves to B
     // via login_stitch (the device's most recent identified user, by event_ts). A panel send for
-    // A must not touch that shared device at all (fresh device on every send, D-73 amended
-    // 2026-10-14): re-pointing it would silently re-attribute B's own anonymous event to A,
+    // A must not touch that shared device at all (a fresh device on every send): re-pointing it
+    // would silently re-attribute B's own anonymous event to A,
     // exactly the live bug this route must never reintroduce. Two accounts untouched elsewhere in
-    // this file (09 D-11, app_users.csv): u_baba14aa (daniel.hill389), u_c0d06d19 (leah.stewart812).
+    // this file (app_users.csv): u_baba14aa (daniel.hill389), u_c0d06d19 (leah.stewart812).
     const userA = 'u_baba14aa'
     const userB = 'u_c0d06d19'
     const send = async (eventId: string, event: string, userId: string | null, ts: string) => {
@@ -313,10 +312,10 @@ describe('POST /api/events/test (09 D-73)', () => {
 })
 
 // demoTimestamp() (shared/demo-timestamp.ts, imported by both the panel route and
-// scripts/send-webhook.ts, D-72 one home): TODAY plus the CURRENT UTC time of day, never a
+// scripts/send-webhook.ts, one home): TODAY plus the CURRENT UTC time of day, never a
 // frozen or dropped time of day. T-WH-PANEL-4 above only checks `startsWith(TODAY)`, which a
 // mutant returning `${TODAY}T00:00:00Z` would still pass; this fakes the clock so the time-of-day
-// half is pinned exactly, independent of 02 §Time's wall-clock allow-list / 09 D-01.
+// half is pinned exactly, independent of the real clock.
 describe('demoTimestamp (shared/demo-timestamp.ts; 02 §Time, 09 D-01/D-73 amended 2026-10-14)', () => {
   it('returns TODAY at the exact faked UTC time of day, not midnight and not real "now"', () => {
     vi.useFakeTimers()
@@ -336,7 +335,7 @@ describe('demoTimestamp (shared/demo-timestamp.ts; 02 §Time, 09 D-01/D-73 amend
   })
 })
 
-// T-WH-PANEL-10: no second copy of verify or ingest (09 D-73's own rule). A mutant that skips
+// T-WH-PANEL-10: no second copy of verify or ingest. A mutant that skips
 // signing or verify, or swaps the real POST /webhooks/app call for a direct ingestEvent call,
 // is caught two ways: (1) here, statically — the route must call the real webhookRoutes.request
 // and the shared webhookMac, and must never call ingestEvent or verifyWebhook itself; (2)

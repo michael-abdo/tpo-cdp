@@ -6,20 +6,20 @@ import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook, signedRequest } from './helpers/webhook'
 
-// GET /api/events/recent (04 §GET /api/events/recent, 06 §/events) and T-WH-10 (08, R4.10).
+// GET /api/events/recent and T-WH-10.
 // Every event goes through the real POST /webhooks/app; the feed and the segment preview are read
 // through the real routes on the same worker (SELF), with no re-import between write and read.
 // The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts).
-// Inputs and where they come from (09 D-11: brief-shaped payloads built from real ids):
+// Inputs and where they come from (brief-shaped payloads built from real ids):
 // - users are real app_users.csv rows: u_c3a64c0a (line 5, julia.wilson12@yahoo.com),
-//   u_2b6447a3 (line 2, julia.evans230@gmail.com, Instagram, active, 02 §Counts demo subject),
+//   u_2b6447a3 (line 2, julia.evans230@gmail.com, Instagram, active, a demo subject),
 //   u_09acb8a4 (line 6, appuser17@gmail.com, app-only), which carries the 22 events of the feed
 //   limit test so julia.evans230's app score is not saturated before T-WH-10. The unknown user
-//   id u_09acb8a is u_09acb8a4 with its last character removed (09 D-47); it occurs nowhere in
+//   id u_09acb8a is u_09acb8a4 with its last character removed; it occurs nowhere in
 //   data/*.csv.
 // - devices are `d_` + the hex of a real user id; event ids come from eventIdPool().
-// - event times are the brief's 2026-09-28T14:22:05Z (04 §Webhook body) and 07 §D's 09:00 and
-//   09:10 on TODAY (02 §Time: demo events default to TODAY).
+// - event times are the brief's 2026-09-28T14:22:05Z and 09:00 and 09:10 on TODAY (demo events
+//   default to TODAY).
 
 const BRIEF_TS = '2026-09-28T14:22:05Z'
 const nextEventId = eventIdPool()
@@ -200,9 +200,9 @@ async function preview(filters: unknown): Promise<PreviewBody> {
   return res.json<PreviewBody>()
 }
 
-// 08 T-WH-10 (09 D-53, amended by D-69): the app activity filters (app_active_within_days,
+// T-WH-10: the app activity filters (app_active_within_days,
 // app_event) read v_app_events, which only webhooks fill, so an event now moves a segment count;
-// the engagement filters read the stored engagement_score, which an event also moves (09 D-46).
+// the engagement filters read the stored engagement_score, which an event also moves.
 // This test pins both on the same worker with no re-import: the score in the rows, and the app
 // activity counts (test/segments.test.ts T-SEG-9 and T-SEG-11 pin the same for engagement ranges,
 // windows, stitching and events after TODAY).
@@ -218,7 +218,7 @@ describe('T-WH-10 a segment reflects a webhook event with no re-import, same wor
       return { score: found.engagement_score }
     }
 
-    // App activity counts (09 D-69): only webhook events feed them, and this file sent none for her yet.
+    // App activity counts: only webhook events feed them, and this file sent none for her yet.
     const appCount = async (f: Record<string, unknown>) => (await preview(f)).count
     const has = async (f: Record<string, unknown>) => (await preview(f)).rows.some((r) => r.email === julia)
     const countsBefore = { week: await appCount({ app_active_within_days: 7 }), login: await appCount({ app_event: 'login' }), open: await appCount({ app_event: 'app_open' }) }
