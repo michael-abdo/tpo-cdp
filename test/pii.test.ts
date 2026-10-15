@@ -698,6 +698,29 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
 describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and more invisible characters are stripped (09 D-79 fixer round 2)', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
 
+  it('the self-audit\'s exact spelling of a stored address, joy . hall830 @ protonmail . com, is blocked outbound and redacted in a question', async () => {
+    const known = await loadKnownEmails(env.DB)
+    const spaced = 'joy . hall830 @ protonmail . com'
+    expect(findPII(`is ${spaced} engaged?`, known)).toBe('known_email')
+    expect(redactEmails(`is ${spaced} engaged?`).text).toBe('is [email] engaged?')
+  })
+
+  it('an address padded with spaces around "@" or "." is caught; ordinary sentences and handles are not (self-audit at 1200107)', () => {
+    const none = new KnownEmails([])
+    for (const text of ['press . desk @ example . com', 'press @ example.com', 'press@ example . co . uk', 'new.person @ example.de']) {
+      expect(findPII(text, none), text).toBe('email_pattern')
+    }
+    for (const text of [
+      'Most signed up at Instagram. Of those, 46 went cold.',
+      'follow us @ instagram',
+      'meet @ noon',
+      'It rose 3 . 5 points. Then it fell.',
+      'Version 2 . 0 is out',
+    ]) {
+      expect(findPII(text, none), text).toBeNull()
+    }
+  })
+
   it('a spelled address with any two-letter or common generic TLD is caught, and a spelled dot in the name part counts too (09 D-79 closure)', () => {
     const known = new KnownEmails([])
     for (const text of ['press at example dot de', 'press at example dot ai', 'new.person at example dot ca', 'new dot person at example.com', 'sales at shop dot store']) {

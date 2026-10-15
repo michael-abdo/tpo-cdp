@@ -264,14 +264,28 @@ function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
       const onAt = tokens.indexOf(kind)
       const onEnd = next < clause.length ? tokens.indexOf(clause[next]) : end
       const on = tokens.slice(onAt + 1, onEnd)
-      const linked = on.some((_, k) => {
-        const [a, d1, c1, eq, b, d2, c2] = on.slice(k, k + 7)
+      // The ON's top-level AND-parts; at least one must be exactly `a.col = b.col` between two
+      // different views. An OR at the top level or around that equality (`ON p.pkey = w.pkey OR
+      // 1 = 1`, the self-audit's 2026-10-14 probe) leaves no such part, so it is refused here,
+      // not only by the plan check. An OR inside a separate filter part stays allowed.
+      const conjuncts: SqlToken[][] = [[]]
+      for (const c of on) {
+        if (c.depth === kind.depth && word(c) === 'AND') conjuncts.push([])
+        else conjuncts[conjuncts.length - 1]!.push(c)
+      }
+      const isColumnEquality = (part: readonly SqlToken[]) => {
+        let x = part
+        while (x.length >= 2 && x[0]!.text === '(' && x[x.length - 1]!.text === ')') x = x.slice(1, -1)
+        if (x.length !== 7) return false
+        const [a, d1, c1, eq, b, d2, c2] = x
         return (
-          a?.kind === 'word' && d1?.text === '.' && c1?.kind === 'word' && eq?.text === '=' &&
-          b?.kind === 'word' && d2?.text === '.' && c2?.kind === 'word' && a.text.toUpperCase() !== b.text.toUpperCase()
+          a!.kind === 'word' && d1!.text === '.' && c1!.kind === 'word' && eq!.text === '=' &&
+          b!.kind === 'word' && d2!.text === '.' && c2!.kind === 'word' && a!.text.toUpperCase() !== b!.text.toUpperCase()
         )
-      })
-      if (!linked) problems.add('a JOIN must link the two views on a column equality, e.g. ON p.pkey = w.pkey')
+      }
+      if (!conjuncts.some(isColumnEquality)) {
+        problems.add('a JOIN must link the two views on a column equality joined with AND (never OR), e.g. ON p.pkey = w.pkey')
+      }
     })
   })
   return [...problems]

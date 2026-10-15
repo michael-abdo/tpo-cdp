@@ -144,6 +144,12 @@ const DISGUISE_TOKEN_RE = new RegExp(
     '|(?<atBr>\\s*(?:\\[\\s*at\\s*\\]|\\(\\s*at\\s*\\)|\\{\\s*at\\s*\\}|<\\s*at\\s*>)\\s*)' +
     '|(?<dotBr>\\s*(?:\\[\\s*dot\\s*\\]|\\(\\s*dot\\s*\\)|\\{\\s*dot\\s*\\})\\s*)' +
     '|(?<dotSpelled>(?<=[\\p{L}\\p{N}_-])\\s+dot\\s+(?=[\\p{L}\\p{N}_-]))' +
+    // A literal "@" or "." padded with spaces between word characters ("joy . hall830 @
+    // protonmail . com"), the self-audit's unlisted spelling (09 D-79): folded like the others.
+    '|(?<atSpaced>(?<=[\\p{L}\\p{N}_.+-])(?:\\s+@\\s*|\\s*@\\s+)(?=[\\p{L}\\p{N}]))' +
+    // A spaced "." needs a space on BOTH sides, so an ordinary sentence end ("at Instagram. Of
+    // those…") is never read as a domain dot.
+    '|(?<dotSpaced>(?<=[\\p{L}\\p{N}_-])\\s+\\.\\s+(?=[\\p{L}\\p{N}_-]))' +
     '|(?<ch>[\\s\\S])',
   'giu',
 )
@@ -191,9 +197,9 @@ function foldDisguises(stage1: readonly ScanToken[]): DisguiseToken[] {
     const [origStart] = end > start ? spanAt[start]! : [stage1Text.length, stage1Text.length]
     const [, origEnd] = end > start ? spanAt[end - 1]! : [stage1Text.length, stage1Text.length]
     const groups = m.groups as Record<string, string | undefined>
-    const isDot = groups.dotBr !== undefined || groups.dotSpelled !== undefined
+    const isDot = groups.dotBr !== undefined || groups.dotSpelled !== undefined || groups.dotSpaced !== undefined
     const out =
-      groups.pct !== undefined || groups.hex !== undefined || groups.dec !== undefined || groups.atBr !== undefined
+      groups.pct !== undefined || groups.hex !== undefined || groups.dec !== undefined || groups.atBr !== undefined || groups.atSpaced !== undefined
         ? '@'
         : isDot
           ? '.'

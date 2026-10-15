@@ -575,6 +575,8 @@ describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset 
       'SELECT count(*) FROM v_profiles p JOIN v_web_events w',
       "SELECT count(*) FROM v_profiles p JOIN v_web_events w ON p.status = 'active'",
       'SELECT count(*) FROM v_profiles p JOIN v_web_events w ON 1 = 1',
+      'SELECT count(*) FROM v_profiles p JOIN v_web_events w ON p.pkey = w.pkey OR 1 = 1',
+      "SELECT count(*) FROM v_profiles p JOIN v_web_events w ON (p.pkey = w.pkey OR w.page <> '')",
       'SELECT count(*) FROM v_web_events a JOIN v_web_events b ON a.page = a.page',
       'SELECT count(*) FROM v_profiles WHERE pkey IN (SELECT w.pkey FROM v_web_events w, v_app_events e)',
     ]) expect(() => readOnlySelect(sql), sql).toThrow(GateDenied)
@@ -584,6 +586,7 @@ describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset 
       'SELECT count(*) FROM v_profiles p JOIN v_web_events w ON w.pkey = p.pkey',
       'SELECT count(*) FROM v_profiles p LEFT JOIN v_web_events w ON p.pkey = w.pkey AND w.page = \'/\'',
       'SELECT count(*) FROM v_profiles JOIN v_web_events USING (pkey)',
+      "SELECT count(*) FROM v_profiles p JOIN v_web_events w ON p.pkey = w.pkey AND (w.page = '/' OR w.page = '/subscribe')",
       "SELECT source, count(*) FROM v_profiles WHERE status = 'active' GROUP BY source",
       'SELECT count(*) FROM v_profiles WHERE pkey IN (SELECT pkey FROM v_web_events)',
     ]) expect(() => readOnlySelect(sql), sql).not.toThrow()
