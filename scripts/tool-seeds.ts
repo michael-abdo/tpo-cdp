@@ -16,8 +16,9 @@
  *   and the unsubscribed default (02 §Defaults) mean the same thing in both tools. Its metrics
  *   are the ones builtin-handlers.ts computes over the v_* views. The draft's
  *   `engagement_buckets` is not seeded (09 D-56): 02 §Derived defines no buckets, and bucket
- *   edges in SQL would be a second formula (D-46). "Most engaged" is the segment tool's
- *   ranking instead: its rows come out by stored engagement_score, highest first.
+ *   edges in SQL would be a second formula (D-46). "Most engaged readers" is the segment tool with
+ *   engagement_gte = MOST_ENGAGED_MIN (shared/segment-filters.ts), its rows by stored
+ *   engagement_score, highest first: a short, ranked list rather than every active subscriber.
  * - `query_sql` names only the views 01 §PII-free views defines (the draft listed views that do not
  *   exist) and states the rules Gates 2 and 3 enforce, so the model can write a query that passes
  *   them the first time (03 rows 7-8). Its input is exactly the draft's `sql` and `explanation`.
@@ -38,7 +39,7 @@
 
 import { TODAY } from '../shared/config'
 import { addDays, DEFINITIONS, type DateWindow, lastNDays } from '../shared/derive'
-import { FILTER_KEYS, FILTER_SCHEMA, type FilterKey } from '../shared/segment-filters'
+import { FILTER_KEYS, FILTER_SCHEMA, type FilterKey, MOST_ENGAGED_MIN } from '../shared/segment-filters'
 import type { SqlValue } from '../worker/ingest/sql'
 
 export interface ToolSeed {
@@ -71,7 +72,7 @@ const FILTER_DESCRIPTIONS: { readonly [K in FilterKey]: string } = {
   include_never_opened: 'With days_since_open_gte, also include everyone who never opened. Default false.',
   went_cold: `"any" = cold now (the cold definition); "YYYY-MM" = went cold in that month (went_cold_in), no month after ${TODAY.slice(0, 7)}.`,
   signed_up_within_days: 'Signed up from N days before today through today, both days counted (30 = the new_subscriber definition).',
-  engagement_gte: 'Stored engagement_score at least this (0–100).',
+  engagement_gte: `Stored engagement_score at least this (0–100). ${MOST_ENGAGED_MIN} = "most engaged readers".`,
   engagement_lte: 'Stored engagement_score at most this (0–100); not below engagement_gte.',
   has_app: 'true = has an app account, false = has none, null or absent = either.',
   site_visit_within_days: 'Visited the site in the last N days.',
@@ -95,8 +96,10 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
       'Count and list a subscriber segment, exactly as the segment builder does. Returns the count, how many ' +
       'unsubscribed profiles the status filter hides, and up to 10 rows referenced by pseudonymous keys (pk_…), ' +
       'listed most engaged first (the stored engagement_score, highest first). ' +
-      'Use for "who/which subscribers…" questions, for "most engaged readers" (no extra filters; the rows are the ' +
-      'ranking), and whenever the teammate may want to open or export the list. ' +
+      'Use for "who/which subscribers…" questions and whenever the teammate may want to open or export the list. ' +
+      `For "most engaged readers" (or "most engaged subscribers") set engagement_gte to ${MOST_ENGAGED_MIN}: ` +
+      `the list is everyone with an engagement score of ${MOST_ENGAGED_MIN} or more, most engaged first; ` +
+      'say that rule in the answer. ' +
       'Status defaults to ["active"]. days_since_open_gte is the brief\'s "no open in N days" filter, not "cold"; ' +
       'to list subscribers who went cold use went_cold ("any" = cold now, or a month "YYYY-MM"); for a month it ' +
       'matches the count aggregate went_cold gives over that month. ' +

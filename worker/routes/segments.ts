@@ -94,7 +94,7 @@ export async function countSegment(db: D1Database, segment: CompiledSegment): Pr
   return n
 }
 
-/** The segment's rows in email order, all of them or the first `limit`. */
+/** The segment's rows, most engaged first (SEGMENT_SORT), all of them or the first `limit`. */
 export async function segmentRows(db: D1Database, segment: CompiledSegment, limit?: number): Promise<SegmentRow[]> {
   const statement =
     limit === undefined

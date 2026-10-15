@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, toolSeedInsert } from '../scripts/tool-seeds'
 import { HOSTED_URL } from '../shared/config'
+import { MOST_ENGAGED_MIN } from '../shared/segment-filters'
 import { PII_COLUMNS } from '../shared/pii'
 import { startTrace } from '../worker/assistant/audit/ai-audit'
 import { MODEL } from '../worker/assistant/build-request'
@@ -611,9 +612,9 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     const pkeys = collectPkeys(result)
     expect(pkeys).toHaveLength(100)
 
-    // After: the UI payload carries subscribers of the builder's segment, as emails. The tool's
-    // rows come most engaged first (09 D-56), so they are members of the builder's 177, not its
-    // first 100 in email order.
+    // After: the UI payload carries subscribers of the builder's segment, as emails. Both lists
+    // come most engaged first (09 D-56); ties break by pkey in the tool and by email in the
+    // builder, so the check is membership in the builder's 177, not position.
     const hydrated = rehydrate(result, await loadEmailsByPkey(env.DB, pkeys))
     expect(hydrated.table?.columns[0]).toBe('email')
     const all = new Set((await preview(cookie, PRESET, 1000)).rows.map((r) => r.email))
@@ -764,29 +765,43 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(respond({ modelText: null, outputs: [seg, cold], capped: true }).result.table?.rows).toEqual([{ cold: 147 }])
   })
 
-  it('"our most engaged readers": the segment tool lists the highest stored engagement scores first (09 D-56)', async () => {
+  it('"our most engaged readers": the tool row maps it to engagement_gte 50, not to every active subscriber', () => {
+    const segment = TOOL_SEEDS.find((t) => t.name === 'segment')!
+    expect(MOST_ENGAGED_MIN).toBe(50)
+    expect(segment.description).toContain(`For "most engaged readers" (or "most engaged subscribers") set engagement_gte to ${MOST_ENGAGED_MIN}`)
+    // The old wording sent the model to no filter at all: every active subscriber (2,610).
+    expect(segment.description).not.toMatch(/no extra filters/)
+    expect(String((segment.inputSchema.properties as Record<string, { description: string }>).engagement_gte.description)).toContain(
+      `${MOST_ENGAGED_MIN} = "most engaged readers"`,
+    )
+  })
+
+  it('"our most engaged readers": 487 active subscribers with engagement 50 or more, highest scores first, the same list "Open segment" shows (09 D-56)', async () => {
     const cookie = await loginCookie()
-    // Independent of the tool's SQL: the scores of active subscribers, from the tables, highest first.
+    const filters = { engagement_gte: MOST_ENGAGED_MIN }
+    // Independent of the tool's SQL: the scores of active subscribers at 50 or more, from the tables, highest first.
     const { results } = await env.DB.prepare(
-      "SELECT p.engagement_score AS score FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm WHERE s.status = 'active' ORDER BY p.engagement_score DESC LIMIT 100",
-    ).all<{ score: number }>()
+      "SELECT p.engagement_score AS score FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm WHERE s.status = 'active' AND p.engagement_score >= ? ORDER BY p.engagement_score DESC LIMIT 100",
+    )
+      .bind(MOST_ENGAGED_MIN)
+      .all<{ score: number }>()
     const top = results.map((r) => r.score)
     expect(top).toHaveLength(100)
     expect(top[0]).toBeGreaterThan(top[99]) // the data has a spread, so the order is visible
 
     const { transport, requests } = scripted([
-      () => message([toolUse('toolu_top', 'segment', {})], 'tool_use'),
+      () => message([toolUse('toolu_top', 'segment', filters)], 'tool_use'),
       () =>
         message(
           [
             text(
               finalText('Here are the most engaged readers.', {
                 type: 'segment',
-                text: 'Active subscribers, most engaged first by engagement score.',
+                text: 'Active subscribers with an engagement score of 50 or more, most engaged first.',
                 window: null,
-                filters_applied: { status: ['active'] },
+                filters_applied: { status: ['active'], engagement_gte: MOST_ENGAGED_MIN },
                 definitions_used: ['engagement_score'],
-                segment: { filters: {} },
+                segment: { filters },
               }),
             ),
           ],
@@ -803,10 +818,14 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     }>()
     expect(body.type).toBe('segment')
     expect(body.partial).toBe(false)
-    const builder = await preview(cookie, {}, 1)
-    expect(body.segment.count).toBe(builder.count) // opens in the builder as the same segment
+    expect(body.segment.count).toBe(487) // 02 §Counts / T-SEG-9: engagement >= 50, active
+    const builder = await preview(cookie, filters)
+    expect(builder.count).toBe(body.segment.count) // opens in the builder as the same segment
+    expect(builder.hidden_unsubscribed).toBe(27)
     expect(body.table.columns[0]).toBe('email')
     expect(body.table.rows.map((r) => r.engagement_score)).toEqual(top)
+    // "Open segment" shows the builder's rows: the same scores in the same order.
+    expect((builder.rows as unknown as { engagement_score: number }[]).map((r) => r.engagement_score)).toEqual(top)
 
     // The model's ten rows are the top ten scores too, as pk_ keys.
     const shown = String(firstToolResult(requests[1]).content)

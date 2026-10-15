@@ -25,7 +25,7 @@ import { TODAY } from '../../shared/config'
 import { DEFINITIONS, type DefinitionKey, NEW_SUBSCRIBER_DAYS } from '../../shared/derive'
 import { GLOSSARY } from '../../shared/glossary'
 import { CANONICAL_SOURCES } from '../../shared/normalize'
-import { SEGMENT_COLUMNS, SEGMENT_SORT_COLUMN } from '../../shared/segment-filters'
+import { SEGMENT_COLUMNS, SEGMENT_SORT } from '../../shared/segment-filters'
 import { SUBSCRIBER_STATUSES } from '../../worker/ingest/quarantine'
 import { downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
@@ -430,8 +430,8 @@ export function RowDetails({ row }: { row: SegmentRow }) {
 /**
  * What the download has, beside Export CSV (06 §/segments, 09 D-76): every piece reads the one
  * home the export itself uses, so this can never describe a different file than the one that
- * downloads. SEGMENT_COLUMNS and SEGMENT_SORT_COLUMN (shared/segment-filters.ts) are the same
- * array compileSegment reads to build the export's SELECT and ORDER BY; `filters` is the
+ * downloads. SEGMENT_COLUMNS and SEGMENT_SORT (shared/segment-filters.ts) are the same arrays
+ * compileSegment reads to build the export's SELECT and ORDER BY; `filters` is the
  * canonical object the server echoed for this result (POST /api/segments/preview's `filters`),
  * read through the one filters-in-words renderer (src/filters-applied.ts) the Ask bar's answer
  * card already uses. D-72: the row count repeats only as a number, in words the count sentence
@@ -457,9 +457,7 @@ export function ExportFileDetails({ filters, count }: { filters: SegmentFilters;
       <Disclosure label="What's in the file">
         <div className="space-y-2 text-sm text-gray-700">
           <p>Columns, in file order: {SEGMENT_COLUMNS.map(columnLabel).join(', ')}.</p>
-          {/* SEGMENT_SORT_COLUMN names email today, a sorted-not-numeric column; "A to Z" only
-              reads right while that stays true (shared/segment-filters.ts). */}
-          <p>Sorted by {columnLabel(SEGMENT_SORT_COLUMN)}, A to Z.</p>
+          <p>Sorted by {SEGMENT_SORT.map((key) => `${columnLabel(key.column)}, ${key.words}`).join('; then by ')}.</p>
           {applied.status === 'shown' ? (
             <div>
               <p>Filters applied:</p>

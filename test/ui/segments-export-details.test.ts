@@ -4,12 +4,12 @@ import { describe, expect, it } from 'vitest'
 import segmentsSource from '../../src/pages/SegmentsPage.tsx?raw'
 import { ExportFileDetails } from '../../src/pages/SegmentsPage'
 import { BRIEF_EXAMPLE } from '../../src/previous-searches'
-import { SEGMENT_COLUMNS, SEGMENT_SORT_COLUMN, type SegmentFilters } from '../../shared/segment-filters'
+import { SEGMENT_COLUMNS, SEGMENT_SORT, type SegmentFilters } from '../../shared/segment-filters'
 
 // /segments "What's in the file" (06 §/segments, R3; 09 D-76): beside Export CSV, one short
 // level-1 line names the rows and whether unsubscribed subscribers are part of the file, and a
 // level-2 disclosure lists the columns in file order, the sort order and the filters the server
-// echoed, every piece read from SEGMENT_COLUMNS / SEGMENT_SORT_COLUMN (shared/segment-filters.ts,
+// echoed, every piece read from SEGMENT_COLUMNS / SEGMENT_SORT (shared/segment-filters.ts,
 // the same array compileSegment reads to build the export's SQL) so the UI can never describe a
 // different file than the one Export CSV downloads. D-72: the row count is stated once more, in
 // new words, never the heading's exact count sentence or segmentLabel's exact sentence.
@@ -59,9 +59,9 @@ describe('/segments ExportFileDetails: "What\'s in the file" (09 D-76)', () => {
     )
   })
 
-  it('names the sort order by the same column compileSegment sorts by', () => {
-    expect(SEGMENT_SORT_COLUMN).toBe('email')
-    expect(text(BRIEF_EXAMPLE, 177)).toContain('Sorted by Email, A to Z.')
+  it('names the sort order by the same keys compileSegment sorts by: engagement, highest first, then email', () => {
+    expect(SEGMENT_SORT.map((k) => k.column)).toEqual(['engagement_score', 'email'])
+    expect(text(BRIEF_EXAMPLE, 177)).toContain('Sorted by Engagement, highest first; then by Email, A to Z.')
   })
 
   it('raw column headers, export order, sit in Technical details, exactly SEGMENT_COLUMNS joined', () => {

@@ -22,7 +22,7 @@ import {
   ENGAGEMENT_MIN,
   FILTER_KEYS,
   SEGMENT_COLUMNS,
-  SEGMENT_SORT_COLUMN,
+  SEGMENT_SORT,
   type SegmentFilters,
   SITE_PAGE_PATTERN,
   WENT_COLD_ANY,
@@ -34,12 +34,12 @@ import { ApiError } from '../auth/middleware'
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../ingest/quarantine'
 import type { SqlValue } from '../ingest/sql'
 
-/** The validated filter object and its keys, and the export's column list and sort column: one
+/** The validated filter object and its keys, and the export's column list and row order: one
  * home, shared/segment-filters.ts (19 §5.5, 09 D-76). */
-export { FILTER_KEYS, SEGMENT_COLUMNS, SEGMENT_SORT_COLUMN, type SegmentFilters }
+export { FILTER_KEYS, SEGMENT_COLUMNS, SEGMENT_SORT, type SegmentFilters }
 
 export interface CompiledSegment {
-  /** One SELECT over the segment's rows in the 04 export column order, ordered by email. */
+  /** One SELECT over the segment's rows in the 04 export column order, in SEGMENT_SORT order. */
   sql: string
   params: SqlValue[]
   /** The SQL with placeholders only (04): the same text, since no value is ever inlined. */
@@ -295,11 +295,11 @@ const TABLES: SegmentRelation = {
 
 /**
  * How the builder's SELECT reads each export column, raw (no `AS`): compileSegment aliases it to
- * the column's SEGMENT_COLUMNS name, and for SEGMENT_SORT_COLUMN alone, uses it bare in ORDER BY.
- * One home (09 D-76) for the export's column list and its sort, so the SELECT and the ORDER BY can
- * never read a different expression for the same column than the other does, and the /segments
- * "What's in the file" disclosure, reading only the column NAMES from shared/segment-filters.ts,
- * never needs to repeat this SQL to describe the same file.
+ * the column's SEGMENT_COLUMNS name, and uses the SEGMENT_SORT columns bare in ORDER BY. One home
+ * (09 D-76) for the export's column list and its order, so the SELECT and the ORDER BY can never
+ * read a different expression for the same column, and the /segments "What's in the file"
+ * disclosure, reading only the column NAMES from shared/segment-filters.ts, never needs to repeat
+ * this SQL to describe the same file.
  */
 const SEGMENT_COLUMN_SQL: { readonly [K in (typeof SEGMENT_COLUMNS)[number]]: string } = {
   email: 's.email_norm',
@@ -435,7 +435,7 @@ export function compileSegment(filters: SegmentFilters): CompiledSegment {
     `SELECT ${SEGMENT_COLUMNS.map((c) => `${SEGMENT_COLUMN_SQL[c]} AS ${c}`).join(', ')}`,
     'FROM subscribers s LEFT JOIN profiles p ON p.email_norm = s.email_norm',
     `WHERE ${where}`,
-    `ORDER BY ${SEGMENT_COLUMN_SQL[SEGMENT_SORT_COLUMN]}`,
+    `ORDER BY ${SEGMENT_SORT.map((key) => `${SEGMENT_COLUMN_SQL[key.column]} ${key.direction === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`,
   ].join(' ')
   return { sql, params, sql_shape: sql }
 }
@@ -456,9 +456,10 @@ export interface CompiledModelSegment {
  * The same filters compiled over v_profiles, with site visits and app activity as IN-subqueries
  * on v_web_events and v_app_events: only v_* views, never a table (05 §Exactly what the model
  * receives, "Structural"). Rows come out most engaged first: the stored
- * engagement_score descending, pkey breaking ties (09 D-56, D-46: an ORDER BY on the stored
- * column, no formula). That is the path for "our most engaged readers" (R5.2); the builder keeps
- * its email order (04). status IN (…) drops the profiles that have no subscriber row.
+ * engagement_score descending (09 D-56, D-46: an ORDER BY on the stored column, no formula), as
+ * the builder's do. Ties break by pkey here, since the view has no email; the builder breaks them
+ * by email, so two rows with the same score may swap places between the two lists.
+ * status IN (…) drops the profiles that have no subscriber row.
  */
 export function compileModelSegment(filters: SegmentFilters): CompiledModelSegment {
   const { where, params } = segmentWhere(filters, MODEL_VIEW)

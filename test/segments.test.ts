@@ -17,7 +17,7 @@ import { redactDetail } from '../worker/assistant/gates/pii-guard'
 import { respond } from '../worker/assistant/respond'
 import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
-import { compileModelSegment, compileSegment, parseFilters, SEGMENT_COLUMNS, SEGMENT_SORT_COLUMN } from '../worker/segments/compile'
+import { compileModelSegment, compileSegment, parseFilters, SEGMENT_COLUMNS, SEGMENT_SORT } from '../worker/segments/compile'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { realCsvs, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
@@ -198,13 +198,27 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect(allRows.filter((r) => r[1] === 'unsubscribed')).toHaveLength(independentCount(['unsubscribed']))
   })
 
-  it("rows come back sorted by email, ascending (09 D-76): compileSegment's one sort column", async () => {
-    expect(SEGMENT_SORT_COLUMN).toBe('email')
-    const [, ...rows] = await exportRecords(PRESET)
-    const emails = rows.map((r) => r[EXPORT_HEADER.indexOf('email')])
-    // 177 real rows, not already in increasing order by construction (data/subscribers.csv's own
-    // row order): this fails if compileSegment's ORDER BY ever names a different column.
-    expect(emails).toEqual([...emails].sort())
+  it('rows come back most engaged first, email A to Z within a score, in the preview and the export alike (09 D-76)', async () => {
+    expect(SEGMENT_SORT.map((k) => [k.column, k.direction])).toEqual([
+      ['engagement_score', 'desc'],
+      ['email', 'asc'],
+    ])
+    /** Score high to low, then email in code-unit order (SQLite's order for email_norm). */
+    const ranked = (rows: { email: string; score: number }[]) =>
+      [...rows].sort((a, b) => b.score - a.score || (a.email < b.email ? -1 : a.email > b.email ? 1 : 0))
+    const [, ...records] = await exportRecords(PRESET)
+    const exported = records.map((r) => ({ email: r[EXPORT_HEADER.indexOf('email')], score: Number(r[EXPORT_HEADER.indexOf('engagement_score')]) }))
+    // 177 real rows with a spread of scores and many ties: this fails if the ORDER BY drops either key.
+    expect(exported).toHaveLength(PRESET_COUNT)
+    expect(new Set(exported.map((r) => r.score)).size).toBeGreaterThan(5)
+    expect(exported.length - new Set(exported.map((r) => r.score)).size).toBeGreaterThan(5)
+    expect(exported).toEqual(ranked(exported))
+    expect(exported[0]!.score).toBeGreaterThan(exported[exported.length - 1]!.score)
+    // The preview lists the same rows in the same order: its first 100 are the export's first 100.
+    const body = await preview(PRESET)
+    expect(body.count).toBe(PRESET_COUNT)
+    expect(body.rows.map((r) => r.email)).toEqual(exported.slice(0, 100).map((r) => r.email))
+    expect(body.sql_shape).toMatch(/ORDER BY p\.engagement_score DESC, s\.email_norm ASC$/)
   })
 
   it('a source value with a single quote is 400 invalid_filters (09 D-69 #6, 19 §0 F7): source is now a subset of CANONICAL_SOURCES, so it never reaches SQL at all', async () => {
