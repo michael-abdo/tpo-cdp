@@ -1,6 +1,6 @@
 /**
- * Subscriber ingest: quarantine, normalize, dedupe (02 §Quarantine, §Dedupe, R1.3,
- * 09 D-27, D-28). Pure: a parsed CSV in, records and quarantined rows out; the seed script
+ * Subscriber ingest: quarantine, normalize, dedupe. Pure: a parsed CSV in, records and
+ * quarantined rows out; the seed script
  * (scripts/csv2sql) does the file I/O and the SQL.
  */
 import { canonicalSource, normalizeEmail } from '../../shared/normalize'
@@ -19,7 +19,7 @@ export interface Subscriber {
   email_raw: string
   signup_date: string
   status: SubscriberStatus
-  /** Canonical source (02 §Normalization); `null` when blank. */
+  /** Canonical source (shared/normalize.ts); `null` when blank. */
   source: string | null
   /** `null` = never opened. */
   last_open_date: string | null
@@ -30,7 +30,7 @@ export interface Subscriber {
 export interface QuarantinedRow {
   line_no: number
   reason: QuarantineReason
-  /** The row re-serialized as one CSV record. PII possible; never in a view (01). */
+  /** The row re-serialized as one CSV record. PII possible; never in a view. */
   raw_row: string
 }
 
@@ -51,7 +51,8 @@ interface Merging {
 }
 
 /**
- * Merge precedence (02 §Dedupe, D-27, 09 D-70 item 9): earliest `signup_date`, latest non-null
+ * Merge precedence, defined so it can be tested even though no duplicate pair in the data
+ * disagrees on any field: earliest `signup_date`, latest non-null
  * `last_open_date`, `unsubscribed` if any row says so, `source` from the earliest-signup row
  * whose source is not blank (the earlier-seen row on a tie; blank only if every row is), first
  * `email_raw`, `merged_count` summed.

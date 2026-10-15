@@ -1,5 +1,5 @@
 /**
- * Seed SQL emission (11 §Seed). Pure: a built Seed in, the four seed files' statements out.
+ * Seed SQL emission. Pure: a built Seed in, the four seed files' statements out.
  * Literal values escaped here, at most 250 rows per INSERT and every statement under D1's
  * 100 KB limit, no BEGIN/COMMIT (`wrangler d1 execute --file` wraps the file). Tables are
  * written so every REFERENCES target precedes its referrer (migrations/0001_core.sql):
@@ -9,7 +9,7 @@
 import type { ImportRun, Seed } from './link'
 
 export const MAX_ROWS_PER_INSERT = 250
-/** D1's per-statement SQL length limit, in bytes (11 §Seed). */
+/** D1's per-statement SQL length limit, in bytes. */
 export const MAX_STATEMENT_BYTES = 100_000
 
 export type SqlValue = string | number | null
