@@ -20,16 +20,14 @@ import { traceOutcome } from '../worker/routes/audit'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// T-GATE-2 and T-AI-2 (08, band A Fri). Designs: 03 §Gateway layers rows 7, 8, 9, 11; 01 §PII-free
-// views; 05 §Scanner, §Leak paths; 04 §POST /api/assistant; 14 §3.5, §4.2 (origin; deviations
-// 09 D-24); 09 D-41.
+// T-GATE-2 and T-AI-2.
 //
 // Inputs: the seeded D1 (data/*.csv via test/helpers/seed.ts) and the assistant_tools rows from
 // scripts/tool-seeds.ts. The SQL strings are what a model could write: view and column names from
-// 01, the probes the gates must refuse (table names from migrations/0001_core.sql), and filter
-// values that occur in data/*.csv (status, source, page "/"). Expected numbers come from 02
-// §Counts: 2,610 active / 290 unsubscribed subscribers; the demo subject joy.hall830 (first page
-// "/", first UTM "instagram"). No test calls the network (09 D-54): the one route test passes a
+// the PII-free views, the probes the gates must refuse (table names from migrations/0001_core.sql),
+// and filter values that occur in data/*.csv (status, source, page "/"). Expected numbers are the
+// seed's: 2,610 active / 290 unsubscribed subscribers; the demo subject joy.hall830 (first page
+// "/", first UTM "instagram"). No test calls the network: the one route test passes a
 // transport defined here that returns Messages-API-shaped turns written in this file.
 
 const JOY = 'joy.hall830@protonmail.com'
@@ -199,7 +197,7 @@ describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
   })
 
   it('the wall clock through a date function is denied: no time value, a computed one, a free-text column, a renamed column', () => {
-    // SQLite evaluates each of these with the machine's clock, not TODAY (02 §Time).
+    // SQLite evaluates each of these with the machine's clock, not TODAY.
     const probes: Array<[string, RegExp]> = [
       ['SELECT count(*) AS n FROM v_profiles WHERE signup_date > date()', /^date\(\) without a time value reads the wall clock/],
       ["SELECT strftime('%Y-%m-%d') AS d FROM v_profiles", /^strftime\(\) without a time value reads the wall clock/],
@@ -245,7 +243,7 @@ describe('T-GATE-2 Gate 2: validateSqlAgainstViews (03 row 7)', () => {
       const counts = await env.DB.prepare(
         `SELECT count(${column}) AS filled, sum(${column} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*') AS iso FROM ${view}`,
       ).first<{ filled: number; iso: number | null }>()
-      // app events arrive only through the webhook (no events CSV, 09 D-11), which stores event_ts normalized (09 D-38).
+      // app events arrive only through the webhook (no events CSV), which stores event_ts normalized.
       if (view !== 'v_app_events') expect(counts!.filled, qualified).toBeGreaterThan(0)
       expect(counts!.iso ?? 0, qualified).toBe(counts!.filled)
     }
@@ -501,7 +499,7 @@ describe('T-AI-2 query_sql results contain pk_ keys only (05 §Strategy, §Leak 
   })
 })
 
-// ── the whole request (04 §POST /api/assistant) ─────────────────────────────────────────────
+// ── the whole request (POST /api/assistant) ─────────────────────────────────────────────────
 
 let calls = 0
 

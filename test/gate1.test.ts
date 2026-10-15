@@ -14,13 +14,13 @@ import { ApiError } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
 
-// T-GATE-1 (08): Gate 1 cases for its 19 regexes (pinned to the reference copy in
-// ORIGIN_PATTERNS below; 03 §Gateway layers row 2): DDL, UNION SELECT, injection phrases, SSN/card/passport shapes blocked; an email in
+// T-GATE-1: Gate 1 cases for its 19 regexes (pinned to the reference copy in
+// ORIGIN_PATTERNS below): DDL, UNION SELECT, injection phrases, SSN/card/passport shapes blocked; an email in
 // the text redacted, not blocked. Plus the blocked half of T-AI-4: a Gate 1 block writes an
 // ai_audit row kind=blocked, status=blocked under the request's trace_id, with no payload.
 //
 // Inputs:
-// - Benign questions are the brief's three example questions (00 R5.2), verbatim.
+// - Benign questions are the brief's three example questions, verbatim.
 // - Emails are real: joy.hall830@protonmail.com (subscribers.csv:902), julia.evans230@gmail.com
 //   (subscribers.csv:373) and the raw spelling PAUL.GARCIA558@GMAIL.COM (app_users.csv:8).
 // - Attack probes are the phrases the patterns name, not business data. The

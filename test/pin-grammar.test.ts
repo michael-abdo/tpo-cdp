@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { classifyPinnableSql } from '../worker/insights/pin-grammar'
 
-// worker/insights/pin-grammar.ts (09 D-64b amending D-64a): the positive grammar a query_sql
+// worker/insights/pin-grammar.ts: the positive grammar a query_sql
 // answer's SQL must pass to pin. Pure, no DB: every shape here is tested directly against
 // classifyPinnableSql, the same function board.ts calls at pin time and on every board run. The
-// bypass classes named in the D-64b decision (aliasing, subqueries, CTEs, window functions, string
+// bypass classes it must refuse (aliasing, subqueries, CTEs, window functions, string
 // concatenation of a key, substr of a key, GROUP BY on a key, HAVING tricks, UNION) each get one
 // test; T-INS-10..14 in test/insights-board.test.ts exercise the same classifier end to end.
 
@@ -170,8 +170,8 @@ describe('classifyPinnableSql: every D-64b bypass class is refused', () => {
 
   it('an identifier column reached through WHERE, ORDER BY or a second mention anywhere else is refused', () => {
     expect(classifyPinnableSql("SELECT count(*) AS n FROM v_profiles WHERE pkey = 'pk_0000000000000000'")).toMatchObject({ ok: false })
-    // A bare `ORDER BY pkey` on a person list is the one allowed tie-breaker (09 D-64b, amended
-    // 2026-10-14, tested above); any expression over the key in ORDER BY is still a second mention.
+    // A bare `ORDER BY pkey` on a person list is the one allowed tie-breaker (tested above); any
+    // expression over the key in ORDER BY is still a second mention.
     expect(classifyPinnableSql('SELECT pkey, source FROM v_profiles ORDER BY substr(pkey, 1, 4)')).toMatchObject({ ok: false })
   })
 })

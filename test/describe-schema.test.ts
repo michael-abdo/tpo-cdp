@@ -9,9 +9,8 @@ import { executeToolCall } from '../worker/assistant/tools/tool-executor'
 import { loadTools } from '../worker/assistant/tools/tool-loader'
 import { seedDatabase } from './helpers/seed'
 
-// describe_schema (16 §If time remains item 1; 14 §4.2 draft; 03 §Gateway layers rows 3, 9; 05
-// §What the model receives). Inputs: the seeded D1 (data/*.csv via test/helpers/seed.ts, so the
-// views have rows the tool must not return) and the assistant_tools rows of scripts/tool-seeds.ts.
+// describe_schema. Inputs: the seeded D1 (data/*.csv via test/helpers/seed.ts, so the views have
+// rows the tool must not return) and the assistant_tools rows of scripts/tool-seeds.ts.
 // The expected views and columns are read from sqlite_master and PRAGMA here, independently of
 // schema-context.ts. The one bad input is `profiles`, a real table name, which the tool must refuse.
 

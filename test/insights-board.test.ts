@@ -37,25 +37,24 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// The insights board (09 D-64; 04 §/api/insights board; 01 §insights; 06 §/insights):
-// T-INS-4, T-INS-5, T-INS-6, T-INS-8 and T-INS-9 of 08.
+// The insights board: T-INS-4, T-INS-5, T-INS-6, T-INS-8 and T-INS-9.
 //
-// No test calls the network (09 D-54). Each pin starts from a real trace: a question sent through
+// No test calls the network. Each pin starts from a real trace: a question sent through
 // the production assistant route with a transport defined in this file that returns
 // Messages-API-shaped turns written here (recorded test input, like assistant.test.ts), so the
 // ai_audit rows are the ones the real gateway writes. The board itself is the production Worker
 // (SELF) over the seeded D1 (data/*.csv) and the assistant_tools rows of scripts/tool-seeds.ts.
-// Expected numbers come from 02 §Counts only: Instagram active went_cold_in(2026-08) = 46; the
+// Expected numbers are the seed's only: Instagram active went_cold_in(2026-08) = 46; the
 // brief's preset = 177; 2,900 subscribers. Other numbers are compared between two paths (the
 // tile and the same tool run directly), never written down. The demo subject
-// joy.hall830@protonmail.com (subscribers.csv) is the real email a title must not carry (D-47).
+// joy.hall830@protonmail.com (subscribers.csv) is the real email a title must not carry.
 
 const JOY = 'joy.hall830@protonmail.com'
-// Her own app user id and a device of hers (02 §Counts: app_users.csv), for the one test below
-// that sends a real signed webhook (09 D-11, D-47: real ids, only the link's path is invented).
+// Her own app user id and a device of hers (app_users.csv), for the one test below
+// that sends a real signed webhook (real ids, only the link's path is invented).
 const JOY_APP_USER = 'u_ceed5f12'
 const JOY_DEVICE = 'd_ceed5f12'
-const BRIEF_TS = '2026-09-28T14:22:05Z' // TODAY at a time of day (02 §Time), as the brief's sample webhook is stamped
+const BRIEF_TS = '2026-09-28T14:22:05Z' // TODAY at a time of day, as the brief's sample webhook is stamped
 const nextEventId = eventIdPool()
 const WENT_COLD_AUGUST = { metric: 'went_cold', status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 const PRESET = { status: ['active'], source: ['instagram'], days_since_open_gte: 30, include_never_opened: true }
@@ -129,7 +128,7 @@ async function askAnswer(
   app.onError(onError)
   const res = await app.request(
     '/api/assistant',
-    // A fresh documentation address per call keeps these asks off one ASSISTANT_LIMITER key (09 D-70 #6).
+    // A fresh documentation address per call keeps these asks off one ASSISTANT_LIMITER key (T-HARD-6).
     {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
@@ -183,7 +182,7 @@ async function stored(id: string): Promise<StoredRow | null> {
 
 const tileCount = () => env.DB.prepare('SELECT count(*) AS n FROM insights').first<number>('n')
 
-/** Replaces the checked input stored on a trace's successful tool_call row (an edited copy of a real trace, 09 D-47). */
+/** Replaces the checked input stored on a trace's successful tool_call row (an edited copy of a real trace). */
 async function editTracedInput(auditId: string, input: unknown): Promise<void> {
   const res = await env.DB.prepare("UPDATE ai_audit SET request_json = ? WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'")
     .bind(JSON.stringify(input), auditId)
@@ -193,7 +192,7 @@ async function editTracedInput(auditId: string, input: unknown): Promise<void> {
 
 /**
  * Stores a copy of a real pinned row under a new id with other params, and optionally another
- * prompt (stored-state drift, 09 D-47).
+ * prompt (stored-state drift).
  */
 async function insertCopy(of: string, params: Record<string, unknown>, title: string, prompt?: string): Promise<string> {
   const id = crypto.randomUUID()
@@ -206,12 +205,12 @@ async function insertCopy(of: string, params: Record<string, unknown>, title: st
   return id
 }
 
-/** The one seeded query row (scripts/tool-seeds.ts): a pinnable lookup with fixed SQL (09 D-64a). */
+/** The one seeded query row (scripts/tool-seeds.ts): a pinnable lookup with fixed SQL. */
 const QUERY_ROW = 'pages_new_subscribers_hit_first'
 
 /**
  * Runs `body` with one more enabled `query` row whose template is `sql`, the way the Growth team adds
- * a question type (09 D-41), then removes it. The loader validates it like any row (03 row 3).
+ * a question type (tools are data), then removes it. The loader validates it like any row.
  */
 async function withQueryRow(sql: string, body: (name: string) => Promise<void>): Promise<void> {
   const seed: ToolSeed = {
@@ -231,7 +230,7 @@ async function withQueryRow(sql: string, body: (name: string) => Promise<void>):
   }
 }
 
-/** Replaces the seeded query row's SQL template for the length of `body` (stored-state drift, 09 D-47). */
+/** Replaces the seeded query row's SQL template for the length of `body` (stored-state drift). */
 async function withQueryRowSql(sql: string, body: () => Promise<void>): Promise<void> {
   const original = await env.DB.prepare('SELECT execution_config FROM assistant_tools WHERE name = ?').bind(QUERY_ROW).first<string>('execution_config')
   const config = JSON.parse(original!) as { sql: string }
@@ -266,8 +265,8 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
 
     const tile = await pin({ audit_id: auditId })
     expect(tile).toMatchObject({ tool: 'aggregate', built_in: false, status: 'ok', error: null, chart: 'number' })
-    expect(tile.result?.rows).toEqual([{ went_cold: 46 }]) // 02 §Counts
-    // The prompt is the question as the model received it: Gate 1 redacted the email (05).
+    expect(tile.result?.rows).toEqual([{ went_cold: 46 }])
+    // The prompt is the question as the model received it: Gate 1 redacted the email.
     expect(tile.prompt).toBe('how many Instagram signups like [email] went cold last month?')
     expect(tile.title).toBe(tile.prompt)
     const row = await stored(tile.id)
@@ -338,7 +337,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
 
   it('insight_panel is always 400 not_pinnable with the D-64a sentence; nothing is stored', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // insight_panel is the board's own tool, never pinned: a real trace's call edited to name it (09 D-47).
+    // insight_panel is the board's own tool, never pinned: a real trace's call edited to name it.
     const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
     const edited = await env.DB.prepare(
       "UPDATE ai_audit SET tool_name = 'insight_panel', request_json = ? WHERE trace_id = ? AND kind = 'tool_call' AND status = 'success'",
@@ -356,8 +355,8 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
 
   it('a query_sql answer whose SQL fails the D-64b positive grammar is 400 not_pinnable with the grammar\'s reasons; nothing is stored (09 D-77: no approval queue)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // Runs fine (Gate 2/3 allow HAVING; it is a real successful tool call), but the D-64b grammar
-    // refuses HAVING outright (09 D-64b: a crafted HAVING cannot wave a small group through, since
+    // Runs fine (Gate 2/3 allow HAVING; it is a real successful tool call), but the pin grammar
+    // refuses HAVING outright (a crafted HAVING cannot wave a small group through, since
     // the small-group mask re-checks every row at every run regardless of it).
     const sql = "SELECT source, count(*) AS subscribers FROM v_profiles GROUP BY source HAVING count(*) > 10"
     const answer = await askAnswer('how many subscribers come from each source?', [
@@ -374,7 +373,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
     expect(body.error).toBe('not_pinnable')
     expect(body.message).toBe(NOT_PINNABLE_SHAPE_MESSAGE)
     expect(body.details).toEqual(['HAVING is not allowed: groups under 5 people are hidden automatically at run time, whatever HAVING says'])
-    // Nothing stored: no tile, and no assistant_tools row either (09 D-77: no approval queue).
+    // Nothing stored: no tile, and no assistant_tools row either (there is no approval queue).
     expect(await tileCount()).toBe(beforeTiles)
     expect(await env.DB.prepare('SELECT count(*) AS n FROM assistant_tools').first<number>('n')).toBe(beforeTools)
 
@@ -414,7 +413,7 @@ describe('T-INS-4: a pin is the trace’s last successful tool call, re-validate
 
   it('describe_schema never pins (400 not_pinnable); segment, aggregate and a grammar-conforming query_sql all do (09 D-64, D-64b)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // describe_schema's answer is no query at all, so D-64a's free-form-query sentence would be
+    // describe_schema's answer is no query at all, so the free-form-query sentence would be
     // untrue of it; it gets NOT_PINNABLE_OTHER_MESSAGE instead, unconditionally, unlike query_sql.
     const others = Object.keys(BUILTIN_HANDLERS).filter((name) => name !== 'segment' && name !== 'aggregate' && name !== 'query_sql')
     expect(others).toEqual(['describe_schema'])
@@ -463,8 +462,8 @@ describe('T-INS-5: windows resolve against TODAY', () => {
   it('rolling presets resolve on TODAY; fixed stays as stored; detection prefers a preset', () => {
     expect(TODAY).toBe('2026-09-28')
     expect(resolveWindow({ rolling: 'last_month' }, TODAY)).toEqual({ kind: 'rolling', preset: 'last_month', from: '2026-08-01', to: '2026-08-31' })
-    expect(resolveWindow({ rolling: 'last_month' }, TODAY)).toMatchObject(lastMonth()) // 02 §Derived "last month"
-    // 02 §Derived "last N days" = TODAY − N .. TODAY = 2026-08-29..2026-09-28 (08 T-INS-5); the
+    expect(resolveWindow({ rolling: 'last_month' }, TODAY)).toMatchObject(lastMonth()) // "last month"
+    // "Last N days" = TODAY − N .. TODAY = 2026-08-29..2026-09-28 (T-INS-5); the
     // same window as lastNDays(30) and new_subscriber. Literal dates, so a one-day drift fails here.
     expect(resolveWindow({ rolling: 'last_30_days' }, TODAY)).toEqual({ kind: 'rolling', preset: 'last_30_days', from: '2026-08-29', to: '2026-09-28' })
     expect(lastNDays(30)).toEqual({ from: '2026-08-29', to: '2026-09-28' })
@@ -475,7 +474,7 @@ describe('T-INS-5: windows resolve against TODAY', () => {
   })
 
   it('the reused presets are 02 §Derived itself: last_month = lastMonth(today), last_30_days = lastNDays(30, today), on any day', () => {
-    // One home per definition (09 D-68): the board must not carry its own month or 30-day formula.
+    // One home per definition: the board must not carry its own month or 30-day formula.
     // Month ends, a year boundary and a leap day, so a second formula that agrees only on TODAY fails.
     for (const today of [TODAY, '2026-01-01', '2026-03-31', '2024-03-01', '2028-02-29', '2026-12-31']) {
       expect(resolveWindow({ rolling: 'last_month' }, today)).toEqual({ kind: 'rolling', preset: 'last_month', ...DEFINITIONS.last_month.fn(today) })
@@ -516,7 +515,7 @@ describe('T-INS-5: windows resolve against TODAY', () => {
     expect(after.window).toMatchObject({ from: '2026-08-29', to: '2026-09-28' })
     // The tile's period wins: its dates come first and "only"; "last month" is left as the pinned question's words.
     expect(after.explain).toBe(`Explain “${title}” for Aug 29 – Sep 28, 2026 only (last 30 days). It was pinned from: ${question}`)
-    // Ask accepts it (Gate 1) with the real known-email set, and no word of it is redacted as a local part (09 D-70 #1).
+    // Ask accepts it (Gate 1) with the real known-email set, and no word of it is redacted as a local part (T-HARD-1).
     const gate1 = sanitizeQuestion(after.explain, await loadKnownEmails(env.DB))
     expect(gate1.ok && gate1.question.text).toBe(after.explain)
     expect((await api(`/${tile.id}`, { method: 'PATCH', body: { window: { fixed: ['2026-08-01', '2026-08-15'] } } })).status).toBe(200)
@@ -536,9 +535,9 @@ describe('T-INS-5: windows resolve against TODAY', () => {
       expect(tile.explain, tile.id).toBe(question)
       expect(tile.explain).not.toBe(tile.title)
     }
-    // 06 §UI principles 4: "Explain this" fills the Ask bar at level 1, so no code name such as going_cold_risk.
+    // "Explain this" fills the Ask bar at level 1, so no code name such as going_cold_risk.
     for (const tile of tiles) expect(tile.explain, tile.id).not.toMatch(/[a-z]+_[a-z_]+/)
-    // 09 D-66, 06 §Vocabulary: the brief's words in every question the board hands to Ask — each
+    // The brief's words in every question the board hands to Ask — each
     // tile's, and every per-row question of the four panels (going-cold's names its definition key).
     // (A pinned tile's question is the teammate's own words, so only the built-in tiles are ours.)
     const retired = /\breaders?\b|\bapp users?\b|\bnewsletter list\b/i
@@ -563,7 +562,7 @@ describe('T-INS-5: windows resolve against TODAY', () => {
   it('a lookup that sets its own dates (a query row) has no window; the answer and the tile name the same dates', async () => {
     const answer = await askAnswer('which pages do new subscribers hit first?', [{ name: 'pages_new_subscribers_hit_first', input: {} }])
     expect(answer.pin_window).toBeNull()
-    // 02 §Derived new_subscriber = TODAY − 30 .. TODAY.
+    // new_subscriber = TODAY − 30 .. TODAY.
     expect(answer.pin_own_dates).toEqual({ from: '2026-08-29', to: '2026-09-28' })
     const tile = await pin({ audit_id: answer.audit_id })
     const segment = await askAnswer('build me a list of our most engaged readers', [{ name: 'segment', input: { status: ['active'] } }])
@@ -681,7 +680,7 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     const chained = 'SELECT count(*) AS n FROM v_profiles; SELECT count(*) AS n FROM v_web_events'
     // Copies of the real row whose stored params now carry SQL: the query row's input takes none (Gate 2).
     const asQueryRow = [await insertCopy(tile.id, { sql: rawTable }, 'Drifted to raw-table SQL'), await insertCopy(tile.id, { sql: chained }, 'Drifted to chained SQL')]
-    // Copies whose tool also drifted to query_sql: refused before the executor (09 D-64a), whether or
+    // Copies whose tool also drifted to query_sql: refused before the executor, whether or
     // not their SQL would pass the gates (the last one does, and would show a number if it ran).
     const asQuerySql = [
       await insertCopy(tile.id, { sql: rawTable, explanation: 'drift' }, 'Drifted to query_sql over a table'),
@@ -702,7 +701,7 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
         for (const id of drifted) {
           const t = tiles.find((x) => x.id === id)!
           expect(t, `run ${run}`).toMatchObject({ status: 'error', result: null, segment: null, sql: null })
-          // Level 1 is a plain sentence; the gates' problems are only in Technical details (09 D-64a).
+          // Level 1 is a plain sentence; the gates' problems are only in Technical details.
           expect(t.error).toBe('This tile’s saved lookup no longer passes today’s checks, so it cannot run. Technical details say why.')
           expect(t.error_details).toMatch(/\S/)
         }
@@ -783,7 +782,7 @@ describe('T-INS-6: the board re-runs every tile with no model call', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const tile = await pin({ audit_id: await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }]) })
     const params = JSON.parse((await stored(tile.id))!.params) as Record<string, unknown>
-    // Copies of the real row (09 D-47): one with a window the board does not know, one whose params is a JSON array.
+    // Copies of the real row: one with a window the board does not know, one whose params is a JSON array.
     const badWindow = await insertCopy(tile.id, { ...params, window: { rolling: 'bogus' } }, 'Drifted window')
     const notObject = await insertCopy(tile.id, params, 'Drifted params shape')
     await env.DB.prepare('UPDATE insights SET params = ? WHERE id = ?').bind(JSON.stringify([params]), notObject).run()
@@ -832,14 +831,14 @@ describe('T-INS-8: built-in tiles, PATCH, DELETE, session', () => {
     const builtIns = (await env.DB.prepare('SELECT id, tool, params, built_in FROM insights WHERE built_in = 1 ORDER BY sort_order').all<StoredRow>()).results
     expect(builtIns.map((r) => JSON.parse(r.params).panel)).toEqual([...INSIGHT_PANELS])
     expect(builtIns.every((r) => r.tool === 'insight_panel')).toBe(true)
-    // insight_panel is the board's own tool, never an assistant_tools row (09 D-64).
+    // insight_panel is the board's own tool, never an assistant_tools row.
     expect(await env.DB.prepare("SELECT count(*) AS n FROM assistant_tools WHERE name = 'insight_panel'").first<number>('n')).toBe(0)
 
     const { tiles } = await board()
     const panelTiles = tiles.filter((t) => t.built_in)
     expect(panelTiles).toHaveLength(4)
     const sourceApp = panelTiles.find((t) => t.id === builtIns[0].id)!
-    expect(sourceApp.result?.summary.total).toMatchObject({ subscribers: 2900 }) // 02 §Counts
+    expect(sourceApp.result?.summary.total).toMatchObject({ subscribers: 2900 })
     expect(sourceApp.chart).toBe('bar')
 
     vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -936,7 +935,7 @@ describe('T-INS-8: built-in tiles, PATCH, DELETE, session', () => {
     expect((await api('/builtin-funnel', { method: 'PATCH', body: { sort_order: 20 } })).status).toBe(200)
     expect((await api(`/${last.id}`, { method: 'DELETE' })).status).toBe(204)
 
-    // A segment tile always shows its count and "Open segment" (09 D-64): a chart override is refused.
+    // A segment tile always shows its count and "Open segment": a chart override is refused.
     const list = await pin({ audit_id: await askRecorded('which Instagram readers have not opened in 30 days?', [{ name: 'segment', input: PRESET }]) })
     const chart = await api(`/${list.id}`, { method: 'PATCH', body: { chart: 'number' } })
     expect(chart.status).toBe(400)
@@ -975,7 +974,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
   it('a segment tile is a count and filters, never rows', async () => {
     const tile = await pin({ audit_id: await askRecorded('which Instagram readers have not opened in 30 days?', [{ name: 'segment', input: PRESET }]) })
     expect(tile.chart).toBe('segment')
-    expect(tile.segment?.count).toBe(177) // 02 §Counts, the brief's preset
+    expect(tile.segment?.count).toBe(177) // the brief's preset
     expect(tile.segment?.filters).toMatchObject({ status: ['active'], source: ['instagram'], days_since_open_gte: 30, include_never_opened: true })
     expect(tile.result?.rows).toEqual([])
     expect(JSON.stringify(tile)).not.toContain('pk_')
@@ -1057,8 +1056,8 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
   it('a pin whose rows name individual subscribers is refused: the board holds counts only', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const before = await tileCount()
-    // A query row is data the Growth team adds (09 D-41), so its fixed SQL may list subscribers by key:
-    // the aggregates-only check still runs on every pinnable lookup after D-64a.
+    // A query row is data the Growth team adds, so its fixed SQL may list subscribers by key:
+    // the aggregates-only check still runs on every pinnable lookup.
     for (const sql of [
       "SELECT pkey, signup_date FROM v_profiles WHERE source = 'instagram' LIMIT 5",
       // A key inside a longer cell, and a key with its pk_ prefix cut off, name subscribers too.
@@ -1094,7 +1093,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     // Allowed: the seeded query row, distinct counts (any case, qualified), keys outside every SELECT list.
     const seeded = TOOL_SEEDS.find((t) => t.name === QUERY_ROW)!.executionConfig as { sql: string }
     for (const sql of [
-      // As the loader holds it: every :name rewritten to ? (09 D-45, tool-loader.ts).
+      // As the loader holds it: every :name rewritten to ? (tool-loader.ts).
       seeded.sql.replace(/:\w+/g, '?'),
       'SELECT source, count(DISTINCT pkey) AS subscribers FROM v_profiles GROUP BY source',
       'SELECT page, COUNT( distinct w.visitor_hash ) AS visitors FROM v_web_events w GROUP BY page',
@@ -1119,7 +1118,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
 
   it('a result naming a key across cells, through separators, or as a bare key column is not an aggregate (namesASubject)', async () => {
     const keys = await loadKnownKeys(env.DB)
-    // A real subscriber's key and a real visitor's (09 D-47).
+    // A real subscriber's key and a real visitor's.
     const pkey = (await env.DB.prepare('SELECT pkey FROM profiles WHERE email_norm = ?').bind(JOY).first<string>('pkey'))!
     const visitor = (await env.DB.prepare('SELECT visitor_hash FROM web_visitors WHERE email_norm = ?').bind(JOY).first<string>('visitor_hash'))!
     const hex = pkey.slice(3)
@@ -1139,7 +1138,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
   it('a query row whose result holds a dashed key it did not select is refused at pin (the output check, 04)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     // Joy's stored first page drifts to carry her own key in dashed groups of four, as a client-sent
-    // path can (09 D-47: a real row, edited). The query row selects no key, so only the output check sees it.
+    // path can (a real row, edited). The query row selects no key, so only the output check sees it.
     const auditId = await askRecorded('which pages do new subscribers hit first?', [{ name: QUERY_ROW, input: {} }])
     const original = (
       await env.DB.prepare('SELECT visitor_hash, first_page FROM web_visitors WHERE email_norm = ?').bind(JOY).all<{ visitor_hash: string; first_page: string | null }>()
@@ -1167,9 +1166,9 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
   it('a pin whose first run’s result fails the scanner is 400 blocked_pii, never echoing the email; nothing is stored', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // The query row groups new subscribers by their first page, a path a client sent (05: untrusted).
-    // Joy (a new subscriber, 02 §Demo subjects) has a tracked visit; after the answer, her stored first
-    // page drifts to a link carrying her own email, as a newsletter link can (09 D-47: a real row, edited).
+    // The query row groups new subscribers by their first page, a path a client sent (untrusted).
+    // Joy (a new subscriber, a demo subject) has a tracked visit; after the answer, her stored first
+    // page drifts to a link carrying her own email, as a newsletter link can (a real row, edited).
     const auditId = await askRecorded('which pages do new subscribers hit first?', [{ name: QUERY_ROW, input: {} }])
     const original = (
       await env.DB.prepare('SELECT visitor_hash, first_page FROM web_visitors WHERE email_norm = ?').bind(JOY).all<{ visitor_hash: string; first_page: string | null }>()
@@ -1195,7 +1194,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       expect(text).not.toContain(JOY)
       expect(text).not.toContain('@')
       expect(await tileCount()).toBe(before)
-      // The executor's result scan caught it, and the block is audited without the email (03 row 11).
+      // The executor's result scan caught it, and the block is audited without the email.
       const blocked = await env.DB.prepare("SELECT error FROM ai_audit WHERE kind = 'blocked' ORDER BY rowid DESC LIMIT 1").first<string>('error')
       expect(blocked).toMatch(/^blocked_pii: \w+ in tool_result$/)
     } finally {
@@ -1247,7 +1246,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
         expect(tile.error).toContain('personal-data check')
       }
       expect(tiles.filter((t) => !drifted.includes(t.id)).every((t) => t.status === 'ok')).toBe(true)
-      // The block is in the audit trail, without the email (03 row 11): one row per blocked tile of this run.
+      // The block is in the audit trail, without the email: one row per blocked tile of this run.
       const runTrace = await env.DB.prepare("SELECT trace_id FROM ai_audit WHERE tool_name = 'insight_panel' ORDER BY rowid DESC LIMIT 1").first<string>('trace_id')
       const blocked = await env.DB.prepare("SELECT error FROM ai_audit WHERE trace_id = ? AND kind = 'blocked'").bind(runTrace).all<{ error: string }>()
       expect(blocked.results).toHaveLength(drifted.length)
@@ -1306,7 +1305,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     const LOCAL = JOY.slice(0, JOY.indexOf('@'))
     const auditId = await askRecorded('how many Instagram signups went cold last month?', [{ name: 'aggregate', input: WENT_COLD_AUGUST }])
     for (const word of [LOCAL, JOY]) {
-      // An edited copy of a real trace (D-47): the question the model received now names the subscriber.
+      // An edited copy of a real trace: the question the model received now names the subscriber.
       const res = await env.DB.prepare("UPDATE ai_audit SET request_json = json_set(request_json, '$.messages[0].content', ?) WHERE rowid = (SELECT rowid FROM ai_audit WHERE trace_id = ? AND kind = 'model_request' ORDER BY created_at, rowid LIMIT 1)")
         .bind(`how many signups like ${word} went cold last month?`, auditId)
         .run()
@@ -1324,9 +1323,9 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
     }
   })
 
-  // 09 D-79 item 3: the board is one of the outbound scan sites, so a stored tile that only
-  // later reads a known local part (no "@" anywhere, the webhook-link path 09 D-70 #2 and D-79
-  // added known_local_part for) must block exactly as an email would. Pinned clean, then re-run
+  // The board is one of the outbound scan sites, so a stored tile that only
+  // later reads a known local part (no "@" anywhere, the webhook-link path known_local_part
+  // exists for) must block exactly as an email would. Pinned clean, then re-run
   // after the real signed webhook lands the local part in v_app_events.link (mutation check:
   // tool-executor.ts:138's guardPayload — removing it, or weakening it to scan only text holding
   // "@", lets this test's tile answer 200 with the link instead of blocking).
@@ -1368,7 +1367,7 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
   })
 })
 
-// T-INS-10..13 (09 D-64b, amending D-64a; D-77 drops the human-approval path (C)): a free-form
+// T-INS-10..13 (there is no human-approval path): a free-form
 // query_sql answer pins when its SQL passes the positive grammar of worker/insights/pin-grammar.ts
 // — one test per shape (A: totals, B: the small-group mask, "lists": a person list), plus the
 // outright refusal (nothing queued, nothing stored) for anything else. Every SQL here is one real
@@ -1385,7 +1384,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     expect(tile.status).toBe('ok')
     expect(tile.result?.columns).toEqual(['source', 'subscribers'])
     expect(tile.result?.rows.length).toBeGreaterThan(0)
-    // Wrapped as its own new, enabled query-type assistant_tools row (09 D-64b), not literally query_sql.
+    // Wrapped as its own new, enabled query-type assistant_tools row, not literally query_sql.
     const storedRow = await stored(tile.id)
     expect(storedRow!.tool).not.toBe('query_sql')
     const toolRow = await env.DB.prepare('SELECT handler_type, enabled FROM assistant_tools WHERE name = ?').bind(storedRow!.tool).first<{
@@ -1458,7 +1457,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
   })
 
   it('T-INS-11 shape B: any row whose people count reads under 5 shows "< 5" in every other column, every run', async () => {
-    // A real small group, found rather than assumed (09 D-47): the smallest (source, status, signup month) triple
+    // A real small group, found rather than assumed: the smallest (source, status, signup month) triple
     // (finer than source+status alone, which this seed never makes small; a date bucket is itself an allowed dimension).
     const smallest = await env.DB.prepare(
       "SELECT source, status, substr(signup_date, 1, 7) AS month, count(*) AS n FROM v_profiles GROUP BY source, status, substr(signup_date, 1, 7) ORDER BY n ASC LIMIT 1",
@@ -1477,7 +1476,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     // The dimension columns stay visible; only the masked count differs from a direct read.
     const big = tile.result!.rows.find((r) => typeof r.subscribers === 'number' && (r.subscribers as number) >= 5)
     expect(big).toBeDefined()
-    // Masked on every run, not just the first (09 D-64b "at pin time and on every board run").
+    // Masked on every run, not just the first ("at pin time and on every board run").
     const onBoard = (await board()).tiles.find((t) => t.id === tile.id)!
     expect(onBoard.result!.rows.find((r) => r.source === smallest!.source && r.status === smallest!.status && r.month === smallest!.month)!.subscribers).toBe(
       '< 5',
@@ -1498,12 +1497,12 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     expect(tile.status).toBe('ok')
     expect(tile.result?.columns).toEqual(['email', 'source', 'status'])
     expect(tile.result?.rows.length).toBe(PERSON_LIST_CAP)
-    // Gate 3 itself returns at most SQL_ROW_LIMIT rows (03 row 8); rows_total is how many of
+    // Gate 3 itself returns at most SQL_ROW_LIMIT rows; rows_total is how many of
     // those this run got back, not the unlimited real population (the full list is Segments/export).
     expect(tile.result?.summary.rows_total).toBe(SQL_ROW_LIMIT)
     expect(tile.result?.summary.may_have_more_rows).toBe(true)
     expect(tile.result?.summary.rows_shown).toBe(PERSON_LIST_CAP)
-    // Re-hydrated for staff: every row names a real subscriber's email (05 §Re-hydration), no raw pk_ key left.
+    // Re-hydrated for staff: every row names a real subscriber's email, no raw pk_ key left.
     const JOY_PKEY_ROW = await env.DB.prepare(
       "SELECT p.pkey AS pkey FROM profiles p JOIN subscribers s ON s.email_norm = p.email_norm WHERE s.source = 'instagram' AND s.status = 'active' LIMIT 1",
     ).first<string>('pkey')
@@ -1557,7 +1556,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
     const toolName = storedRow!.tool
 
     // Edit the wrapped row's execution_config.sql to a still-Gate-2/3-legal but non-grammar query
-    // (HAVING), as if a D-41 row drifted under the pinned tile (its SQL is data: D-41). If runTile
+    // (HAVING), as if an assistant_tools row drifted under the pinned tile (its SQL is data). If runTile
     // re-checked only the stored params and not this fresh SQL, this would still run as a trusted
     // totals tile instead of refusing.
     const drifted = `${sql} HAVING count(*) >= 1`
@@ -1587,7 +1586,7 @@ describe('T-INS-10..13: query_sql pins in safe shapes (totals, small-group mask,
   })
 
   it('a pinned "list" tile whose SQL drifts to a totals shape with a small group is refused, never run unmasked (09 D-64b finding)', async () => {
-    // Runtime proof: pin a person list, then let its wrapped row's SQL drift (a D-41 row is data)
+    // Runtime proof: pin a person list, then let its wrapped row's SQL drift (an assistant_tools row is data)
     // to a grouped totals query that holds a group under 5. The shape check above
     // (`classified.shape !== pinShape`) is the only thing that stops this: without it, runTile
     // would run the fresh (now-totals) SQL under a tile still carrying pin_shape "list", skip

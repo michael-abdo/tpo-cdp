@@ -5,10 +5,10 @@ import { describe, expect, it } from 'vitest'
 import { EMAIL_REGEX, PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
 import { pkeyForEmail, pkeyForUnknownUser, visitorHash } from '../shared/pseudonym'
 
-// 05 §Pseudonymous key, 01 §PII denylist, 09 D-17. Emails, user ids and visitor ids are
-// real values from data/*.csv (the 02 demo subjects, the second app user, and
+// Pseudonymous keys and the PII denylist. Emails, user ids and visitor ids are
+// real values from data/*.csv (the demo subjects, the second app user, and
 // u_3380b6e6's raw spelling in app_users.csv:8 / web_events.csv:4849). The one exception
-// is the device id d_4b21e8, from the brief's sample webhook (04 §Webhook, 09 D-11). The
+// is the device id d_4b21e8, from the brief's sample webhook. The
 // secret comes from .dev.vars and is never printed: assertions compare keys, not the secret.
 
 const KEY_FORMAT = /^pk_[0-9a-f]{16}$/

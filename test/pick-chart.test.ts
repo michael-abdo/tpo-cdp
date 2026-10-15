@@ -4,9 +4,9 @@ import { BAR_TOP_CATEGORIES, CHART_OVERRIDES, type ChartInput, pickChart } from 
 import { BUILTIN_HANDLERS, type ToolOutput } from '../worker/assistant/tools/builtin-handlers'
 import { seedDatabase } from './helpers/seed'
 
-// T-INS-7 (08; 09 D-64): the pickChart rule table of 06 §/insights, row by row, and the override.
+// T-INS-7: the pickChart rule table, row by row, and the override.
 // Every input is a real result: the builder tools run over the seeded D1 (data/*.csv), or rows
-// read from the PII-free views (09 D-47: no invented source, status or date). A rule that needs a
+// read from the PII-free views (no invented source, status or date). A rule that needs a
 // shape no tool returns (a boolean cell, an empty column list) edits a copy of a real result.
 
 const PRESET = { status: ['active'], source: ['instagram'], days_since_open_gte: 30, include_never_opened: true }
@@ -82,7 +82,7 @@ describe('T-INS-7: pickChart picks the chart from the result shape (06 §/insigh
 
   it('a segment result → segment, whatever its rows', async () => {
     const segment = await run('segment', PRESET)
-    expect(segment.segment?.count).toBe(177) // 02 §Counts
+    expect(segment.segment?.count).toBe(177)
     expect(pickChart(shape(segment))).toBe('segment')
     expect(pickChart({ columns: [], rows: [], segment: { count: segment.segment!.count } })).toBe('segment')
   })
