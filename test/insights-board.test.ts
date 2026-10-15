@@ -3,7 +3,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { Hono } from 'hono'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { TOOL_SEEDS, type ToolSeed, toolSeedInsert } from '../scripts/tool-seeds'
-import { TODAY } from '../shared/config'
+import { HOSTED_URL, TODAY } from '../shared/config'
 import { DEFINITIONS, lastMonth, lastNDays } from '../shared/derive'
 import {
   BLOCKED_TILE_TITLE,
@@ -35,6 +35,7 @@ import { INSIGHT_PANEL, INSIGHT_PANELS, NOT_AGGREGATE_MESSAGE, type Tile } from 
 import { assistantRoutes } from '../worker/routes/assistant'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
+import { eventIdPool, sendWebhook } from './helpers/webhook'
 
 // The insights board (09 D-64; 04 §/api/insights board; 01 §insights; 06 §/insights):
 // T-INS-4, T-INS-5, T-INS-6, T-INS-8 and T-INS-9 of 08.
@@ -50,6 +51,12 @@ import { seedDatabase } from './helpers/seed'
 // joy.hall830@protonmail.com (subscribers.csv) is the real email a title must not carry (D-47).
 
 const JOY = 'joy.hall830@protonmail.com'
+// Her own app user id and a device of hers (02 §Counts: app_users.csv), for the one test below
+// that sends a real signed webhook (09 D-11, D-47: real ids, only the link's path is invented).
+const JOY_APP_USER = 'u_ceed5f12'
+const JOY_DEVICE = 'd_ceed5f12'
+const BRIEF_TS = '2026-09-28T14:22:05Z' // TODAY at a time of day (02 §Time), as the brief's sample webhook is stamped
+const nextEventId = eventIdPool()
 const WENT_COLD_AUGUST = { metric: 'went_cold', status: ['active'], source: ['instagram'], window_from: '2026-08-01', window_to: '2026-08-31' }
 const PRESET = { status: ['active'], source: ['instagram'], days_since_open_gte: 30, include_never_opened: true }
 const WENT_COLD_AUGUST_SQL =
@@ -1315,6 +1322,50 @@ describe('T-INS-9: no tile or stored row holds an email or a raw id', () => {
       expect(body.details[0].field).toBe('question')
       expect(await tileCount(), word).toBe(before)
     }
+  })
+
+  // 09 D-79 item 3: the board is one of the outbound scan sites, so a stored tile that only
+  // later reads a known local part (no "@" anywhere, the webhook-link path 09 D-70 #2 and D-79
+  // added known_local_part for) must block exactly as an email would. Pinned clean, then re-run
+  // after the real signed webhook lands the local part in v_app_events.link (mutation check:
+  // tool-executor.ts:138's guardPayload — removing it, or weakening it to scan only text holding
+  // "@", lets this test's tile answer 200 with the link instead of blocking).
+  it('a stored query tile that later reads a webhook link holding a known local part is a "Blocked tile" (09 D-79 item 3)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const LOCAL = JOY.slice(0, JOY.indexOf('@'))
+    await withQueryRow("SELECT link, count(*) AS n FROM v_app_events WHERE link LIKE '%/u/%' GROUP BY link", async (name) => {
+      // Pinned before the webhook below lands, so the first run (askRecorded + pin) is clean.
+      const auditId = await askRecorded('how many clicks has each profile link gotten?', [{ name, input: {} }])
+      const tile = await pin({ audit_id: auditId })
+      expect(tile.status).toBe('ok')
+      try {
+        const link = `${HOSTED_URL}/u/${LOCAL}`
+        const res = await sendWebhook(
+          JSON.stringify({
+            event_id: nextEventId(),
+            event: 'link_click',
+            user_id: JOY_APP_USER,
+            device_id: JOY_DEVICE,
+            timestamp: BRIEF_TS,
+            properties: { link },
+          }),
+        )
+        expect(res.status).toBe(202) // the schema allows it: no "@", a plain http(s) URL (04 §Webhook)
+        const stored = await env.DB.prepare("SELECT link FROM v_app_events WHERE link = ?").bind(link).all()
+        expect(stored.results).toHaveLength(1)
+        const lastRow = await env.DB.prepare('SELECT max(rowid) AS r FROM ai_audit').first<number>('r')
+        const { tiles } = await board()
+        const blocked = tiles.find((t) => t.id === tile.id)!
+        expect(blocked).toMatchObject({ status: 'error', result: null, params: {}, sql: null, prompt: null, title: BLOCKED_TILE_TITLE, explain: BLOCKED_TILE_TITLE })
+        expect(blocked.error).toContain('personal-data check')
+        expect(JSON.stringify(blocked)).not.toContain(LOCAL)
+        const blockedRow = await env.DB.prepare("SELECT error FROM ai_audit WHERE rowid > ? AND kind = 'blocked' ORDER BY rowid DESC LIMIT 1").bind(lastRow).first<string>('error')
+        expect(blockedRow).toBe('blocked_pii: known_local_part in tool_result')
+      } finally {
+        await env.DB.prepare('DELETE FROM insights WHERE id = ?').bind(tile.id).run()
+      }
+    })
   })
 })
 

@@ -70,7 +70,7 @@ import { detectWindow, type InsightWindow, isCalendarDate, type ResolvedWindow, 
 import { type AuditTrace, AuditWriteError, startTrace } from '../assistant/audit/ai-audit'
 import { authorizeToolCall } from '../assistant/gates/gate2-tool-authorizer'
 import { lexSql, SqlLexError, type SqlToken } from '../assistant/gates/gate3-readonly-sql'
-import { findPII, guardPayload, loadKnownEmails, PiiBlockedError, redactKnownLocalParts } from '../assistant/gates/pii-guard'
+import { findPII, guardPayload, loadKnownEmails, PiiBlockedError } from '../assistant/gates/pii-guard'
 import type { BuiltinHandler, ResultRow, ToolOutput } from '../assistant/tools/builtin-handlers'
 import { executeToolCall } from '../assistant/tools/tool-executor'
 import { type LoadedTool, type LoadedTools, loadTools } from '../assistant/tools/tool-loader'
@@ -834,9 +834,10 @@ function checkedTitle(value: unknown): string {
 async function assertStorable(db: D1Database, fields: Record<string, unknown>): Promise<void> {
   const known = await loadKnownEmails(db)
   for (const [field, value] of Object.entries(fields)) {
-    // A known email's local part typed without its domain ("joy.hall830") names the subscriber too:
-    // the same check Gate 1 redacts in a question (09 D-70 #1) refuses it in a title or a question.
-    const check = findPII(value ?? '', known) ?? (typeof value === 'string' && redactKnownLocalParts(value, known).count > 0 ? 'known_email' : null)
+    // findPII's own known_local_part check (09 D-79) covers a known email's local part typed
+    // without its domain ("joy.hall830") the same way Gate 1 redacts it in a question (D-70 #1);
+    // this call keeps no check of its own.
+    const check = findPII(value ?? '', known)
     if (check !== null) {
       console.warn(JSON.stringify({ at: 'insights-board', outcome: 'blocked_pii', field, check }))
       throw new ApiError(400, 'blocked_pii', `The ${field} contains an email address or a raw id, so it cannot be saved.`, [{ field, check }])

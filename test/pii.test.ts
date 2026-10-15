@@ -2,9 +2,9 @@ import { env } from 'cloudflare:test'
 import type Anthropic from '@anthropic-ai/sdk'
 import { Hono } from 'hono'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { TODAY } from '../shared/config'
+import { HOSTED_URL, TODAY } from '../shared/config'
 import { DEFINITIONS } from '../shared/derive'
-import { PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
+import { normalizeForScan, PII_COLUMNS, RAW_ID_REGEX } from '../shared/pii'
 import { AuditTrace, AuditWriteError, startTrace } from '../worker/assistant/audit/ai-audit'
 import { buildModelRequest, MAX_TOKENS, MODEL, type ModelTool } from '../worker/assistant/build-request'
 import { enforceGate1, type SanitizedQuestion } from '../worker/assistant/gates/gate1-input-sanitizer'
@@ -16,11 +16,13 @@ import {
   loadKnownEmails,
   logModelPayload,
   PiiBlockedError,
+  redactEmails,
 } from '../worker/assistant/gates/pii-guard'
 import { discoverViewSchemas, type ViewSchema, viewSchemas } from '../worker/assistant/schema-context'
 import { renderSystemPrompt } from '../worker/assistant/system-prompt'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
+import { eventIdPool, sendWebhook } from './helpers/webhook'
 import { seedDatabase } from './helpers/seed'
 
 // T-PII-1, T-PII-2, T-PII-3, T-PII-4 (08) and the parts of T-AI-4 that need no model call, over
@@ -484,3 +486,312 @@ describe('T-PII-4 / T-AI-4 review fixes: awaited blocked rows, every scanned fie
     expect(JSON.stringify(body)).not.toContain('@')
   })
 })
+
+// T-PII-5 (08; 09 D-79): the normalizer (shared/pii.ts normalizeForScan) runs before every check,
+// and the outbound scan now also blocks a bare known local part. Real values throughout (09
+// D-47): the demo subject JOY and her own app user id/device, a webhook sent through the real
+// signed path (09 D-11), only the disguise spelling is invented around her real local part.
+describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
+  const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
+  const JOY_DEVICE = 'd_ceed5f12' // her own app user id's hex (JOY_APP_USER = u_ceed5f12)
+  const BRIEF_TS = '2026-09-28T14:22:05Z'
+  // One shared pool for this describe block's webhook sends: a fresh `eventIdPool()()` call
+  // always starts from the same first hex, so two tests calling it independently collide on the
+  // same event_id ("duplicate", 200) when D1 is not reset between them.
+  const nextEventId = eventIdPool()
+
+  describe('Gate 1 redacts every disguise form of a known address, one mapping at a time', () => {
+    const disguises: Array<[name: string, typed: string]> = [
+      ['%40', `${JOY_LOCAL}%40protonmail.com`],
+      ['&#64;', `${JOY_LOCAL}&#64;protonmail.com`],
+      ['&#x40;', `${JOY_LOCAL}&#x40;protonmail.com`],
+      ['full-width ＠ (NFKC)', `${JOY_LOCAL}＠protonmail.com`],
+      ['small ﹫ (NFKC)', `${JOY_LOCAL}﹫protonmail.com`],
+      ['[at]', `${JOY_LOCAL}[at]protonmail.com`],
+      ['(at)', `${JOY_LOCAL}(at)protonmail.com`],
+      ['{at}', `${JOY_LOCAL}{at}protonmail.com`],
+      ['<at>', `${JOY_LOCAL}<at>protonmail.com`],
+      ['[at] with spaces', `${JOY_LOCAL} [ at ] protonmail.com`],
+      ['[dot]', `${JOY_LOCAL}@protonmail[dot]com`],
+      ['(dot)', `${JOY_LOCAL}@protonmail(dot)com`],
+      ['{dot}', `${JOY_LOCAL}@protonmail{dot}com`],
+      ['spelled "at"/"dot"', `${JOY_LOCAL} at protonmail dot com`],
+      ['spelled, upper case', `${JOY_LOCAL} AT protonmail DOT com`],
+      ['zero-width between dot and hall', `joy.​hall830@protonmail.com`],
+      ['soft hyphen inside protonmail', `${JOY_LOCAL}@proton­mail.com`],
+      // 09 D-79 fixer round (normalizeForScan's two-stage fold): a full-width bracketed disguise,
+      // a zero-width character splitting the bare spelled "at", and a full-width "%" before "40".
+      ['full-width bracket "[ａｔ]"/"[ｄｏｔ]"', `${JOY_LOCAL} [ａｔ] protonmail [ｄｏｔ] com`],
+      ['zero-width inside bare "at"', `${JOY_LOCAL} a​t protonmail dot com`],
+      ['full-width percent "％40"', `${JOY_LOCAL}％40protonmail.com`],
+    ]
+
+    it.each(disguises)('%s', async (_name, typed) => {
+      const trace = await startTrace(env.DB)
+      const question = await enforceGate1(trace, `write to ${typed} about her account`)
+      expect(question.text).toBe('write to [email] about her account')
+      expect(question.emailsRedacted).toBe(1)
+    })
+
+    it('every disguise is also caught by the outbound scan (findPII), not only Gate 1', async () => {
+      const known = await loadKnownEmails(env.DB)
+      for (const [, typed] of disguises) expect(findPII({ text: typed }, known), typed).toBe('known_email')
+    })
+  })
+
+  it('no false positive: ordinary "at"/"dot" prose and an @-free phrase pass untouched', () => {
+    for (const text of ['meet at noon', 'data dot com', 'the cat sat at the mat', 'see you at the game']) {
+      expect(redactEmails(text)).toEqual({ text, count: 0 })
+    }
+  })
+
+  it('no false positive: a bare "at <domain>" with no spelled "dot" is prose, not an email shape (09 D-79 fixer round)', async () => {
+    // The old mapping folded every lone "at" on its own ("signed up at instagram.com" became
+    // "signed up@instagram.com", which EMAIL_REGEX then read as local "up", domain
+    // "instagram.com"). The fix only folds the full spoken shape "<local> at <domain> dot <tld>",
+    // so a plain domain after "at" (no spelled "dot") stays untouched.
+    const known = await loadKnownEmails(env.DB)
+    for (const text of [
+      'Most new subscribers signed up at instagram.com last month.',
+      'https://thepourover.com/news/look-at-this.html',
+      '{"link":"https://thepourover.com/where-we-are-at-now.html"}',
+      'Readers clicked at thepourover.com/news for the story.',
+    ]) {
+      expect(redactEmails(text)).toEqual({ text, count: 0 })
+      expect(findPII(text, known), text).toBeNull()
+    }
+    expect(await enforceGate1(await startTrace(env.DB), 'who signed up at instagram.com last month?')).toMatchObject({
+      text: 'who signed up at instagram.com last month?',
+      emailsRedacted: 0,
+    })
+  })
+
+  it('no false positive: a webhook link with an "-at-" slug never blocks a real tool_result read of it (09 D-79 fixer round)', async () => {
+    // link_click accepts any http(s) URL with no "@" (04 §Webhook); a slug like "look-at-this"
+    // has "at" next to hyphens, not whitespace, so it must never be read as a spoken "at".
+    const link = `${HOSTED_URL}/news/look-at-this.html`
+    const res = await sendWebhook(
+      JSON.stringify({
+        event_id: nextEventId(),
+        event: 'link_click',
+        user_id: JOY_APP_USER,
+        device_id: JOY_DEVICE,
+        timestamp: BRIEF_TS,
+        properties: { link },
+      }),
+    )
+    expect(res.status).toBe(202)
+    const stored = await rows('SELECT link FROM v_app_events WHERE pkey = ? AND link = ?', joyPkey, link)
+    expect(stored).toHaveLength(1)
+    const known = await loadKnownEmails(env.DB)
+    expect(findPII(framed('query_sql', stored), known)).toBeNull()
+    const trace = await startTrace(env.DB)
+    await expect(guardPayload(trace, framed('query_sql', stored), 'tool_result', 'query_sql')).resolves.toBeUndefined()
+  })
+
+  it('a webhook link holding JOY\u2019s bare local part is blocked before a tool result reaches the model', async () => {
+    // 09 D-70 #2: an http(s) link with no "@" is accepted and stored as-is, so a bare local part
+    // in a path (no email shape, no raw id) reached the model until the outbound scan checked
+    // local parts too (09 D-79). Sent through the real signed webhook path (09 D-11).
+    const link = `${HOSTED_URL}/u/${JOY_LOCAL}`
+    const eventId = nextEventId()
+    const res = await sendWebhook(
+      JSON.stringify({
+        event_id: eventId,
+        event: 'link_click',
+        user_id: JOY_APP_USER,
+        device_id: JOY_DEVICE,
+        timestamp: BRIEF_TS,
+        properties: { link },
+      }),
+    )
+    expect(res.status).toBe(202)
+    const stored = await rows('SELECT link FROM v_app_events WHERE pkey = ? AND link = ?', joyPkey, link)
+    expect(stored).toHaveLength(1) // the schema allowed it: no "@", a plain http(s) URL (04 §Webhook)
+
+    const known = await loadKnownEmails(env.DB)
+    const result = framed('query_sql', stored)
+    expect(result).not.toContain('@')
+    expect(findPII(result, known)).toBe('known_local_part')
+
+    const trace = await startTrace(env.DB)
+    await expect(guardPayload(trace, result, 'tool_result', 'query_sql')).rejects.toMatchObject({
+      code: 'blocked_pii',
+      check: 'known_local_part',
+      site: 'tool_result',
+    })
+  })
+
+  it('a model response that spells the address out ("joy dot hall830 at protonmail dot com") is blocked', async () => {
+    const known = await loadKnownEmails(env.DB)
+    const spelled = `${JOY_LOCAL.replace('.', ' dot ')} at protonmail dot com`
+    expect(spelled).not.toContain('@')
+    expect(() => assertNoPII({ text: `Write to her at ${spelled}.` }, known, 'model_output')).toThrow(PiiBlockedError)
+    try {
+      assertNoPII({ text: `Write to her at ${spelled}.` }, known, 'model_output')
+    } catch (err) {
+      expect(err).toBeInstanceOf(PiiBlockedError)
+      expect((err as PiiBlockedError).check).toBe('known_email')
+    }
+  })
+
+  describe('mutation checks: each of these fails if the fix it names were reverted', () => {
+    it('dropping NFKC would miss the full-width and small at-signs (normalizeForScan)', () => {
+      expect(normalizeForScan(`${JOY_LOCAL}＠protonmail.com`).text).toBe(JOY)
+      expect(normalizeForScan(`${JOY_LOCAL}﹫protonmail.com`).text).toBe(JOY)
+    })
+
+    it('dropping the %40/&#64;/&#x40; mapping would miss those three on their own', () => {
+      expect(normalizeForScan(`${JOY_LOCAL}%40protonmail.com`).text).toBe(JOY)
+      expect(normalizeForScan(`${JOY_LOCAL}&#64;protonmail.com`).text).toBe(JOY)
+      expect(normalizeForScan(`${JOY_LOCAL}&#x40;protonmail.com`).text).toBe(JOY)
+    })
+
+    it('dropping the bracket "[at]"/"[dot]" mapping would miss a bracketed disguise', () => {
+      expect(normalizeForScan(`${JOY_LOCAL}[at]protonmail[dot]com`).text).toBe(JOY)
+    })
+
+    it('dropping the spelled-out "at"/"dot" mapping would miss "joy at example dot com"', () => {
+      expect(normalizeForScan(`${JOY_LOCAL} at protonmail dot com`).text).toBe(JOY)
+      // The mapping only folds the FULL spoken shape "<local> at <domain> dot <tld>" — it requires
+      // a spelled "dot" after "at", so a lone "at" in ordinary prose is left alone (09 D-79 fixer
+      // round; see the false-positive tests above for "signed up at instagram.com" and the rest).
+      expect(normalizeForScan('meet at noon').text).toBe('meet at noon')
+      expect(normalizeForScan('signed up at instagram.com').text).toBe('signed up at instagram.com')
+    })
+
+    it('narrowing the zero-width set back to the old five characters would miss U+2060 WORD JOINER (09 D-79 fixer round)', () => {
+      // shared/sql-sign.ts's INVISIBLE_CHARS (category Cf plus Default_Ignorable_Code_Point) is
+      // the one home for this set; it covers U+2060 WORD JOINER, which the old five-character
+      // list (U+200B-200D/FEFF/00AD) did not.
+      expect(normalizeForScan(`${JOY_LOCAL}⁠@protonmail.com`).text).toBe(JOY)
+      expect(normalizeForScan(`new.person⁠@example.com`).text).toBe('new.person@example.com')
+    })
+
+    it('dropping known_local_part from findPII would let the webhook-link scenario above through null, not a check', async () => {
+      const known = await loadKnownEmails(env.DB)
+      expect(findPII(`see ${HOSTED_URL}/u/${JOY_LOCAL} for her activity`, known)).toBe('known_local_part')
+    })
+
+    it('a caller using its own weaker check (just EMAIL_REGEX, no known-email/local-part lookup) would miss both', async () => {
+      // The one detector (findPII) is what every caller must share; a hand-rolled "/@/".test()
+      // substitute would pass this known_local_part case and the known_email case below.
+      const known = await loadKnownEmails(env.DB)
+      expect(/@/.test(`see ${HOSTED_URL}/u/${JOY_LOCAL}`)).toBe(false)
+      expect(findPII(`see ${HOSTED_URL}/u/${JOY_LOCAL}`, known)).toBe('known_local_part')
+      expect(/@/.test(JOY)).toBe(true)
+      expect(findPII(JOY, known)).toBe('known_email')
+    })
+  })
+})
+
+// T-PII-6 (09 D-79 fixer round 2): e560cb3 fixed the false positive on ordinary "at"/"dot" prose
+// by dropping the bare spelled-"dot" fold and requiring the spelled "at" fold's domain to carry
+// its own spelled "dot" — but that also broke every disguise that is not itself a spelled "dot"
+// right next to "at" (a bracketed or escaped "@" whose domain's dot is spelled, or vice versa)
+// and a known local part typed with a spelled "dot" ("joy dot hall830", no "at" at all). Item 1
+// restores the bare fold (unconditional: a dot alone is never an email shape) and lets the
+// spelled "at" fold's domain accept a disguised dot in ANY listed form. Item 2 widens the
+// invisible-character set FORMAT_CHARS (category Cf) left out. Item 5 stops the restored bare
+// fold from turning ordinary chart prose ("the dot plot", "random dot points") into a manufactured
+// "@" by requiring the spelled shape's domain to end in a real TLD.
+describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and more invisible characters are stripped (09 D-79 fixer round 2)', () => {
+  const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
+
+  it('a spelled address with any two-letter or common generic TLD is caught, and a spelled dot in the name part counts too (09 D-79 closure)', () => {
+    const known = new KnownEmails([])
+    for (const text of ['press at example dot de', 'press at example dot ai', 'new.person at example dot ca', 'new dot person at example.com', 'sales at shop dot store']) {
+      expect(findPII(text, known), text).toBe('email_pattern')
+    }
+    for (const text of ['signed up at instagram.com', 'Look at the dot plot below.', 'meet at noon', 'data dot com']) {
+      expect(findPII(text, known), text).toBeNull()
+    }
+  })
+
+  it('item 1: every string the self-audit found still returning 200 with the address now folds (model answers)', () => {
+    for (const text of ['press [at] example dot com', 'press@example dot com', 'press at example [dot] com']) {
+      expect(normalizeForScan(text).text, text).toBe('press@example.com')
+    }
+    expect(normalizeForScan('Write to joy dot hall830.').text).toBe('Write to joy.hall830.')
+  })
+
+  it('item 1: the outbound scan blocks every one of those model answers (email_pattern or known_local_part, never null)', async () => {
+    const known = await loadKnownEmails(env.DB)
+    for (const text of ['press [at] example dot com', 'press@example dot com', 'press at example [dot] com']) {
+      expect(findPII({ text: `${text} is a working address.` }, known), text).toBe('email_pattern')
+    }
+    expect(() => assertNoPII({ text: 'Write to joy dot hall830.' }, known, 'model_output')).toThrow(PiiBlockedError)
+    try {
+      assertNoPII({ text: 'Write to joy dot hall830.' }, known, 'model_output')
+    } catch (err) {
+      expect(err).toBeInstanceOf(PiiBlockedError)
+      expect((err as PiiBlockedError).check).toBe('known_local_part')
+    }
+  })
+
+  it('item 1: Gate 1 redacts the same disguised questions, and a spelled known local part with no "@" at all', async () => {
+    for (const [question, redacted] of [
+      ['is press [at] example dot com engaged?', 'is [email] engaged?'],
+      ['is press at example [dot] com engaged?', 'is [email] engaged?'],
+      ['is joy dot hall830 engaged?', 'is [email] engaged?'],
+    ] as const) {
+      const sanitized = await enforceGate1(await startTrace(env.DB), question)
+      expect(sanitized.text, question).toBe(redacted)
+      expect(sanitized.emailsRedacted, question).toBe(1)
+    }
+  })
+
+  it('mutation check: removing the bare spelled-"dot" fold would miss "joy dot hall830" (no "@", no bracket, no "at")', () => {
+    // data/*.csv has no "." in a local part written with a spelled "dot" and no "at": this is
+    // exactly the shape the regression missed, since it is not inside the "<local> at <domain>"
+    // shape at all.
+    expect(normalizeForScan('joy dot hall830').text).toBe('joy.hall830')
+  })
+
+  it('item 2: more invisible characters are dropped (U+034F, U+FE0F, U+180B, U+115F, U+3164), including spliced into a known local part', async () => {
+    const known = await loadKnownEmails(env.DB)
+    const invisibles = ['͏', '️', '᠋', 'ᅟ', 'ㅤ']
+    for (const ch of invisibles) {
+      const label = `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`
+      expect(normalizeForScan(`press${ch}@example.com`).text, label).toBe('press@example.com')
+      expect(findPII({ text: `Write to press${ch}@example.com.` }, known), label).toBe('email_pattern')
+      const splicedLocal = `${JOY_LOCAL.slice(0, 3)}${ch}${JOY_LOCAL.slice(3)}`
+      expect(normalizeForScan(splicedLocal).text, label).toBe(JOY_LOCAL)
+      const sanitized = await enforceGate1(await startTrace(env.DB), `is ${splicedLocal} engaged?`)
+      expect(sanitized.text, label).toBe('is [email] engaged?')
+      expect(sanitized.emailsRedacted, label).toBe(1)
+    }
+  })
+
+  it('mutation check: narrowing the invisible set back to \\p{Cf} alone would miss U+034F and U+FE0F', () => {
+    expect(normalizeForScan('press͏@example.com').text).toBe('press@example.com')
+    expect(normalizeForScan('press️@example.com').text).toBe('press@example.com')
+  })
+
+  it('item 5: ordinary chart prose with a spelled "dot" stays prose — its last word is not a real TLD', async () => {
+    const known = await loadKnownEmails(env.DB)
+    for (const text of ['Look at the dot plot below.', 'Click at random dot points.', 'The spike at launch dot see the tile.']) {
+      expect(normalizeForScan(text).text, text).not.toContain('@')
+      expect(redactEmails(text), text).toEqual({ text, count: 0 })
+      expect(findPII(text, known), text).toBeNull()
+    }
+    expect(await enforceGate1(await startTrace(env.DB), 'Look at the dot plot below.')).toMatchObject({
+      text: 'Look at the dot plot below.',
+      emailsRedacted: 0,
+    })
+  })
+
+  it('item 5: a real disguised address with a real TLD still blocks (the TLD check is not a new false negative)', async () => {
+    const known = await loadKnownEmails(env.DB)
+    expect(findPII('joy.hall830 at protonmail dot com', known)).toBe('known_email')
+    expect(findPII('new.person at example dot com', known)).toBe('email_pattern')
+    expect(findPII('new.person at example dot co dot uk', known)).toBe('email_pattern')
+  })
+
+  it('mutation check: accepting any word as the spelled shape\'s TLD would turn "the dot plot" into an email again', () => {
+    const text = normalizeForScan('Look at the dot plot below.').text
+    expect(text).toBe('Look at the.plot below.')
+    expect(text).not.toContain('@')
+  })
+})
+
