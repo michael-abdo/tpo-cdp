@@ -53,10 +53,10 @@ export function foldSeparators(value: string): string {
 
 /**
  * For membership checks only: the letters and digits of an already lower-cased value, every other
- * character dropped, so "juliaevans230", "julia--evans230" and "julia.evans230" are all
- * "juliaevans230". Every stored local part holds digits (name, dot, surname, digits), so this form
- * still names one subscriber; KnownEmails compares it only for local parts that hold a letter and
- * a digit.
+ * character dropped, so "juliaevans230", "julia--evans230", "julia.evans230" and "julia evans 230"
+ * are all "juliaevans230". Every stored local part holds digits (name, dot, surname, digits), so
+ * this form still names one subscriber; KnownEmails compares it only for local parts that hold a
+ * letter and a digit.
  */
 export function lettersAndDigits(value: string): string {
   return value.replace(/[^a-z0-9]/g, '')

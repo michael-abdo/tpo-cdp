@@ -10,9 +10,10 @@
 //   2. email_pattern    — the case-insensitive email regex (shared/pii.ts EMAIL_REGEX)
 //   3. raw_id           — raw app user, device or web visitor ids, with "_" or a dash (shared/pii.ts RAW_ID_REGEX)
 //   4. known_local_part — a known email's local part with no "@" at all, also letter for letter
-//                         with its dots dropped ("joyhall830"); this closes the path a stored
-//                         email's local part can take through a tool result, e.g. a webhook
-//                         `link` such as "…/u/joy.hall830"
+//                         with its dots dropped ("joyhall830") or as words with spaces between
+//                         them ("joy hall 830"); this closes the path a stored email's local part
+//                         can take through a tool result, e.g. a webhook `link` such as
+//                         "…/u/joy.hall830"
 // A hit throws `PiiBlockedError` (500 `blocked_pii`). It never redacts
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
@@ -55,9 +56,12 @@ export class KnownEmails {
   private readonly localParts: ReadonlySet<string>
   /**
    * The same local parts as letters and digits only (shared/pii.ts lettersAndDigits), for those
-   * that hold a letter and a digit: "juliaevans230" and "julia--evans230" are julia.evans230.
+   * that hold a letter and a digit: "juliaevans230", "julia--evans230" and the words
+   * "julia evans 230" joined are julia.evans230.
    */
   private readonly localPartLetters: ReadonlySet<string>
+  /** The longest of those letters-and-digits forms: how far findSpacedLocalPartSpans joins words. */
+  readonly maxLocalPartLetters: number
   /** The longest known local part. */
   readonly maxLocalPartLength: number
   /**
@@ -92,6 +96,7 @@ export class KnownEmails {
     this.shapes = new Map([...shapes].map(([local, lengths]) => [local, [...lengths]]))
     this.localParts = localParts
     this.localPartLetters = localPartLetters
+    this.maxLocalPartLetters = Math.max(0, ...[...localPartLetters].map((l) => l.length))
     this.maxLocalPartLength = Math.max(0, ...[...localParts].map((l) => l.length))
     this.maxLocalPartSpan = 2 * this.maxLocalPartLength
   }
@@ -108,6 +113,15 @@ export class KnownEmails {
     // Letters only when the token starts and ends on one, so a sentence dash after the name
     // ("joy.hall830-") stays outside the match, as a sentence dot does.
     return ALNUM_EDGES.test(folded) && this.localPartLetters.has(lettersAndDigits(folded))
+  }
+
+  /**
+   * True when `letters` (lower case, letters and digits only) is a known local part letter for
+   * letter, for a local part holding a letter and a digit: the words "julia evans 230" joined are
+   * "juliaevans230", julia.evans230.
+   */
+  isLocalPartLetters(letters: string): boolean {
+    return this.localPartLetters.has(letters)
   }
 
   /**
@@ -165,8 +179,10 @@ function serialize(payload: unknown): string {
 
 /**
  * Every normalized-text span that is a known local part at a non-alphanumeric
- * boundary — the one scan both the outbound detector (findPII) and Gate 1's redaction
- * (redactKnownLocalParts) run; neither keeps its own copy. `text` must already be normalized.
+ * boundary, typed as one word or as several words with whitespace between them
+ * (findSpacedLocalPartSpans) — the one scan both the outbound detector (findPII) and Gate 1's
+ * redaction (redactKnownLocalParts) run; neither keeps its own copy. Spans may overlap; the
+ * redaction merges them. `text` must already be normalized.
  */
 function findLocalPartSpans(text: string, known: KnownEmails): Array<readonly [number, number]> {
   const spans: Array<readonly [number, number]> = []
@@ -192,6 +208,56 @@ function findLocalPartSpans(text: string, known: KnownEmails): Array<readonly [n
       } else {
         i += 1
       }
+    }
+  }
+  return [...spans, ...findSpacedLocalPartSpans(text, known)]
+}
+
+/** A run of LOCAL_PART_TOKEN words with only whitespace between them ("julia evans 230"). */
+const WORD_RUN = new RegExp(`${LOCAL_PART_TOKEN.source}(?:\\s+${LOCAL_PART_TOKEN.source})*`, 'gi')
+
+/**
+ * Every normalized-text span that is a known local part typed as words with whitespace between
+ * them ("julia evans230", "Joy Hall 830"): the letters and digits of consecutive words, joined,
+ * are a known local part letter for letter (KnownEmails.isLocalPartLetters, so only a local part
+ * holding a letter and a digit counts). A span starts and ends on a whole run of letters and
+ * digits, never inside one, so "xjulia evans230" and "julia evans2301" stay as typed, and it
+ * holds whitespace (a single word is findLocalPartSpans' own case). Words are joined only while
+ * the joined form is no longer than the longest known one. `text` must already be normalized.
+ */
+function findSpacedLocalPartSpans(text: string, known: KnownEmails): Array<readonly [number, number]> {
+  const spans: Array<readonly [number, number]> = []
+  for (const run of text.matchAll(WORD_RUN)) {
+    if (!/\s/.test(run[0])) continue
+    // Lower case through the one case fold (shared/normalize.ts). A run holds only the ASCII
+    // characters of LOCAL_PART_TOKEN and whitespace, and starts and ends on one of those
+    // characters, so the fold keeps its length and every index in it.
+    const folded = normalizeQueryFragment(run[0])
+    // Each run of letters and digits, and whether whitespace comes between it and the one before.
+    const parts: Array<{ start: number; end: number; letters: string; spaceBefore: boolean }> = []
+    for (const m of folded.matchAll(/[a-z0-9]+/g)) {
+      const previousEnd = parts.length === 0 ? 0 : parts[parts.length - 1]!.end
+      const spaceBefore = /\s/.test(folded.slice(previousEnd, m.index))
+      parts.push({ start: m.index, end: m.index + m[0].length, letters: m[0], spaceBefore })
+    }
+    let a = 0
+    while (a < parts.length) {
+      let joined = parts[a]!.letters
+      let spaced = false
+      let last = -1
+      // The longest match from this word wins, as in findLocalPartSpans.
+      for (let b = a + 1; b < parts.length; b += 1) {
+        joined += parts[b]!.letters
+        if (joined.length > known.maxLocalPartLetters) break
+        spaced ||= parts[b]!.spaceBefore
+        if (spaced && known.isLocalPartLetters(joined)) last = b
+      }
+      if (last === -1) {
+        a += 1
+        continue
+      }
+      spans.push([run.index + parts[a]!.start, run.index + parts[last]!.end])
+      a = last + 1
     }
   }
   return spans
@@ -358,8 +424,10 @@ export function redactEmails(text: string): { text: string; count: number } {
  * count: a maximal run of local-part characters (shared/pii.ts LOCAL_PART_TOKEN), as typed or
  * less any leading or trailing `. _ % + -` (sentence punctuation, "joy.hall830-"), must equal a
  * known local part of at least LOCAL_PART_MIN_CHARS characters, so "joy.hall8301" or
- * "joy.hall83" stay as typed. Run after `redactEmails`, whose `[email]` holds no token that
- * long. Shares `findLocalPartSpans` with the outbound detector (findPII), so the two never drift.
+ * "joy.hall83" stay as typed. Whole words typed with spaces between them count too when their
+ * letters and digits, joined, are the local part's ("joy hall 830", findSpacedLocalPartSpans).
+ * Run after `redactEmails`, whose `[email]` holds no token that long. Shares `findLocalPartSpans`
+ * with the outbound detector (findPII), so the two never drift.
  */
 export function redactKnownLocalParts(text: string, known: KnownEmails): { text: string; count: number } {
   // On the membership normalization, so a stored address spaced any way ("joy .hall830@protonmail
