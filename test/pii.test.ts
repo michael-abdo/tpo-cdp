@@ -17,6 +17,7 @@ import {
   logModelPayload,
   PiiBlockedError,
   redactEmails,
+  redactKnownLocalParts,
 } from '../worker/assistant/gates/pii-guard'
 import { discoverViewSchemas, type ViewSchema, viewSchemas } from '../worker/assistant/schema-context'
 import { renderSystemPrompt } from '../worker/assistant/system-prompt'
@@ -703,11 +704,17 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     const spaced = 'joy . hall830 @ protonmail . com'
     expect(findPII(`is ${spaced} engaged?`, known)).toBe('known_email')
     expect(redactEmails(`is ${spaced} engaged?`).text).toBe('is [email] engaged?')
+    // One-side-spaced dots (the adversarial review of 46fdc9d): still the stored address, caught
+    // by the membership check and redacted whole in a question.
+    for (const oneSide of ['joy .hall830@protonmail .com', 'joy. hall830@protonmail. com', 'JOY .HALL830 @PROTONMAIL .COM']) {
+      expect(findPII(`is ${oneSide} engaged?`, known), oneSide).toBe('known_email')
+      expect(redactKnownLocalParts(redactEmails(`is ${oneSide} engaged?`).text, known).text, oneSide).toBe('is [email] engaged?')
+    }
   })
 
   it('an address padded with spaces around "@" or "." is caught; ordinary sentences and handles are not (self-audit at 1200107)', () => {
     const none = new KnownEmails([])
-    for (const text of ['press . desk @ example . com', 'press @ example.com', 'press@ example . co . uk', 'new.person @ example.de']) {
+    for (const text of ['press . desk @ example . com', 'press.desk @ example.com', 'press@ example . co . uk', 'new.person @ example.de', 'desk2 @ example.com']) {
       expect(findPII(text, none), text).toBe('email_pattern')
     }
     for (const text of [
@@ -716,6 +723,16 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
       'meet @ noon',
       'It rose 3 . 5 points. Then it fell.',
       'Version 2 . 0 is out',
+      // A space before "@" after a plain word reads as prose (it cannot be told apart from an
+      // unknown address with a plain name, "press @ example.com"; README states that gap).
+      'follow us @ instagram.com',
+      'visit us @ pourover.com',
+      'DM us @ thepourover.news',
+      'Follow @thepourover.com',
+      'press @ example.com',
+      // A spaced dot never lets a spelled "at" fold.
+      'signed up at instagram . com',
+      'sales at shop . store',
     ]) {
       expect(findPII(text, none), text).toBeNull()
     }

@@ -14,7 +14,7 @@
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
 import { normalizeEmail, normalizeQueryFragment } from '../../../shared/normalize'
-import { EMAIL_REGEX, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, type NormalizedScan, normalizeForScan, RAW_ID_REGEX } from '../../../shared/pii'
+import { EMAIL_REGEX, LOCAL_PART_MIN_CHARS, LOCAL_PART_TOKEN, type NormalizedScan, normalizeForMembership, normalizeForScan, RAW_ID_REGEX } from '../../../shared/pii'
 import { ApiError } from '../../auth/middleware'
 import type { AuditTrace } from '../audit/ai-audit'
 
@@ -75,17 +75,25 @@ export class KnownEmails {
    * its own entry point and passes the result on, so this never re-normalizes.
    */
   occursIn(text: string): boolean {
-    for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
-      for (const [local, lengths] of this.shapes) {
-        const start = at - local
-        if (start < 0) continue
-        for (const length of lengths) {
-          const candidate = normalizeEmail(text.slice(start, start + length))
-          if (candidate !== null && this.emails.has(candidate)) return true
-        }
+    for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) if (this.matchAt(text, at) !== null) return true
+    return false
+  }
+
+  /** The [start, end) span of a known email whose "@" is at `at` in `text`, or null. */
+  matchAt(text: string, at: number): readonly [number, number] | null {
+    for (const [local, lengths] of this.shapes) {
+      const start = at - local
+      if (start < 0) continue
+      for (const length of lengths) {
+        const slice = text.slice(start, start + length)
+        // normalizeEmail trims, so a slice starting or ending on a space would also match; the span
+        // must be the address itself, or a redaction would swallow the space next to it.
+        if (/^\s|\s$/u.test(slice)) continue
+        const candidate = normalizeEmail(slice)
+        if (candidate !== null && this.emails.has(candidate)) return [start, start + length]
       }
     }
-    return false
+    return null
   }
 }
 
@@ -174,12 +182,18 @@ function applySpans(
   return { text: result, count }
 }
 
-/** The four checks, in order, over one already-normalized text. */
-function checkNormalizedText(text: string, known: KnownEmails): PiiCheck | null {
-  if (known.occursIn(text)) return 'known_email'
-  if (EMAIL_REGEX.test(text)) return 'email_pattern'
-  if (RAW_ID_REGEX.test(text)) return 'raw_id'
-  if (findLocalPartSpans(text, known).length > 0) return 'known_local_part'
+/**
+ * The four checks, in order, over one raw text: the shape checks (email pattern, raw id) on the
+ * conservative normalization, the membership checks (a stored email, a stored local part) on the
+ * aggressive one, which only a real subscriber's address can match (09 D-79).
+ */
+function checkText(raw: string, known: KnownEmails): PiiCheck | null {
+  const shape = normalizeForScan(raw).text
+  const member = normalizeForMembership(raw).text
+  if (known.occursIn(member)) return 'known_email'
+  if (EMAIL_REGEX.test(shape)) return 'email_pattern'
+  if (RAW_ID_REGEX.test(shape)) return 'raw_id'
+  if (findLocalPartSpans(member, known).length > 0) return 'known_local_part'
   return null
 }
 
@@ -218,13 +232,13 @@ function collectLeafStrings(payload: unknown, out: string[]): void {
  * ran. Every text normalizeForScan sees is normalized once, never raw.
  */
 export function findPII(payload: unknown, known: KnownEmails): PiiCheck | null {
-  const wholeHit = checkNormalizedText(normalizeForScan(serialize(payload)).text, known)
+  const wholeHit = checkText(serialize(payload), known)
   if (wholeHit !== null) return wholeHit
   if (typeof payload !== 'string') {
     const leaves: string[] = []
     collectLeafStrings(payload, leaves)
     for (const leaf of leaves) {
-      const hit = checkNormalizedText(normalizeForScan(leaf).text, known)
+      const hit = checkText(leaf, known)
       if (hit !== null) return hit
     }
   }
@@ -308,8 +322,27 @@ export function redactEmails(text: string): { text: string; count: number } {
  * long. Shares `findLocalPartSpans` with the outbound detector (findPII), so the two never drift.
  */
 export function redactKnownLocalParts(text: string, known: KnownEmails): { text: string; count: number } {
-  const normalized = normalizeForScan(text)
-  return applySpans(text, normalized, findLocalPartSpans(normalized.text, known), '[email]')
+  // On the membership normalization, so a stored address spaced any way ("joy .hall830@protonmail
+  // .com") is redacted whole, not just its local part (09 D-79, self-audit at 1200107).
+  const normalized = normalizeForMembership(text)
+  const spans = [...knownEmailSpans(normalized.text, known), ...findLocalPartSpans(normalized.text, known)].sort((a, b) => a[0] - b[0])
+  const merged: Array<readonly [number, number]> = []
+  for (const span of spans) {
+    const last = merged[merged.length - 1]
+    if (last !== undefined && span[0] < last[1]) merged[merged.length - 1] = [last[0], Math.max(last[1], span[1])]
+    else merged.push(span)
+  }
+  return applySpans(text, normalized, merged, '[email]')
+}
+
+/** Every normalized-text span that is a stored email (the same lookup as KnownEmails.occursIn). */
+function knownEmailSpans(text: string, known: KnownEmails): Array<readonly [number, number]> {
+  const spans: Array<readonly [number, number]> = []
+  for (let at = text.indexOf('@'); at !== -1; at = text.indexOf('@', at + 1)) {
+    const hit = known.matchAt(text, at)
+    if (hit !== null) spans.push(hit)
+  }
+  return spans
 }
 
 /**

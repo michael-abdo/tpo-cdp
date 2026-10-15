@@ -586,6 +586,8 @@ describe('join-shape rule (2026-10-14 live finding: a filtered cross join reset 
       'SELECT count(*) FROM v_profiles p JOIN v_web_events w ON w.pkey = p.pkey',
       'SELECT count(*) FROM v_profiles p LEFT JOIN v_web_events w ON p.pkey = w.pkey AND w.page = \'/\'',
       'SELECT count(*) FROM v_profiles JOIN v_web_events USING (pkey)',
+      'SELECT count(*) FROM v_profiles p JOIN v_web_events w ON (p.pkey = w.pkey)',
+      'SELECT n FROM (SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON (p.pkey = w.pkey))',
       "SELECT count(*) FROM v_profiles p JOIN v_web_events w ON p.pkey = w.pkey AND (w.page = '/' OR w.page = '/subscribe')",
       "SELECT source, count(*) FROM v_profiles WHERE status = 'active' GROUP BY source",
       'SELECT count(*) FROM v_profiles WHERE pkey IN (SELECT pkey FROM v_web_events)',

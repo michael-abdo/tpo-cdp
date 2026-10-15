@@ -146,7 +146,10 @@ const DISGUISE_TOKEN_RE = new RegExp(
     '|(?<dotSpelled>(?<=[\\p{L}\\p{N}_-])\\s+dot\\s+(?=[\\p{L}\\p{N}_-]))' +
     // A literal "@" or "." padded with spaces between word characters ("joy . hall830 @
     // protonmail . com"), the self-audit's unlisted spelling (09 D-79): folded like the others.
-    '|(?<atSpaced>(?<=[\\p{L}\\p{N}_.+-])(?:\\s+@\\s*|\\s*@\\s+)(?=[\\p{L}\\p{N}]))' +
+    // A "@" glued to the name with spaces after it ("press@ example.com") always folds; one with
+    // a space before it folds only when the name looks like an address part (holds a ".", digit,
+    // "_" or "+", or follows a spaced dot), so "visit us @ pourover.com" stays prose.
+    '|(?<atSpaced>(?<=[\\p{L}\\p{N}_.+-])@\\s+(?=[\\p{L}\\p{N}])|(?<=(?:[._+\\p{N}][\\p{L}\\p{N}._+-]*|\\s\\.\\s+[\\p{L}\\p{N}_+-]+))\\s+@\\s*(?=[\\p{L}\\p{N}]))' +
     // A spaced "." needs a space on BOTH sides, so an ordinary sentence end ("at Instagram. Of
     // those…") is never read as a domain dot.
     '|(?<dotSpaced>(?<=[\\p{L}\\p{N}_-])\\s+\\.\\s+(?=[\\p{L}\\p{N}_-]))' +
@@ -198,13 +201,16 @@ function foldDisguises(stage1: readonly ScanToken[]): DisguiseToken[] {
     const [, origEnd] = end > start ? spanAt[end - 1]! : [stage1Text.length, stage1Text.length]
     const groups = m.groups as Record<string, string | undefined>
     const isDot = groups.dotBr !== undefined || groups.dotSpelled !== undefined || groups.dotSpaced !== undefined
+    // A spaced "." folds to "." but never marks a disguise: "signed up at instagram . com" must not
+    // let stage 2b's spelled-"at" fold read it as an address.
+    const disguisedDot = groups.dotBr !== undefined || groups.dotSpelled !== undefined
     const out =
       groups.pct !== undefined || groups.hex !== undefined || groups.dec !== undefined || groups.atBr !== undefined || groups.atSpaced !== undefined
         ? '@'
         : isDot
           ? '.'
           : groups.ch!
-    tokens.push({ origStart, origEnd, out, disguisedDot: isDot })
+    tokens.push({ origStart, origEnd, out, disguisedDot })
   }
   return tokens
 }
@@ -255,7 +261,35 @@ function applyAtShape(disguiseTokens: readonly DisguiseToken[]): ScanToken[] {
 
 /** Pure. The one normalizer (see NormalizedScan above). */
 export function normalizeForScan(raw: string): NormalizedScan {
+  return scanOf(raw, applyAtShape(foldDisguises(foldChars(raw))))
+}
+
+/**
+ * Pure. The same normalized text with every whitespace run next to a "." or "@" dropped
+ * ("joy .hall830@protonmail .com" → "joy.hall830@protonmail.com"). Used ONLY for membership
+ * checks against stored values (a known email, a known local part), which can match nothing but
+ * a real subscriber's address, so this aggressive fold adds no false positive; the email-shape
+ * pattern keeps running on normalizeForScan's conservative text (09 D-79, self-audit at 1200107).
+ */
+export function normalizeForMembership(raw: string): NormalizedScan {
   const tokens = applyAtShape(foldDisguises(foldChars(raw)))
+  const isSpace = (t: ScanToken | undefined) => t !== undefined && /^\s+$/u.test(t.out)
+  const isSep = (t: ScanToken | undefined) => t !== undefined && (t.out === '.' || t.out === '@')
+  const kept: ScanToken[] = []
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (isSpace(tokens[i])) {
+      let before = i - 1
+      while (before >= 0 && isSpace(tokens[before])) before -= 1
+      let after = i + 1
+      while (after < tokens.length && isSpace(tokens[after])) after += 1
+      if (isSep(tokens[before]) || isSep(tokens[after])) continue
+    }
+    kept.push(tokens[i]!)
+  }
+  return scanOf(raw, kept)
+}
+
+function scanOf(raw: string, tokens: readonly ScanToken[]): NormalizedScan {
   const text = tokens.map((t) => t.out).join('')
   function mapToOriginal(start: number, end: number): readonly [number, number] {
     let pos = 0

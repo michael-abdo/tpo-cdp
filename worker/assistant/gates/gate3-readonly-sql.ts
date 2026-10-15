@@ -244,10 +244,15 @@ function joinShapeProblems(tokens: readonly SqlToken[]): string[] {
     if (word(from) !== 'FROM') return
     const depth = from.depth
     let end = tokens.length
+    let open = 0 // "(" … ")" opened inside this clause (they carry this clause's depth)
     for (let i = at + 1; i < tokens.length; i += 1) {
       const t = tokens[i]
-      if (t.depth < depth || (t.depth === depth && t.kind === 'punct' && t.text === ')')) { end = i; break }
-      if (t.depth === depth && FROM_CLAUSE_END.has(word(t))) { end = i; break }
+      if (t.depth === depth && t.kind === 'punct' && t.text === '(') open += 1
+      else if (t.depth === depth && t.kind === 'punct' && t.text === ')') {
+        if (open === 0) { end = i; break }
+        open -= 1
+      } else if (t.depth < depth) { end = i; break }
+      else if (t.depth === depth && FROM_CLAUSE_END.has(word(t))) { end = i; break }
     }
     const clause = tokens.slice(at + 1, end).filter((t) => t.depth === depth)
     if (clause.some((t) => t.kind === 'punct' && t.text === ',')) {
