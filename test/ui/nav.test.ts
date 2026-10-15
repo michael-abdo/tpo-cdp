@@ -22,7 +22,7 @@ import { closesOnPointer, escapeAction, NAV, nextOpen } from '../../src/nav'
 // pointerdown listener that calls closesOnPointer, the NavLink onClick that closes on pick, or the
 // button onClick that calls nextOpen). workerd has no DOM, so none of (A)/(B)/(C) can render a real
 // keydown, pointerdown or click and observe React's handler run; that wiring is covered by the live browser
-// check recorded in README "Known gaps" → "Techy nav: the DOM wiring has no automated test".
+// check recorded in docs/notes.md "Known gaps" → "Techy nav: the DOM wiring has no automated test".
 
 function renderAt(url: string): string {
   const navigator = {

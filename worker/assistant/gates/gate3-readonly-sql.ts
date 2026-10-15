@@ -32,7 +32,7 @@
 //      for the scan rule and how it was checked against every legitimate query.
 //   2. a time limit (SQL_TIME_LIMIT_MS): the real run races a timer. D1 has no server-side
 //      statement timeout, so losing the race only stops this Worker's wait for the query — D1
-//      keeps running it to its own limits in the background (README "Known gaps").
+//      keeps running it to its own limits in the background (docs/notes.md "Known gaps").
 //   3. a row-scan cap (SQL_ROWS_READ_CAP) read from D1's own `meta.rows_read`, checked after the
 //      query returns (same gap: the cost is already paid by the time this refuses it).
 // `timeoutMs`/`rowsReadCap` are parameters (default to the constants below) so a test can inject
@@ -417,7 +417,7 @@ const RANGE_CONDITION = /^[\w.]+\s*[<>]\?$/
  * range one (`email_norm=? AND created_at>?`, the shape a real equality-joined or
  * equality-correlated relation shows, e.g. `v_source_app_conversion`'s own correlated subquery) —
  * is never range-only, so neither shape is flagged: the constant-equality one is a known,
- * disclosed gap (README "Known gaps"), and the equality-joined/correlated one is the cheap,
+ * disclosed gap (docs/notes.md "Known gaps"), and the equality-joined/correlated one is the cheap,
  * legitimate indexed access this check must not refuse.
  */
 function isRangeOnlySearch(row: PlanRow): boolean {
@@ -498,7 +498,7 @@ function hasCorrelatedAncestor(row: PlanRow, byId: ReadonlyMap<number, PlanRow>)
  * A cartesian with one side filtered by a *constant equality* (`w.page = '/'`) is not caught by
  * either rule — see "Known, accepted gaps" below.
  *
- * Known, accepted gaps this still misses (README "Known gaps"): a low-cardinality equi-join
+ * Known, accepted gaps this still misses (docs/notes.md "Known gaps"): a low-cardinality equi-join
  * SQLite answers with `SEARCH … USING AUTOMATIC COVERING INDEX` instead of a second SCAN; and a
  * cartesian where one side's own driving access becomes an indexed SEARCH on a *constant
  * equality* filter (`w.page = '/'`, `SEARCH we USING INDEX web_events_page (page=?)`) instead of
@@ -570,9 +570,9 @@ async function checkPlan(db: D1Database, sql: string, params: readonly SqlValue[
  * inject a timeout that reliably beats a real query without mocking D1; the other, for exercising
  * the real `ms > 0` timer path (09 D-81 #2), is racing this function directly against a promise
  * that is genuinely still pending (test/sql-limits.test.ts). `promise` itself is never cancelled
- * either way (D1 has no cancel; it keeps running in the background, README "Known gaps") — and,
+ * either way (D1 has no cancel; it keeps running in the background, docs/notes.md "Known gaps") — and,
  * measured live in workerd against this seed's local D1, a long real query blocks the isolate so
- * completely that the timer below has never been seen to win against one (README "Known gaps");
+ * completely that the timer below has never been seen to win against one (docs/notes.md "Known gaps");
  * it is exercised here only against an ordinary pending promise, not a real heavy D1 call.
  */
 export async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -617,7 +617,7 @@ export async function runReadOnlySelect(
     // and the row-scan measurement is a second read off the *same* prepared, bound statement
     // (one db.prepare/bind call, as "one attempt" always meant here) via run() — the only way the
     // public D1 API gives both; the two terminal calls race the same timeout together, so this
-    // costs an extra D1 read, not extra serial wait (README "Known gaps" notes the doubled read).
+    // costs an extra D1 read, not extra serial wait (docs/notes.md "Known gaps" notes the doubled read).
     const stmt = db.prepare(checked.sql).bind(...params)
     const [rawResult, metaResult] = await raceTimeout(Promise.all([stmt.raw<unknown[]>({ columnNames: true }), stmt.run()]), timeoutMs)
     raw = rawResult

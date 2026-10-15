@@ -82,7 +82,7 @@ describe("/insights' answer card renders the model's filters_applied only throug
     })
   }
 
-  it('the known false positive (README Known gaps): the word select before the window_* keys hides the block', () => {
+  it('the known false positive (docs/notes.md Known gaps): the word select before the window_* keys hides the block', () => {
     const { text } = render(answer({ note: 'select readers', ...REAL }))
     expect(text).toContain(FILTERS_HIDDEN_MESSAGE)
     expect(text).not.toContain('Acquisition source')

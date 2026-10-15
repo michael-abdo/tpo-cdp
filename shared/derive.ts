@@ -6,7 +6,7 @@
  * fragment over that column with bound placeholders (`:today`, or a window's `:from` and `:to`).
  * Values are computed here at write time and stored; SQL never re-implements a formula. Three
  * consumers render from this object and nothing else: the assistant system prompt (05), the UI
- * footers (06) and the README "Definitions" table (copied from the doc strings by hand for the
+ * footers (06) and the docs/notes.md "Definitions" table (copied from the doc strings by hand for the
  * MVP, 11 §Scripts).
  *
  * Pure functions over plain inputs: ISO dates (`YYYY-MM-DD`, or a stored UTC timestamp whose
@@ -189,7 +189,7 @@ export function appAfterSignup(appCreatedAt: string | null, signupDate: string):
 export interface Definition {
   /** The row's name in 02 §Derived. */
   name: string
-  /** One plain-English sentence; rendered verbatim to the model, the UI and the README. */
+  /** One plain-English sentence; rendered verbatim to the model, the UI and docs/notes.md. */
   doc: string
   /** The formula exactly as 02 §Derived states it. */
   formula: string

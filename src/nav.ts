@@ -47,7 +47,7 @@ export function underNav(pathname: string, to: string): boolean {
 
 // The disclosure-nav decision logic (06 §Nav, 09 D-71), pulled out of App.tsx's NavGroupMenu as
 // pure functions with unit tests that need no DOM; those tests do not reach App.tsx's wiring
-// (state, focus, stopPropagation), which README "Known gaps" records as checked live. Each function matches one behaviour D-71 names.
+// (state, focus, stopPropagation), which docs/notes.md "Known gaps" records as checked live. Each function matches one behaviour D-71 names.
 
 /** Esc on an open disclosure-nav panel: close it and return focus to its button. */
 export function escapeAction(key: string, open: boolean): { close: boolean; refocus: boolean } {

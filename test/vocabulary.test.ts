@@ -1,12 +1,13 @@
 // T-VOC-1 (08, 09 D-66): every user-facing word is the brief's own, per the table in 06 §Vocabulary.
 // The scan reads screen text from the TypeScript AST (JSX text, string literals, template chunks;
 // comments are not nodes), handed over by vitest.config.ts as SCREEN_TEXTS.vocabulary for each file
-// test/helpers/screen-text.ts VOCABULARY_SCAN names, plus the README as written, plus the system
+// test/helpers/screen-text.ts VOCABULARY_SCAN names, plus the README and docs/notes.md as written, plus the system
 // prompt as rendered (its Definitions section comes from shared/derive.ts at runtime; its view list
 // from the migrated local D1's v_* views, no seed rows). No network.
 
 import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
+import notes from '../docs/notes.md?raw'
 import readme from '../README.md?raw'
 import componentsSource from '../src/components.tsx?raw'
 import navSource from '../src/nav.ts?raw'
@@ -86,8 +87,8 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(offences({ 'renderSystemPrompt()': prompt.split('\n') })).toEqual([])
   })
 
-  it("no README line holds a retired term outside the brief's own question", () => {
-    expect(offences({ 'README.md': readme.split('\n') })).toEqual([])
+  it("no README or docs/notes.md line holds a retired term outside the brief's own question", () => {
+    expect(offences({ 'README.md': readme.split('\n'), 'docs/notes.md': notes.split('\n') })).toEqual([])
   })
 
   it('nav labels are the 06 words (D-67, D-71): Look up, Segments and Insights in place of AI assistant and Growth (D-64); App events and AI audit log fold into "Techy", last', () => {

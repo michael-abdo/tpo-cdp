@@ -7,9 +7,9 @@
 // `note` is the WHOLE sentence a page reveals under the control once it is activated (D-72's "the
 // note says what it will do", already spelled out per-feature in the design docs), so a page or a
 // test can compare it by equality with no string-building logic to duplicate. `label` is the
-// feature's plain name (used for README and tests, and in the rare case a control's own visible
+// feature's plain name (used for docs/notes.md and tests, and in the rare case a control's own visible
 // text differs from it, such as Look up's "Details" toggle for `profile_revenue`). `group` marks
-// the five Segments "More filters" flags, which README lists once, under one line, per D-80 "one
+// the five Segments "More filters" flags, which docs/notes.md lists once, under one line, per D-80 "one
 // flag per feature, five parts" (segments.md §4 Q4).
 //
 // Ungating a feature is: find its entry here, set `comingSoon: false`, and follow its page spec's
@@ -20,13 +20,13 @@ export type FeaturePage = 'overview' | 'lookup' | 'segments' | 'insights' | 'log
 export interface Feature {
   readonly id: string
   readonly page: FeaturePage
-  /** The feature's plain name (22-pages §1's own words); used for README and tests. */
+  /** The feature's plain name (22-pages §1's own words); used for docs/notes.md and tests. */
   readonly label: string
   /** The whole sentence a page shows once the control is activated. States what the feature will
    * do (D-72's "the note says what it will do"); never repeats "coming soon" (the chip's own
    * words) and never starts with this entry's own `label` or a `controls` entry. */
   readonly note: string
-  /** Segments' five parked filters share one README line, each ungating alone (D-80, segments.md §4 Q4). */
+  /** Segments' five parked filters share one docs/notes.md line, each ungating alone (D-80, segments.md §4 Q4). */
   readonly group?: 'more_filters'
   /**
    * The exact visible text of each rendered control sharing this one flag, in placement order,

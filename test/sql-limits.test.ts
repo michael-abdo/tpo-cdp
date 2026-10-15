@@ -64,7 +64,7 @@ const SYNTAX_ERROR_SQL = 'SELECT source, count(*) AS n FROM v_profiles GROUP BY'
 // '/'`, a constant *equality* filter instead of a range one) still passes uncaught — the plan
 // check's range-only rule (gate3-readonly-sql.ts `isRangeOnlySearch`) deliberately excludes any
 // `=?` term so it does not also refuse a genuine equality join or equality-correlated subquery;
-// README "Known gaps" discloses K1's shape as a residual, so no refusal test is added for it.
+// docs/notes.md "Known gaps" discloses K1's shape as a residual, so no refusal test is added for it.
 const CARTESIAN_WITH_RANGE_FILTER_COMMA = "SELECT count(*) AS n FROM v_profiles p, v_web_events w WHERE w.page > ''"
 const CARTESIAN_WITH_RANGE_FILTER_JOIN_ON = "SELECT count(*) AS n FROM v_profiles p JOIN v_web_events w ON w.page >= ''"
 const CARTESIAN_SELF_JOIN_BOTH_RANGE_FILTERED = "SELECT count(*) AS n FROM v_web_events a, v_web_events b WHERE a.page > '' AND b.page > ''"

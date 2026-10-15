@@ -66,7 +66,7 @@ const quietButton =
  * open panel pushes the theme/log-out row down instead of covering it. The decision logic
  * (escapeAction, closesOnPointer, nextOpen) lives in src/nav.ts as pure functions with unit tests
  * that need no DOM (test/ui/nav.test.ts); this component wires their result to state, focus and
- * stopPropagation, which those tests do not reach (README "Known gaps" records the live check).
+ * stopPropagation, which those tests do not reach (docs/notes.md "Known gaps" records the live check).
  */
 function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desktop' | 'phone' }) {
   const { pathname } = useLocation()

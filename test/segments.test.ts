@@ -640,7 +640,7 @@ describe('T-SEG-10 site visits', () => {
     expect((await preview({ ...PRESET, site_visit_page: '/shadrachs-picks' })).count).toBe(31)
   })
 
-  it('new subscribers who visited /shadrachs-picks = 120 active, 10 hidden (the README\'s Growth task)', async () => {
+  it('new subscribers who visited /shadrachs-picks = 120 active, 10 hidden (docs/notes.md\'s Growth task)', async () => {
     const page = visitedBy((v) => v.page === '/shadrachs-picks')
     const expected = split((s) => isNewSubscriber(s.signup_date) && page.has(s.email))
     expect(expected).toEqual({ active: 120, hidden: 10 })

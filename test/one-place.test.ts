@@ -10,7 +10,7 @@
 //
 // This is a heuristic guard, not a proof: it catches the shapes the fixtures above exercise, and it
 // does not catch everything "say one thing in one place" means. Known gaps (same list as the
-// README's Known gaps): a handler or alias declared inside a component's own body, rather than at
+// docs/notes.md's Known gaps): a handler or alias declared inside a component's own body, rather than at
 // module scope or a prop, is not resolved as a sentence or identifier source; a literal `to`/`href`
 // value on a link is not read as the sentence it carries; an InfoTip-bearing component other than
 // `InfoTip`/`Chip`/`Metric` itself (the scan's own `TIP_TAGS`) — `OverviewPage.tsx`'s `RunFact`, for

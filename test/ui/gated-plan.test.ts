@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES, type Feature, type FeatureId } from '../../shared/features'
 import { literalOccursIn } from '../helpers/gated-assertions'
 
-// T-GATE-1 and T-GATE-5 (00-plan.md §4), read from source/README text (no DOM, no typescript
+// T-GATE-1 and T-GATE-5 (00-plan.md §4), read from source/docs/notes.md text (no DOM, no typescript
 // package — tests run inside workerd; see one-home.test.ts for the same import.meta.glob pattern).
 
 const SRC = import.meta.glob<string>(['../../src/**/*.tsx'], { query: '?raw', import: 'default', eager: true })
-const [README] = Object.values(import.meta.glob<string>('../../README.md', { query: '?raw', import: 'default', eager: true }))
+const [NOTES] = Object.values(import.meta.glob<string>('../../docs/notes.md', { query: '?raw', import: 'default', eager: true }))
 
 /** How many `useGated('<id>')` call sites exist across every .tsx source file. */
 function placementCount(id: FeatureId): number {
@@ -95,23 +95,23 @@ describe('T-GATE-1: every shared/features.ts entry renders on its page exactly o
   })
 })
 
-describe('T-GATE-5: README\'s Known gaps names every gated feature, and the count line matches', () => {
-  it('reads the real README, not an empty glob', () => {
-    expect(README.length).toBeGreaterThan(1000)
-    expect(README).toContain('## Known gaps')
+describe('T-GATE-5: docs/notes.md\'s Known gaps names every gated feature, and the count line matches', () => {
+  it('reads the real docs/notes.md, not an empty glob', () => {
+    expect(NOTES.length).toBeGreaterThan(1000)
+    expect(NOTES).toContain('## Known gaps')
   })
 
   /** The Known gaps section: from its heading to the next `## ` heading. */
-  function knownGaps(readme: string): string {
-    const start = readme.indexOf('## Known gaps')
-    if (start < 0) throw new Error('gated-plan: README has no "## Known gaps" section')
-    const end = readme.indexOf('\n## ', start + 1)
+  function knownGaps(notes: string): string {
+    const start = notes.indexOf('## Known gaps')
+    if (start < 0) throw new Error('gated-plan: docs/notes.md has no "## Known gaps" section')
+    const end = notes.indexOf('\n## ', start + 1)
     if (end < 0) throw new Error('gated-plan: "## Known gaps" never ends (no following heading)')
-    return readme.slice(start, end)
+    return notes.slice(start, end)
   }
 
   it('every FEATURES id and label is named in Known gaps', () => {
-    const gaps = knownGaps(README)
+    const gaps = knownGaps(NOTES)
     const missing: string[] = []
     for (const [id, f] of Object.entries(FEATURES)) {
       if (!gaps.includes(`\`${id}\``)) missing.push(`${id}: missing the flag name`)
@@ -121,14 +121,14 @@ describe('T-GATE-5: README\'s Known gaps names every gated feature, and the coun
   })
 
   it('the "N future features are gated" count equals Object.keys(FEATURES).length', () => {
-    const gaps = knownGaps(README)
+    const gaps = knownGaps(NOTES)
     const m = /\*\*(\d+) future features are gated in place/.exec(gaps)
-    if (m === null) throw new Error('gated-plan: README has no "N future features are gated in place" line')
+    if (m === null) throw new Error('gated-plan: docs/notes.md has no "N future features are gated in place" line')
     expect(Number(m[1])).toBe(Object.keys(FEATURES).length)
   })
 
   it('every FEATURES id appears exactly once in Known gaps (one home, not a scattered second mention)', () => {
-    const gaps = knownGaps(README)
+    const gaps = knownGaps(NOTES)
     for (const id of Object.keys(FEATURES)) {
       const count = gaps.split(`\`${id}\``).length - 1
       expect(count, id).toBe(1)

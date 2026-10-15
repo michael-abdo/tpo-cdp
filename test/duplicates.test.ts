@@ -211,7 +211,7 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
       expect(weights[field].disagree, field).toBeCloseTo(Math.log2((1 - m) / (1 - u)), 12)
     }
     expect(weights.shared_device.agreeing).toBe(0)
-    // The m values the README documents (D-62), pinned as literals so they cannot drift unseen.
+    // The m values docs/notes.md documents (D-62), pinned as literals so they cannot drift unseen.
     expect(M_PROBABILITIES).toEqual({ domain: 0.8, signup_gap: 0.5, source: 0.8, shared_device: 0.9 })
     // 02 §Counts: the device disagree weight, and the 16 three-way pairs would score 97 without it.
     expect(weights.shared_device.disagree).toBeCloseTo(-3.32, 2)

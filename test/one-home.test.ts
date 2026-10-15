@@ -121,7 +121,7 @@ describe('the cold window has one home (09 D-68)', () => {
     expect(goingColdRisk(past, coldSince(past, past))).toBe(false)
   })
 
-  it('the DEFINITIONS sentences for the cold rules carry COLD_DAYS (rendered by Lookup, Growth, the prompt, README)', () => {
+  it('the DEFINITIONS sentences for the cold rules carry COLD_DAYS (rendered by Lookup, Growth, the prompt, docs/notes.md)', () => {
     const days = `${COLD_DAYS} days`
     expect(DEFINITIONS.cold_since.doc).toContain(days)
     expect(DEFINITIONS.cold_since.formula).toBe(`(last_open_date ?? signup_date) + ${days}`)

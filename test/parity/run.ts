@@ -1,7 +1,7 @@
 /**
  * D-75 parity harness, mode B (21 §2.6): runs `test/parity/oracle.ts` against a throwaway LOCAL
  * D1, never the dev database (21 §0 F5) and never the remote one (that is mode C, out of scope
- * for this unit — recorded below and in README "Known gaps"/docs/ai-log.md: it needs production
+ * for this unit — recorded below and in docs/notes.md "Known gaps"/docs/ai-log.md: it needs production
  * D1 credentials, which this round keeps out of a developer-facing npm script).
  *
  * Steps: a fresh `--persist-to` directory under the OS temp dir → `wrangler d1 migrations apply

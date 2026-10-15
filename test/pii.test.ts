@@ -724,7 +724,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
       'It rose 3 . 5 points. Then it fell.',
       'Version 2 . 0 is out',
       // A space before "@" after a plain word reads as prose (it cannot be told apart from an
-      // unknown address with a plain name, "press @ example.com"; README states that gap).
+      // unknown address with a plain name, "press @ example.com"; docs/notes.md states that gap).
       'follow us @ instagram.com',
       'visit us @ pourover.com',
       'DM us @ thepourover.news',
