@@ -11,7 +11,7 @@ import {
   SendToBeehiiv,
 } from '../../src/pages/SegmentsPage'
 import { FILTER_KEYS, type SegmentFilters } from '../../shared/segment-filters'
-import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
+import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 import { DEFAULT_FORM, toFilters } from '../../src/segment-form'
 import { recordSearch, type SearchStore } from '../../src/previous-searches'
 
@@ -35,6 +35,14 @@ describe('Segments: the five gated "More filters"', () => {
       expect(hasDisabledAttribute(html)).toBe(false)
       expect(describedByResolvesTo(html, FEATURES[id].note)).toBe(true)
     }
+  })
+
+  it('each filter\'s own VISIBLE text (legend or label, "Coming soon" aside) equals its features.ts label exactly', () => {
+    expect(elementText(renderToString(createElement(GatedSignedUpBetween)), 'legend')).toBe(FEATURES.filter_signed_up_between.label)
+    expect(elementText(renderToString(createElement(GatedOpenedWithinDays)), 'label')).toBe(FEATURES.filter_opened_within_days.label)
+    expect(elementText(renderToString(createElement(GatedSiteVisitsAtLeast)), 'label')).toBe(FEATURES.filter_site_visits_gte.label)
+    expect(elementText(renderToString(createElement(GatedGoingColdRisk)), 'label')).toBe(FEATURES.filter_going_cold_risk.label)
+    expect(elementText(renderToString(createElement(GatedEmailDomain)), 'label')).toBe(FEATURES.filter_email_domain.label)
   })
 
   it('every gated filter id is its own flag with group "more_filters", and none of them is a real FILTER_KEYS entry', () => {
@@ -119,5 +127,10 @@ describe('Segments: Send to beehiiv', () => {
     expect(html).toContain('aria-disabled="true"')
     expect(hasDisabledAttribute(html)).toBe(false)
     expect(describedByResolvesTo(html, FEATURES.send_to_beehiiv.note)).toBe(true)
+  })
+
+  it('the button\'s own VISIBLE text equals shared/features.ts\'s send_to_beehiiv.label exactly (the review\'s M5: "Push to beehiiv")', () => {
+    const html = renderToString(createElement(SendToBeehiiv))
+    expect(elementText(html, 'button')).toBe(FEATURES.send_to_beehiiv.label)
   })
 })

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 import { Profile } from '../../src/pages/LookupPage'
 import type { Lookup } from '../../src/types'
-import { hasDisabledAttribute } from '../helpers/gated-assertions'
+import { elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 
 // Look up's gated future features (09 D-80, 22-pages/lookup.md §4): App revenue (a fourth column)
 // and Delete this person (a quiet row at the end). T-FEAT-LK-1..4.
@@ -35,6 +35,16 @@ function rendered(): string {
   return renderToString(createElement(MemoryRouter, null, createElement(Profile, { data: PROFILE }))).replaceAll('<!-- -->', '')
 }
 
+/** AppRevenue's own `<section>`, found by its icon's fixed lucide class (never by its title or
+ * button text — those are exactly what the equality check below must be free to catch drifting). */
+function appRevenueSection(html: string): string {
+  const marker = html.indexOf('lucide-credit-card')
+  if (marker < 0) throw new Error('lookup-gated: lucide-credit-card icon not found (AppRevenue column)')
+  const start = html.lastIndexOf('<section', marker)
+  const end = html.indexOf('</section>', marker) + '</section>'.length
+  return html.slice(start, end)
+}
+
 describe('Look up: App revenue (profile_revenue) and Delete this person (delete_person)', () => {
   it('T-FEAT-LK-1: both controls render aria-disabled="true", never disabled, with a describedby that resolves', () => {
     const html = rendered()
@@ -53,6 +63,16 @@ describe('Look up: App revenue (profile_revenue) and Delete this person (delete_
     const html = rendered()
     expect(html).toContain(FEATURES.profile_revenue.label)
     expect(html).toContain(FEATURES.profile_revenue.controls![0])
+  })
+
+  it("App revenue's title and toggle VISIBLE text equal shared/features.ts's label/controls[0] exactly, not merely contain them", () => {
+    const section = appRevenueSection(rendered())
+    expect(elementText(section, 'h3')).toBe(FEATURES.profile_revenue.label)
+    expect(elementText(section, 'button')).toBe(FEATURES.profile_revenue.controls![0])
+  })
+
+  it("Delete this person's own VISIBLE text equals shared/features.ts's delete_person.label exactly (it is the page's last button)", () => {
+    expect(elementText(rendered(), 'button', -1)).toBe(FEATURES.delete_person.label)
   })
 
   it('T-FEAT-LK-3: the gated revenue column renders no digits and no currency sign, in its visible text', () => {

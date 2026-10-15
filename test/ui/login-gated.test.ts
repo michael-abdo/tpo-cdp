@@ -8,9 +8,9 @@ import LoginPage from '../../src/pages/LoginPage'
 import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
 
 // "Your own sign-in" (work_sign_in, 09 D-80, 22-pages/login.md): one flag, two placements — the
-// /login button and the top bar's "Your account". Same canonical note; the top bar appends one
-// extra fact, written once in src/App.tsx (TOPBAR_SSO_EXTRA), never copied back into
-// shared/features.ts.
+// /login button and the top bar's "Your account". Both render the exact same canonical note
+// (shared/features.ts), with no extra fact appended on either page (D-72: one home for the
+// shared-team-password fact).
 
 function rendered(): string {
   return renderToString(createElement(MemoryRouter, null, createElement(LoginPage))).replaceAll('<!-- -->', '')
@@ -54,11 +54,16 @@ describe('Top bar: Your account (work_sign_in)', () => {
     expect(html).not.toContain('aria-controls')
   })
 
-  it('shows the canonical note plus the one extra fact, written once in src/App.tsx, and the describedby resolves to the whole sentence', () => {
+  it('shows the canonical note alone, with no extra fact appended, and the describedby resolves to just that sentence', () => {
     const html = renderToString(createElement(AccountButton))
     expect(html).toContain(FEATURES.work_sign_in.note)
-    expect(html).toContain('Today everyone shares the team password.')
-    expect(describedByResolvesTo(html, `${FEATURES.work_sign_in.note} Today everyone shares the team password.`)).toBe(true)
+    expect(describedByResolvesTo(html, FEATURES.work_sign_in.note)).toBe(true)
+  })
+
+  it('never states the shared-team-password fact twice in the rendered note', () => {
+    const html = renderToString(createElement(AccountButton))
+    const occurrences = html.split('team password').length - 1
+    expect(occurrences).toBe(1)
   })
 
   it('names no person (there is none), shows no sample session or access-log row, and its label comes from shared/features.ts', () => {

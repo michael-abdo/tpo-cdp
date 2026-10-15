@@ -6,7 +6,7 @@ import { SetAlertItem, TileActions } from '../../src/insights/board'
 import { FollowUpField } from '../../src/insights/ask'
 import { SendTheBoardButton } from '../../src/pages/InsightsPage'
 import type { InsightTile } from '../../src/types'
-import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
+import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 
 // Insights' gated future features (09 D-80, 22-pages/insights.md): Schedules and digests (the
 // board header's "Send the board" and a tile's "Set an alert", one shared flag) and Follow-up
@@ -50,6 +50,11 @@ describe('Insights: Send the board (schedules_and_digests)', () => {
     expect(html).toContain(FEATURES.schedules_and_digests.controls![0])
     expect(describedByResolvesTo(html, FEATURES.schedules_and_digests.note)).toBe(true)
   })
+
+  it('the button\'s own VISIBLE text equals shared/features.ts\'s controls[0] exactly', () => {
+    const html = renderToString(createElement(SendTheBoardButton))
+    expect(elementText(html, 'button')).toBe(FEATURES.schedules_and_digests.controls![0])
+  })
 })
 
 describe('Insights: Set an alert (schedules_and_digests, single-number tiles only)', () => {
@@ -67,6 +72,11 @@ describe('Insights: Set an alert (schedules_and_digests, single-number tiles onl
     const html = renderToString(createElement(SetAlertItem)).replaceAll('<!-- -->', '')
     expect(html).toContain('aria-disabled="true"')
     expect(hasDisabledAttribute(html)).toBe(false)
+  })
+
+  it('the button\'s own VISIBLE text equals shared/features.ts\'s controls[1] exactly', () => {
+    const html = renderToString(createElement(SetAlertItem))
+    expect(elementText(html, 'button')).toBe(FEATURES.schedules_and_digests.controls![1])
   })
 })
 
@@ -90,5 +100,11 @@ describe('Insights: Ask a follow-up (follow_up_questions)', () => {
   it('the Ask button carries a hidden " a follow-up" so it reads distinct from the main Ask button', () => {
     const html = renderToString(createElement(FollowUpField))
     expect(html).toContain('a follow-up</span>')
+  })
+
+  it("the field's label and the button's own VISIBLE text (the hidden suffix aside) equal shared/features.ts's controls[0]/controls[1] exactly", () => {
+    const html = renderToString(createElement(FollowUpField))
+    expect(elementText(html, 'label')).toBe(FEATURES.follow_up_questions.controls![0])
+    expect(elementText(html, 'button')).toBe(FEATURES.follow_up_questions.controls![1])
   })
 })

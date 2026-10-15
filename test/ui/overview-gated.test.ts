@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 import { LoadBar, SettingsButton } from '../../src/pages/OverviewPage'
 import type { CsvSource } from '../../src/types'
-import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
+import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
 
 // Overview's gated future features (09 D-80, 22-pages/overview.md): Upload a new file + Run
 // again (csv_upload), Automatic daily sync (daily_sync, beehiiv and App accounts only — 00-plan.md
@@ -41,6 +41,13 @@ describe('Overview: LoadBar (csv_upload, daily_sync)', () => {
     expect(html).toContain(FEATURES.csv_upload.controls![1])
   })
 
+  it('each button\'s own VISIBLE text equals its features.ts label/controls entry exactly, not merely contains it', () => {
+    const html = renderToString(createElement(LoadBar, { source: csv('subscribers', 'beehiiv') }))
+    expect(elementText(html, 'button', 0)).toBe(FEATURES.csv_upload.controls![0])
+    expect(elementText(html, 'button', 1)).toBe(FEATURES.csv_upload.controls![1])
+    expect(elementText(html, 'button', 2)).toBe(FEATURES.daily_sync.label)
+  })
+
   it('the upload note equals shared/features.ts csv_upload.note and its describedby resolves; the sync note equals daily_sync.note', () => {
     const html = renderToString(createElement(LoadBar, { source: csv('subscribers', 'beehiiv') }))
     expect(html).toContain(FEATURES.csv_upload.note)
@@ -72,5 +79,10 @@ describe('Overview: SettingsButton (definition_settings)', () => {
     expect(hasDisabledAttribute(html)).toBe(false)
     expect(html).not.toContain('href="/settings"')
     expect(describedByResolvesTo(html, FEATURES.definition_settings.note)).toBe(true)
+  })
+
+  it('the button\'s own visible text equals shared/features.ts\'s definition_settings.label exactly (the review\'s M6: "Definition settings")', () => {
+    const html = renderToString(createElement(SettingsButton))
+    expect(elementText(html, 'button')).toBe(FEATURES.definition_settings.label)
   })
 })

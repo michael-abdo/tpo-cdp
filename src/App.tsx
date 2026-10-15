@@ -166,17 +166,12 @@ function ThemeToggle() {
 }
 
 /**
- * The one extra true fact the top bar's "Your account" note adds after the canonical
- * `work_sign_in` note (09 D-80, 22-pages/login.md §2.2): written once, here, never copied into
- * shared/features.ts (which holds one note for both /login's button and this one).
- */
-const TOPBAR_SSO_EXTRA = ' Today everyone shares the team password.'
-
-/**
  * The gated "Your account" entry (09 D-80, 22-pages/login.md §2.2): a quiet button, the shape the
  * built account menu will have, naming no person (there is none). No `aria-expanded`/
  * `aria-controls` while gated — a screen reader must not promise a menu that cannot open. Two
- * copies are mounted (desktop row 1 and the phone menu), each with its own note id.
+ * copies are mounted (desktop row 1 and the phone menu), each with its own note id. The note is
+ * the canonical `work_sign_in` note alone (D-72: one home for the shared-team-password fact,
+ * shared/features.ts, never retyped or extended here).
  */
 export function AccountButton() {
   const gated = useGated('work_sign_in')
@@ -190,7 +185,7 @@ export function AccountButton() {
         </button>
         <ComingSoonTag />
       </span>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={`${gated.feature.note}${TOPBAR_SSO_EXTRA}`} />
+      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
     </div>
   )
 }

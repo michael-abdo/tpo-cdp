@@ -11,12 +11,17 @@ import { FEATURES } from '../../shared/features'
 //  1. Every JSX element carrying `{...X.bind}` wires its activation attribute (`onClick` for a
 //     button, `onKeyDown` for a non-button such as a gated `<input>`) to exactly `X.activate` or
 //     `X.onKeyDown` — a bare reference, never a wrapping arrow function that could call anything
-//     else first.
+//     else first. This rule reads EVERY `on[A-Z]\w*=` attribute on the tag, not only
+//     onClick/onChange/onKeyDown, so a second, unrelated handler bolted onto the same element
+//     (the review's P6: `onPointerDown={startUpload}` beside `onClick={upload.activate}`, where
+//     `startUpload` is a module-level function that calls fetch) is caught as an attribute the
+//     allow-list never names — not missed outright because the scan never looked for it.
 //  2. The component function that declares `useGated(...)` contains no `fetch(`, `postJson(`,
 //     `request(`, a `navigate(` call, or `window.location` anywhere in its body.
 //
-// A mutant that bolts a request onto a gated handler, or wraps `activate`/`onKeyDown` in a new
-// arrow function, fails rule 1 or 2 and is caught here without a real browser.
+// A mutant that bolts a request onto a gated handler (as its own attribute or inside the
+// component body), or wraps `activate`/`onKeyDown` in a new arrow function, fails rule 1 or 2 and
+// is caught here without a real browser.
 
 const SRC = import.meta.glob<string>(['../../src/**/*.tsx'], { query: '?raw', import: 'default', eager: true })
 
@@ -140,9 +145,13 @@ function attributeBraceValue(body: string, attrStart: number): string {
   throw new Error('gated-handlers: attribute value never closes')
 }
 
-/** Every `{...VAR.bind}`-carrying JSX tag's own activation attribute(s): from the bind spread,
+/** Every `{...VAR.bind}`-carrying JSX tag's own event-handler attribute(s): from the bind spread,
  * walk back to the nearest `<` and forward to this tag's real closing `>` (`tagEnd`, brace-depth
- * aware), then read every `on[A-Z]\w*={…}` inside it with `attributeBraceValue`. */
+ * aware), then read every `on[A-Z]\w*={…}` inside it with `attributeBraceValue` — EVERY `on*`
+ * attribute, not only `onClick`/`onChange`/`onKeyDown`, so a tag that also wires an unrelated
+ * handler (the review's P6: `onPointerDown={startUpload}` bolted onto the same button) is
+ * returned here too and falls through to the caller's exhaustive allow-list, rather than never
+ * being seen at all. */
 function bindTagActivationAttrs(body: string): { tag: string; attr: string; value: string }[] {
   const out: { tag: string; attr: string; value: string }[] = []
   for (const m of body.matchAll(/\{\.\.\.(\w+)\.bind\}/g)) {
@@ -151,7 +160,7 @@ function bindTagActivationAttrs(body: string): { tag: string; attr: string; valu
     if (tagStart < 0) throw new Error(`gated-handlers: unterminated tag around ${v}.bind`)
     const end = tagEnd(body, m.index)
     const tag = body.slice(tagStart, end + 1)
-    for (const am of tag.matchAll(/\son(Click|Change|KeyDown)=/g))
+    for (const am of tag.matchAll(/\son([A-Z]\w*)=/g))
       out.push({ tag, attr: `on${am[1]}`, value: attributeBraceValue(tag, am.index + 1).trim() })
   }
   return out
@@ -165,13 +174,15 @@ describe('T-GATE-3: every gated handler does nothing but activate (source scan, 
     expect(files.some(([p]) => p.includes('SegmentsPage'))).toBe(true)
   })
 
-  it("every {...X.bind} tag's onClick/onKeyDown is exactly X.activate or X.onKeyDown, never a wrapping arrow", () => {
+  it("every {...X.bind} tag's event handlers are exactly onClick/onChange={X.activate} or onKeyDown={X.onKeyDown} — no other on* attribute, never a wrapping arrow", () => {
     const offenders: string[] = []
     for (const [path, text] of files) {
       for (const { attr, value } of bindTagActivationAttrs(text)) {
         const [owner] = value.split('.')
         // onClick (a button) and onChange (a gated checkbox/select) both wire straight to
-        // `activate`; onKeyDown (a gated text input) wires to the hook's own `onKeyDown`.
+        // `activate`; onKeyDown (a gated text input) wires to the hook's own `onKeyDown`. Any
+        // other `on*` attribute on the same tag (onPointerDown, onMouseDown, a wrapping arrow on
+        // onClick itself, …) is never allowed, whatever it points at.
         const ok =
           ((attr === 'onClick' || attr === 'onChange') && value === `${owner}.activate`) ||
           (attr === 'onKeyDown' && value === `${owner}.onKeyDown`)

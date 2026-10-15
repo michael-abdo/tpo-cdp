@@ -143,12 +143,17 @@ export const FEATURES = {
     page: 'insights',
     label: 'Follow-up questions',
     note: 'Answer a follow-up question, such as "and last month?", without starting the search over.',
-    controls: ['Ask a follow-up'],
+    // controls[0] is the field's own label (its full visible text); controls[1] is the button's
+    // own visible text — just "Ask". The button also carries a hidden " a follow-up" suffix,
+    // written once in src/insights/ask.tsx (never copied here), so it reads apart from the page's
+    // other, unrelated "Ask" button (AskSection's own submit button) — that suffix is not this
+    // entry's fact to own, since controls[0] already says the whole thing in words.
+    controls: ['Ask a follow-up', 'Ask'],
     comingSoon: true,
   },
   // Shared by /login's button and the top bar's "Your account" (login.md §2): one flag, one
-  // canonical note. The top bar adds one extra true fact after it, written once in src/App.tsx
-  // (TOPBAR_SSO_EXTRA), never copied back in here (login.md §2.2's own "written once in code").
+  // canonical note, read as-is by both placements (src/App.tsx's AccountButton never appends
+  // anything after it — D-72, one home for the shared-team-password fact).
   work_sign_in: {
     id: 'work_sign_in',
     page: 'login',

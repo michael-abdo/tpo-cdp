@@ -172,6 +172,20 @@ describe('isActivatingKey (the Tab-reveals-every-note regression)', () => {
     expect(body).toContain('setActivated(true)')
     for (const pattern of [/\bfetch\(/, /\bpostJson\(/, /\brequest\(/, /\bnavigate\(/, /window\.location/]) expect(body).not.toMatch(pattern)
   })
+
+  // M2 above only read activate()'s own body; a mutant can bolt the same banned call onto
+  // onKeyDown instead (the review's P13: `void fetch('/api/x')` inside useGated's onKeyDown) and
+  // every prior check — the per-page markup tests, T-GATE-3's page-component scan, and the
+  // activate()-only check above — misses it, since onKeyDown's body was never read. This reads the
+  // WHOLE file instead of one named function, so nothing declared in use-gated.ts, present or
+  // future, can carry a banned call anywhere.
+  it('no function in src/use-gated.ts — onKeyDown included — calls fetch, postJson, request, navigate or touches window.location', () => {
+    const [useGatedSource] = Object.values(
+      import.meta.glob<string>('../../src/use-gated.ts', { query: '?raw', import: 'default', eager: true }),
+    )
+    for (const pattern of [/\bfetch\(/, /\bpostJson\(/, /\brequest\(/, /\bnavigate\(/, /window\.location/])
+      expect(useGatedSource).not.toMatch(pattern)
+  })
 })
 
 describe('ComingSoonTag', () => {

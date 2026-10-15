@@ -102,7 +102,8 @@ export function FollowUpField() {
           onClick={gated.activate}
           className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-4 text-sm font-medium text-ink-subtle"
         >
-          Ask<span className="sr-only"> a follow-up</span>
+          {gated.feature.controls![1]}
+          <span className="sr-only"> a follow-up</span>
         </button>
       </div>
       <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
