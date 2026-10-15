@@ -33,7 +33,7 @@ export interface SourceEntry {
   readonly checks: readonly CheckKind[]
 }
 
-/** Registry order is the order every screen and GET /api/sources lists them in (08 T-SRC-1). */
+/** Registry order is the order every screen and GET /api/sources lists them in (T-SRC-1). */
 export const SOURCES = [
   {
     id: 'subscribers',

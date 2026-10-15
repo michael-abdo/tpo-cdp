@@ -11,7 +11,7 @@
  *   4. one row, one column, and that cell is a number            → number (one big number)
  *   5. first column is time, every other column is a number      → line
  *   6. first column is a category, every other column is a number → bar; the bar length is the
- *      first number column, sorted, top BAR_TOP_CATEGORIES + "Other" (06), however many rows
+ *      first number column, sorted, top BAR_TOP_CATEGORIES + "Other", however many rows
  *   7. anything else                                             → table
  *
  * Column kinds, read from every row: a number column holds only numbers or nulls and at least

@@ -58,5 +58,5 @@ export function normalizeQueryFragment(raw: string): string {
   return foldEmail(raw)
 }
 
-/** Shortest normalized fragment the search answers; shorter is 400 `query_too_short` (04). */
+/** Shortest normalized fragment the search answers; shorter is 400 `query_too_short`. */
 export const QUERY_FRAGMENT_MIN_LENGTH = 3
