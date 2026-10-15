@@ -826,6 +826,24 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     expect(body.table.rows.map((r) => r.engagement_score)).toEqual(top)
     // "Open segment" shows the builder's rows: the same scores in the same order.
     expect((builder.rows as unknown as { engagement_score: number }[]).map((r) => r.engagement_score)).toEqual(top)
+    // And the same people in the same order, ties included: the seed has 25 active subscribers tied
+    // at 75 among these 487, so a different tie-break on one side would reorder them.
+    const tiedAt75 = await env.DB.prepare(
+      "SELECT count(*) AS n FROM subscribers s JOIN profiles p ON p.email_norm = s.email_norm WHERE s.status = 'active' AND p.engagement_score = 75",
+    ).first<number>('n')
+    expect(tiedAt75).toBe(25)
+    expect(new Set(top).size).toBeLessThan(top.length)
+    const answerEmails = body.table.rows.map((r) => r.email)
+    expect(answerEmails).toEqual(builder.rows.map((r) => r.email))
+    const exported = await SELF.fetch('http://cdp.test/api/segments/export.csv', {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
+      body: JSON.stringify({ filters }),
+    })
+    expect(exported.status).toBe(200)
+    const exportEmails = (await exported.text()).trim().split('\r\n').slice(1).map((line) => line.split(',')[0])
+    expect(exportEmails).toHaveLength(487)
+    expect(exportEmails.slice(0, 100)).toEqual(answerEmails)
 
     // The model's ten rows are the top ten scores too, as pk_ keys.
     const shown = String(firstToolResult(requests[1]).content)
@@ -833,6 +851,9 @@ describe('T-AI-3: segment filters in the model output → type segment, the buil
     const scoreColumn = MODEL_SEGMENT_COLUMNS.indexOf('engagement_score')
     const tableLines = shown.split('\n').filter((line) => /^\| pk_[0-9a-f]{16} \|/.test(line))
     expect(tableLines.map((line) => Number(line.split('|')[scoreColumn + 1].trim()))).toEqual(top.slice(0, 10))
+    // The model's first ten are the Segments page's first ten, the same people in the same order.
+    const builderTen = await Promise.all(answerEmails.slice(0, 10).map((email) => pkeyOf(email)))
+    expect(tableLines.map((line) => line.split('|')[1].trim())).toEqual(builderTen)
   })
 
   it('structural: the segment tool\'s SQL names only v_profiles and selects no PII column (05 "Structural")', () => {

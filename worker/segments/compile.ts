@@ -293,9 +293,17 @@ const TABLES: SegmentRelation = {
 }
 
 /**
+ * The ORDER BY of a segment's rows over one relation, from SEGMENT_SORT: the builder and the
+ * assistant's tool build theirs here, so the two lists can never come out in a different order.
+ */
+function segmentOrderBy(rel: SegmentRelation): string {
+  return `ORDER BY ${SEGMENT_SORT.map((key) => `${key.column === 'pkey' ? rel.pkey : rel.engagement} ${key.direction === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`
+}
+
+/**
  * How the builder's SELECT reads each export column, raw (no `AS`): compileSegment aliases it to
- * the column's SEGMENT_COLUMNS name, and uses the SEGMENT_SORT columns bare in ORDER BY. One home
- * for the export's column list and its order, so the SELECT and the ORDER BY can never
+ * the column's SEGMENT_COLUMNS name. One home
+ * for the export's column list, so the SELECT can never
  * read a different expression for the same column, and the /segments "What's in the file"
  * disclosure, reading only the column NAMES from shared/segment-filters.ts, never needs to repeat
  * this SQL to describe the same file.
@@ -434,7 +442,7 @@ export function compileSegment(filters: SegmentFilters): CompiledSegment {
     `SELECT ${SEGMENT_COLUMNS.map((c) => `${SEGMENT_COLUMN_SQL[c]} AS ${c}`).join(', ')}`,
     'FROM subscribers s LEFT JOIN profiles p ON p.email_norm = s.email_norm',
     `WHERE ${where}`,
-    `ORDER BY ${SEGMENT_SORT.map((key) => `${SEGMENT_COLUMN_SQL[key.column]} ${key.direction === 'desc' ? 'DESC' : 'ASC'}`).join(', ')}`,
+    segmentOrderBy(TABLES),
   ].join(' ')
   return { sql, params, sql_shape: sql }
 }
@@ -454,16 +462,15 @@ export interface CompiledModelSegment {
 /**
  * The same filters compiled over v_profiles, with site visits and app activity as IN-subqueries
  * on v_web_events and v_app_events: only v_* views, never a table, so the model's tool can read
- * no PII column. Rows come out most engaged first: the stored
- * engagement_score descending (an ORDER BY on the stored column, no formula), as
- * the builder's do. Ties break by pkey here, since the view has no email; the builder breaks them
- * by email, so two rows with the same score may swap places between the two lists.
+ * no PII column. Rows come out in SEGMENT_SORT order, the builder's own: the stored
+ * engagement_score descending (an ORDER BY on the stored column, no formula), ties by pkey, so the
+ * answer card lists the same people in the same order as "Open segment" and Export CSV.
  * status IN (…) drops the profiles that have no subscriber row.
  */
 export function compileModelSegment(filters: SegmentFilters): CompiledModelSegment {
   const { where, params } = segmentWhere(filters, MODEL_VIEW)
   return {
-    rowsSql: `SELECT ${MODEL_SEGMENT_COLUMNS.join(', ')} FROM v_profiles WHERE ${where} ORDER BY engagement_score DESC, pkey`,
+    rowsSql: `SELECT ${MODEL_SEGMENT_COLUMNS.join(', ')} FROM v_profiles WHERE ${where} ${segmentOrderBy(MODEL_VIEW)}`,
     countSql: `SELECT count(*) AS n FROM v_profiles WHERE ${where}`,
     params,
   }

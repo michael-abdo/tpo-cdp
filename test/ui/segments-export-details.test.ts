@@ -59,9 +59,9 @@ describe('/segments ExportFileDetails: "What\'s in the file" (09 D-76)', () => {
     )
   })
 
-  it('names the sort order by the same keys compileSegment sorts by: engagement, highest first, then email', () => {
-    expect(SEGMENT_SORT.map((k) => k.column)).toEqual(['engagement_score', 'email'])
-    expect(text(BRIEF_EXAMPLE, 177)).toContain('Sorted by Engagement, highest first; then by Email, A to Z.')
+  it('names the sort order by the same keys compileSegment sorts by: engagement, highest first, then ties in a fixed order', () => {
+    expect(SEGMENT_SORT.map((k) => k.column)).toEqual(['engagement_score', 'pkey'])
+    expect(text(BRIEF_EXAMPLE, 177)).toContain('Sorted by Engagement, highest first; ties in a fixed order.')
   })
 
   it('raw column headers, export order, sit in Technical details, exactly SEGMENT_COLUMNS joined', () => {

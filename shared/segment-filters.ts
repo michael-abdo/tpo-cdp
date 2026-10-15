@@ -60,25 +60,27 @@ export type FilterKey = (typeof FILTER_KEYS)[number]
  */
 export const SEGMENT_COLUMNS = ['email', 'status', 'source', 'signup_date', 'last_open_date', 'engagement_score', 'has_app'] as const
 
-/** One key of a segment's row order, with the plain words /segments says for its direction. */
-export interface SegmentSortKey {
-  readonly column: (typeof SEGMENT_COLUMNS)[number]
-  readonly direction: 'asc' | 'desc'
-  /** How /segments says the direction: "highest first" for the score, "A to Z" for the email. */
-  readonly words: string
-}
+/**
+ * One key of a segment's row order. `words` is what /segments says for it: after the column's own
+ * label for the score ("Engagement, highest first"), on its own for the tie-break.
+ */
+export type SegmentSortKey =
+  | { readonly column: 'engagement_score'; readonly direction: 'desc'; readonly words: string }
+  /** The tie-break: the pseudonymous key, which both the builder and the assistant's tool can read. */
+  | { readonly column: 'pkey'; readonly direction: 'asc'; readonly words: string }
 
 /**
- * The order of a segment's rows wherever they are listed: the preview on /segments, the list
- * "Open segment" opens there, and the Export CSV file. Most engaged first (the stored
- * engagement_score, highest first), so "our most engaged readers" comes out as a ranked list;
- * email breaks ties, so the order is the same on every run. The order changes no count.
- * worker/segments/compile.ts compileSegment builds its ORDER BY from this, and the /segments
- * "Sorted by" sentence reads it, so the two can never name a different order.
+ * The order of a segment's rows wherever they are listed: the assistant's answer card, the
+ * preview on /segments, the list "Open segment" opens there, and the Export CSV file. Most engaged
+ * first (the stored engagement_score, highest first), so "our most engaged readers" comes out as a
+ * ranked list; ties break by pkey, the one key both the builder (tables) and the assistant's tool
+ * (v_profiles, which has no email) can read, so every list names the same people in the same
+ * order, the same on every run. The order changes no count. worker/segments/compile.ts builds both
+ * ORDER BYs from this, and the /segments "Sorted by" sentence reads it.
  */
 export const SEGMENT_SORT: readonly SegmentSortKey[] = [
   { column: 'engagement_score', direction: 'desc', words: 'highest first' },
-  { column: 'email', direction: 'asc', words: 'A to Z' },
+  { column: 'pkey', direction: 'asc', words: 'ties in a fixed order' },
 ]
 
 /**

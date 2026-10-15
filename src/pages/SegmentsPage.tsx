@@ -458,7 +458,7 @@ export function ExportFileDetails({ filters, count }: { filters: SegmentFilters;
       <Disclosure label="What's in the file">
         <div className="space-y-2 text-sm text-gray-700">
           <p>Columns, in file order: {SEGMENT_COLUMNS.map(columnLabel).join(', ')}.</p>
-          <p>Sorted by {SEGMENT_SORT.map((key) => `${columnLabel(key.column)}, ${key.words}`).join('; then by ')}.</p>
+          <p>Sorted by {SEGMENT_SORT.map((key) => (key.column === 'pkey' ? key.words : `${columnLabel(key.column)}, ${key.words}`)).join('; ')}.</p>
           {applied.status === 'shown' ? (
             <div>
               <p>Filters applied:</p>

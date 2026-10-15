@@ -4,6 +4,7 @@ import { TOOL_SEEDS } from '../scripts/tool-seeds'
 import { TODAY } from '../shared/config'
 import { isNewSubscriber, noOpenInDays } from '../shared/derive'
 import { CANONICAL_SOURCES, normalizeEmail } from '../shared/normalize'
+import { pkeyForEmail } from '../shared/pseudonym'
 import { JOY, OWN_ACCOUNT } from './helpers/shared-ids'
 import { toApiError } from '../src/api-error'
 import { BRIEF_EXAMPLE, readSearches, type SearchStore, searchKey, STORAGE_KEY } from '../src/previous-searches'
@@ -19,7 +20,7 @@ import { BUILTIN_HANDLERS } from '../worker/assistant/tools/builtin-handlers'
 import { ingestSubscribers } from '../worker/ingest/subscribers'
 import { compileModelSegment, compileSegment, parseFilters, SEGMENT_COLUMNS, SEGMENT_SORT } from '../worker/segments/compile'
 import { documentationIp, loginCookie } from './helpers/auth'
-import { realCsvs, seedDatabase } from './helpers/seed'
+import { piiKeySecret, realCsvs, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
 // POST /api/segments/preview and /api/segments/export.csv (04 §/api/segments/preview,
@@ -198,16 +199,21 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect(allRows.filter((r) => r[1] === 'unsubscribed')).toHaveLength(independentCount(['unsubscribed']))
   })
 
-  it('rows come back most engaged first, email A to Z within a score, in the preview and the export alike', async () => {
+  it('rows come back most engaged first, ties by pkey, in the preview and the export alike', async () => {
     expect(SEGMENT_SORT.map((k) => [k.column, k.direction])).toEqual([
       ['engagement_score', 'desc'],
-      ['email', 'asc'],
+      ['pkey', 'asc'],
     ])
-    /** Score high to low, then email in code-unit order (SQLite's order for email_norm). */
-    const ranked = (rows: { email: string; score: number }[]) =>
-      [...rows].sort((a, b) => b.score - a.score || (a.email < b.email ? -1 : a.email > b.email ? 1 : 0))
+    /** Score high to low, then pkey in code-unit order (SQLite's order for a TEXT key). */
+    const ranked = (rows: { email: string; score: number; pkey: string }[]) =>
+      [...rows].sort((a, b) => b.score - a.score || (a.pkey < b.pkey ? -1 : a.pkey > b.pkey ? 1 : 0))
     const [, ...records] = await exportRecords(PRESET)
-    const exported = records.map((r) => ({ email: r[EXPORT_HEADER.indexOf('email')], score: Number(r[EXPORT_HEADER.indexOf('engagement_score')]) }))
+    const exported = await Promise.all(
+      records.map(async (r) => {
+        const email = r[EXPORT_HEADER.indexOf('email')]!
+        return { email, score: Number(r[EXPORT_HEADER.indexOf('engagement_score')]), pkey: await pkeyForEmail(piiKeySecret(), email) }
+      }),
+    )
     // 177 real rows with a spread of scores and many ties: this fails if the ORDER BY drops either key.
     expect(exported).toHaveLength(PRESET_COUNT)
     expect(new Set(exported.map((r) => r.score)).size).toBeGreaterThan(5)
@@ -218,7 +224,9 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     const body = await preview(PRESET)
     expect(body.count).toBe(PRESET_COUNT)
     expect(body.rows.map((r) => r.email)).toEqual(exported.slice(0, 100).map((r) => r.email))
-    expect(body.sql_shape).toMatch(/ORDER BY p\.engagement_score DESC, s\.email_norm ASC$/)
+    expect(body.sql_shape).toMatch(/ORDER BY p\.engagement_score DESC, p\.pkey ASC$/)
+    // The assistant's tool builds its ORDER BY from the same keys.
+    expect(compileModelSegment(parseFilters(PRESET)).rowsSql).toMatch(/ORDER BY engagement_score DESC, pkey ASC$/)
   })
 
   it('a source value with a single quote is 400 invalid_filters (09 D-69 #6, 19 §0 F7): source is now a subset of CANONICAL_SOURCES, so it never reaches SQL at all', async () => {
