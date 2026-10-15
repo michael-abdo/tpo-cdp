@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 
-// T-GATE-3 (00-plan.md §4): "activating a gated control sends no request and changes no state
+// T-GATE-3: "activating a gated control sends no request and changes no state
 // except revealing the note." The isolated per-page gated tests only check shape (does the markup
 // exist), never that a handler does nothing more — a fetch bolted onto `onClick` alongside
-// `gated.activate` survives every one of them (the review's M1/M2/M10 probes). This file reads
+// `gated.activate` survives every one of them. This file reads
 // every component that calls `useGated(...)` as source text (no DOM, no typescript package —
 // tests run inside workerd) and enforces two structural rules no handler may violate:
 //

@@ -6,7 +6,7 @@ import { ComingSoonTag, GatedNote } from '../../src/components'
 import { isActivatingKey, useGated } from '../../src/use-gated'
 
 // Shared gated-feature wiring (09 D-80): the scaffolding every page's gated controls share
-// (T-GATE-1..5, 22-pages/00-plan.md §4). A page's own gate test (test/ui/*-gated.test.ts) checks
+// (T-GATE-1..5). A page's own gate test (test/ui/*-gated.test.ts) checks
 // its rendered markup; this file checks the shared hook and note component in isolation, once,
 // so every page inherits the same proof instead of re-deriving it.
 
@@ -159,9 +159,9 @@ describe('isActivatingKey (the Tab-reveals-every-note regression)', () => {
     expect(body).toContain('isActivatingKey(e.key)')
   })
 
-  // The review's M2 probe: "useGated.activate also calls fetch('/api/x')" survived every
-  // existing check (the per-page tests only check markup; T-GATE-3's source scan only walks each
-  // PAGE component's body, never the hook's own). activate() is the hook's only state-changing
+  // A hook whose activate also calls fetch('/api/x') would pass every other check (the per-page
+  // tests only check markup; T-GATE-3's source scan only walks each PAGE component's body, never
+  // the hook's own). activate() is the hook's only state-changing
   // function, so its body is read directly here.
   it('activate() touches nothing but setActivated — no fetch, postJson, request, navigate or window.location', () => {
     const [useGatedSource] = Object.values(
@@ -173,8 +173,8 @@ describe('isActivatingKey (the Tab-reveals-every-note regression)', () => {
     for (const pattern of [/\bfetch\(/, /\bpostJson\(/, /\brequest\(/, /\bnavigate\(/, /window\.location/]) expect(body).not.toMatch(pattern)
   })
 
-  // M2 above only read activate()'s own body; a mutant can bolt the same banned call onto
-  // onKeyDown instead (the review's P13: `void fetch('/api/x')` inside useGated's onKeyDown) and
+  // The check above only reads activate()'s own body; the same banned call can be bolted onto
+  // onKeyDown instead (`void fetch('/api/x')` inside useGated's onKeyDown), and
   // every prior check — the per-page markup tests, T-GATE-3's page-component scan, and the
   // activate()-only check above — misses it, since onKeyDown's body was never read. This reads the
   // WHOLE file instead of one named function, so nothing declared in use-gated.ts, present or

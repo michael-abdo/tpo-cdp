@@ -267,7 +267,7 @@ describe('Rows to fix tab logic (src/needs-review.ts) on the real answers', () =
     expect(duplicateUserId[0].sentence).toBe("1 app account couldn't be added — this user ID is already used by an earlier row.")
     expect(duplicateUserId[0].fix).toBe('Give this row its own user ID in app_users.csv, then re-import the file.')
 
-    // Every reason's sentence/fix differs from every other's (an M8-style fallback never fires
+    // Every reason's sentence/fix differs from every other's (a generic fallback sentence never fires
     // silently for a reason that does have its own line).
     const sentences = [unknownStatus, misplacedEmail, conflictingEmail, duplicateUserId].map((g) => g[0].sentence)
     expect(new Set(sentences).size).toBe(sentences.length)

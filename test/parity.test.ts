@@ -31,7 +31,7 @@ import {
   visitorHash,
 } from './parity/oracle'
 
-// D-75 (09 decision log; design 21-subscriber-data-parity-spec.md): a second, independent
+// D-75 (09 decision log): a second, independent
 // implementation recomputes every subscriber's expected record straight from the raw CSV bytes
 // (test/parity/oracle.ts, never importing worker/, shared/ or src/ product code) and diffs it
 // against the real seeded store. T-PAR-1..10 below. Reports name pkeys, visitor_hash, event ids
@@ -497,7 +497,7 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
   /** The oracle's and the app's import_runs for the same planted texts must agree on every
    * file's rows_in/rows_out/merged/quarantined-count, and their total event counts must match —
    * not just the one file's quarantine rows plantedQuarantine() diffs above. A rule that quarantines
-   * a row but ALSO lets it through as an event (the conflicting_email mutant O3: it still pushes
+   * a row but ALSO lets it through as an event (e.g. a conflicting_email rule that still pushes
    * the row onto `events` after queuing it) passes a quarantine-only diff but fails rows_out and
    * events.length here, on both engines reading the SAME edited text (09 D-78(b)). */
   function expectSameLinking(expected: OracleResult, seed: Seed): void {
@@ -629,7 +629,7 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
     ])
     // Only that row is set aside (21 §D-78): the visitor keeps joy's first email/signup, never
     // julia's planted one, and (via plantedQuarantine's expectSameLinking) the row never also
-    // becomes an event in either engine — the exact shape of mutant O3.
+    // becomes an event in either engine — the exact bug expectSameLinking guards against.
     await expectSameVisitor(expected, seed, 'v_c9e136fd6d')
   })
 
@@ -779,7 +779,7 @@ describe('T-PAR-5 app users', () => {
 
 // -------------------------------------------------------------------------------------------
 // T-PAR-6: every 02 §Counts number, from the oracle alone (plus two read-time checks against
-// the real API/handler, guarding the M14/M15 derived-value mutants)
+// the real API/handler, guarding against small changes to the derived-value SQL)
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
   it('subscribers.csv: 2,995 rows, 8 blank, 2 invalid, 85 merged pairs, 2,900 subscribers, 2,610/290 active/unsub', () => {
@@ -1006,8 +1006,8 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
   })
 
   // Read-time derived values, checked against the real segment endpoints, not only recomputed
-  // inside the oracle (21 §2.5 "Derived"). Guards M14 (days_since_open.sql +1) and M15 (cold.sql
-  // `<=` → `<`): both would move these counts but leave the oracle-only tests above untouched.
+  // inside the oracle (21 §2.5 "Derived"). Guards against a +1 in days_since_open.sql and a
+  // `<=` → `<` in cold.sql: both would move these counts but leave the oracle-only tests above untouched.
   it('the brief preset and the built-in cold metric match the real segment endpoints: 177/55, 147/41', async () => {
     const cookie = await loginCookie()
     const previewRes = await SELF.fetch('http://cdp.test/api/segments/preview', {
@@ -1157,7 +1157,7 @@ describe('T-PAR-6c hardest cases #9 and #10 (21 §3)', () => {
 // imports worker/lookup/fuzzy.ts (21 §2.1) — "partial" is its own substring match over every
 // profile email (subscriber + app_only, the same set GET /api/lookup/search's grp 0/1 reads) and
 // a matching app_users.user_id prefix (grp 2); "fuzzy" is its own damerauLevenshtein, the same
-// metric the session scratchpad's counts.py used to reproduce these fixtures originally.
+// metric the fixtures were first computed with.
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-6d partial/fuzzy lookup fixtures (21 §4.1 item 3)', () => {
   function profileEmails(): string[] {
