@@ -1316,17 +1316,19 @@ describe('T-PII-5 at the route: a webhook link holding a known local part is blo
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
     const link = `${HOSTED_URL}/u/${JOY_LOCAL}`
-    const res = await sendWebhook(
-      JSON.stringify({
-        event_id: eventIdPool()(),
-        event: 'link_click',
-        user_id: JOY_APP_USER,
-        device_id: JOY_DEVICE,
-        timestamp: '2026-09-28T14:22:05Z',
-        properties: { link },
-      }),
-    )
-    expect(res.status).toBe(202)
+    const send = (eventId: string, properties: Record<string, string>) =>
+      sendWebhook(
+        JSON.stringify({ event_id: eventId, event: 'link_click', user_id: JOY_APP_USER, device_id: JOY_DEVICE, timestamp: '2026-09-28T14:22:05Z', properties }),
+      )
+    const nextEventId = eventIdPool()
+    // The webhook now refuses this link at ingest (worker/webhooks/exposed-properties.ts) ...
+    expect((await send(nextEventId(), { link })).status).toBe(400)
+    // ... so the row is planted, as one stored before that check existed would be: a real event
+    // through the real path, then its link set to the known local part.
+    const eventId = nextEventId()
+    expect((await send(eventId, { link: `${HOSTED_URL}/news/supreme-court-ruling-explained` })).status).toBe(202)
+    const planted = await env.DB.prepare("UPDATE app_events SET properties = json_set(properties, '$.link', ?) WHERE event_id = ?").bind(link, eventId).run()
+    expect(planted.meta.changes).toBe(1)
 
     const sql = "SELECT link FROM v_app_events WHERE link LIKE '%/u/%'"
     const { transport, requests } = scripted([
