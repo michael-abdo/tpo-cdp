@@ -1,5 +1,7 @@
 /**
- * The seed pipeline's linking step (02 §Linking 1–3, §Derived; 09 D-08, D-44, D-46).
+ * The seed pipeline's linking step. A visitor whose `/subscribe` row carries a subscriber's
+ * email is linked to that profile for its whole history, before and after signup, which is what
+ * makes "which pages do new subscribers hit first?" answerable.
  * Pure apart from WebCrypto: three parsed CSVs and PII_KEY_SECRET in, every row the seed
  * writes out. Runs the existing per-file ingests, builds one profile per subscriber plus one
  * `app_only` profile per app email that is not a subscriber, and computes the stored derived
@@ -21,7 +23,7 @@ export interface SeedCsvs {
 }
 
 export interface SubscriberRow extends Subscriber {
-  /** Stored per 09 D-46. */
+  /** Computed once here by shared/derive.ts and stored, so SQL never repeats the formula. */
   cold_since: string
 }
 
@@ -30,7 +32,7 @@ export interface ProfileRow {
   email_norm: string
   kind: 'subscriber' | 'app_only'
   engagement_score: number
-  /** 09 D-44: `signup_date` for a subscriber, the app `created_at` for an app-only profile. */
+  /** `signup_date` for a subscriber, the app `created_at` for an app-only profile. */
   created_at: string
 }
 
@@ -55,7 +57,7 @@ export interface Seed {
   app_users: AppUser[]
   /** One per file, in the order subscribers, web_events, app_users. */
   runs: ImportRun[]
-  /** Distinct `/subscribe` emails with no subscriber: they get no profile (02 §Edge cases). */
+  /** Distinct `/subscribe` emails with no subscriber: they get no profile (a known, counted gap; 0 on the seed). */
   subscribe_emails_without_subscriber: number
 }
 
@@ -95,7 +97,7 @@ export async function buildSeed(csvs: SeedCsvs, secret: string): Promise<Seed> {
   }))
 
   const visits = siteVisitsLast30d(web.events, web.visitors)
-  // App events only arrive by webhook, so every profile has 0 at seed (09 D-46).
+  // App events only arrive by webhook, so every profile has 0 at seed.
   const score = (lastOpenDate: string | null, email: string) =>
     DEFINITIONS.engagement_score.fn({
       last_open_date: lastOpenDate,

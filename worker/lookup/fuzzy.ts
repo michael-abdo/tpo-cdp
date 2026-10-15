@@ -1,19 +1,19 @@
 /**
- * Fuzzy ("did you mean") lookup (09 D-59, 04 §/api/lookup/search, 06 §/lookup), pure: no D1,
+ * Fuzzy ("did you mean") lookup for GET /api/lookup/search, pure: no D1,
  * no secrets, so test/lookup-search.test.ts runs it directly. worker/routes/lookup.ts calls it
- * only when partial lookup (09 D-52) found nothing, over every stored `profiles.email_norm`.
+ * only when partial lookup found nothing, over every stored `profiles.email_norm`.
  *
  * The fragment comes in already folded by `normalizeQueryFragment` and the emails are stored
- * folded (02 §Normalization), so nothing here trims or lowercases. Distance is the unrestricted
+ * folded, so nothing here trims or lowercases. Distance is the unrestricted
  * Damerau–Levenshtein distance (insert, delete, substitute, swap two neighbouring characters,
  * each costing 1, with later edits allowed inside a swapped pair), counted in code points.
  */
 
-/** Shortest normalized fragment that gets suggestions (04: "≥ 5 characters"). */
+/** Shortest normalized fragment that gets suggestions. */
 export const FUZZY_MIN_LENGTH = 5
-/** Largest distance that is still a suggestion (09 D-59). */
+/** Largest distance that is still a suggestion. */
 export const FUZZY_MAX_DISTANCE = 2
-/** At most this many suggestions (04: "≤ 5"). */
+/** At most this many suggestions. */
 export const DID_YOU_MEAN_LIMIT = 5
 
 /** The unrestricted Damerau–Levenshtein distance between `a` and `b` (Lowrance–Wagner). */
@@ -81,7 +81,7 @@ export function emailDistance(fragment: string, email: string): number | null {
   return best
 }
 
-/** Whether a search answer gets suggestions at all: no partial match and a long enough fragment (04). */
+/** Whether a search answer gets suggestions at all: no partial match and a long enough fragment. */
 export function wantsSuggestions(fragment: string, matchCount: number): boolean {
   return matchCount === 0 && length(fragment) >= FUZZY_MIN_LENGTH
 }

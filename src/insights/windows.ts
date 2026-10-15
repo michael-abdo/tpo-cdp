@@ -1,6 +1,6 @@
-// The rolling presets a person can pick, and a tile's time period in words (06 §/insights: "Aug
-// 1–31, 2026"). The presets and how each resolves against TODAY live in shared/insight-window.ts
-// (09 D-64); their words live in shared/date-words.ts, which the Worker also uses for "Explain
+// The rolling presets a person can pick, and a tile's time period in words ("Aug 1–31, 2026").
+// The presets and how each resolves against TODAY live in shared/insight-window.ts;
+// their words live in shared/date-words.ts, which the Worker also uses for "Explain
 // this". This file asks detectWindow which preset an answer's dates equal, the same rule the server
 // uses when it stores a pin.
 

@@ -1,4 +1,4 @@
-// The shapes the charts of /insights draw (09 D-64), read from a result's columns the way
+// The shapes the charts of /insights draw, read from a result's columns the way
 // shared/pick-chart.ts reads them: the first column is the category or the time, the first number
 // column after it is the value. pickChart chooses the kind; these say whether a result has what a
 // kind needs (so "Change chart" offers only kinds that can draw) and pull out what is drawn.
@@ -17,7 +17,7 @@ export interface ChartSegment {
   filters: SegmentFilters
 }
 
-/** Table rows shown before "Show all …" (principle 2: the rest is one click away). */
+/** Table rows shown before "Show all …" (the rest is one click away). */
 export const FIRST_ROWS = 10
 
 // ── shapes ───────────────────────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ export interface BarShape {
   other: { count: number; value: number | null } | null
   /**
    * Rows with no bar to draw: a value of 0 or no value. They stay in the numbers table; the chart
-   * says how many (06 §UI principles: say why something is not shown).
+   * says how many, so nothing is left out without saying why.
    */
   undrawn: { zero: number; missing: number }
   /** Rates share a 0–100% scale; counts run to the largest bar. */
@@ -80,7 +80,7 @@ export interface BarShape {
 
 /**
  * A category first and a number: bars sorted largest first, top BAR_TOP_CATEGORIES, the rest as
- * "Other" (06). A zero or missing value draws no bar, so it is counted in `undrawn` instead.
+ * "Other". A zero or missing value draws no bar, so it is counted in `undrawn` instead.
  */
 export function barShape(r: ChartResult): BarShape | null {
   const category = categoryColumn(r)

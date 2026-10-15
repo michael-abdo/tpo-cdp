@@ -1,11 +1,11 @@
 /**
- * Pseudonymous keys (design 05 §Pseudonymous key, 09 D-17).
+ * Pseudonymous keys: the model and the PII-free views see these, never an email or a raw id.
  *
  * `pk_` + the first 16 hex chars of HMAC-SHA256(PII_KEY_SECRET, input). Keyed, so a key
  * cannot be reversed or recomputed without the secret. WebCrypto only, so the same file
  * runs in workerd (the Worker) and in Node 20+ (scripts/csv2sql.ts).
  *
- * Errors never echo the input: it is an email or a raw id (04 §Error envelope).
+ * Errors never echo the input: it is an email or a raw id.
  */
 import { normalizeEmail } from './normalize'
 
@@ -34,8 +34,8 @@ function requireValue(value: string, what: string): void {
 
 /**
  * The profile key for an already-normalized email. Throws if `emailNorm` is not exactly
- * what `normalizeEmail` produces (02 §Normalization lists this file as a location), so a
- * raw spelling can never yield a second key for the same person.
+ * what `normalizeEmail` produces, so a raw spelling can never yield a second key for the same
+ * person.
  */
 export async function pkeyForEmail(secret: string, emailNorm: string): Promise<string> {
   requireValue(emailNorm, 'emailNorm')
@@ -58,7 +58,7 @@ export async function visitorHash(secret: string, visitorId: string): Promise<st
 }
 
 /**
- * `ai_audit.client_key` (migrations/0005, 09 D-70 #6): `ck_` + hashes `client:` + the client's
+ * `ai_audit.client_key` (migrations/0005): `ck_` + hashes `client:` + the client's
  * CF-Connecting-IP, so the assistant's hourly limit can count per client without storing the
  * address. A different prefix from `pk_`: it names a network, never a profile.
  */

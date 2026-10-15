@@ -1,4 +1,4 @@
-/* DIRECTION (09 D-60, 06 §UI principles) — "refined calm"
+/* DIRECTION — "refined calm"
  * Tone: a quiet daily desk for non-technical Growth editors; restraint over noise, one thing per glance.
  * Type: Fraunces (soft optical serif) for page/section titles; Figtree (warm geometric sans) for everything else.
  * Palette: warm paper neutrals, low-glare charcoal at night; ONE accent, deep ink-teal; red only for errors.
@@ -207,7 +207,7 @@
     accent-color: var(--accent);
   }
 
-  /* One clear, consistent focus ring for every interactive element (principle 7). */
+  /* One clear, consistent focus ring for every interactive element (keyboard users). */
   a:focus-visible,
   button:focus-visible,
   input:focus-visible,
@@ -233,7 +233,7 @@
   }
 }
 
-/* The one orchestrated motion (D-60): each page's top-level blocks rise in, 60 ms apart. */
+/* The one orchestrated motion: each page's top-level blocks rise in, 60 ms apart. */
 @keyframes page-enter {
   from {
     opacity: 0;
@@ -263,7 +263,7 @@
   animation-delay: 300ms;
 }
 
-/* Respect reduced motion (principle 7): the stagger is off and nothing else animates. */
+/* Respect reduced motion: the stagger is off and nothing else animates. */
 @media (prefers-reduced-motion: reduce) {
   .page-enter > * {
     animation: none;

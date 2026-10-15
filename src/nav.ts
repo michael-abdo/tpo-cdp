@@ -1,4 +1,4 @@
-// The main nav's data (06 §Nav, 09 D-71): one array, the single source both the desktop nav and the
+// The main nav's data: one array, the single source both the desktop nav and the
 // phone nav read (src/App.tsx TopBar), and that Shell reads (flatNavLinks) to title the document.
 // Kept out of App.tsx itself (a component file, real JSX) so this plain data needs no JSX to read —
 // test/ui/nav.test.ts imports it as an ordinary module, and App.tsx stays a components-only export
@@ -14,8 +14,8 @@ export type NavGroupEntry = { kind: 'group'; label: string; icon: LucideIcon; it
 export type NavEntry = ({ kind: 'link' } & NavLinkItem) | NavGroupEntry
 
 /**
- * Nav labels are the brief's words for each screen (06 §Vocabulary, 09 D-66, D-67; principles 1, 4);
- * "Insights" is D-64's. Single source of truth (09 D-71 requirement 4): Overview · Look up ·
+ * Nav labels are the brief's words for each screen, in plain language ("Insights" is the one
+ * name the brief does not give). Single source of truth: Overview · Look up ·
  * Segments · Insights stay top-level; App events and AI audit log fold into the "Techy" group,
  * declared here and nowhere else, kept last.
  */
@@ -45,9 +45,10 @@ export function underNav(pathname: string, to: string): boolean {
   return pathname === to || pathname.startsWith(`${to}/`)
 }
 
-// The disclosure-nav decision logic (06 §Nav, 09 D-71), pulled out of App.tsx's NavGroupMenu as
-// pure functions with unit tests that need no DOM; those tests do not reach App.tsx's wiring
-// (state, focus, stopPropagation), which docs/notes.md "Known gaps" records as checked live. Each function matches one behaviour D-71 names.
+// The disclosure-nav decision logic (the WAI-ARIA disclosure-navigation pattern), pulled out of
+// App.tsx's NavGroupMenu as pure functions with unit tests that need no DOM; those tests do not
+// reach App.tsx's wiring (state, focus, stopPropagation), which docs/notes.md "Known gaps" records
+// as checked live. Each function matches one behaviour of that pattern.
 
 /** Esc on an open disclosure-nav panel: close it and return focus to its button. */
 export function escapeAction(key: string, open: boolean): { close: boolean; refocus: boolean } {

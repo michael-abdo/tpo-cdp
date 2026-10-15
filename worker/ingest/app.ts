@@ -1,5 +1,5 @@
 /**
- * App user ingest (02 §Quarantine, §Linking 1; 01 §Tables app_users). Pure: a parsed
+ * App user ingest: quarantine and normalize app_users.csv. Pure: a parsed
  * app_users.csv in, records and quarantined rows out.
  */
 import { normalizeEmail } from '../../shared/normalize'
@@ -17,7 +17,7 @@ export interface AppUser {
   email_norm: string
   /** `YYYY-MM-DD`, as in the file. */
   created_at: string
-  /** 1 = from app_users.csv (0 is reserved for webhook-created unknown users, 02 §Linking 4). */
+  /** 1 = from app_users.csv (0 is reserved for webhook-created unknown users). */
   from_csv: 1
 }
 
@@ -47,9 +47,9 @@ export function classifyAppRow(header: readonly string[], row: readonly string[]
 }
 
 /**
- * A `user_id` seen twice has no rule in 02, so a repeat is quarantined (`duplicate_user_id`,
- * 09 D-78) rather than guessed or aborting the seed: the first row with that id is kept, the
- * later one is set aside.
+ * A `user_id` seen twice has no rule, so a repeat is quarantined (`duplicate_user_id`) rather
+ * than guessed or aborting the seed, the way a real sync should survive one odd row: the first
+ * row with that id is kept, the later one is set aside.
  */
 export function ingestApp(csv: ParsedCsv): AppIngest {
   const col = requireHeaders('app_users.csv', csv.header, APP_COLUMNS)

@@ -1,4 +1,4 @@
-// Light/dark theme choice (09 D-60). With no saved choice the OS preference rules (index.css
+// Light/dark theme choice. With no saved choice the OS preference rules (index.css
 // prefers-color-scheme); a saved choice sets <html data-theme>. Storage can throw (private mode,
 // blocked site data), so every read and write is guarded and the page works without it.
 

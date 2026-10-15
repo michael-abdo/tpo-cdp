@@ -1,8 +1,9 @@
--- PII-free views: the only relations the model can touch (design 01 §PII-free views).
--- PII denylist (01 §PII denylist; the code copy is PII_COLUMNS in shared/pii.ts):
+-- PII-free views: the only relations the model can touch.
+-- PII denylist (the code copy is PII_COLUMNS in shared/pii.ts):
 --   email_norm, email_raw, user_id, device_id, visitor_id, raw_row, properties
 -- No view selects any of them (T-PII-2); they appear only in join conditions.
--- cold_since and engagement_score are the stored columns; SQL holds no formula (09 D-46).
+-- cold_since and engagement_score are stored columns written by shared/derive.ts; SQL holds no
+-- formula, so each rule has one home.
 
 CREATE VIEW v_profiles AS
 WITH app AS (
@@ -47,7 +48,7 @@ FROM web_events we
 JOIN web_visitors wv ON wv.visitor_id = we.visitor_id
 LEFT JOIN profiles p ON p.email_norm = wv.email_norm;
 
--- Identity resolution at read time (01 §Identity resolution): an event's own user_id, or for
+-- Identity resolution at read time: an event's own user_id, or for
 -- an anonymous event the device's most recent user, then app_users.email_norm → profiles.
 CREATE VIEW v_app_events AS
 SELECT
@@ -70,7 +71,7 @@ SELECT
 FROM web_visitors
 GROUP BY first_page, first_utm_source;
 
--- Funnel direction: converted only if the app account was created after signup (02 §Linking 6).
+-- Funnel direction: converted only if the app account was created after signup.
 CREATE VIEW v_source_app_conversion AS
 WITH per_subscriber AS (
   SELECT

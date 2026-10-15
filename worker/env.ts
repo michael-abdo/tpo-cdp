@@ -1,7 +1,7 @@
-// Env types and the fail-fast binding check (03 §Module layout; the list is 11 §Deploy).
-// Origin: palisade site-auth.ts L19-48, the fail-closed config idea (14 §7).
+// Env types and the fail-fast binding check: a deploy missing a secret or binding refuses every
+// request (fail closed) instead of running half-configured.
 
-/** Hono environment for every route: the Worker bindings plus the verified session (04 §Auth). */
+/** Hono environment for every route: the Worker bindings plus the verified session. */
 export type AppEnv = {
   Bindings: Env
   Variables: { session: { sub: string; exp: number } }
@@ -9,14 +9,14 @@ export type AppEnv = {
 
 /**
  * Secrets read as strings. ANTHROPIC_API_KEY is deliberately absent: it is probed lazily on the
- * first assistant call (11 §Deploy).
+ * first assistant call, so everything but the assistant runs without it.
  */
 const SECRET_NAMES = ['WEBHOOK_SECRET', 'PII_KEY_SECRET', 'SITE_PASSWORD', 'SESSION_SECRET'] as const
 const LIMITER_NAMES = ['LOGIN_LIMITER', 'WEBHOOK_LIMITER', 'ASSISTANT_LIMITER', 'EXPORT_LIMITER', 'TEST_EVENT_LIMITER'] as const
 
 export type SecretName = (typeof SECRET_NAMES)[number]
 
-/** Thrown when a binding or secret is absent; carries names only, never values. Rendered as 500 server_misconfigured (04 §Error envelope). */
+/** Thrown when a binding or secret is absent; carries names only, never values. Rendered as 500 server_misconfigured. */
 export class MissingBindingsError extends Error {
   readonly missing: readonly string[]
   constructor(missing: readonly string[]) {
@@ -50,7 +50,7 @@ export function assertBindings(env: Partial<Env>): asserts env is Env {
 
 /**
  * Returns one secret or throws MissingBindingsError. The auth modules read secrets through this
- * so they stay fail-closed even when mounted without assertBindings in front (04 §Auth).
+ * so they stay fail-closed even when mounted without assertBindings in front.
  */
 export function requireSecret(env: Partial<Env>, name: SecretName): string {
   const value = env[name]

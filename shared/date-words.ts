@@ -1,4 +1,5 @@
-// Calendar dates in plain words (06 §UI principles 4: "Aug 1–31, 2026"). One home for both the
+// Calendar dates in plain words ("Aug 1–31, 2026"), never raw ISO strings, because the screens are
+// for non-technical staff. One home for both the
 // browser (src/format.ts and src/insights/windows.ts re-export these) and the Worker, which words a
 // tile's time period into its "Explain this" question (worker/insights/board.ts). Pure: reads the
 // digits as stored, so no time-zone shift and no clock.
@@ -9,7 +10,7 @@ export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', '
 const STORED_DATE = /^(\d{4})-(\d{2})-(\d{2})/
 
 /**
- * A stored date or timestamp as plain words, `Sep 2, 2026` (06 §UI principles 4). Reads the
+ * A stored date or timestamp as plain words, `Sep 2, 2026`. Reads the
  * digits as stored, so no time-zone shift; any other shape is shown as-is and flagged.
  */
 export function humanDate(date: string): string {

@@ -1,8 +1,8 @@
 // The non-component half of the shared listbox keyboard contract (../listbox.tsx holds the
 // component; react/only-export-components, kept apart the same way src/events-poll.ts is kept
 // out of src/pages/EventsPage.tsx and src/events-test-words.ts out of src/events-test-panel.tsx).
-// 06 keyboard contract: ArrowUp/ArrowDown moves the active option, Enter picks it, Esc closes the
-// list. Used by src/pages/LookupPage.tsx and src/events-test-panel.tsx (D-72: one home).
+// The keyboard contract: ArrowUp/ArrowDown moves the active option, Enter picks it, Esc closes the
+// list. Used by src/pages/LookupPage.tsx and src/events-test-panel.tsx (one home, so they never differ).
 
 import { type KeyboardEvent, useState } from 'react'
 

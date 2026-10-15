@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { TODAY } from '../shared/config'
 import { addDays, COLD_DAYS, coldSince, DEFINITIONS, goingColdRisk, isCold, isNewSubscriber, lastMonth, NEW_SUBSCRIBER_DAYS } from '../shared/derive'
 
-// One home per definition (09 D-68, D-46; 18-settings-spec §1 rows 2, 4, 13 and §7 Tier 0;
-// 02 §Derived "One runtime source"). Static scans over the product source, read at transform time
+// One home per definition (09 D-68, D-46; 02 §Derived "One runtime source"). Static scans over
+// the product source, read at transform time
 // by Vite (works in the workers pool, as T-NORM-3 does), plus runtime checks that the cold window
 // constant is the number every cold rule and sentence uses. No number changes: COLD_DAYS stays 30.
 

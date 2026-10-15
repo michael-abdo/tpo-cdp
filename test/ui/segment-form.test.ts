@@ -20,7 +20,7 @@ import {
 // The /segments form as data (09 D-69 review gaps 2, 3 and 4; 08 T-SEG-4, T-SEG-6, T-SEG-7, T-SEG-9).
 // Every filter object here is canonical, as POST /api/segments/preview echoes it (T-SEG-6), with
 // real values (09 D-47): sources from subscribers.csv, /shadrachs-picks from web_events.csv, the
-// windows and counts of 02 §Counts and 19-segments-spec §3 (30 days, Aug 2026, engagement 50,
+// windows and counts of 02 §Counts (30 days, Aug 2026, engagement 50,
 // read_story in the last 7 days). The server's own problem lines and their plain words are pinned
 // against the real Worker in test/segments.test.ts; here they are rendered.
 
@@ -137,7 +137,7 @@ function render(element: ReturnType<typeof createElement>): { html: string; text
 }
 
 // The server's lines as worker/segments/compile.ts writes them; test/segments.test.ts pins that the
-// real Worker sends exactly these for the review's values and that the page turns them into these words.
+// real Worker sends exactly these for these values and that the page turns them into these words.
 const SIGNED_UP_LINE = 'signed_up_within_days must be a whole number from 1 to 3650'
 const ORDER_LINE = 'engagement_gte must not be greater than engagement_lte'
 

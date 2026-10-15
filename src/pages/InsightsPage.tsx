@@ -1,10 +1,10 @@
-// /insights (06 §/insights, R5 + R6; 09 D-64): one place to ask and to keep answers. Level 1 = the
+// /insights: one place to ask and to keep answers. Level 1 = the
 // Ask bar (src/insights/ask.tsx) and the board below it (src/insights/board.tsx): the tiles of GET
 // /api/insights, which the server re-runs on every request through the gated executor with no model
-// call (04). The four built-in tiles are the former Growth panels. An answer's "Pin to board" adds
-// a tile; a tile's "Explain this" fills the Ask bar and waits for Ask (09 D-39). /assistant and
+// call. The four built-in tiles are the former Growth panels. An answer's "Pin to board" adds
+// a tile; a tile's "Explain this" fills the Ask bar and waits for Ask. /assistant and
 // /growth redirect here, keeping ?q= (src/App.tsx), so an old "Explain this" link still fills the box.
-// Every change ends with the board fetched again and a polite announcement (06 §UI principles 7);
+// Every change ends with the board fetched again and a polite announcement for screen readers;
 // a plain Refresh announces "Board updated." once the new tiles are in. Refresh stays focusable
 // while it works (aria-disabled, clicks ignored), so a keyboard user keeps their place.
 
@@ -19,7 +19,7 @@ import { PREFILL_PARAM } from '../insights/questions'
 import type { InsightBoard, InsightTile } from '../types'
 
 /**
- * The gated "Send the board" digest button (09 D-80, 22-pages/insights.md §2a): beside Refresh, in
+ * The gated "Send the board" digest button (coming soon): beside Refresh, in
  * DOM order after it, so Tab reaches Refresh first. Shown only when the board loaded with at least
  * one tile — an empty or failed board has nothing to send.
  */

@@ -1,8 +1,10 @@
--- Reviewer decisions on scored possible-duplicate pairs (design 01 §duplicate_reviews, 09 D-62).
+-- Reviewer decisions on scored possible-duplicate pairs. Fuzzy matches never merge on their own;
+-- a person decides.
 -- One row per pair, replaced when the reviewer changes their mind (POST /api/duplicates/:pair_id/review).
 -- No PII column: the pair is named by its two pseudonymous profile keys only. A decision never
--- changes any other table (nothing merges, 09 D-13); no foreign key, so a reset that drops and
--- re-seeds profiles cannot be blocked by it, and pkeys are stable across re-seeds (05 §Pseudonymous key).
+-- changes any other table (nothing merges); no foreign key, so a reset that drops and re-seeds
+-- profiles cannot be blocked by it, and pkeys are stable across re-seeds (a keyed hash of the
+-- email, shared/pseudonym.ts).
 
 CREATE TABLE duplicate_reviews (
   pair_id    TEXT PRIMARY KEY,                    -- worker/dedupe/score.ts pairId: hash of the two pkeys, order-independent

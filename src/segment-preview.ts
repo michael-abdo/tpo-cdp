@@ -1,4 +1,4 @@
-// One preview on /segments and what it leaves in Previous searches (19-segments-spec §2, 09 D-69).
+// One preview on /segments and what it leaves in Previous searches.
 // A search is remembered only after the server answered 200, and what is remembered is the
 // canonical `filters` the server echoed, never the object the browser sent: the echo is what the
 // count on screen was computed from, and its canonical key is what keeps a row from showing twice.
@@ -17,7 +17,7 @@ export type PreviewResult =
   | { status: 'ok'; data: SegmentPreview; filters: SegmentFilters }
   | { status: 'error'; message: string; problems: FilterProblem[] }
 
-/** The body POST /api/segments/preview takes (04). */
+/** The body POST /api/segments/preview takes. */
 export interface PreviewRequest {
   filters: SegmentFilters
   limit: number

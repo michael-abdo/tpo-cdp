@@ -1,18 +1,18 @@
-// "Pin to board" (06 §/insights, 09 D-64): a modal dialog with the tile's title (prefilled from the
+// "Pin to board": a modal dialog with the tile's title (prefilled from the
 // question) and, when the pinned lookup takes a time period, the choice "Rolling: last month" or
 // "Fixed: Aug 1–31, 2026". Whether it takes one is the server's answer (`pin_window` of POST
 // /api/assistant, the same reading POST /api/insights does), so the dialog never offers a choice
 // the pin would drop. A lookup that sets its own dates (`pin_own_dates`, a query row's built-in
 // period) shows them in the same words the tile's footer will (ownDatesText); a lookup with neither
 // says nothing about time, as its tile says "As of <TODAY>". The browser sends only the trace id
-// and, when the person changed it, the title (04: never a tool, params or SQL; an unchanged title is
+// and, when the person changed it, the title (never a tool, params or SQL; an unchanged title is
 // left to the server, which names the tile after the Gate 1-redacted question, so a question that
 // held an email still pins). The server stores the window rolling when it equals a preset, else
 // fixed. When the person chose the other kind, one PATCH sets it. A segment answer says what its
 // tile keeps (the count and a link to the segment) and what it does not (order, names), since the
-// answer card showed both (09 D-64: segment tiles show a count, never emails).
+// answer card showed both (segment tiles show a count, never emails).
 // The native <dialog> gives the focus trap, Esc to close and the backdrop; focus goes back to the
-// button that opened it (06 §UI principles 7).
+// button that opened it.
 
 import { type FormEvent, useEffect, useId, useRef, useState } from 'react'
 import { ApiError, errorMessage, patchJson, postJson } from '../api'

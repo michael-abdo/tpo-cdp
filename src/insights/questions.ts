@@ -1,14 +1,14 @@
-// The Ask bar's fixed words (06 §/insights): the brief's example questions, the query parameter
+// The Ask bar's fixed words: the brief's example questions, the query parameter
 // that fills the bar, and the id that takes an answer's "See it on the board" to its new tile.
 
-/** The brief's three example questions, verbatim (R5.2). */
+/** The brief's three example questions, verbatim. */
 export const BRIEF_QUESTIONS = [
   'how many Instagram signups went cold last month?',
   'build me a list of our most engaged readers',
   'which pages do new subscribers hit first?',
 ] as const
 
-/** The query parameter that fills the Ask bar (09 D-39); /assistant?q= redirects here with it. */
+/** The query parameter that fills the Ask bar ("Explain this" links use it); /assistant?q= redirects here with it. */
 export const PREFILL_PARAM = 'q'
 
 

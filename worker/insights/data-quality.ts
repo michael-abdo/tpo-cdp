@@ -1,22 +1,21 @@
-// Data quality, the fourth /growth panel (16 §If time remains 5; 04 §GET /api/insights/
-// data-quality, 06 §/growth; R6, T-INS-3). Two parts:
-//   - `import`: the seed's own record, read from `import_runs` and `quarantine` (02 §Quarantine,
-//     09 D-28). The per-file report lives on Overview (06 §Overview), so the panel shows only the
-//     share set aside and points there (06 §UI principles 5). The two tables must agree on how
+// Data quality, the fourth /growth panel (GET /api/insights/data-quality, T-INS-3). Two parts:
+//   - `import`: the seed's own record, read from `import_runs` and `quarantine`. The per-file
+//     report lives on Overview, so the panel shows only the share set aside and points there
+//     instead of repeating it. The two tables must agree on how
 //     many rows were set aside; if they do not, the request fails loud rather than show either.
 //   - `checks`: gaps in the records that did load, each counted over the PII-free views the
 //     assistant reads (v_profiles, v_web_events), so its "Explain this" question reproduces the
-//     number (09 D-39). The unexpected-value checks are the ones 02 §Normalization promises: a
+//     number. The unexpected-value checks are the ones shared/normalize.ts promises: a
 //     source outside the canonical set passes through and shows up here, never silently lost.
 // Every status is counted (a data gap is a gap whoever it belongs to), so the subscriber
-// questions ask the assistant to include unsubscribed ones (02 §Defaults). Live query on
-// every request; nothing is cached (03 §No-restart).
+// questions ask the assistant to include unsubscribed ones (it leaves them out by default).
+// Live query on every request; nothing is cached, so new data shows with no restart.
 
 import { CANONICAL_SOURCES } from '../../shared/normalize'
 
 export interface QuarantineGroup {
   file: string
-  /** A reason from 02 §Quarantine. */
+  /** A quarantine reason (worker/ingest/quarantine.ts). */
   reason: string
   rows: number
 }
@@ -52,7 +51,7 @@ export interface DataQualityCheck {
   of: number
   /** count / of, 4 decimals; null when there is nothing to check. */
   rate: number | null
-  /** The assistant question this number answers (09 D-39). */
+  /** The assistant question this number answers. */
   explain: string
 }
 
@@ -68,7 +67,7 @@ const IMPORT_SQL = `SELECT coalesce(sum(rows_in), 0) AS rows_in, coalesce(sum(ro
   coalesce(sum(merged), 0) AS merged, coalesce(sum(quarantined), 0) AS quarantined FROM import_runs`
 const QUARANTINE_SQL = `SELECT file, reason, count(*) AS "rows" FROM quarantine GROUP BY file, reason ORDER BY file, reason`
 // app_users_not_on_list's `of` (app_users_not_on_list's `explain`, below) is "all app accounts
-// with an email", so the denominator stays email-scoped: migrations/0011 (09 D-78(b)) gives a
+// with an email", so the denominator stays email-scoped: migrations/0011 gives a
 // kind = 'unknown_user_stub' row has_app = 1 by its user_id link, not an email, so it is excluded
 // here the same way it is excluded from every other email-keyed v_profiles read (e.g.
 // source-app.ts's WHERE kind = 'subscriber'). Without the kind filter, a stub inflates `of` by

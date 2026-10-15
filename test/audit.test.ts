@@ -24,7 +24,7 @@ import { GateDenied } from '../worker/assistant/gates/gate3-readonly-sql'
 import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// Unit H3: GET /api/audit?limit= and GET /api/audit/:trace_id (04 §GET /api/audit; 05 §Proof
+// GET /api/audit?limit= and GET /api/audit/:trace_id (04 §GET /api/audit; 05 §Proof
 // surfaces; 06 §/audit; R5.5). The audit routes are reached through the production worker (SELF),
 // so the mount behind requireSession is what is tested. Traces are written by real assistant calls
 // through assistantRoutes() with a transport defined in this file that returns Messages-API-shaped

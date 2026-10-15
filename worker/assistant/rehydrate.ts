@@ -1,15 +1,15 @@
-// Re-hydration (design 05 §Re-hydration; 03 §Gateway layers row 10; 07 §H). The model answers in
+// Re-hydration. The model answers in
 // pk_ keys; after it has finished and its output has been scanned, the server swaps each key for
 // the subscriber's email for the authenticated UI. Only the HTTP response carries the emails:
-// nothing hydrated is written to ai_audit or sent back to the model (single-shot, 09 D-34).
+// nothing hydrated is written to ai_audit or sent back to the model (single-shot: no next turn).
 //
 // `collectPkeys` and `rehydrate` are pure; `loadEmailsByPkey` is the one read, by bound
-// parameters in chunks under D1's 100-parameter cap (11 §Seed).
+// parameters in chunks under D1's 100-parameter cap.
 
 import type { Cell } from './tools/builtin-handlers'
 import type { AssistantResult } from './respond'
 
-/** A pseudonymous key (05 §Pseudonymous key): pk_ and 16 hex characters. */
+/** A pseudonymous key (shared/pseudonym.ts): pk_ and 16 hex characters. */
 const PKEY = /\bpk_[0-9a-f]{16}\b/g
 
 const CHUNK = 100
@@ -27,7 +27,7 @@ export function collectPkeys(result: AssistantResult): string[] {
   return [...found]
 }
 
-/** email_norm for each key that has one (unknown-user stub profiles have none, 01). */
+/** email_norm for each key that has one (unknown-user stub profiles have none). */
 export async function loadEmailsByPkey(db: D1Database, pkeys: readonly string[]): Promise<Map<string, string>> {
   const emails = new Map<string, string>()
   for (let i = 0; i < pkeys.length; i += CHUNK) {

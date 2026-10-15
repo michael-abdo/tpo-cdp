@@ -1,12 +1,13 @@
-// Routes for the screens built so far (06 §Navigation): /login, / (Overview), /lookup, /segments, /events,
+// Routes for the screens built so far: /login, / (Overview), /lookup, /segments, /events,
 // /insights and /audit (with /audit/:traceId for one trace). /assistant and /growth merged into
-// /insights (09 D-64) and redirect there, keeping the query string, so ?q= still fills the Ask bar.
+// /insights and redirect there, keeping the query string, so ?q= still fills the Ask bar.
 // Every page except /login sits under the top bar; the session itself is checked by the API,
 // whose 401 sends the browser back to /login (src/api.ts).
-// Shell a11y (06 §UI principles 7): "Skip to content" link, aria-current on the nav, focus moves to
+// Shell a11y (WCAG 2.2 AA): "Skip to content" link, aria-current on the nav, focus moves to
 // the new page's <h1> on navigation, and document.title follows the route.
-// "Techy" (06 §Nav, 09 D-71): App events and AI audit log fold into one dropdown, last in the nav,
-// following the WAI-ARIA disclosure-navigation pattern (NavGroupMenu below).
+// "Techy": App events and AI audit log fold into one dropdown, last in the nav, so the top level
+// keeps the four screens Growth staff use. It follows the WAI-ARIA disclosure-navigation pattern
+// (NavGroupMenu below).
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router'
@@ -36,7 +37,7 @@ import SegmentsPage from './pages/SegmentsPage'
 const APP_NAME = 'TPO Mini CDP'
 
 function navClass({ isActive }: { isActive: boolean }): string {
-  // The current page reads by weight + a soft fill, not colour alone (principle 7).
+  // The current page reads by weight + a soft fill, not colour alone (WCAG 2.2 AA).
   return `inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap transition-colors duration-150 ${
     isActive
       ? 'bg-accent-soft font-semibold text-accent-strong'
@@ -48,7 +49,7 @@ const quietButton =
   'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap text-ink-muted transition-colors duration-150 hover:bg-surface-2 hover:text-ink'
 
 /**
- * "Techy" (06 §Nav, 09 D-71): a WAI-ARIA disclosure-navigation button that reveals App events and
+ * "Techy": a WAI-ARIA disclosure-navigation button that reveals App events and
  * AI audit log as real NavLinks, rendered inline right after the button (no portal) — so the panel
  * sits in the DOM, and in Tab order, straight after the button: Tab from Techy lands on "App
  * events", and Shift+Tab from "App events" returns to Techy. Click, Enter or Space toggles it
@@ -58,8 +59,8 @@ const quietButton =
  * the button+panel closes it (closesOnPointer); picking a link closes it (the link's onClick); nothing
  * traps focus. The button reads as current (same soft fill + weight as a NavLink, navClass)
  * whenever /events, /audit or /audit/:traceId is the route, with a visually-hidden "(current
- * section)" standing in for aria-current, which only ever names one real page (D-67's comment on
- * /audit/:traceId moves here: underNav's prefix match is what keeps "AI audit log" current on a
+ * section)" standing in for aria-current, which only ever names one real page (on
+ * /audit/:traceId, underNav's prefix match is what keeps "AI audit log" current on a
  * trace page). `variant` tells the two mounted copies (the desktop nav, the phone menu) how to lay
  * the panel out: "desktop" positions it `absolute`, right-aligned under the button and clamped to
  * the viewport width so it never widens the page; "phone" renders it as a plain in-flow list, so an
@@ -146,7 +147,7 @@ function NavGroupMenu({ group, variant }: { group: NavGroupEntry; variant: 'desk
   )
 }
 
-/** Light/dark switch (09 D-60): says the theme it switches TO, remembered per browser. */
+/** Light/dark switch: says the theme it switches TO, remembered per browser. */
 function ThemeToggle() {
   const [theme, setLocal] = useState<Theme>(() => effectiveTheme())
   const next: Theme = theme === 'dark' ? 'light' : 'dark'
@@ -166,11 +167,11 @@ function ThemeToggle() {
 }
 
 /**
- * The gated "Your account" entry (09 D-80, 22-pages/login.md §2.2): a quiet button, the shape the
+ * The gated "Your account" entry (a coming-soon feature): a quiet button, the shape the
  * built account menu will have, naming no person (there is none). No `aria-expanded`/
  * `aria-controls` while gated — a screen reader must not promise a menu that cannot open. Two
  * copies are mounted (desktop row 1 and the phone menu), each with its own note id. The note is
- * the canonical `work_sign_in` note alone (D-72: one home for the shared-team-password fact,
+ * the canonical `work_sign_in` note alone (one home for the shared-team-password fact,
  * shared/features.ts, never retyped or extended here).
  */
 export function AccountButton() {
@@ -209,7 +210,7 @@ function TopBar() {
     }
   }
 
-  // Only Overview needs `end`. Techy (09 D-71) marks itself current for /events, /audit and
+  // Only Overview needs `end`. Techy marks itself current for /events, /audit and
   // /audit/:traceId with its own logic (NavGroupMenu's `underNav`), not a NavLink. Built twice (one
   // mounted copy per nav) because NavGroupMenu's `variant` differs: the desktop copy below and the
   // phone copy inside #phone-menu each need their own open/close state and their own layout.
@@ -248,8 +249,8 @@ function TopBar() {
           <Icon icon={ICONS.today} className="hidden size-3.5 sm:block" />
           Today: {humanDate(TODAY)}
         </span>
-        {/* Gated (09 D-80, 22-pages/login.md §2.2): row 1 from 640 px up (both the ≥1024 and the
-            640–1023 placements the spec draws separately collapse to one spot here, simplified). */}
+        {/* Gated (coming soon): row 1 from 640 px up (the ≥1024 and the 640–1023 placements
+            collapse to one spot here, simplified). */}
         <span className="hidden sm:inline-flex">
           <AccountButton />
         </span>
@@ -355,7 +356,7 @@ function Shell() {
   )
 }
 
-/** An old path's link lands on /insights with its query (?q=) intact (09 D-64). */
+/** An old path's link lands on /insights with its query (?q=) intact. */
 function ToInsights() {
   const { search } = useLocation()
   return <Navigate to={`/insights${search}`} replace />

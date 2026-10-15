@@ -80,7 +80,7 @@ export function exampleValue(placeholder: string): string | null {
 }
 
 /** Each placeholder example that a button, link, summary or any other element on the same screen
- * shows again — not only an action (09 D-72, m7): a plain hint beside the placeholder can read the
+ * shows again — not only an action (09 D-72): a plain hint beside the placeholder can read the
  * same identifier, or spell out the same value, without being a button, link or summary. */
 export function exampleShownTwice(facts: ScreenFacts): string[] {
   const out: string[] = []
@@ -111,7 +111,7 @@ describe('T-UI-ONE say one thing in one place (09 D-72)', () => {
     for (const page of ['LoginPage', 'OverviewPage', 'LookupPage', 'SegmentsPage', 'EventsPage', 'InsightsPage', 'AuditPage'])
       expect(scanned).toContain(`src/pages/${page}.tsx`)
     for (const piece of ['ask', 'board', 'charts', 'pin-dialog']) expect(scanned).toContain(`src/insights/${piece}.tsx`)
-    // Fixed, not derived from ONE_PLACE_SCAN.files itself (09 D-72, m9): every src/*.ts module that
+    // Fixed, not derived from ONE_PLACE_SCAN.files itself (09 D-72): every src/*.ts module that
     // holds a whole sentence a page shows, so dropping one from the scan fails here, not silently.
     for (const file of ['src/labels.ts', 'src/events-poll.ts', 'src/filters-applied.ts'])
       expect(ONE_PLACE_SCAN.files, file).toContain(file)

@@ -1,9 +1,9 @@
-// GET /api/duplicates · POST /api/duplicates/:pair_id/review (04, 09 D-62; R1.3): the scored
-// "Possible duplicates" review on Overview (06 §Overview). Scoring is worker/dedupe/score.ts; this
+// GET /api/duplicates · POST /api/duplicates/:pair_id/review: the scored "Possible duplicates"
+// review on Overview. Scoring is worker/dedupe/score.ts; this
 // file reads the rows it needs and stores a reviewer's verdict in duplicate_reviews.
-// Nothing merges (D-13): the only table this file writes is duplicate_reviews, never profiles,
-// subscribers or any event table. It returns emails, so it sits behind the session guard and is
-// never an assistant tool (05).
+// Nothing merges: the only table this file writes is duplicate_reviews, never profiles,
+// subscribers or any event table, and the UI has no destructive action. It returns emails, so it
+// sits behind the session guard and is never an assistant tool (emails never reach the model).
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
@@ -19,7 +19,7 @@ import {
   scoreDuplicates,
 } from '../dedupe/score'
 
-/** The rows GET returns at most (04). */
+/** The rows GET returns at most. */
 export const DUPLICATES_MAX_ROWS = 50
 
 export const VERDICTS = ['same_person', 'different_people'] as const
@@ -30,7 +30,7 @@ export interface Decision {
   decided_at: string
 }
 
-/** One side of a pair as the UI shows it (04: email, signed up, source, status). */
+/** One side of a pair as the UI shows it: email, signed up, source, status. */
 export interface DuplicateReaderOut {
   email: string
   signup_date: string
@@ -104,7 +104,7 @@ interface Shown {
   /** The pairs a person sees: the review and auto bands (score ≥ REVIEW_MIN_SCORE), best first. */
   shown: ScoredPair[]
   decided: Map<string, Decision>
-  /** Shown pairs with no decision yet, over all of them, not just the first 50 (09 D-62, D-65). */
+  /** Shown pairs with no decision yet, over all of them, not just the first 50. */
   toReview: number
 }
 
@@ -119,7 +119,7 @@ async function loadShown(db: D1Database): Promise<Shown> {
 }
 
 /**
- * The possible_duplicates check of GET /api/sources (09 D-65): GET /api/duplicates' `to_review`,
+ * The possible_duplicates check of GET /api/sources: GET /api/duplicates' `to_review`,
  * from the same loadShown() (no second scorer, no second band filter).
  */
 export async function duplicatesToReview(db: D1Database): Promise<number> {
@@ -136,7 +136,7 @@ duplicateRoutes.get('/duplicates', async (c) => {
     to_review: toReview,
     review: shown.slice(0, DUPLICATES_MAX_ROWS).map((p) => pairOut(p, decided.get(p.pair_id) ?? null)),
     hidden_below_review: result.pairs.length - shown.length,
-    // The band edges the Overview footer explains (09 D-62, D-68): sent with the pairs so the page
+    // The band edges the Overview footer explains: sent with the pairs so the page
     // never bundles its own copy of the numbers that decided which pairs it shows.
     bands: { auto_min: AUTO_MIN_SCORE, review_min: REVIEW_MIN_SCORE },
     weights: result.weights,
@@ -182,8 +182,8 @@ duplicateRoutes.post('/duplicates/:pair_id/review', async (c) => {
       'No possible-duplicate pair has that id. Refresh the page to see the current list.',
     )
   }
-  // Wall clock: when the reviewer pressed the button (01 §duplicate_reviews: decided_at, UTC). It is
-  // on 02 §Time's wall-clock allow-list (`duplicate_reviews.decided_at`, 09 D-62); no date rule reads it.
+  // Wall clock: when the reviewer pressed the button (decided_at, UTC). It is bookkeeping, not a
+  // business date, and no date rule reads it.
   const decidedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   await c.env.DB.prepare(
     `INSERT INTO duplicate_reviews (pair_id, pkey_a, pkey_b, verdict, score, decided_at)

@@ -1,13 +1,14 @@
 /**
- * Quarantine rules (02 §Quarantine, 09 D-28). A row that cannot become a record is kept
- * with exactly one reason, never dropped, and is not counted. Required headers are checked
+ * Quarantine rules. A row that cannot become a record is kept with exactly one reason, never
+ * dropped, and is not counted, so a hand count of the file can be reconciled with ours (the
+ * difference is listed, not lost). Required headers are checked
  * before any row is read so a wrong file fails fast with the file and column named.
  * Pure: plain arrays in, a reason out.
  */
 import { normalizeEmail } from '../../shared/normalize'
 
 /**
- * The reasons in 02 §Quarantine. classifySubscriberRow tests blank_row first, then a blank
+ * The quarantine reasons, one home. classifySubscriberRow tests blank_row first, then a blank
  * email (missing_field), an unparseable email (invalid_email), the other required fields
  * (missing_field) and the dates (bad_date).
  */
@@ -72,7 +73,7 @@ export function isIsoDate(value: string): boolean {
 /**
  * Classifies one subscribers.csv row: `null` when it can become a subscriber, otherwise
  * its quarantine reason. A status that is present but not `active`/`unsubscribed` has no
- * rule in 02 §Quarantine, so it is quarantined (`unknown_status`, 09 D-78) rather than
+ * rule, so it is quarantined (`unknown_status`) rather than
  * guessed or aborting the whole seed. `lineNo` is accepted for call-site symmetry with the
  * other classify* functions and existing callers; this function needs no line number itself.
  */

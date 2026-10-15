@@ -1,9 +1,10 @@
-// The glossary (09 D-63, 06 §Overview InfoTip): the only home of the plain words for pipeline terms
-// (source, sync, rows read, kept, merged, rejected, the source statuses, the two source checks of
-// 09 D-65, webhook, the quarantine reasons, Overview's headline numbers and the app's event names), each with one or two sentences a
-// non-technical Growth teammate can follow, in the brief's words (06 §UI principles 4, §Vocabulary). Derived metrics keep their text in
-// DEFINITIONS (shared/derive.ts, 02 §Derived) under the plain headings of DEFINITION_LABEL (src/labels.ts, their
-// one home per 09 D-68); explain() reads either, so an InfoTip has one lookup and never shows a raw name.
+// The glossary: the only home of the plain words for pipeline terms (source, sync, rows read,
+// kept, merged, rejected, the source statuses, the two source checks, webhook, the quarantine
+// reasons, Overview's headline numbers and the app's event names), each with one or two sentences
+// a non-technical Growth teammate can follow, in the brief's words. Derived metrics keep their
+// text in DEFINITIONS (shared/derive.ts) under the plain headings of DEFINITION_LABEL
+// (src/labels.ts, their one home); explain() reads either, so an InfoTip has one lookup and never
+// shows a raw name.
 // test/sources.test.ts (T-SRC-2) checks every term the Overview names exists here or there.
 
 import { DEFINITION_LABEL } from '../src/labels'
@@ -59,7 +60,7 @@ export const GLOSSARY = {
     term: 'Rejected',
     text: "Rows that couldn't become a record, such as a blank row or an invalid email. They are set aside for review, never deleted, and not counted.",
   },
-  // A source's status chips (06 §/ Overview 2, 09 D-65). The two check kinds are the keys of
+  // A source's status chips on Overview. The two check kinds are the keys of
   // shared/sources.ts CHECK_KINDS, so a check from the API finds its words.
   ok: {
     term: 'OK',
@@ -77,10 +78,10 @@ export const GLOSSARY = {
   possible_duplicates: {
     term: 'possible duplicate',
     many: 'possible duplicates',
-    // That nothing is deduped on its own is said once, in the footer line under the list (09 D-72).
+    // That nothing is deduped on its own is said once, in the footer line under the list, not here too.
     text: 'Two subscribers with different emails whose names match, for a person to judge.',
   },
-  // Quarantine reasons (02 §Quarantine): the codes are the keys, so a reason from the API finds its words.
+  // Quarantine reasons: the codes are the keys, so a reason from the API finds its words.
   blank_row: {
     term: 'blank row',
     many: 'blank rows',
@@ -121,7 +122,7 @@ export const GLOSSARY = {
     many: 'duplicate user IDs',
     text: 'An earlier row already used this user ID, so this row is not loaded.',
   },
-  // Overview's headline numbers (06 §Overview 1).
+  // Overview's headline numbers.
   subscribers_signed_up: {
     term: 'Subscribers',
     text: 'Newsletter subscribers after deduping emails, unsubscribed ones included. Rejected rows are not counted.',
@@ -138,13 +139,13 @@ export const GLOSSARY = {
     term: 'App events',
     text: 'App events received through the webhook since launch. The same event sent twice counts once.',
   },
-  // /segments (19-segments-spec §2, 09 D-69).
+  // /segments.
   previous_searches: {
     term: 'Previous searches',
     text: 'The last 5 segments you previewed in this browser, newest first; only the filters are kept, never the subscribers. To share one with the Growth team, ask the AI assistant for it and pin it to Insights, or export the CSV.',
   },
   // The app's event names (worker/webhooks/schema.ts APP_EVENTS), shown as the brief writes them, each
-  // with a plain gloss in an InfoTip (06 §Vocabulary "live events", 09 D-66).
+  // with a plain gloss in an InfoTip.
   app_open: {
     term: 'app_open',
     text: 'Someone opened the app.',

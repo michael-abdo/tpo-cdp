@@ -1,5 +1,5 @@
-// GET /api/overview (04 §/api/overview, 06 §Overview; R1.1, 09 D-28).
-// Every number is a live query on each request: nothing is cached (03 §No-restart).
+// GET /api/overview: the headline numbers on Overview.
+// Every number is a live query on each request: nothing is cached, so new data shows with no restart.
 
 import { Hono } from 'hono'
 import type { AppEnv } from '../env'

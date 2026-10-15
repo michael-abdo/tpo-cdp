@@ -1,17 +1,15 @@
 /**
- * D-75 parity oracle (design 21-subscriber-data-parity-spec.md §2). A second, independent
+ * D-75 parity oracle. A second, independent
  * recomputation of every subscriber's expected record straight from the raw CSV bytes, written
  * from 02 (data rules, derived definitions, counts), 05 (pseudonymous keys) and 09's decision log
  * — never from the app's own code. T-PAR-1 (test/parity.test.ts) enforces this by reading this
  * file's text and failing on any import outside vitest, cloudflare:test and Node/Web built-ins:
  * this file imports nothing at all, so that check always passes.
  *
- * Evidence: a throwaway Python prototype of exactly this logic (session scratchpad
- * `parity/oracle.py`) ran against a copy of the local D1 and the remote D1 (read-only) on
- * 2026-10-14 and found 0 mismatches over every table (21 §0 Findings F2). This file is a fresh
- * TypeScript port of the same rules, used as a reference for the rules and the expected numbers
- * only (21: "use it as a reference … not as code to import") — nothing here is copied from it or
- * from the app.
+ * Evidence: a throwaway Python prototype of exactly this logic ran against a copy of the local D1
+ * and the remote D1 (read-only) on 2026-10-14 and found 0 mismatches over every table. This file
+ * is a fresh TypeScript port of the same rules, written from the rules and the expected numbers
+ * only — nothing here is copied from the prototype or from the app.
  *
  * Every date is a plain `YYYY-MM-DD` (or `YYYY-MM-DDTHH:MM:SSZ`) string; day arithmetic reads the
  * first 10 characters and uses `Date.UTC`, never `new Date(localString)` (21 §2.1 "Dates as

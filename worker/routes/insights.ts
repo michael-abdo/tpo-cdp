@@ -1,15 +1,14 @@
-// /api/insights (04 §/api/insights board and §GET /api/insights/…; 06 §/insights; R5, R6; 09 D-64).
-// Mounted at /api by worker/index.ts, behind requireJson and requireSession (04 §Auth), so every
+// /api/insights: the board and the four panel routes.
+// Mounted at /api by worker/index.ts, behind requireJson and requireSession, so every
 // route here needs a session; none is an assistant tool.
 //   - the board: GET /api/insights re-runs every tile with no model call; POST pins an answer
 //     from its audit trace; PATCH edits a tile; DELETE removes one (worker/insights/board.ts)
-//   - the four panel routes stay (04): pre-aggregated JSON for the former /growth panels, the
+//   - the four panel routes stay: pre-aggregated JSON for the former /growth panels, the
 //     same functions the board's insight_panel tool calls; every number the assistant can
-//     reproduce carries an `explain` question (09 D-39). going-cold and data-quality are parked
-//     items 4 and 5 of 16 §If time remains, built.
-//   - there is no approval queue (09 D-77 reverses D-64b (C)): a free-form query_sql pin that
-//     fails the positive grammar is refused outright (worker/insights/board.ts), so
-//     /insights/approvals/* routes no longer exist (404 like any unknown route).
+//     reproduce carries an `explain` question.
+//   - there is no approval queue: a free-form query_sql pin that fails the pin grammar is
+//     refused outright (worker/insights/board.ts), so there are no /insights/approvals/* routes
+//     (404 like any unknown route).
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'

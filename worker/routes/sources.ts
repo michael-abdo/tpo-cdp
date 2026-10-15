@@ -1,10 +1,9 @@
-// GET /api/sources (04 §GET /api/sources, 09 D-63, D-65; R1.1): every source in the registry
-// (shared/sources.ts) with its last sync, status, checks, record count and run history, for
-// Overview's Sources table (06 §Overview). Names, kinds, units and which checks a source has come
-// only from the registry; numbers only from import_runs, quarantine, app_events and, for the
-// possible_duplicates check, the D-62 scorer through worker/routes/duplicates.ts (the same count
-// GET /api/duplicates calls to_review). Live queries on every request; nothing is cached
-// (03 §No-restart). Session auth (mounted behind requireSession).
+// GET /api/sources: every source in the registry (shared/sources.ts) with its last sync, status,
+// checks, record count and run history, for Overview's Sources table. Names, kinds, units and
+// which checks a source has come only from the registry; numbers only from import_runs,
+// quarantine, app_events and, for the possible_duplicates check, the duplicate scorer through
+// worker/routes/duplicates.ts (the same count GET /api/duplicates calls to_review). Live queries
+// on every request; nothing is cached. Session auth (mounted behind requireSession).
 
 import { Hono } from 'hono'
 import { TODAY } from '../../shared/config'
@@ -14,18 +13,18 @@ import { duplicatesToReview } from './duplicates'
 
 export interface SourceRun {
   id: number
-  /** When the seed script ran, UTC `YYYY-MM-DDTHH:MM:SSZ` (02 §Time allow-list, 09 D-48). */
+  /** When the seed script ran, UTC `YYYY-MM-DDTHH:MM:SSZ` (wall clock: bookkeeping, not a business date). */
   ran_at: string
   rows_in: number
   rows_out: number
   merged: number
   /** Rows set aside (quarantined) by this run. */
   rejected: number
-  /** Of those, rows a person can fix: every reason except blank_row (09 D-61). */
+  /** Of those, rows a person can fix: every reason except blank_row. */
   needs_review: number
 }
 
-/** One check the registry declares for a source, with what it counts now (09 D-65). */
+/** One check the registry declares for a source, with what it counts now. */
 export interface SourceCheck {
   kind: CheckKind
   count: number
@@ -56,7 +55,7 @@ export interface WebhookSourceOut extends Common {
   kind: 'webhook'
   loads_by: 'webhook'
   status: 'live'
-  /** Events whose event time falls on TODAY (02 §Time), not the wall-clock day. */
+  /** Events whose event time falls on TODAY (the fixed business date), not the wall-clock day. */
   today: number
   /** Latest received_at; null before the first event. */
   last_received: string | null
@@ -132,7 +131,7 @@ sourceRoutes.get('/sources', async (c) => {
   const sources: SourceOut[] = SOURCES.map((s): SourceOut => {
     const declared: readonly CheckKind[] = s.checks
     if (s.kind === 'webhook') {
-      // A webhook has no sync to set rows aside and no status but live (04).
+      // A webhook has no sync to set rows aside and no status but live.
       if (declared.length > 0) throw new Error(`sources: webhook source ${s.id} declares checks`)
       return {
         id: s.id,
@@ -151,8 +150,8 @@ sourceRoutes.get('/sources', async (c) => {
     }
     const history = runsOf(s.id)
     const last = history[0]
-    // Every CSV source declares rows_to_fix (shared/sources.ts, 09 D-65), so a fixable row in any
-    // file shows as a chip and a tab (08 T-SRC-3 pins the declarations).
+    // Every CSV source declares rows_to_fix (shared/sources.ts), so a fixable row in any
+    // file shows as a chip and a tab (T-SRC-3 pins the declarations).
     const counts: Record<CheckKind, number> = {
       rows_to_fix: last?.needs_review ?? 0,
       possible_duplicates: possibleDuplicates,

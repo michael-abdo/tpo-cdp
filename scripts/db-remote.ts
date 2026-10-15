@@ -1,6 +1,6 @@
 /**
- * Remote D1 seed and reset (11 §Scripts, §Seed, §Reset; 09 D-13). The only way to write the
- * production database in bulk: there is no destructive action in the hosted UI.
+ * Remote D1 seed and reset. The only way to write the production database in bulk: there is no
+ * destructive action in the hosted UI, so a reviewer clicking around cannot wipe the demo.
  *
  *   npm run db:seed:remote    → scripts/csv2sql.ts, then every seed/*.sql via
  *                               `wrangler d1 execute cdp --remote --file`
@@ -25,7 +25,7 @@ const DB = 'cdp'
 
 type Mode = '--seed' | '--reset'
 
-/** Reads one line from stdin and aborts unless it is the database name (11 §Reset). */
+/** Reads one line from stdin and aborts unless it is the database name (a typed confirmation). */
 async function confirm(mode: Mode): Promise<void> {
   const action = mode === '--reset' ? 'DROP every table, re-migrate and re-seed' : 'seed'
   process.stderr.write(`Type the database name (${DB}) to ${action} the REMOTE database: `)

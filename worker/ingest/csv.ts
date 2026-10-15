@@ -1,5 +1,5 @@
 /**
- * Minimal RFC 4180 CSV parser for the three seed files (03 §Module layout, used by
+ * Minimal RFC 4180 CSV parser for the three seed files (used by
  * scripts/csv2sql). Pure: text in, records out; no file I/O.
  *
  * Supports quoted fields, `""` escapes inside quotes, and CRLF or LF record ends. A final

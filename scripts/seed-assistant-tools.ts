@@ -1,15 +1,15 @@
 /**
- * `npm run tools:seed -- --local` | `--remote` [`--update <name>[,<name>…]`] (11 §Scripts): writes
+ * `npm run tools:seed -- --local` | `--remote` [`--update <name>[,<name>…]`]: writes
  * the scripts/tool-seeds.ts rows into assistant_tools, idempotent by `name`, then reads the table
  * back and fails unless every seeded name is there and every seeded row equals its seed
  * (description, input_schema, handler_type, execution_config). Run after the migrations.
  *
  * Fail safe: the target must be named; there is no default. --remote first requires the
- * database name (`cdp`) on stdin, like the other remote writes (11 §Reset). The insert never
+ * database name (`cdp`) on stdin, like the other remote writes (scripts/db-remote.ts). The insert never
  * overwrites or deletes a row; only `--update` overwrites, and only the rows it names (their
  * seeded columns; `enabled` and `sort_order` stay). Fail loud: any wrangler failure exits
  * non-zero naming the step, and so does a seeded row that differs from its seed, naming the row,
- * its fields and the `--update` command, so a schema change (the `segment` row's D-69 keys) can
+ * its fields and the `--update` command, so a schema change (new keys on the `segment` row) can
  * never stay behind silently. Reads no secret.
  */
 import { spawnSync } from 'node:child_process'

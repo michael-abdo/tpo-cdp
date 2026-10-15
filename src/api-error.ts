@@ -1,10 +1,10 @@
-// The failed-call half of the UI's HTTP client (04 §Error envelope), kept free of the DOM so the
+// The failed-call half of the UI's HTTP client (the error envelope), kept free of the DOM so the
 // worker test project can turn a real server response into the same ApiError the page sees
 // (test/segments.test.ts, T-SEG-4/7/9). src/api.ts is the client and re-exports ApiError.
 
 /**
  * A failed API call: the HTTP status and the envelope's `error` code, `message` and `details`
- * (04 §Error envelope; `[]` when the body has none). /segments reads the details of a 400
+ * (`[]` when the body has none). /segments reads the details of a 400
  * `invalid_filters` to name the field and its limit (src/segment-form.ts filterProblems).
  */
 export class ApiError extends Error {

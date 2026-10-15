@@ -1,8 +1,9 @@
-// GET /api/quarantine?reason=&file= (04 §/api/quarantine, 09 D-61, D-63; R1.1): the rows the import
-// set aside, each with its fields as written in the file, for Overview's "Needs review" section and
-// each run's "View rejected rows" (06 §Overview). `file` is a source id from shared/sources.ts.
-// Returns raw emails, so it sits behind the session guard and is never an assistant tool (05).
-// Read-only: there is no route that edits or deletes a quarantined row (09 D-13).
+// GET /api/quarantine?reason=&file=: the rows the import set aside, each with its fields as
+// written in the file, for Overview's "Needs review" section and each run's "View rejected rows".
+// A count alone does not say which subscribers are missing from every list; the rows do.
+// `file` is a source id from shared/sources.ts.
+// Returns raw emails, so it sits behind the session guard and is never an assistant tool.
+// Read-only: there is no route that edits or deletes a quarantined row (fix the file, re-seed).
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
@@ -59,8 +60,8 @@ function reasonFilter(raw: string | undefined): QuarantineReason | null {
 }
 
 /**
- * Any source id in the registry (04: "a source id"). The webhook source is valid and has no rows:
- * a refused webhook is answered and logged (04 §Webhook responses), never stored as a row.
+ * Any source id in the registry. The webhook source is valid and has no rows:
+ * a refused webhook is answered and logged, never stored as a row.
  */
 function fileFilter(raw: string | undefined): SourceId | null {
   if (raw === undefined) return null

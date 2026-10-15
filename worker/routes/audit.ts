@@ -1,22 +1,22 @@
-// GET /api/audit?limit=&board_runs= and GET /api/audit/:trace_id (04 §GET /api/audit; 06 §/audit;
-// 05 §Proof surfaces; R5.5). Mounted at /api by worker/index.ts, behind requireSession. Read-only
-// over ai_audit (01), the rows worker/assistant/audit/ai-audit.ts wrote:
+// GET /api/audit?limit=&board_runs= and GET /api/audit/:trace_id: the proof of what the AI was
+// sent. Mounted at /api by worker/index.ts, behind requireSession. Read-only
+// over ai_audit, the rows worker/assistant/audit/ai-audit.ts wrote:
 //   - the list: the latest assistant traces, newest first, one line each: when it started, the
 //     redacted question as the model received it (messages[0] of the trace's first model_request
 //     row; null when the request stopped before any model call, e.g. at Gate 1), how the request
 //     ended (`outcome`, read from the trace's last row: see traceOutcome), the most severe row
 //     status, the number of model and tool rows, and the tokens summed over the trace. Outcome and
-//     status differ on purpose: a D-58 discard, an unknown tool, a Gate 2/3 refusal or an invalid
+//     status differ on purpose: an SQL-text discard, an unknown tool, a Gate 2/3 refusal or an invalid
 //     tool input writes a blocked or error row and the request still answers 200, so the worst row
 //     is not the result. A board run (an /insights board refresh, pin or tile change re-running
-//     tiles with no model call, 09 D-64) is a trace with no session_sub: its outcome is
+//     tiles with no model call) is a trace with no session_sub: its outcome is
 //     `board_run`, and the list leaves such traces out unless `board_runs=include`, so a board
 //     that refreshes on every view never pushes the questions off the page
 //   - one trace: every ai_audit row of the trace in write order, each field as stored. request_json
 //     is the exact payload sent after the scanner (the writer refuses a row that fails the PII
-//     scan), so nothing here can hold an email; the re-hydrated result is never stored (05
-//     §Re-hydration). session_sub is not returned: the screen does not need it.
-// Nothing is cached (03 §No-restart): a trace written a moment ago is in the next response.
+//     scan), so nothing here can hold an email; the re-hydrated result is never stored.
+//     session_sub is not returned: the screen does not need it.
+// Nothing is cached: a trace written a moment ago is in the next response.
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
@@ -42,7 +42,7 @@ export type AuditStatus = 'success' | 'error' | 'blocked'
  *                           their saved lookups; nothing was sent to the AI
  *   answered                the last row is a successful model call: the request returned 200
  *                           (the iteration cap and a malformed block also end here, as partial)
- *   answered_text_replaced  the last row is the D-58 discard: 200 with the server sentence
+ *   answered_text_replaced  the last row is the discard of model text showing SQL: 200 with the server sentence
  *   blocked                 the last row is a refusal that ended the request (Gate 1, rate limit,
  *                           missing key, tool loading, the PII scanner)
  *   failed                  the last row is a failed model call or a tool that threw: 502 or 500
@@ -74,7 +74,7 @@ export interface AuditTraceSummary {
   tokens_out: number
 }
 
-/** One ai_audit row as stored (01), without session_sub. */
+/** One ai_audit row as stored, without session_sub. */
 export interface AuditRowOut {
   id: string
   kind: 'model_request' | 'tool_call' | 'blocked'

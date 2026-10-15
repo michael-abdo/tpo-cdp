@@ -1,7 +1,7 @@
-// POST /api/assistant (04 §POST /api/assistant; R5). Mounted at /api behind requireJson and
-// requireSession (04 §Auth), so `c.get('session')` is the verified session. Single-shot: the
-// body is exactly {question} (multi-turn history is parked, 09 D-34). The layers themselves are
-// worker/assistant/route.ts.
+// POST /api/assistant. Mounted at /api behind requireJson and requireSession, so
+// `c.get('session')` is the verified session. Single-shot: the body is exactly {question}; there
+// is no multi-turn history, which would be the hardest path to keep PII off. The layers
+// themselves are worker/assistant/route.ts.
 
 import { Hono } from 'hono'
 import { ApiError } from '../auth/middleware'
@@ -32,7 +32,7 @@ async function readQuestion(req: Request): Promise<string> {
 }
 
 /**
- * The route, with the model transport factory as a parameter (09 D-54): worker/index.ts mounts
+ * The route, with the model transport factory as a parameter: worker/index.ts mounts
  * `assistantRoutes()` with the direct Anthropic transport; tests mount it with a transport
  * written in the test file.
  */

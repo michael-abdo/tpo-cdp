@@ -1,8 +1,8 @@
-// Shared UI pieces every page uses (06 §UI principles, 09 D-55; 06 §Empty and error states).
-// One calm visual system (09 D-60, amends D-45): theme tokens from index.css, one ink-teal accent,
+// Shared UI pieces every page uses. The screens are for non-technical staff on first sight, so
+// they share one calm visual system: theme tokens from index.css, one ink-teal accent,
 // lucide-react icons always beside a visible text label (icons are aria-hidden).
 // Disclosure depth is fixed at two levels: Disclosure (level 2) may hold one TechnicalDetails
-// (level 3); nothing nests deeper (principle 2).
+// (level 3); nothing nests deeper, so detail is one click away but never buried.
 
 import {
   Activity,
@@ -72,7 +72,7 @@ import { explain, isGlossaryKey, type TipKey } from '../shared/glossary'
 export type { LucideIcon }
 
 /**
- * One icon per meaning (09 D-60). Always render an icon next to its words, with aria-hidden — never
+ * One icon per meaning. Always render an icon next to its words, with aria-hidden — never
  * as the only carrier of meaning. Nav keys match the route; status keys match the outcome.
  */
 export const ICONS = {
@@ -100,7 +100,7 @@ export const ICONS = {
   refresh: RefreshCw,
   info: Info,
   history: History,
-  // insights board (09 D-64)
+  // insights board
   pin: Pin,
   tileOptions: Ellipsis,
   moveUp: ArrowUp,
@@ -120,7 +120,7 @@ export const ICONS = {
   live: Radio,
   empty: Inbox,
   loading: LoaderCircle,
-  // Gated future features (09 D-80): one icon per feature, named by its own page spec.
+  // Gated future features: one icon per feature.
   upload: Upload,
   schedule: CalendarClock,
   settings: SlidersHorizontal,
@@ -136,7 +136,7 @@ export function Icon({ icon: I, className = 'size-4' }: { icon: LucideIcon; clas
   return <I aria-hidden="true" focusable="false" strokeWidth={1.75} className={`shrink-0 ${className}`} />
 }
 
-/** Primary = the one main action of a screen (principle 1); secondary = everything else. */
+/** Primary = the one main action of a screen (each screen has one job); secondary = everything else. */
 export function Button({
   variant = 'secondary',
   type = 'button',
@@ -208,7 +208,7 @@ export function PageHeader({
       {/* min-w-0 max-w-full: a gated action's revealed note is a long sentence with no width of
           its own, so without a cap here the flex item's content-based width (shrink-0) stays as
           wide as the note's one unwrapped line, pushing the page into sideways scroll on phone
-          widths (09 D-80, Overview's Settings for definitions). Capped, the note wraps instead. */}
+          widths (e.g. Overview's Settings for definitions). Capped, the note wraps instead. */}
       {action !== undefined && <div className="min-w-0 max-w-full shrink-0">{action}</div>}
     </div>
   )
@@ -228,7 +228,7 @@ function Chevron({ open }: { open?: boolean }) {
 }
 
 /**
- * Level 2 (principles 2, 3): a native <details>/<summary> with a chevron and words, so hidden
+ * Level 2: a native <details>/<summary> with a chevron and words, so hidden
  * info has scent, opens by tap or keyboard (Enter/Space) and never needs hover.
  * `label` is what the toggle says ("Details", "How the data was combined", "Show all 9 visits").
  */
@@ -264,7 +264,7 @@ export function Disclosure({
 }
 
 /**
- * Level 3 (principle 2): the one fixed-labelled "Technical details" toggle. Use it only inside a
+ * Level 3: the one fixed-labelled "Technical details" toggle. Use it only inside a
  * Disclosure (or a block that is itself level 2), never nested in another TechnicalDetails.
  * Holds raw names, codes, ids, pk_ keys, SQL shape and second-precise UTC times (format.ts utc()).
  */
@@ -283,7 +283,7 @@ export function TechnicalDetails({ children }: { children: ReactNode }) {
 }
 
 /**
- * A polite live region (principle 7) for result counts and status changes. Keep it mounted and
+ * A polite live region (for screen readers) for result counts and status changes. Keep it mounted and
  * change `message`, so screen readers hear each change. `visible` shows it as a quiet line too.
  */
 export function Announcer({ message, visible = false }: { message: string; visible?: boolean }) {
@@ -294,7 +294,7 @@ export function Announcer({ message, visible = false }: { message: string; visib
   )
 }
 
-/** A short text loading state, announced politely (principles 7, 8). */
+/** A short text loading state, announced politely; text, not a spinner alone. */
 export function Loading({ label = 'Loading…' }: { label?: string }) {
   return (
     <p role="status" aria-live="polite" className="inline-flex items-center gap-2 text-sm text-ink-muted">
@@ -308,7 +308,7 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
 const NETWORK_FAILURE = /failed to fetch|networkerror|load failed/i
 
 /**
- * Shows the 04 error envelope's message (06 §Empty and error states) and an optional next step.
+ * Shows the error envelope's message and an optional next step.
  * Pass `id` so an input can point at it with aria-describedby. A network failure becomes plain
  * guidance. `compact` drops the box (for the top bar).
  */
@@ -342,8 +342,8 @@ export function ErrorLine({
 }
 
 /**
- * An explicit empty state (06 §Empty and error states) that says what to do next and may offer a
- * one-click example (principle 6). `children` = the message; keep test-locked texts verbatim.
+ * An explicit empty state that says what to do next and may offer a
+ * one-click example, so a first visit is never a blank page. `children` = the message; keep test-locked texts verbatim.
  */
 export function EmptyState({
   children,
@@ -404,7 +404,7 @@ export function Section({
 }
 
 /**
- * A label/value pair inside a <dl>. Labels are plain words, never raw field names (principle 4).
+ * A label/value pair inside a <dl>. Labels are plain words, never raw field names.
  * The value wraps at word boundaries by default, so plain prose never breaks mid-word; a caller
  * showing a raw id or hash with no natural break point (a profile key, a device or visitor id)
  * passes `breakAll` so a long token still wraps inside its column instead of overflowing it.
@@ -418,13 +418,13 @@ export function Field({ label, children, breakAll = false }: { label: string; ch
   )
 }
 
-/** Gap between the popover and the viewport edge, px (06 §UI principles 9: never wider than the screen). */
+/** Gap between the popover and the viewport edge, px (never wider than a phone screen). */
 const TIP_EDGE = 16
 /** The popover's widest size, px. */
 const TIP_WIDTH = 288
 
 /**
- * A toggletip (06 §Overview InfoTip, D-55 #3): an ⓘ button beside a term; click, tap, Enter or
+ * A toggletip: an ⓘ button beside a term; click, tap, Enter or
  * Space opens a small popover with the term's text from the glossary or DEFINITIONS
  * (shared/glossary.ts explain()); Esc (focus returns to the button), a click outside, scrolling or
  * resizing closes it. Never hover-only. The popover is a polite live region that is always in the
@@ -529,7 +529,7 @@ export function InfoTip({ term }: { term: TipKey }) {
 
 /**
  * An app event name as the brief writes it (app_open, read_story, link_click, login), with its plain
- * gloss in an InfoTip from the glossary (06 §Vocabulary, 09 D-66); a name with no gloss shows as sent.
+ * gloss in an InfoTip from the glossary; a name with no gloss shows as sent.
  */
 export function EventName({ event, nameId }: { event: string; nameId?: string }) {
   return (
@@ -582,7 +582,7 @@ export function StatTile({
 }
 
 /**
- * A headline number with its plain label and an InfoTip that explains it (06 §Overview 1). `term`
+ * A headline number with its plain label and an InfoTip that explains it. `term`
  * names the glossary or DEFINITIONS entry; the label stays visible text.
  */
 export function Metric({
@@ -600,8 +600,8 @@ export function Metric({
 }
 
 /**
- * A small badge that carries its meaning in words, never colour alone (principle 7). With
- * `onClick` it is a button (a status chip that opens what it counts), 24 px tall (principle 7).
+ * A small badge that carries its meaning in words, never colour alone (WCAG 2.2 AA). With
+ * `onClick` it is a button (a status chip that opens what it counts), 24 px tall (the minimum target size).
  */
 export function Tag({
   children,
@@ -641,7 +641,7 @@ export function Tag({
 }
 
 /**
- * A visible, always-in-the-name "Coming soon" chip (09 D-80), the one home of its words: every
+ * A visible, always-in-the-name "Coming soon" chip, the one home of its words: every
  * gated control sits beside exactly one of these, so the state is never shown by colour alone.
  */
 export function ComingSoonTag() {
@@ -651,7 +651,7 @@ export function ComingSoonTag() {
 /**
  * The note `useGated` (src/use-gated.ts) describes: always in the DOM with its real text (so `aria-describedby`
  * resolves from the first render), `sr-only` until `activated`. A separate, always-`sr-only`
- * `Announcer` fires the one polite announcement on activation (09 D-80), kept apart from this
+ * `Announcer` fires the one polite announcement on activation, kept apart from this
  * paragraph so the sentence is never shown twice on screen — only ever read twice.
  */
 export function GatedNote({ id, activated, text }: { id: string; activated: boolean; text: string }) {
@@ -667,7 +667,7 @@ export function GatedNote({ id, activated, text }: { id: string; activated: bool
 }
 
 export interface Column<T> {
-  /** Plain-language header (principle 4); also the label in the stacked cards. */
+  /** Plain-language header; also the label in the stacked cards. */
   header: string
   cell: (row: T) => ReactNode
   /** Right-aligns the column in the table. */
@@ -695,8 +695,8 @@ function useNarrow(): boolean {
 }
 
 /**
- * A table from 640 px up; stacked label:value cards below (principle 9), so the page never scrolls
- * sideways. `details` adds a per-row toggle ("Details" by default) for level-2 fields (principle 2).
+ * A table from 640 px up; stacked label:value cards below, so the page never scrolls
+ * sideways on a phone. `details` adds a per-row toggle ("Details" by default) for level-2 fields.
  * Both layouts share one set of open rows, and an open row's details mount only in the layout on
  * screen, so a panel that fetches or holds state exists once. Pass `open` and `onOpenChange` to
  * control which rows are open from outside (a control elsewhere on the row that opens it).

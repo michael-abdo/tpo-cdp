@@ -1,9 +1,9 @@
-// What the Ask bar's answer card shows of the model's `filters_applied` (06 §/insights answer card footer, 09 D-58).
+// What the Ask bar's answer card shows of the model's `filters_applied` (the card's footer).
 // The model writes `filters_applied` itself, and the server does not screen it (respond.ts screens
-// only `text`), so the page runs the same D-58 check (shared/sql-sign.ts) over every key and every
+// only `text`), so the page runs the same SQL-sign check (shared/sql-sign.ts) over every key and every
 // string in it, and over its JSON as shown in Technical details. Any sign hides the whole object,
 // at both levels, and a sentence in words says why: rejection, not stripping, as for `text`.
-// Otherwise each filter shows as a plain label and value (06 §UI principles 4), with the raw JSON
+// Otherwise each filter shows as a plain label and value, with the raw JSON
 // for Technical details. Pure, so the test runs it on the shapes the page would render.
 
 import { type SqlSign, sqlSign } from '../shared/sql-sign'

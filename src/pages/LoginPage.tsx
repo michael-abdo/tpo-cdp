@@ -1,7 +1,7 @@
-// /login (06 §/login, D2): one password field. A wrong password shows "Wrong password" and
-// nothing else, plus a neutral rate-limit notice; a 429 shows the rate-limit message from the 04
-// envelope. The error is tied to the field (aria-invalid + aria-describedby) and "Signing in…"
-// is announced (06 §UI principles 7).
+// /login: one password field. A wrong password shows "Wrong password" and
+// nothing else, plus a neutral rate-limit notice; a 429 shows the rate-limit message from the
+// error envelope. The error is tied to the field (aria-invalid + aria-describedby) and "Signing in…"
+// is announced to screen readers.
 
 import { type FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
@@ -24,7 +24,7 @@ export default function LoginPage() {
     document.title = 'Sign in · TPO Mini CDP'
   }, [])
 
-  // The neutral limit notice follows a plain miss; a 429's own message already says it (principle 5).
+  // The neutral limit notice follows a plain miss; a 429's own message already says it, so it is not repeated.
   const missed = error === 'Wrong password'
 
   async function submit(e: FormEvent) {
@@ -84,7 +84,7 @@ export default function LoginPage() {
         </Button>
         <Announcer message={busy ? 'Signing in…' : ''} />
 
-        {/* Gated (09 D-80, 22-pages/login.md §2.1): below the real path, never above it. */}
+        {/* Gated (coming soon): below the real path, never above it. */}
         <div aria-hidden="true" className="flex items-center gap-2 text-xs text-ink-muted">
           <span className="h-px flex-1 bg-line" />
           or
