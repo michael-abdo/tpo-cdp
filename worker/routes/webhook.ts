@@ -145,3 +145,14 @@ webhookRoutes.post('/app', async (c) => {
   // caller of this open URL; /events and its "Send a test event" panel read it behind the session.
   return c.json({ accepted: true, event_id: parsed.event.event_id }, 202)
 })
+
+/** What a GET (a browser, a link checker) or any other non-POST to the webhook URL is told. */
+export const METHOD_NOT_ALLOWED_MESSAGE =
+  'This URL takes only POST: one signed JSON app event per request, as described in the Webhook section of docs/notes.md.'
+
+// Any other method on the same path: 405 with `Allow: POST`, not the generic 404, so a person
+// who opens the URL in a browser learns it exists and how to use it. HEAD is routed as GET.
+webhookRoutes.all('/app', (c) => {
+  logRefusal(405, 'method_not_allowed', `method ${c.req.method}`)
+  return c.json({ error: 'method_not_allowed', message: METHOD_NOT_ALLOWED_MESSAGE }, 405, { Allow: 'POST' })
+})
