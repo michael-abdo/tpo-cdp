@@ -107,7 +107,7 @@ async function awaitLimiterWindow(needMs: number): Promise<void> {
   if (left < needMs) await new Promise((resolve) => setTimeout(resolve, left + 250))
 }
 
-describe('T-AUTH-1 login, session cookie and fail-closed (04 §Auth)', () => {
+describe('T-AUTH-1 login, session cookie and fail-closed', () => {
   it('a wrong password is 401 after the 100 ms delay, same length or not', async () => {
     for (const password of [wrongPasswordSameLength(), `${realSecret('SITE_PASSWORD')}${realSecret('SITE_PASSWORD').at(-1)}`]) {
       const started = Date.now()
@@ -368,7 +368,7 @@ describe('constant-time comparison without crypto.subtle.timingSafeEqual (fallba
   })
 })
 
-describe('assertBindings (11 §Deploy, fail fast)', () => {
+describe('assertBindings (fail fast)', () => {
   it('names every missing binding and secret in one error', () => {
     expect(() =>
       assertBindings(
@@ -390,7 +390,7 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
     )
   })
 
-  it('runs before routing: /health with a missing TEST_EVENT_LIMITER is 500 naming it (04 §POST /api/events/test needs it; kills M16: TEST_EVENT_LIMITER dropped from the required list)', async () => {
+  it('runs before routing: /health with a missing TEST_EVENT_LIMITER is 500 naming it (POST /api/events/test needs it; catches TEST_EVENT_LIMITER dropped from the required list)', async () => {
     const res = await app.fetch(new Request(`${BASE}/health`), envWithout('TEST_EVENT_LIMITER'))
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ error: 'server_misconfigured', message: 'The server is missing required configuration: TEST_EVENT_LIMITER.' })
@@ -402,7 +402,7 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
     expect((await app.fetch(new Request(`${BASE}/health`), envWithout('ANTHROPIC_API_KEY'))).status).toBe(200)
   })
 
-  it('boots and serves with no TOOL_APPROVAL binding (09 D-77: the approval queue, and its secret, are gone)', async () => {
+  it('boots and serves with no TOOL_APPROVAL binding (the approval queue, and its secret, are gone)', async () => {
     // TOOL_APPROVAL is not a key of Env any more (worker-configuration.d.ts no longer declares it,
     // since it comes from .dev.vars.example having no such line); envWithout can't take it as a
     // (keyof Env)[] arg, so this test deletes it from a plain copy instead. The guard stays real:
@@ -421,7 +421,7 @@ describe('assertBindings (11 §Deploy, fail fast)', () => {
   })
 })
 
-describe('T-AUTH-2 error bodies carry no secrets (04 §Error envelope)', () => {
+describe('T-AUTH-2 error bodies carry no secrets', () => {
   it('a forced 500 and the /health body contain none of the secret values', async () => {
     const forced = await app.fetch(new Request(`${BASE}/health`), envWithout('DB'))
     expect(forced.status).toBe(500)

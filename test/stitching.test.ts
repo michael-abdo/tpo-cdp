@@ -89,7 +89,7 @@ const STITCHED_TIMELINE = [
   { event: 'login', event_ts: AT_0910, properties: null, attached_via: 'direct' },
 ]
 
-describe('T-WH-9a 07 §D: anonymous events first, login later', () => {
+describe('T-WH-9a anonymous events first, login later', () => {
   it('stores the anonymous events unresolved, then attaches both to the user once the login arrives, tagged stitched', async () => {
     const user = 'u_baba14aa'
     const email = 'daniel.hill389@gmail.com'
@@ -137,8 +137,8 @@ describe('T-WH-9a 07 §D: anonymous events first, login later', () => {
   })
 })
 
-describe('T-WH-9b 07 §E: login first, anonymous events late', () => {
-  it('gives lookup output identical to 07 §D for the same user, device and events', async () => {
+describe('T-WH-9b login first, anonymous events late', () => {
+  it('gives lookup output identical to the anonymous-first order for the same user, device and events', async () => {
     const user = 'u_3ab82c73'
     const device = 'd_3ab82c73'
     const s = sequence(user, device)

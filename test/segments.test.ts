@@ -111,7 +111,7 @@ function independentCount(status: readonly string[], includeNeverOpened: boolean
   ).length
 }
 
-describe('T-SEG-1 the brief preset matches 02 §Counts and an independent count', () => {
+describe('T-SEG-1 the brief preset matches the expected count and an independent count', () => {
   it('returns 177, equal to the count computed from the raw CSV in TypeScript', async () => {
     const body = await preview(PRESET)
     expect(body.count).toBe(PRESET_COUNT)
@@ -154,7 +154,7 @@ describe('T-SEG-1 the brief preset matches 02 §Counts and an independent count'
   })
 })
 
-describe('T-SEG-2 hidden unsubscribed (02 §Defaults)', () => {
+describe('T-SEG-2 hidden unsubscribed', () => {
   // hidden_unsubscribed counts unsubscribed rows matching every other filter, so including
   // unsubscribed raises the count by exactly that number (T-SEG-2). On this data that is the
   // independent count below, not the seed's 93: 93 is every unsubscribed Instagram
@@ -172,14 +172,14 @@ describe('T-SEG-2 hidden unsubscribed (02 §Defaults)', () => {
     expect(both.hidden_unsubscribed).toBe(0)
   })
 
-  it('the 93 of 02 §Counts is every unsubscribed Instagram subscriber, recency filter ignored', async () => {
+  it('the expected 93 is every unsubscribed Instagram subscriber, recency filter ignored', async () => {
     const body = await preview({ source: ['instagram'], status: ['unsubscribed'] })
     expect(body.count).toBe(UNSUBSCRIBED_INSTAGRAM)
   })
 })
 
 describe('T-SEG-3 export follows the segment and binds every value', () => {
-  it('header is the exact 04 column list and every row carries a status', async () => {
+  it('header is the exact export column list and every row carries a status', async () => {
     const [header, ...rows] = await exportRecords(PRESET)
     expect(header).toEqual(EXPORT_HEADER)
     expect([...SEGMENT_COLUMNS]).toEqual(EXPORT_HEADER)
@@ -228,7 +228,7 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect(compileModelSegment(parseFilters(PRESET)).rowsSql).toMatch(/ORDER BY engagement_score DESC, pkey ASC$/)
   })
 
-  it('a source value with a single quote is 400 invalid_filters (09 D-69 #6, 19 §0 F7): source is now a subset of CANONICAL_SOURCES, so it never reaches SQL at all', async () => {
+  it('a source value with a single quote is 400 invalid_filters: source is now a subset of CANONICAL_SOURCES, so it never reaches SQL at all', async () => {
     for (const path of ['preview', 'export.csv']) {
       const res = await post(path, { filters: { source: [INJECTION_PROBE] } })
       expect(res.status).toBe(400)
@@ -249,7 +249,7 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
     expect((await res.json<{ filters: SegmentFilters }>()).filters.source).toEqual([...CANONICAL_SOURCES].sort())
   })
 
-  it('a source array with more distinct values than CANONICAL_SOURCES.length is 400 invalid_filters before the membership check even runs (09 D-69 #6: caps the bound SQL variables)', async () => {
+  it('a source array with more distinct values than CANONICAL_SOURCES.length is 400 invalid_filters before the membership check even runs (caps the bound SQL variables)', async () => {
     // Eight distinct, non-blank, non-canonical values (none of them INJECTION_PROBE, so this is a
     // different code path from the single-value membership rejection above): the cap problem fires
     // on their count alone, naming no value and never reaching the membership check's problem.
@@ -279,7 +279,7 @@ describe('T-SEG-3 export follows the segment and binds every value', () => {
 })
 
 describe('segment request errors', () => {
-  it('an unknown filter key is 400 invalid_filters, naming no key text at all (09 D-70 fixer round 4)', async () => {
+  it('an unknown filter key is 400 invalid_filters, naming no key text at all', async () => {
     for (const path of ['preview', 'export.csv']) {
       const res = await post(path, { filters: { ...PRESET, pages_viewed: 16 } })
       expect(res.status).toBe(400)
@@ -297,8 +297,8 @@ describe('segment request errors', () => {
   })
 
   it(
-    'no caller-controlled key text ever reaches a 400 response or console.warn, for any key shape (09 D-70 item 1, ' +
-      'fixer rounds 2 and 4): an unknown filter key and an unknown top-level body field are always exactly ' +
+    'no caller-controlled key text ever reaches a 400 response or console.warn, for any key shape: ' +
+      'an unknown filter key and an unknown top-level body field are always exactly ' +
       '"unknown filter" / "unknown field", never the key, whatever PII shape that key spells. This replaces the ' +
       "earlier per-shape redaction tests: redactDetail's regex approach missed a double-percent-encoded \"@\" " +
       "(%2540), a raw id glued to a word character (RAW_ID_REGEX's \\b never fires mid-word, so " +
@@ -511,7 +511,7 @@ describe('T-SEG-6 the preview echoes the canonical filters', () => {
     expect((await preview(a.filters)).filters).toEqual(a.filters)
   })
 
-  it('the brief\'s preset echoes as BRIEF_EXAMPLE, so Previous searches never shows the example twice (19 §2)', async () => {
+  it('the brief\'s preset echoes as BRIEF_EXAMPLE, so Previous searches never shows the example twice', async () => {
     // visibleSearches adds the example row unless a stored echo has BRIEF_EXAMPLE's key; the page
     // stores the server's echo, so the echo of the preset, sent bare or as the row sends it, must be it.
     for (const sent of [PRESET, BRIEF_EXAMPLE, { ...PRESET, source: ['Instagram'], status: ['active'] }]) {
@@ -559,7 +559,7 @@ describe('T-SEG-7 signed up in the last N days', () => {
 })
 
 describe('T-SEG-8 went cold', () => {
-  it('Instagram + went_cold 2026-08 = 46 active, 20 hidden, 66 across statuses (02 §Counts)', async () => {
+  it('Instagram + went_cold 2026-08 = 46 active, 20 hidden, 66 across statuses', async () => {
     const expected = split((s) => isInstagram(s) && coldSinceOf(s).startsWith('2026-08') && coldSinceOf(s) <= TODAY)
     expect(expected).toEqual({ active: 46, hidden: 20 })
     const body = await preview({ source: ['instagram'], went_cold: '2026-08' })
@@ -585,7 +585,7 @@ describe('T-SEG-8 went cold', () => {
     expect(split((s) => coldSinceOf(s).startsWith('2026-09')).active).toBeGreaterThan(expected.active)
   })
 
-  it('Instagram + any = cold now = 147 (02 §Counts)', async () => {
+  it('Instagram + any = cold now = 147', async () => {
     const expected = split((s) => isInstagram(s) && coldSinceOf(s) <= TODAY)
     expect(expected.active).toBe(147)
     const body = await preview({ source: ['instagram'], went_cold: 'any' })
@@ -772,7 +772,7 @@ const MVP_EXAMPLES: Record<string, unknown>[] = [
 ]
 
 describe('T-SEG-12 every new filter keeps the segment rules', () => {
-  it('for every MVP example: both statuses = active + hidden (D-51) and the tool counts what the builder counts', async () => {
+  it('for every MVP example: both statuses = active + hidden and the tool counts what the builder counts', async () => {
     for (const filters of MVP_EXAMPLES) {
       const active = await preview(filters)
       const both = await preview({ ...filters, status: ['active', 'unsubscribed'] })
@@ -786,7 +786,7 @@ describe('T-SEG-12 every new filter keeps the segment rules', () => {
     }
   })
 
-  it('the segment tool names the definitions each new filter applied (19 §4 "Assistant")', async () => {
+  it('the segment tool names the definitions each new filter applied', async () => {
     const used = async (filters: Record<string, unknown>) => (await BUILTIN_HANDLERS.segment.run(env.DB, filters)).summary.definitions_used
     expect(await used({ source: ['instagram'], went_cold: '2026-08' })).toEqual(['went_cold_in', 'cold_since'])
     expect(await used({ source: ['instagram'], went_cold: 'any' })).toEqual(['cold', 'cold_since'])
@@ -894,7 +894,7 @@ describe('T-SEG-12 every new filter keeps the segment rules', () => {
   })
 })
 
-describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart (09 D-69 amends D-53)', () => {
+describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart', () => {
   // These run last: each signed event changes the stored data the tests above count.
   const nextEventId = eventIdPool()
   const send = (fields: Record<string, unknown>) =>
@@ -959,7 +959,7 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
     expect(await counts({ app_event: 'login' })).toEqual({ active: 1, hidden: 0 })
   })
 
-  it('an event dated after TODAY counts (09 D-01); an unsubscribed user moves the hidden count', async () => {
+  it('an event dated after TODAY counts; an unsubscribed user moves the hidden count', async () => {
     const before = await counts({ app_active_within_days: 1 })
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
     expect(now > TODAY).toBe(true)

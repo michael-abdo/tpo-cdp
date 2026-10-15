@@ -443,7 +443,7 @@ describe('T-WH-6 an unknown user_id', () => {
     expect(healed.map((r) => r.event)).toEqual(['read_story', 'app_open'])
   })
 
-  it('never inflates data-quality app_users_not_on_list.of: a stub has no email to count it against (09 D-78(b) regression)', async () => {
+  it('never inflates data-quality app_users_not_on_list.of: a stub has no email to count it against', async () => {
     // u_f2411d1: data/app_users.csv's real u_f2411d1c (line 9) with its last character removed,
     // unused as either a known or an unknown id anywhere else in this file.
     const unknown = 'u_f2411d1'
@@ -505,7 +505,7 @@ describe('T-WH-7 out of order and old events', () => {
   })
 })
 
-describe('T-WH-7b lenient offsets (09 D-38)', () => {
+describe('T-WH-7b lenient offsets', () => {
   it('accepts an hour-only offset and stores the same UTC instant', async () => {
     // The brief's instant with the -05:00 offset used in T-WH-6, its minutes removed.
     for (const timestamp of [
@@ -520,7 +520,7 @@ describe('T-WH-7b lenient offsets (09 D-38)', () => {
   })
 })
 
-describe('09 D-46 score recompute and 01 identity resolution across one device', () => {
+describe('score recompute and identity resolution across one device', () => {
   it('rescores both users when a device changes hands, and an older event keeps its own user_id', async () => {
     const [x, xEmail] = ['u_38e852b0', 'sarah.edwards657@gmail.com']
     const [y, yEmail] = ['u_f1cad5ce', 'eli.clark874@icloud.com']
@@ -594,7 +594,7 @@ describe('T-WH-8 duplicate delivery', () => {
     expect(await count('app_users WHERE user_id = ?', 'u_3380b6e')).toBe(0)
   })
 
-  it('skips the device_identity update on a duplicate (07 §B), so a replay cannot take a device back', async () => {
+  it('skips the device_identity update on a duplicate, so a replay cannot take a device back', async () => {
     // Two users on one device at the same event_ts: the later arrival owns it (>=).
     const dev = 'd_f2411d1c'
     const a = event({ event: 'login', user_id: 'u_f2411d1c', device_id: dev })
@@ -649,7 +649,7 @@ describe('T-WH-11 signature headers', () => {
     )
   })
 
-  it('logs each 401 with its reason and no header or body value (04 §Webhook responses)', async () => {
+  it('logs each 401 with its reason and no header or body value', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
     await unchanged(() => sendWebhook(body, { secret: webhookSecret().slice(0, -1) }), 'bad_signature')
@@ -687,7 +687,7 @@ describe('T-WH-11 signature headers', () => {
     expect(await res.json()).toMatchObject({ error: 'invalid_event', details: [{ field: 'body' }] })
   })
 
-  it("rejects a wrong signature even under the exact header set the events/test panel sends (content-type, timestamp, signature, cf-connecting-ip; 09 D-73): a verify bypass keyed to this route's own header shape would otherwise go undetected", async () => {
+  it("rejects a wrong signature even under the exact header set the events/test panel sends (content-type, timestamp, signature, cf-connecting-ip): a verify bypass keyed to this route's own header shape would otherwise go undetected", async () => {
     const body = JSON.stringify(event({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))
     const timestamp = String(nowSeconds())
     const wrongSignature = await signature('not-the-real-secret', timestamp, new TextEncoder().encode(body))
@@ -758,7 +758,7 @@ describe('T-WH-12 size and content-type caps', () => {
     expect(JSON.parse((await stored(atCap.event_id as string))!.properties!).page).toHaveLength(200)
   })
 
-  it('accepts any JSON object as properties and caps strings at any depth (04, 09 D-22)', async () => {
+  it('accepts any JSON object as properties and caps strings at any depth', async () => {
     const slug = 'supreme-court-ruling-explained'
     const base = { user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }
     const accepted = event({

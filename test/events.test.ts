@@ -54,7 +54,7 @@ async function post(body: Record<string, unknown>): Promise<number> {
   return (await sendWebhook(JSON.stringify(body))).status
 }
 
-describe('GET /api/events/recent (04, 06 §/events)', () => {
+describe('GET /api/events/recent', () => {
   it('401 without a session cookie', async () => {
     const res = await SELF.fetch('http://cdp.test/api/events/recent')
     expect(res.status).toBe(401)
@@ -167,7 +167,7 @@ describe('GET /api/events/recent (04, 06 §/events)', () => {
     expect((await feed()).map((e) => e.event_id)).toEqual(expected)
   })
 
-  it('orders by received_at, not event time: a late event with an older timestamp lists first (07 §C)', async () => {
+  it('orders by received_at, not event time: a late event with an older timestamp lists first', async () => {
     const before = await feed()
     // Every event above carries a later event time (09:00, 09:10 or the brief's 14:22) than this one.
     const late = {

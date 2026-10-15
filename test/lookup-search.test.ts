@@ -88,7 +88,7 @@ async function found(q: string): Promise<SearchBody> {
   return res.json<SearchBody>()
 }
 
-describe('normalizeQueryFragment (02 §Normalization)', () => {
+describe('normalizeQueryFragment', () => {
   it('trims and lowercases, and nothing else', () => {
     // The "." stays: no dot stripping, like normalizeEmail.
     expect(normalizeQueryFragment('  JOY.HALL ')).toBe('joy.hall')
@@ -101,7 +101,7 @@ describe('normalizeQueryFragment (02 §Normalization)', () => {
     expect(lookupSource).not.toMatch(/\bLOWER\s*\(/i)
   })
 
-  it('the browser sends the raw input and never folds it (02 §Normalization)', () => {
+  it('the browser sends the raw input and never folds it', () => {
     for (const [file, text] of [
       ['src/pages/LookupPage.tsx', lookupPageSource],
       ['src/api.ts', apiSource],
@@ -216,7 +216,7 @@ describe('T-API-3 partial lookup', () => {
   })
 })
 
-describe('fuzzy helper (worker/lookup/fuzzy.ts, 09 D-59)', () => {
+describe('fuzzy helper (worker/lookup/fuzzy.ts)', () => {
   it('damerauLevenshtein counts insert, delete, substitute and swap as 1, unrestricted', () => {
     expect(damerauLevenshtein('joy.hall830', 'joy.hall830')).toBe(0)
     expect(damerauLevenshtein('joy.hal830', 'joy.hall830')).toBe(1)

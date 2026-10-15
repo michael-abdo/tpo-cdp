@@ -63,7 +63,7 @@ function bindingLimit(name: string): number {
   return Number(match[1])
 }
 
-describe('POST /api/events/test (09 D-73)', () => {
+describe('POST /api/events/test', () => {
   it('T-WH-PANEL-1: 401 without a session cookie', async () => {
     const res = await sendTest({ user_id: KNOWN_USER, event: 'app_open' }, '')
     expect(res.status).toBe(401)
@@ -120,7 +120,7 @@ describe('POST /api/events/test (09 D-73)', () => {
     expect(first).toEqual(body.event)
   })
 
-  it('T-WH-PANEL-4b: a second send for the same account gets a fresh device, not the first send\'s (D-73 amended 2026-10-14: device reuse dropped)', async () => {
+  it('T-WH-PANEL-4b: a second send for the same account gets a fresh device, not the first send\'s', async () => {
     const first = await (await sendTest({ user_id: KNOWN_USER, event: 'app_open' })).json<TestEventResponse>()
     const second = await (await sendTest({ user_id: KNOWN_USER, event: 'login' })).json<TestEventResponse>()
     expect(second.event.device_id).not.toBe(first.event.device_id)
@@ -142,7 +142,7 @@ describe('POST /api/events/test (09 D-73)', () => {
     expect(after).toBe(before)
   })
 
-  it('T-WH-PANEL-5d: a resend sends the inner webhook exactly the stored row, no more and no less (kills M14: a dropped properties spread; M15: user_id sent as null)', async () => {
+  it('T-WH-PANEL-5d: a resend sends the inner webhook exactly the stored row, no more and no less (catches a dropped properties spread or user_id sent as null)', async () => {
     // Spies on the inner POST /webhooks/app call the same way T-WH-PANEL-10's own runtime-proof
     // test does, so this is a live assertion on what the route actually sent, not just on its
     // response body.
@@ -173,7 +173,7 @@ describe('POST /api/events/test (09 D-73)', () => {
     }
   })
 
-  it('T-WH-PANEL-5c: a resend of an event with non-null properties sends them back unchanged (kills M14: a dropped properties spread)', async () => {
+  it('T-WH-PANEL-5c: a resend of an event with non-null properties sends them back unchanged (catches a dropped properties spread)', async () => {
     // A real app account (KNOWN_USER) sending a real-shaped read_story event with a properties
     // story slug (T-HARD-2's own slug pattern), through the real webhook so the
     // row is genuinely stored, not constructed by hand.
@@ -244,11 +244,11 @@ describe('POST /api/events/test (09 D-73)', () => {
     }
   })
 
-  it('T-WH-PANEL-8a: TEST_EVENT_LIMITER is 20/min, exactly as 04 §POST /api/events/test documents it (kills M7d: a quietly widened binding)', () => {
+  it('T-WH-PANEL-8a: TEST_EVENT_LIMITER is 20/min, exactly as documented (catches a quietly widened binding)', () => {
     expect(bindingLimit('TEST_EVENT_LIMITER')).toBe(20)
   })
 
-  it('T-WH-PANEL-8: 429 past its own limit, and a new session from the same address is still 429 (09 D-70 #6 style)', async () => {
+  it('T-WH-PANEL-8: 429 past its own limit, and a new session from the same address is still 429 (as T-HARD-6)', async () => {
     const limit = bindingLimit('TEST_EVENT_LIMITER')
     const ip = documentationIp()
     const first = await loginCookie(ip)
@@ -279,7 +279,7 @@ describe('POST /api/events/test (09 D-73)', () => {
     expect(second.event.device_id).not.toBe(first.event.device_id)
   })
 
-  it('T-WH-PANEL-9b: never moves device ownership to a different account (D-73 out of scope)', async () => {
+  it('T-WH-PANEL-9b: never moves device ownership to a different account', async () => {
     // A then B logs in on the same shared device, then an anonymous event on it resolves to B
     // via login_stitch (the device's most recent identified user, by event_ts). A panel send for
     // A must not touch that shared device at all (a fresh device on every send): re-pointing it
@@ -316,7 +316,7 @@ describe('POST /api/events/test (09 D-73)', () => {
 // frozen or dropped time of day. T-WH-PANEL-4 above only checks `startsWith(TODAY)`, which a
 // mutant returning `${TODAY}T00:00:00Z` would still pass; this fakes the clock so the time-of-day
 // half is pinned exactly, independent of the real clock.
-describe('demoTimestamp (shared/demo-timestamp.ts; 02 §Time, 09 D-01/D-73 amended 2026-10-14)', () => {
+describe('demoTimestamp (shared/demo-timestamp.ts)', () => {
   it('returns TODAY at the exact faked UTC time of day, not midnight and not real "now"', () => {
     vi.useFakeTimers()
     try {
@@ -327,7 +327,7 @@ describe('demoTimestamp (shared/demo-timestamp.ts; 02 §Time, 09 D-01/D-73 amend
     }
   })
 
-  it('scripts/send-webhook.ts imports demoTimestamp from shared/demo-timestamp and defines no copy of its own (D-72 one home)', () => {
+  it('scripts/send-webhook.ts imports demoTimestamp from shared/demo-timestamp and defines no copy of its own (one home)', () => {
     const code = import.meta.glob<string>('../scripts/send-webhook.ts', { query: '?raw', import: 'default', eager: true })
     const text = code['../scripts/send-webhook.ts']
     expect(text).toMatch(/import \{ demoTimestamp \} from '\.\.\/shared\/demo-timestamp'/)
@@ -454,7 +454,7 @@ describe('T-WH-PANEL-11: a stored event always resends as a duplicate; a refused
   })
 })
 
-describe('T-WH-PANEL-12: the same CSRF/body rules as every other session POST (09 D-73)', () => {
+describe('T-WH-PANEL-12: the same CSRF/body rules as every other session POST', () => {
   it('a non-JSON content type is 415 unsupported_media_type, and nothing is written', async () => {
     const before = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
     const res = await SELF.fetch('http://cdp.test/api/events/test', {

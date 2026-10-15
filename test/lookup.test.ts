@@ -105,7 +105,7 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     expect(byUser).toEqual(byEmail)
   })
 
-  it('joy: exactly the 04 shape, stored derived values, 9 web events with 3 pre-signup', async () => {
+  it('joy: exactly the API shape, stored derived values, 9 web events with 3 pre-signup', async () => {
     const body = await found(JOY)
     expect(Object.keys(body)).toEqual(['profile', 'newsletter', 'web', 'app'])
     expect(body.profile).toEqual({
@@ -230,7 +230,7 @@ describe('T-API-1 lookup by email and by u_ resolve one profile', () => {
     }
   })
 
-  it('404 not_found for a blank or missing q and for one that is neither an email nor u_… (04 lists only 404)', async () => {
+  it('404 not_found for a blank or missing q and for one that is neither an email nor u_… (the API lists only 404)', async () => {
     const notFound = { error: 'not_found', message: 'No profile matches that email or id.' }
     for (const q of ['', '   ', 'joy.hall830']) {
       const res = await lookup(q)
@@ -313,7 +313,7 @@ describe('T-API-1 lookup by pk_, d_ and v_ resolve the same profile as the email
   })
 })
 
-describe('T-ING-5 pre-signup views come from the stored signup moment (02 §Linking 2, §Counts)', () => {
+describe('T-ING-5 pre-signup views come from the stored signup moment', () => {
   it('signup_ts is set exactly for the 1,400 linked visitors, on their signup_date', async () => {
     const n = (sql: string) => env.DB.prepare(sql).first<number>('n')
     expect(await n('SELECT count(*) AS n FROM web_visitors WHERE signup_ts IS NOT NULL')).toBe(1400)

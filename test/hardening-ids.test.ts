@@ -59,7 +59,7 @@ async function get<T>(path: string): Promise<T> {
 
 const lookup = (q: string) => get<Lookup>(`/api/lookup?${new URLSearchParams({ q })}`)
 
-describe('T-HARD-4 lookup returns every app account and web visitor of one profile (09 D-70 item 4)', () => {
+describe('T-HARD-4 lookup returns every app account and web visitor of one profile', () => {
   it('the derived seed holds two app accounts and two linked visitors for joy', async () => {
     const n = (sql: string) => env.DB.prepare(sql).bind(JOY).first<number>('n')
     expect(await n('SELECT count(*) AS n FROM app_users WHERE email_norm = ?')).toBe(2)
@@ -140,7 +140,7 @@ describe('T-HARD-4 lookup returns every app account and web visitor of one profi
   })
 })
 
-describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank source wins (09 D-70 item 9)', () => {
+describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank source wins', () => {
   const visitorOf = (rows: string[][]) => {
     const web = realCsvs().web_events
     return ingestWeb({ header: web.header, rows, lineNos: rows.map((_, i) => 5421 + i) })
@@ -155,7 +155,7 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
     }
   })
 
-  it('an email on any other page is quarantined as misplaced_email, never thrown (09 D-78)', () => {
+  it('an email on any other page is quarantined as misplaced_email, never thrown', () => {
     const subscribe = rowAt(realCsvs().web_events, 5421)
     // Real pages, real pages joined under /subscribe, and /subscribe with its last letter removed:
     // only the exact path /subscribe (query string and one trailing slash removed, any letter case) links.
@@ -174,7 +174,7 @@ describe('T-HARD-9 seed robustness: /subscribe variants link, earliest non-blank
     }
   })
 
-  it('/subscribe matches in any letter case, keeping the query-string and trailing-slash rule (09 D-78)', () => {
+  it('/subscribe matches in any letter case, keeping the query-string and trailing-slash rule', () => {
     const subscribe = rowAt(realCsvs().web_events, 5421)
     for (const page of ['/Subscribe', '/SUBSCRIBE', '/Subscribe/', '/Subscribe?utm_source=instagram']) {
       const result = visitorOf([[subscribe[0], page, ...subscribe.slice(2)]])

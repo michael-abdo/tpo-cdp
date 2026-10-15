@@ -83,7 +83,7 @@ async function auditCount(traceId: string): Promise<number> {
   return n
 }
 
-describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own (09 D-70 #1)', () => {
+describe('T-HARD-1: Gate 1 redacts a known email local part typed on its own', () => {
   it('a demo subject typed as joy.hall830 reaches the model as [email], counted like an email, no audit row', async () => {
     const trace = await startTrace(env.DB)
     const question = await enforceGate1(trace, 'is joy.hall830 engaged?')
@@ -187,7 +187,7 @@ async function storedCount(eventId: unknown): Promise<number> {
   return n
 }
 
-describe('T-HARD-2: webhook story and link must be slugs; other strings never reach v_app_events (09 D-70 #2)', () => {
+describe('T-HARD-2: webhook story and link must be slugs; other strings never reach v_app_events', () => {
   it('stores a slug story and an http(s) link, and v_app_events shows them', async () => {
     const body = joyEvent({ properties: { story: SLUG, link: LINK } })
     expect((await post(body)).status).toBe(202)
@@ -274,7 +274,7 @@ function deviceOwner(deviceId: string) {
   return env.DB.prepare('SELECT user_id, last_seen_ts FROM device_identity WHERE device_id = ?').bind(deviceId).first<{ user_id: string; last_seen_ts: string }>()
 }
 
-describe('T-HARD-3: an event time more than 24 h after the server clock is refused (09 D-70 #3)', () => {
+describe('T-HARD-3: an event time more than 24 h after the server clock is refused', () => {
   const ELI = { user_id: 'u_f1cad5ce', email: 'eli.clark874@icloud.com' }
   const SARAH = 'u_38e852b0'
   const DEVICE = 'd_f1cad5ce'
@@ -309,7 +309,7 @@ describe('T-HARD-3: an event time more than 24 h after the server clock is refus
     })
   })
 
-  it('an event 23 h ahead, after TODAY, is stored and counts toward the score (09 D-01)', async () => {
+  it('an event 23 h ahead, after TODAY, is stored and counts toward the score', async () => {
     const before = await scoreOf(ELI.email)
     const ahead = { event_id: nextEventId(), event: 'app_open', user_id: ELI.user_id, device_id: DEVICE, timestamp: fromNow(23 * HOUR_MS) }
     expect((await post(ahead)).status).toBe(202)
@@ -332,7 +332,7 @@ async function segmentsPost(path: string, body: unknown, cookie: string, ip: str
   })
 }
 
-describe('T-HARD-5: the segment CSV export neutralizes formula cells (09 D-70 #5)', () => {
+describe('T-HARD-5: the segment CSV export neutralizes formula cells', () => {
   it('the real export of all 2,900 subscribers is unchanged: no cell starts with = + - @ or gets a quote', async () => {
     const res = await segmentsPost('export.csv', { filters: { status: ['active', 'unsubscribed'] } }, await loginCookie())
     expect(res.status).toBe(200)
@@ -382,7 +382,7 @@ async function withScoresFailing<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('T-HARD-7: a duplicate delivery re-runs the score recompute, so a failed one heals (09 D-70 #7)', () => {
+describe('T-HARD-7: a duplicate delivery re-runs the score recompute, so a failed one heals', () => {
   const SARAH = { user_id: 'u_38e852b0', email: 'sarah.edwards657@gmail.com' }
   const JOHN = { user_id: 'u_f2411d1c', email: 'john.turner61@gmail.com' }
   const DEVICE = 'd_38e852b0'
@@ -480,7 +480,7 @@ async function earlierCalls(sub: string, clientKey: string, n: number): Promise<
   }
 }
 
-describe('T-HARD-6: per-client limits a new session does not reset (09 D-70 #6)', () => {
+describe('T-HARD-6: per-client limits a new session does not reset', () => {
   it('the assistant: past the per-IP limit, signing in again from the same address is still 429', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const limit = bindingLimit('ASSISTANT_LIMITER')

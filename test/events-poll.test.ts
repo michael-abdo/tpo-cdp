@@ -36,7 +36,7 @@ async function send(event: string, time: string): Promise<void> {
 
 const ids = (events: readonly RecentEvent[]) => new Set(events.map((e) => e.event_id))
 
-describe('/events polls every 5 seconds and announces only new events (06 §/events)', () => {
+describe('/events polls every 5 seconds and announces only new events', () => {
   it('polls every 5 seconds', () => {
     expect(POLL_MS).toBe(5_000)
   })
@@ -72,7 +72,7 @@ describe('/events polls every 5 seconds and announces only new events (06 §/eve
     expect(eventsAnnouncement(null, [], 'initial')).toBe('0 events shown')
   })
 
-  it("a 'sent' fetch says nothing even with a new row, since the panel's own result line already named the outcome (D-72); 'poll' with the same input still speaks", async () => {
+  it("a 'sent' fetch says nothing even with a new row, since the panel's own result line already named the outcome; 'poll' with the same input still speaks", async () => {
     const shown = await feed()
     await send('app_open', '11:00:00')
     const withNew = await feed()
