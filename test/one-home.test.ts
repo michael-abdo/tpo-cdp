@@ -57,7 +57,7 @@ describe('the cold window has one home', () => {
     expect(coldRuleLiteral('  return addDays(lastOpenDate ?? signupDate, 30)')).toBe(true)
     expect(coldRuleLiteral("    doc: 'Opened an email in the last 30 days but not in the last 14, or will become cold…'")).toBe(true)
     expect(coldRuleLiteral("          Instagram readers who haven't opened in 30 days")).toBe(false)
-    expect(coldRuleLiteral("/** The brief's R3 example (02 §Counts): Instagram, active, no open in 30 days including never-opened. */")).toBe(false)
+    expect(coldRuleLiteral("/** The brief's R3 example: Instagram, active, no open in 30 days including never-opened. */")).toBe(false)
     expect(coldRuleLiteral('  const window = DEFINITIONS.last_n_days.fn(30)')).toBe(false)
   })
 

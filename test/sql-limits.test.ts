@@ -503,7 +503,7 @@ describe('one shared function protects every path that runs model/saved SQL, inc
       const toolsBefore = await toolCount()
       await env.DB.prepare(
         `INSERT INTO insights (id, title, prompt, tool, tool_version, params, chart, sort_order, built_in, created_at)
-         VALUES (?, 'D-81 cartesian probe tile', NULL, ?, ?, '{}', NULL, 9999, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+         VALUES (?, 'cartesian probe tile', NULL, ?, ?, '{}', NULL, 9999, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
       )
         .bind(insightId, toolName, INSIGHT_PARAMS_VERSION)
         .run()
