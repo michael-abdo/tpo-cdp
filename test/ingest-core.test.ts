@@ -5,17 +5,17 @@ import { parseCsv, type ParsedCsv } from '../worker/ingest/csv'
 import { classifySubscriberRow, requireHeaders, SUBSCRIBER_COLUMNS } from '../worker/ingest/quarantine'
 import { ingestSubscribers, type SubscriberIngest } from '../worker/ingest/subscribers'
 
-// 02 §Quarantine, §Dedupe, §Counts; 09 D-27, D-28; tests 08 T-ING-2..4 (R1.3, C5).
+// Quarantine, dedupe and merge precedence: T-ING-2..4.
 // Input is the real data/subscribers.csv. No test introduces a value that is not in data/*.csv.
 // Tests that change the real file or its rows, and how:
 // - CRLF vs LF: the real file text with CRLF replaced by LF.
 // - ragged row: ",active" deleted from real line 70.
 // - missing column: "signup_date" deleted from the real header.
 // - missing_field: the signup_date or the email of real line 70 emptied.
-// - T-ING-4 (08 "a conflicting pair built from real rows"): lines 70/2269 with fields set to
+// - T-ING-4 ("a conflicting pair built from real rows"): lines 70/2269 with fields set to
 //   values that occur in the real file (2026-07-01, 2026-09-28, unsubscribed, Facebook, blank),
-//   because no pair in the data disagrees (02 §Dedupe).
-// - three-row merge (T-ING-3): real line 70 fed three times, unchanged (09 D-47), because no
+//   because no pair in the data disagrees.
+// - three-row merge (T-ING-3): real line 70 fed three times, unchanged, because no
 //   address occurs three times in the data.
 
 let loaded: { parsed: ParsedCsv; result: SubscriberIngest } | undefined

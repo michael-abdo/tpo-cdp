@@ -1,4 +1,4 @@
-// T-VOC-1 (08, 09 D-66): every user-facing word is the brief's own, per the table in 06 §Vocabulary.
+// T-VOC-1: every user-facing word is the brief's own.
 // The scan reads screen text from the TypeScript AST (JSX text, string literals, template chunks;
 // comments are not nodes), handed over by vitest.config.ts as SCREEN_TEXTS.vocabulary for each file
 // test/helpers/screen-text.ts VOCABULARY_SCAN names, plus the README and docs/notes.md as written, plus the system
@@ -42,7 +42,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     const scanned = Object.keys(env.SCREEN_TEXTS.vocabulary)
     for (const file of VOCABULARY_SCAN.files) expect(scanned).toContain(file)
     // Pinned on their own (not only via VOCABULARY_SCAN, which this would check against itself):
-    // the definitions and the server sentences 08 T-VOC-1 names.
+    // the definitions and the server sentences T-VOC-1 names.
     for (const file of [
       'shared/derive.ts',
       'shared/glossary.ts',
@@ -127,7 +127,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     expect(lookupSource).toContain(
       "'Finds anyone: newsletter info, site visits and app activity in one view.'",
     )
-    // App revenue's title is no longer a literal attribute (09 D-80: it reads shared/features.ts's
+    // App revenue's title is not a literal attribute (it reads shared/features.ts's
     // own label, one home for every gated label and note), so it is pinned there instead of in the
     // literal-attribute scan.
     expect(new Set(attributeValues(lookupSource, 'Column', 'title'))).toEqual(
@@ -135,7 +135,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
     )
     expect(FEATURES.profile_revenue.label).toBe('App revenue')
     expect(lookupSource).toContain('title={gated.feature.label}')
-    // Field labels a person reads on the profile (06 §Vocabulary subscriber, web and app fields).
+    // Field labels a person reads on the profile (the brief's subscriber, web and app fields).
     const fields = new Set(attributeValues(lookupSource, 'Field', 'label'))
     for (const label of [
       'Status',
@@ -181,7 +181,7 @@ describe('T-VOC-1 the brief\'s words everywhere (09 D-66, 06 §Vocabulary)', () 
       'events_received',
     ])
     expect(overviewSource).toContain('label={GLOSSARY[h.term].term} term={h.term}')
-    // merged = "deduped" (06 §Vocabulary dedupe + link).
+    // merged = "deduped".
     expect(GLOSSARY.merged.term).toBe('Deduped')
   })
 

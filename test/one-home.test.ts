@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { TODAY } from '../shared/config'
 import { addDays, COLD_DAYS, coldSince, DEFINITIONS, goingColdRisk, isCold, isNewSubscriber, lastMonth, NEW_SUBSCRIBER_DAYS } from '../shared/derive'
 
-// One home per definition (09 D-68, D-46; 02 §Derived "One runtime source"). Static scans over
+// One home per definition ("one runtime source"). Static scans over
 // the product source, read at transform time
 // by Vite (works in the workers pool, as T-NORM-3 does), plus runtime checks that the cold window
 // constant is the number every cold rule and sentence uses. No number changes: COLD_DAYS stays 30.
@@ -16,7 +16,7 @@ const code = import.meta.glob<string>(
 /**
  * A line that writes the cold rule's number itself: 30 on a line about cold, "no opens for 30", or
  * `addDays(…, 30)`. The brief's preset ("haven't opened in 30 days", "no open in 30 days") is its own
- * filter (09 D-30), not the cold rule, so it does not match.
+ * filter, not the cold rule, so it does not match.
  */
 function coldRuleLiteral(line: string): boolean {
   if (!/\b30\b/.test(line)) return false
@@ -86,7 +86,7 @@ describe('the cold window has one home (09 D-68)', () => {
 
   it('coldSince and goingColdRisk write COLD_DAYS, never the number (their bodies, read as text)', () => {
     // A runtime edge test cannot tell COLD_DAYS from a literal 30 while COLD_DAYS === 30, so the
-    // two named consumers (09 D-68) are checked as source text too.
+    // two named consumers are checked as source text too.
     const derive = code['../shared/derive.ts'] ?? ''
     const cold = functionBody(derive, 'coldSince')
     expect(cold).toContain('COLD_DAYS')

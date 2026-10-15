@@ -21,9 +21,9 @@ import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// The scored possible-duplicates review (09 D-62; 04 §/api/duplicates; 06 §Overview): T-DUP-1..3 (08).
-// The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts). Expected numbers are 02's
-// "Fuzzy duplicates" paragraph and §Counts: 1,704 candidate pairs over 788 stems (1,977 emails);
+// The scored possible-duplicates review: T-DUP-1..3.
+// The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts). Expected numbers are the
+// seed's: 1,704 candidate pairs over 788 stems (1,977 emails);
 // agreement rates 0.347 (domain), 0.147 (signup within 7 days), 0.195 (source); 16 pairs agree on
 // all three, ≈ 17 expected by chance; 0 hard links; joy.hall → 3 emails, 3 pairs, none in review.
 // Inputs and where they come from:
@@ -32,11 +32,11 @@ import { eventIdPool, sendWebhook } from './helpers/webhook'
 //   subscribers.csv:842) and u_b9e9a984 (line 432, mark.mitchell662@outlook.com,
 //   subscribers.csv:1406), a candidate pair that agrees on no soft field. Both log in on one device,
 //   `d_` + the hex of the first user id (the convention of test/webhook.test.ts), through the real
-//   signed POST /webhooks/app (09 D-11: brief-shaped payloads from real ids); event ids from
-//   eventIdPool(); times 09:00/09:05/09:10 on TODAY (02 §Time: demo events default to TODAY).
-// - the 404 pair id (09 D-47): the two demo subjects joy.hall830 and julia.evans230 (02 §Counts),
+//   signed POST /webhooks/app (brief-shaped payloads from real ids); event ids from
+//   eventIdPool(); times 09:00/09:05/09:10 on TODAY (demo events default to TODAY).
+// - the 404 pair id: the two demo subjects joy.hall830 and julia.evans230,
 //   real profiles whose name stems differ, so they are no candidate pair.
-// - bad verdicts are removals or a JSON shape change, never invented business data (09 D-47).
+// - bad verdicts are removals or a JSON shape change, never invented business data.
 
 const JOY_HALL = ['joy.hall524@protonmail.com', 'joy.hall830@protonmail.com', 'joy.hall898@gmail.com']
 const MARK_A = { user: 'u_a6ac1f6c', email: 'mark.mitchell424@gmail.com' }
@@ -122,12 +122,12 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
     expect(body.review.map(emailsOf).sort()).toEqual(threeWay.map(([a, b]) => emailsOf({ a, b })).sort())
     expect(body.to_review).toBe(16)
     expect(body.hidden_below_review).toBe(1688)
-    // The footer's band edges come from here, the scorer's own constants (09 D-62, D-68).
+    // The footer's band edges come from here, the scorer's own constants.
     expect(body.bands).toEqual({ auto_min: AUTO_MIN_SCORE, review_min: REVIEW_MIN_SCORE })
     expect(body.bands).toEqual({ auto_min: 90, review_min: 50 })
     for (const pair of body.review) {
       expect(pair.band).toBe('review')
-      // 02 Fuzzy duplicates: the 16 three-way pairs each score 76 (review band 50–89, D-62).
+      // The 16 three-way pairs each score 76 (review band 50–89).
       expect(pair.score).toBe(76)
       expect(pair.decision).toBeNull()
       expect(Object.keys(pair)).toEqual([
@@ -143,11 +143,11 @@ describe('T-DUP-1: candidates and bands on the seed', () => {
       expect(Object.keys(pair.a)).toEqual(['email', 'signup_date', 'source', 'status'])
       expect(pair.reasons.map((r) => r.field)).toEqual([...SCORED_FIELDS])
       expect(pair.reasons.map((r) => r.agrees)).toEqual([true, true, true, false])
-      // The review band's suggestion is just the verdict; the reasons above already name what matches (09 D-72).
+      // The review band's suggestion is just the verdict; the reasons above already name what matches.
       expect(pair.suggestion).toBe('Could be the same person')
       expect(pair.pair_id).toBe(await pairId(...(await pkeysOf(pair))))
     }
-    // The D-62 chance check, as 02 states it: 16 observed, ≈ 17 expected.
+    // The chance check: 16 observed, ≈ 17 expected.
     expect(body.chance.all_soft_agree).toBe(16)
     expect(Math.round(body.chance.expected_by_chance)).toBe(17)
   })
@@ -190,7 +190,7 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
       const agree = softAgreement(a, b)
       for (const field of Object.keys(counts) as (keyof typeof counts)[]) if (agree[field]) counts[field]++
     }
-    // 02's rates: 0.347 × 0.147 × 0.195.
+    // The seed's agreement rates: 0.347 × 0.147 × 0.195.
     expect(counts.domain / n).toBeCloseTo(0.347, 3)
     expect(counts.signup_gap / n).toBeCloseTo(0.147, 3)
     expect(counts.source / n).toBeCloseTo(0.195, 3)
@@ -211,9 +211,9 @@ describe('T-DUP-2: Fellegi–Sunter weights and ranking', () => {
       expect(weights[field].disagree, field).toBeCloseTo(Math.log2((1 - m) / (1 - u)), 12)
     }
     expect(weights.shared_device.agreeing).toBe(0)
-    // The m values docs/notes.md documents (D-62), pinned as literals so they cannot drift unseen.
+    // The m values docs/notes.md documents, pinned as literals so they cannot drift unseen.
     expect(M_PROBABILITIES).toEqual({ domain: 0.8, signup_gap: 0.5, source: 0.8, shared_device: 0.9 })
-    // 02 §Counts: the device disagree weight, and the 16 three-way pairs would score 97 without it.
+    // The device disagree weight, and the 16 three-way pairs would score 97 without it.
     expect(weights.shared_device.disagree).toBeCloseTo(-3.32, 2)
     expect(scoreFromWeight(weights.domain.agree + weights.signup_gap.agree + weights.source.agree)).toBe(97)
   })

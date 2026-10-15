@@ -2,7 +2,7 @@ import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import { TODAY } from '../shared/config'
 
-// Harness smoke test: the Worker runs in workerd, D1 answers, and TODAY is the fixed date (02 §Time).
+// Harness smoke test: the Worker runs in workerd, D1 answers, and TODAY is the fixed date.
 describe('GET /health', () => {
   it('reports the database and the fixed TODAY', async () => {
     const res = await SELF.fetch('http://cdp.test/health')

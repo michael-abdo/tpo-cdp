@@ -3,9 +3,9 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// GET /api/overview (04 §/api/overview, 06 §Overview; R1.1, D-28). The test D1 holds the real
+// GET /api/overview. The test D1 holds the real
 // seed of data/*.csv (test/helpers/seed.ts) and no webhook events; every expected number is
-// from 02 §Counts.
+// the seed's.
 
 let cookie: string
 

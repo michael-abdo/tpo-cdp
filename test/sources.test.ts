@@ -17,9 +17,9 @@ import { seedDatabase } from './helpers/seed'
 import { SCAN_FIXTURES, type ScanFixture } from './helpers/screen-text'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// GET /api/sources (04 §GET /api/sources, 09 D-63, D-65; 08 T-SRC-1, T-SRC-3) and the Overview's
-// glossary and registry discipline (08 T-SRC-2). The test D1 holds the real seed of data/*.csv
-// (test/helpers/seed.ts); every expected number is 02 §Counts'. Webhook inputs (09 D-11): the user
+// GET /api/sources (T-SRC-1, T-SRC-3) and the Overview's
+// glossary and registry discipline (T-SRC-2). The test D1 holds the real seed of data/*.csv
+// (test/helpers/seed.ts); every expected number is the seed's. Webhook inputs: the user
 // is app_users.csv line 2 (u_2b6447a3, julia.evans230, the PDF's sample), the brief's sample device
 // d_4b21e8, event ids from eventIdPool(); event times are the brief's 2026-09-28T14:22:05Z (on
 // TODAY) and web_events.csv line 3's 2026-06-30 20:45:52 (not on TODAY).
@@ -56,13 +56,13 @@ async function postEvent(timestamp: string): Promise<void> {
   expect((await sendWebhook(JSON.stringify(body))).status).toBe(202)
 }
 
-/** The subscribers source's checks (09 D-65), in its registry order. */
+/** The subscribers source's checks, in its registry order. */
 const subscriberChecks = (rows_to_fix: number, possible_duplicates: number) => [
   { kind: 'rows_to_fix', count: rows_to_fix },
   { kind: 'possible_duplicates', count: possible_duplicates },
 ]
 
-/** A CSV source with only the rows_to_fix check (web_events, app_users; 09 D-65). */
+/** A CSV source with only the rows_to_fix check (web_events, app_users). */
 const fixChecks = (rows_to_fix: number) => [{ kind: 'rows_to_fix', count: rows_to_fix }]
 
 const csvRun = (rows_in: number, rows_out: number, merged: number, rejected: number, needs_review: number) => ({
@@ -118,7 +118,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
     })
     expect(web).toMatchObject({ status: 'ok', checks: fixChecks(0), records: 10000, last_sync: ranAt, runs: [csvRun(10000, 10000, 0, 0, 0)] })
     expect(app).toMatchObject({ status: 'ok', checks: fixChecks(0), records: 930, last_sync: ranAt, runs: [csvRun(930, 930, 0, 0, 0)] })
-    // 04's key order, for each kind.
+    // The API's key order, for each kind.
     expect(Object.keys(subscribers)).toEqual([
       'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'checks', 'records', 'last_sync', 'runs',
     ])
@@ -144,7 +144,7 @@ describe('GET /api/sources (T-SRC-1)', () => {
       last_received: null,
       runs: [],
     })
-    // 04's key order for the webhook entry (toEqual above ignores order).
+    // The API's key order for the webhook entry (toEqual above ignores order).
     expect(Object.keys(before ?? {})).toEqual([
       'id', 'name', 'kind', 'unit', 'unit_one', 'loads_by', 'status', 'checks', 'records', 'today', 'last_received', 'runs',
     ])
@@ -183,8 +183,8 @@ describe('GET /api/sources (T-SRC-1)', () => {
   })
 
   it('needs_review counts every non-blank reason: bad_date and missing_field too (09 D-61, D-63)', async () => {
-    // 09 D-47: real quarantine rows keep their raw_row; only the reason code moves to another
-    // 02 §Quarantine code. The seed holds blank_row and invalid_email only, so this is the one way
+    // Real quarantine rows keep their raw_row; only the reason code moves to another
+    // quarantine code. The seed holds blank_row and invalid_email only, so this is the one way
     // the route ever sees the other two reasons.
     const rows = await env.DB.prepare(
       "SELECT id, reason FROM quarantine WHERE file = 'subscribers' ORDER BY line_no",
@@ -221,11 +221,11 @@ describe('GET /api/sources (T-SRC-1)', () => {
   })
 
   it('status, records and last sync come from the newest run; runs are newest first', async () => {
-    // A second, later load of real subscribers rows (09 D-47: a removal): the first 1,500 data rows
+    // A second, later load of real subscribers rows (a removal): the first 1,500 data rows
     // of data/subscribers.csv minus the lines the seed set aside, run through the production ingest
     // (worker/ingest/subscribers.ts), so its read/kept/merged numbers are the code's, not typed in.
     // Its kept count differs from the seed run's 2,900, so `records` shows which run it came from.
-    // ran_at is the wall-clock time a run happened (02 §Time allow-list, 09 D-48): a minute later.
+    // ran_at is the wall-clock time a run happened (one of the few wall-clock reads): a minute later.
     const full = parseCsv(subscribersCsv)
     const setAside = new Set(ingestSubscribers(full).quarantined.map((q) => q.line_no))
     expect(setAside.size).toBe(10)
@@ -336,7 +336,7 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
     for (const entry of SOURCES) {
       const declared: readonly string[] = entry.checks
       expect(declared).toEqual(CHECK_KINDS.filter((k) => declared.includes(k)))
-      // 09 D-65: every CSV source declares rows_to_fix, so a fixable row in any file reaches a screen.
+      // Every CSV source declares rows_to_fix, so a fixable row in any file reaches a screen.
       if (entry.kind === 'csv') expect(declared).toContain('rows_to_fix')
     }
   })
@@ -383,7 +383,7 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
   })
 
   it('a row a person can fix in another CSV file shows as that source\'s rows_to_fix chip, not a 500', async () => {
-    // 09 D-47: one of the seed's real invalid-email rows moved to the Website run, with both
+    // One of the seed's real invalid-email rows moved to the Website run, with both
     // runs' set-aside counts moved with it so import_runs and quarantine still agree.
     const runOf = (file: string) =>
       env.DB.prepare('SELECT id FROM import_runs WHERE file = ?').bind(file).first<{ id: number }>()
@@ -432,7 +432,7 @@ describe('GET /api/sources checks (T-SRC-3, 09 D-65)', () => {
 const overviewCode = overviewSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
 /**
- * What a page's text says that only the registry may say (08 T-SRC-2, 09 D-63): a source's name,
+ * What a page's text says that only the registry may say (T-SRC-2): a source's name,
  * unit (one or many), file name or bare id, or a count of files. `texts` are a file's JSX text runs,
  * string literals and template chunks from the TypeScript AST (test/helpers/screen-text.ts), so text
  * beside an interpolation ("{n} files", "{x} subscribers") is scanned like any other. A run that
@@ -475,7 +475,7 @@ describe('Overview terms and source text (T-SRC-2)', () => {
       ]),
     )
     for (const key of named) expect(() => explain(key)).not.toThrow()
-    // Terms the page passes through from data: each source's kind, each check kind (09 D-65) and each quarantine reason.
+    // Terms the page passes through from data: each source's kind, each check kind and each quarantine reason.
     for (const s of SOURCES) expect(isGlossaryKey(s.kind)).toBe(true)
     for (const kind of CHECK_KINDS) expect(isGlossaryKey(kind)).toBe(true)
     for (const reason of QUARANTINE_REASONS) expect(isGlossaryKey(reason)).toBe(true)
@@ -485,7 +485,7 @@ describe('Overview terms and source text (T-SRC-2)', () => {
 
   it('explain() reads both homes and fails loud on an unknown key; the two homes share no key', () => {
     expect(explain('merged')).toEqual({ term: GLOSSARY.merged.term, text: GLOSSARY.merged.text })
-    // A definition shows its plain heading, never its raw name (06 §UI principles 4, 09 D-66).
+    // A definition shows its plain heading, never its raw name.
     expect(explain('cold')).toEqual({ term: DEFINITION_LABEL.cold, text: DEFINITIONS.cold.doc })
     expect(explain('engagement_score')).toEqual({ term: 'Engagement', text: DEFINITIONS.engagement_score.doc })
     for (const key of Object.keys(DEFINITIONS) as (keyof typeof DEFINITIONS)[]) {
@@ -497,7 +497,7 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     expect(shared).toEqual([])
     for (const entry of Object.values(GLOSSARY)) {
       expect(entry.term.length).toBeGreaterThan(0)
-      // One or two plain sentences (06 §UI principles 4).
+      // One or two plain sentences.
       expect(entry.text.split(/(?<=\.)\s/).length).toBeLessThanOrEqual(2)
     }
   })
@@ -531,10 +531,10 @@ describe('Overview terms and source text (T-SRC-2)', () => {
     expect(texts).toContain('View rejected rows')
     expect(sourceTextOffences(texts)).toEqual([])
     expect(overviewCode).not.toMatch(/\b(?:\d+|three) files?\b/i)
-    // The per-file prose 09 D-63 removed.
+    // Per-file prose the Overview no longer shows.
     for (const gone of ['Loaded ', 'into one list', 'How the data was combined', 'rows in'])
       expect(overviewCode).not.toContain(gone)
-    // 06 §/ Overview: Technical details read "Loads by: seed script" / "webhook", from one label home.
+    // Technical details read "Loads by: seed script" / "webhook", from one label home.
     expect(LOADS_BY_LABEL).toEqual({ seed: 'seed script', webhook: 'webhook' })
     expect(texts.filter((t) => t.trim().startsWith('Loads by:')).length).toBe(2)
     expect(overviewCode.match(/Loads by: \{LOADS_BY_LABEL\[source\.loads_by\]\}/g)?.length).toBe(2)
@@ -542,11 +542,11 @@ describe('Overview terms and source text (T-SRC-2)', () => {
 })
 
 // Last in the file: it sends webhooks, and the stored events stay for the rest of the file. The seed
-// has no auto-band pair, so this is the only place an auto pair reaches GET /api/sources (09 D-65:
-// "undecided review/auto pairs"). Inputs are T-DUP-2's (test/duplicates.test.ts header): real
+// has no auto-band pair, so this is the only place an auto pair reaches GET /api/sources
+// ("undecided review/auto pairs"). Inputs are T-DUP-2's (test/duplicates.test.ts header): real
 // app_users.csv rows u_a6ac1f6c (line 113, mark.mitchell424@gmail.com) and u_b9e9a984 (line 432,
 // mark.mitchell662@outlook.com) log in on one device, `d_` + the hex of the first user id, through
-// the real signed POST /webhooks/app (09 D-11); event ids from eventIdPool(); times on TODAY.
+// the real signed POST /webhooks/app; event ids from eventIdPool(); times on TODAY.
 describe('GET /api/sources checks count auto-band pairs too (T-SRC-3, 09 D-65)', () => {
   const MARK_A = { user: 'u_a6ac1f6c', email: 'mark.mitchell424@gmail.com' }
   const MARK_B = { user: 'u_b9e9a984', email: 'mark.mitchell662@outlook.com' }

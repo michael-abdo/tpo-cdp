@@ -19,8 +19,8 @@ import {
   wentColdIn,
 } from '../shared/derive'
 
-// 02 §Derived and §Time, 09 D-10/D-14/D-30/D-31/D-36/D-46; tests 08 T-DER-1..3 (C6, R5.2).
-// Rows are the real demo subjects and hand-computed cases from 02 §Counts.
+// The derived definitions and TODAY: T-DER-1..3.
+// Rows are the real demo subjects and hand-computed cases.
 
 describe('T-DER-1 derived dates use TODAY (C6)', () => {
   it('TODAY is the constant the brief fixes', () => {
@@ -254,7 +254,7 @@ describe('time windows and the DEFINITIONS object (02 §Derived "One runtime sou
   it('the SQL fragments compare the stored column against bound dates, never a formula (D-46)', () => {
     expect(DEFINITIONS.cold.sql).toBe('cold_since <= :today')
     expect(DEFINITIONS.days_since_open.sql).toBe('julianday(:today) - julianday(last_open_date)')
-    // 09 D-69: the went-cold month and "signed up in the last N days" bind a window derive.ts computes.
+    // The went-cold month and "signed up in the last N days" bind a window derive.ts computes.
     expect(DEFINITIONS.went_cold_in.sql).toBe('cold_since BETWEEN :from AND :to')
     expect(DEFINITIONS.new_subscriber.sql).toBe('signup_date BETWEEN :from AND :to')
     for (const entry of Object.values(DEFINITIONS)) {
@@ -270,7 +270,7 @@ describe('time windows and the DEFINITIONS object (02 §Derived "One runtime sou
     expect(DEFINITIONS.last_month.fn()).toEqual(lastMonth())
   })
 
-  // 09 D-72: a plain sentence that points a reader at a screen (e.g. `"Cold" (Overview)`) must
+  // A plain sentence that points a reader at a screen (e.g. `"Cold" (Overview)`) must
   // point at a screen that actually shows the term; nothing caught it when a stale "(Overview)"
   // slipped into cold.plain even though Overview never says "Cold".
   it('no `plain` string names a screen that lacks the term it points at', () => {

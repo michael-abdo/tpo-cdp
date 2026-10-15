@@ -11,10 +11,10 @@ import { FILE_HEADERS, quarantineFields } from '../worker/routes/quarantine'
 import { loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 
-// GET /api/quarantine?reason=&file= (04 §/api/quarantine, 09 D-61, D-63) and the pure logic of the
-// Overview's "Rows to fix" tab (src/needs-review.ts, 06 §Overview, 09 D-65). T-OVR-1: the test D1
+// GET /api/quarantine?reason=&file= and the pure logic of the
+// Overview's "Rows to fix" tab (src/needs-review.ts). T-OVR-1: the test D1
 // holds the real seed of data/*.csv; the counts (8 blank rows, the 2 invalid emails `not-an-email` and `@gmail.com`) are
-// 02 §Counts, the line numbers 1750 and 1788 are 08 T-OVR-1's.
+// the seed's, the line numbers 1750 and 1788 are T-OVR-1's.
 
 let cookie: string
 
@@ -209,8 +209,8 @@ describe('Rows to fix tab logic (src/needs-review.ts) on the real answers', () =
     expect(reviewGroups(rows)).toEqual([])
   })
 
-  // 09 D-78: the real seed has none of these 4 reasons (the real data triggers none of them), so
-  // each group here is built from a synthetic QuarantinedRow whose fields are a D-47 minimal edit
+  // The real seed has none of these 4 reasons (the real data triggers none of them), so
+  // each group here is built from a synthetic QuarantinedRow whose fields are a minimal edit
   // of a real row (the same edits test/ingest-seed.test.ts T-ING-8 and test/parity.test.ts
   // T-PAR-3b plant), rather than read from the live /api/quarantine answer.
   it('one group per new D-78 reason: the exact sentence and fix text, never the fallback copy', () => {
