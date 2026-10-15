@@ -1,5 +1,5 @@
-// Constant-time comparisons for the session signature and the site password (04 §Auth).
-// Origin: palisade site-auth.ts L99-107 (14 §7), ported from node:crypto to WebCrypto.
+// Constant-time comparisons for the session signature and the site password, so response timing
+// says nothing about how much of a guess was right. WebCrypto only (no node:crypto in a Worker).
 
 const encoder = new TextEncoder()
 

@@ -31,8 +31,8 @@ import { seedDatabase } from './helpers/seed'
 //
 // Inputs: the seeded D1 (data/*.csv) and the assistant_tools rows from scripts/tool-seeds.ts.
 // Every SQL string here is either the real seeded query row's own SQL, a real view's columns
-// (01), or a comma/`ON 1 = 1`/nested cartesian of two real views — the exact shapes the self-audit
-// found, never an invented table or column. No test calls the network (09 D-54): the Ask-trace
+// (01), or a comma/`ON 1 = 1`/nested cartesian of two real views — the exact shapes measured
+// against the seed, never an invented table or column. No test calls the network (09 D-54): the Ask-trace
 // tests below use a recorded transport, the same pattern test/assistant.test.ts and
 // test/insights-board.test.ts use.
 
@@ -41,14 +41,14 @@ const CARTESIAN_COMMA = 'SELECT p.pkey, w.pkey FROM v_profiles p, v_web_events w
 const CARTESIAN_JOIN_1_1 = 'SELECT p.pkey, w.pkey FROM v_profiles p JOIN v_web_events w ON 1 = 1'
 const REAL_INDEXED_JOIN = 'SELECT p.pkey, w.pkey FROM v_profiles p JOIN v_web_events w ON w.pkey = p.pkey LIMIT 100'
 
-// Nested shapes the self-audit found: the same cartesian, moved one level down, where the earlier
-// parent-0-only rule let it through (see gate3-readonly-sql.ts `cartesianScans`' doc comment).
+// Nested shapes: the same cartesian, moved one level down, where a parent-0-only rule would let
+// it through (see gate3-readonly-sql.ts `cartesianScans`' doc comment).
 const CARTESIAN_IN_UNION_BRANCH = 'SELECT 1 AS n UNION ALL SELECT count(*) FROM v_profiles p, v_web_events w'
 const CARTESIAN_IN_SUBQUERY = "SELECT pkey FROM v_profiles WHERE pkey IN (SELECT p.pkey FROM v_profiles p, v_web_events w WHERE p.pkey <> w.pkey)"
 const CARTESIAN_IN_FROM_SUBQUERY = 'SELECT n FROM (SELECT count(*) AS n FROM v_profiles p, v_web_events w)'
 const CARTESIAN_IN_SCALAR_SUBQUERY = 'SELECT (SELECT count(*) FROM v_profiles p, v_web_events w) AS n'
 // Not a cartesian group (one SCAN in its own scope), but an unindexed scan run once per outer row:
-// read 1,096,962 rows when actually run against the seed (self-audit case A).
+// read 1,096,962 rows when actually run against the seed (the correlated case).
 const CORRELATED_UNINDEXED_SCAN = "SELECT p.pkey, (SELECT count(*) FROM v_web_events w WHERE w.utm_source = p.source) AS n FROM v_profiles p"
 // The same correlated scan with only aggregates selected: passes the join-shape rule and a tile's
 // key-projection guard, so a board run reaches the plan check itself.
@@ -58,7 +58,7 @@ const SYNTAX_ERROR_SQL = 'SELECT source, count(*) AS n FROM v_profiles GROUP BY'
 
 // One-token variants of the exact comma/`ON 1 = 1` cartesian above, each adding a single indexed
 // range filter that turns the filtered side's driving SCAN into a SEARCH, so a SCAN-only plan
-// check lets every one of these through (09 D-81 #1's self-audit; K-labels match its probes).
+// check lets every one of these through (09 D-81 #1; the K labels match the test names below).
 // Measured in workerd against the real seed: K2 189,674,521 rows, K3 189,674,521 rows (the `ON 1
 // = 1` shape), K22 (CROSS JOIN) passed the same way, K5 537,660,000 rows (no SCAN row at all —
 // both sides become range SEARCHes), K8 537,677,692 rows, K26 28,891,129 rows. K1 (`w.page =
@@ -262,12 +262,11 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     expect(result.rows.length).toBe(100)
   })
 
-  // The self-audit's finding: isTopLevelFullScan only ever grouped by `parent = 0`, so a
-  // cartesian moved one level down (a UNION branch, a FROM/IN/scalar subquery) passed the plan
-  // check, then ran to completion (21-84 s locally) before the row-scan cap refused it
-  // after the fact. Each shape here is refused by `cartesianScans`' per-scope grouping before
-  // anything but EXPLAIN runs; reverting to the old parent-0-only rule makes every one of these
-  // four fail (verified in a scratch worktree, 09 D-81's own mutation-check instruction).
+  // A plan check that only groups by `parent = 0` lets a cartesian moved one level down (a UNION
+  // branch, a FROM/IN/scalar subquery) pass, then run to completion (21-84 s locally) before the
+  // row-scan cap refuses it after the fact. Each shape here is refused by `cartesianScans`'
+  // per-scope grouping before anything but EXPLAIN runs; a parent-0-only rule makes every one of
+  // these four fail.
   it.each([
     ['a UNION ALL branch', CARTESIAN_IN_UNION_BRANCH],
     ['an IN (SELECT …) subquery', CARTESIAN_IN_SUBQUERY],
@@ -289,7 +288,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     expect(prepared.every((q) => q.startsWith('EXPLAIN QUERY PLAN')), sql).toBe(true)
   })
 
-  // Case A of the self-audit: not a cartesian group (one SCAN in its own scope), but a correlated
+  // The correlated case: not a cartesian group (one SCAN in its own scope), but a correlated
   // scalar subquery that scans its relation once per outer row — the same cost, caught by a
   // second rule (an ancestor-chain walk for a `CORRELATED …` node), not the per-scope SCAN count.
   it('an unindexed scan inside a correlated subquery is refused, even though it is only one SCAN in its own scope', async () => {
@@ -305,7 +304,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     expect(prepared.some((q) => q.includes(CORRELATED_UNINDEXED_SCAN) && !q.startsWith('EXPLAIN'))).toBe(false)
   })
 
-  // The self-audit's finding (09 D-81 #1): a SCAN-only plan check is a one-token variant of its
+  // 09 D-81 #1: a SCAN-only plan check is a one-token variant of its
   // own cartesian example away from passing — add one indexed range filter (`w.page > ''`) to
   // either side and that side's driving SCAN becomes a SEARCH, which `isRealScan` never counted.
   // Each of these is the exact comma/`ON 1 = 1`/nested-subquery/correlated shape already covered
@@ -331,7 +330,7 @@ describe('09 D-81 #1: the plan check refuses a cartesian/unindexed nested scan b
     expect(prepared.every((q) => q.startsWith('EXPLAIN QUERY PLAN')), sql).toBe(true)
   })
 
-  // Case A's own range-bound twin (K26): the correlated subquery reaches its relation by an
+  // The correlated case's range-bound twin (K26): the correlated subquery reaches its relation by an
   // indexed range SEARCH (`page>?`), not an unindexed SCAN, so only `isRangeOnlySearch` (not
   // `isRealScan`) makes `hasCorrelatedAncestor` apply here.
   it('a correlated subquery that reaches its relation by an indexed range SEARCH is refused the same way as an unindexed SCAN (K26)', async () => {
@@ -424,10 +423,10 @@ describe('09 D-81 #2: the time limit', () => {
     await expect(runReadOnlySelect(env.DB, LEGIT_SQL)).resolves.toMatchObject({ columns: ['pkey', 'page', 'utm_source'] })
   })
 
-  // The self-audit's finding: both existing timeout tests inject `timeoutMs: 0`, which
-  // raceTimeout short-circuits before creating any timer (`if (ms <= 0) throw`), so neither one
-  // exercises the real `ms > 0` race at all — a mutant that deletes the `setTimeout(...)` line
-  // and keeps the `ms <= 0` guard passed the whole suite. These two race the real timer directly
+  // The timeout tests above inject `timeoutMs: 0`, which raceTimeout short-circuits before
+  // creating any timer (`if (ms <= 0) throw`), so neither one exercises the real `ms > 0` race at
+  // all — a mutant that deletes the `setTimeout(...)` line and keeps the `ms <= 0` guard would pass
+  // them. These two race the real timer directly
   // against a genuinely pending promise (never a mock of D1).
   it('raceTimeout, given ms > 0, really rejects once the timer fires, against a promise that has not settled', async () => {
     const neverWithinTest = new Promise((resolve) => setTimeout(resolve, 500))
@@ -436,8 +435,7 @@ describe('09 D-81 #2: the time limit', () => {
 
   // `toHaveBeenCalled()` alone passes for a clearTimeout call on *any* handle, including
   // `clearTimeout(undefined)` — a shadowed or never-assigned `timer` leaks the real 3 s timer on
-  // every successful query (M4b, verified in a scratch worktree at HEAD d0430ca: kills the plain
-  // `clearTimeout(timer)` deletion too, M4, and passes 27/27 without this). Capturing the exact
+  // every successful query; deleting the plain `clearTimeout(timer)` call is caught too. Capturing the exact
   // handle `setTimeout` returned and asserting `clearTimeout` was called with that same handle
   // proves the timer this run actually started is the one cleared, not merely that some call to
   // clearTimeout happened.

@@ -1,40 +1,37 @@
 /**
- * The assistant_tools rows the seed writes: the MVP's four and the parked describe_schema (03
- * §Gateway layers row 9; 09 D-41; 16 §If time remains item 1; drafts in 14 §4.2, same
- * `ToolSeed` shape as the origin's seed-chatbot-tools.ts L31-38). Data only: the Worker
- * never imports this file. Tools are rows (CLAUDE.md "Tools are data"): the loader
- * (worker/assistant/tools/tool-loader.ts) reads them from D1 and validates every enabled row.
- * `npm run tools:seed` (scripts/seed-assistant-tools.ts) writes them; tests insert the same rows
- * through `toolSeedInsert`.
+ * The assistant_tools rows the seed writes: segment, aggregate, query_sql, one `query` row and
+ * describe_schema. Data only: the Worker never imports this file. Tools are rows, so a teammate
+ * can add a question type with no deploy: the loader (worker/assistant/tools/tool-loader.ts)
+ * reads them from D1 and validates every enabled row. `npm run tools:seed`
+ * (scripts/seed-assistant-tools.ts) writes them; tests insert the same rows through
+ * `toolSeedInsert`.
  *
- * Changes from the 14 §4.2 drafts:
- * - `segment` takes exactly the 04 §/api/segments/preview `filters` object (04: "the assistant's
- *   segment tool takes exactly this filters object"), not the draft's own field set. Its
- *   properties are the contract fragment of shared/segment-filters.ts (19 §5.5, 09 D-69), so
- *   `source` is the canonical enum and every string key has an enum or a pattern.
+ * - `segment` takes exactly the POST /api/segments/preview `filters` object, so the assistant and
+ *   the segment builder share one filters object and one compiler. Its properties are the
+ *   contract fragment of shared/segment-filters.ts, so `source` is the canonical enum and every
+ *   string key has an enum or a pattern.
  * - `aggregate` takes `status` and `source` lists like the segment filters, so "Instagram signups"
- *   and the unsubscribed default (02 §Defaults) mean the same thing in both tools. Its metrics
- *   are the ones builtin-handlers.ts computes over the v_* views. The draft's
- *   `engagement_buckets` is not seeded (09 D-56): 02 §Derived defines no buckets, and bucket
- *   edges in SQL would be a second formula (D-46). "Most engaged readers" is the segment tool with
+ *   and the unsubscribed default mean the same thing in both tools. Its metrics
+ *   are the ones builtin-handlers.ts computes over the v_* views. There is no engagement-bucket
+ *   metric: no definition has bucket edges, and edges written into SQL would be a second formula.
+ *   "Most engaged readers" is the segment tool with
  *   engagement_gte = MOST_ENGAGED_MIN (shared/segment-filters.ts), its rows by stored
  *   engagement_score, highest first: a short, ranked list rather than every active subscriber.
- * - `query_sql` names only the views 01 §PII-free views defines (the draft listed views that do not
- *   exist) and states the rules Gates 2 and 3 enforce, so the model can write a query that passes
- *   them the first time (03 rows 7-8). Its input is exactly the draft's `sql` and `explanation`.
- * - `pages_new_subscribers_hit_first` is the one `query` row (03 row 9, 09 D-41, 16 §MVP scope):
+ * - `query_sql` names only the PII-free views that exist and states the rules Gates 2 and 3
+ *   enforce, so the model can write a query that passes them the first time. Its input is `sql`
+ *   and `explanation`.
+ * - `pages_new_subscribers_hit_first` is the one `query` row:
  *   the live proof that a question type is a row, not a deploy. It answers the brief's "which
- *   pages do new subscribers hit first?" (R5.2): the first page of each new subscriber (02
- *   §Derived `new_subscriber`, 09 D-36), counted by page. Its window is rendered from TODAY when
+ *   pages do new subscribers hit first?": the first page of each new subscriber
+ *   (`new_subscriber` in shared/derive.ts), counted by page. Its window is rendered from TODAY when
  *   this file loads (`NEW_SUBSCRIBER_WINDOW`) and checked against `DEFINITIONS.new_subscriber.fn`,
  *   so the row's dates cannot drift from the definition. Its one input,
  *   `include_unsubscribed`, is bound through param_mapping; absent, the template keeps the
- *   unsubscribed default (02 §Defaults).
- * - `describe_schema` (16 §If time remains item 1) keeps the draft's optional `view` input. It
- *   returns the v_* view names and their PRAGMA columns with declared types (01 §PII-free views),
- *   never a row, so the description says "columns" where the draft said "columns and meaning":
- *   meanings live in DEFINITIONS, which the system prompt renders (02 §Derived).
- * - `open_segment` is not seeded: it and the `passthrough` type are parked (16 §If time remains).
+ *   unsubscribed default.
+ * - `describe_schema` has an optional `view` input. It returns the PII-free v_* view names and
+ *   their PRAGMA columns with declared types, never a row, so the description says "columns",
+ *   not "meaning": meanings live in DEFINITIONS, which the system prompt renders.
+ * - `open_segment` is not seeded: it and the `passthrough` type are not built.
  */
 
 import { TODAY } from '../shared/config'
@@ -52,7 +49,7 @@ export interface ToolSeed {
 }
 
 /**
- * The `new_subscriber` window as dates (02 §Derived: TODAY − 30 .. TODAY). Fails at load unless
+ * The `new_subscriber` window as dates (TODAY − 30 .. TODAY). Fails at load unless
  * `DEFINITIONS.new_subscriber.fn` holds both ends and neither day outside them.
  */
 export const NEW_SUBSCRIBER_WINDOW: DateWindow = (() => {
@@ -83,7 +80,7 @@ const FILTER_DESCRIPTIONS: { readonly [K in FilterKey]: string } = {
 
 /**
  * The segment tool's input_schema properties: exactly the filter contract (shared/segment-filters.ts
- * FILTER_SCHEMA, 19 §5.5), in FILTER_KEYS order, each with its description.
+ * FILTER_SCHEMA), in FILTER_KEYS order, each with its description.
  */
 export const SEGMENT_PROPERTIES: Record<string, Record<string, unknown>> = Object.fromEntries(
   FILTER_KEYS.map((key) => [key, { ...FILTER_SCHEMA[key], description: FILTER_DESCRIPTIONS[key] }]),
@@ -230,7 +227,7 @@ export const TOOL_SEEDS: readonly ToolSeed[] = [
 /** assistant_tools columns written by the seed, in the order of `toolSeedValues`. */
 const COLUMNS = ['id', 'name', 'description', 'input_schema', 'handler_type', 'execution_config', 'enabled', 'sort_order'] as const
 
-/** The row values for one seed; `id` is a fresh uuid (14 §4.1: crypto.randomUUID() from the seed script). */
+/** The row values for one seed; `id` is a fresh uuid (crypto.randomUUID() in the seed script). */
 export function toolSeedValues(seed: ToolSeed, id: string): SqlValue[] {
   return [
     id,
@@ -245,10 +242,10 @@ export function toolSeedValues(seed: ToolSeed, id: string): SqlValue[] {
 }
 
 /**
- * One INSERT, idempotent by `name` (11 §Scripts): an existing row of that name is left as it is,
- * so a re-seed never overwrites a row a teammate edited (the origin's onConflictDoNothing, 14 §2.4).
+ * One INSERT, idempotent by `name`: an existing row of that name is left as it is,
+ * so a re-seed never overwrites a row a teammate edited.
  * `values` is either `?` placeholders or rendered literals. created_at/updated_at are the time
- * the row was written, taken in SQL: operational metadata on the 02 §Time wall-clock allow-list.
+ * the row was written, taken in SQL: bookkeeping, so the wall clock is fine (no date rule reads it).
  */
 export function toolSeedSql(values: readonly string[]): string {
   if (values.length !== COLUMNS.length) throw new Error(`tool-seeds: expected ${COLUMNS.length} values, got ${values.length}`)
@@ -265,7 +262,7 @@ export function toolSeedInsert(seed: ToolSeed): { sql: string; params: SqlValue[
 }
 
 /**
- * The columns a seed defines and a re-seed compares (09 D-69: a schema change must reach a row that
+ * The columns a seed defines and a re-seed compares (a schema change must reach a row that
  * already exists). `enabled` and `sort_order` are left out: a teammate may disable or reorder a row.
  */
 export const SEEDED_FIELDS = ['description', 'input_schema', 'handler_type', 'execution_config'] as const
@@ -289,7 +286,7 @@ function canonicalJson(value: unknown): string {
  * The seeded rows whose stored columns differ from TOOL_SEEDS, each with the fields that differ, in
  * TOOL_SEEDS order. Pure. A row the table lacks is not listed here (the read-back names it as
  * missing). The insert never overwrites (`toolSeedSql`), so `npm run tools:seed` uses this to fail
- * loud on a row a newer seed changed, such as the `segment` row before D-69's keys.
+ * loud on a row a newer seed changed, such as a `segment` row seeded before new filter keys.
  */
 export function staleToolRows(rows: readonly StoredToolRow[]): { name: string; fields: SeededField[] }[] {
   const byName = new Map(rows.map((r) => [r.name, r]))

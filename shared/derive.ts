@@ -1,16 +1,16 @@
 /**
- * The one runtime source of every derived definition (design 02 §Derived, 09 D-46).
+ * The one runtime source of every derived definition.
  *
- * Each `DEFINITIONS` entry carries the function, a plain-English doc string, the formula as
- * written in 02 and, where a segment filter compares a stored column in SQL, the comparison
+ * Each `DEFINITIONS` entry carries the function, a plain-English doc string, the formula and,
+ * where a segment filter compares a stored column in SQL, the comparison
  * fragment over that column with bound placeholders (`:today`, or a window's `:from` and `:to`).
- * Values are computed here at write time and stored; SQL never re-implements a formula. Three
- * consumers render from this object and nothing else: the assistant system prompt (05), the UI
- * footers (06) and the docs/notes.md "Definitions" table (copied from the doc strings by hand for the
- * MVP, 11 §Scripts).
+ * Values are computed here at write time and stored; SQL never re-implements a formula, so a
+ * rule cannot drift between the code and the database. Three consumers render from this object
+ * and nothing else: the assistant system prompt, the UI footers and the docs/notes.md
+ * "Definitions" table (copied from the doc strings by hand).
  *
  * Pure functions over plain inputs: ISO dates (`YYYY-MM-DD`, or a stored UTC timestamp whose
- * date part is used) and numbers. The only clock is `TODAY` (02 §Time); `Date.now()` is never
+ * date part is used) and numbers. The only clock is `TODAY` (the brief's fixed date); `Date.now()` is never
  * called here.
  */
 import { TODAY } from './config'
@@ -55,7 +55,7 @@ export interface DateWindow {
 }
 
 /**
- * `TODAY − N .. TODAY` (02 §Derived "last N days"). `today` defaults to TODAY; the Insights board
+ * `TODAY − N .. TODAY` ("last N days"). `today` defaults to TODAY; the Insights board
  * passes it so a pinned tile's rolling window uses this same formula (shared/insight-window.ts).
  */
 export function lastNDays(n: number, today: string = TODAY): DateWindow {
@@ -65,7 +65,7 @@ export function lastNDays(n: number, today: string = TODAY): DateWindow {
 }
 
 /**
- * The previous calendar month relative to TODAY: `{ from: '2026-08-01', to: '2026-08-31' }` (09 D-10).
+ * The previous calendar month relative to TODAY: `{ from: '2026-08-01', to: '2026-08-31' }`.
  * `today` defaults to TODAY, as for lastNDays.
  */
 export function lastMonth(today: string = TODAY): DateWindow {
@@ -87,9 +87,9 @@ export function daysSinceOpen(lastOpenDate: string | null): number | null {
 }
 
 /**
- * The cold window in days (02 §Derived, 09 D-10, D-68): the one home of the number behind
+ * The cold window in days: the one home of the number behind
  * `cold_since`, `cold`, `went_cold_in`, the outer window of `going_cold_risk` and every sentence
- * that explains them. Nothing else in the repo writes this number for the cold rule (08 one-home
+ * that explains them. Nothing else in the repo writes this number for the cold rule (the one-home
  * scan in test/one-home.test.ts).
  */
 export const COLD_DAYS = 30
@@ -99,7 +99,7 @@ export function coldSince(lastOpenDate: string | null, signupDate: string): stri
   return addDays(lastOpenDate ?? signupDate, COLD_DAYS)
 }
 
-/** `cold_since <= TODAY` (09 D-10). */
+/** `cold_since <= TODAY`. */
 export function isCold(coldSinceDate: string): boolean {
   return dayMs(coldSinceDate) <= dayMs(TODAY)
 }
@@ -113,7 +113,8 @@ export function wentColdIn(coldSinceDate: string, month: string): boolean {
 }
 
 /**
- * The brief's literal R3 filter (09 D-30): `days_since_open >= N`. With `includeNeverOpened`
+ * The brief's literal segment filter: `days_since_open >= N`. It differs from `cold`, so both are
+ * defined and labelled. With `includeNeverOpened`
  * a never-opener matches regardless of signup age; without it, never-openers never match.
  */
 export function noOpenInDays(lastOpenDate: string | null, n: number, includeNeverOpened: boolean): boolean {
@@ -124,7 +125,7 @@ export function noOpenInDays(lastOpenDate: string | null, n: number, includeNeve
 
 /**
  * The dates `went_cold_in(month)` covers: the month's first day to its last day or TODAY,
- * whichever comes first (`cold_since` within that calendar month and `<= TODAY`; 19 §3 row 1).
+ * whichever comes first (`cold_since` within that calendar month and `<= TODAY`).
  * Throws on a month that is not `YYYY-MM` or starts after TODAY: segment validation answers 400
  * before calling this (worker/segments/compile.ts), so reaching it is a bug.
  */
@@ -137,17 +138,17 @@ export function wentColdWindow(month: string): DateWindow {
   return { from, to: dayMs(monthEnd) < dayMs(TODAY) ? monthEnd : TODAY }
 }
 
-/** The days that make a subscriber "new" (09 D-10): the one home of the 30, shown on /segments beside "Signed up in the last". */
+/** The days that make a subscriber "new": the one home of the 30, shown on /segments beside "Signed up in the last". */
 export const NEW_SUBSCRIBER_DAYS = 30
 
-/** `signup_date` within `TODAY − NEW_SUBSCRIBER_DAYS .. TODAY` (09 D-36). */
+/** `signup_date` within `TODAY − NEW_SUBSCRIBER_DAYS .. TODAY` ("new subscribers" needs a window to be answerable). */
 export function isNewSubscriber(signupDate: string): boolean {
   return inWindow(signupDate, lastNDays(NEW_SUBSCRIBER_DAYS))
 }
 
 /**
  * Opened in the last COLD_DAYS days but not in the last 14, or `cold_since` within the next 7 days
- * (09 D-31, D-68: the outer window is the cold window).
+ * (the outer window is the cold window).
  */
 export function goingColdRisk(lastOpenDate: string | null, coldSinceDate: string): boolean {
   const openedInColdWindow = lastOpenDate !== null && inWindow(lastOpenDate, lastNDays(COLD_DAYS))
@@ -164,7 +165,7 @@ export interface EngagementInput {
 
 /**
  * 0–100 integer: recency 50 × max(0, 1 − days_since_open/30) · app 25 × min(1, app_events_last_30d/10)
- * · site 25 × min(1, site_visits_last_30d/5). Never opened contributes 0 recency (09 D-14, D-35).
+ * · site 25 × min(1, site_visits_last_30d/5). Never opened contributes 0 recency.
  */
 export function engagementScore(input: EngagementInput): number {
   // The same formula counted in sixths of a point (recency 10·(30 − d), app 15·a, site 30·s), so the
@@ -181,26 +182,26 @@ export function hasApp(appCreatedAt: string | null): boolean {
   return appCreatedAt !== null
 }
 
-/** `app_created_at > signup_date` (same day is not a conversion; 02 §Counts lists 11 same-day rows). */
+/** `app_created_at > signup_date` (same day is not a conversion; the seed has 11 same-day rows). */
 export function appAfterSignup(appCreatedAt: string | null, signupDate: string): boolean {
   return appCreatedAt !== null && daysBetween(signupDate, appCreatedAt) > 0
 }
 
 export interface Definition {
-  /** The row's name in 02 §Derived. */
+  /** The definition's name. */
   name: string
   /** One plain-English sentence; rendered verbatim to the model, the UI and docs/notes.md. */
   doc: string
-  /** The formula exactly as 02 §Derived states it. */
+  /** The formula, written out. */
   formula: string
   /**
-   * SQL comparison fragment over the stored column (09 D-46): `:today` binds TODAY; `:from` and
+   * SQL comparison fragment over the stored column (never a formula): `:today` binds TODAY; `:from` and
    * `:to` bind a window computed here (`went_cold_in`: wentColdWindow(month); `new_subscriber`:
    * lastNDays(N), the segment filter "signed up in the last N days" with N = 30 for the
    * definition itself).
    */
   sql?: string
-  /** A short plain-language fact for a level-1 hint beside a control (09 D-72, D-55): only what
+  /** A short plain-language fact for a level-1 hint beside a control: only what
    * the control's own label doesn't already say. Optional; `doc` (level 2 / Technical details)
    * stays the full definition. The one source for this fact, so a page reads it rather than
    * retyping it. */
@@ -208,7 +209,7 @@ export interface Definition {
   fn: (...args: never[]) => unknown
 }
 
-/** One entry per row of 02 §Derived, in that order. */
+/** One entry per definition. */
 /** "Last month" on TODAY, so the definition's words below can never name another month. */
 const LAST_MONTH = lastMonth()
 

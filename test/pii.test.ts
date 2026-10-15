@@ -524,7 +524,7 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
       ['spelled, upper case', `${JOY_LOCAL} AT protonmail DOT com`],
       ['zero-width between dot and hall', `joy.​hall830@protonmail.com`],
       ['soft hyphen inside protonmail', `${JOY_LOCAL}@proton­mail.com`],
-      // 09 D-79 fixer round (normalizeForScan's two-stage fold): a full-width bracketed disguise,
+      // 09 D-79 (normalizeForScan's two-stage fold): a full-width bracketed disguise,
       // a zero-width character splitting the bare spelled "at", and a full-width "%" before "40".
       ['full-width bracket "[ａｔ]"/"[ｄｏｔ]"', `${JOY_LOCAL} [ａｔ] protonmail [ｄｏｔ] com`],
       ['zero-width inside bare "at"', `${JOY_LOCAL} a​t protonmail dot com`],
@@ -662,8 +662,8 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
     it('dropping the spelled-out "at"/"dot" mapping would miss "joy at example dot com"', () => {
       expect(normalizeForScan(`${JOY_LOCAL} at protonmail dot com`).text).toBe(JOY)
       // The mapping only folds the FULL spoken shape "<local> at <domain> dot <tld>" — it requires
-      // a spelled "dot" after "at", so a lone "at" in ordinary prose is left alone (09 D-79 fixer
-      // round; see the false-positive tests above for "signed up at instagram.com" and the rest).
+      // a spelled "dot" after "at", so a lone "at" in ordinary prose is left alone (09 D-79;
+      // see the false-positive tests above for "signed up at instagram.com" and the rest).
       expect(normalizeForScan('meet at noon').text).toBe('meet at noon')
       expect(normalizeForScan('signed up at instagram.com').text).toBe('signed up at instagram.com')
     })
@@ -693,16 +693,13 @@ describe('T-PII-5: disguised emails and a bare local part (09 D-79)', () => {
   })
 })
 
-// T-PII-6 (09 D-79 fixer round 2): e560cb3 fixed the false positive on ordinary "at"/"dot" prose
-// by dropping the bare spelled-"dot" fold and requiring the spelled "at" fold's domain to carry
-// its own spelled "dot" — but that also broke every disguise that is not itself a spelled "dot"
-// right next to "at" (a bracketed or escaped "@" whose domain's dot is spelled, or vice versa)
-// and a known local part typed with a spelled "dot" ("joy dot hall830", no "at" at all). Item 1
-// restores the bare fold (unconditional: a dot alone is never an email shape) and lets the
-// spelled "at" fold's domain accept a disguised dot in ANY listed form. Item 2 widens the
-// invisible-character set FORMAT_CHARS (category Cf) left out. Item 5 stops the restored bare
-// fold from turning ordinary chart prose ("the dot plot", "random dot points") into a manufactured
-// "@" by requiring the spelled shape's domain to end in a real TLD.
+// T-PII-6 (09 D-79): the bare spelled-"dot" fold is unconditional (a dot alone is never an email
+// shape), so a disguise that is not itself a spelled "dot" right next to "at" (a bracketed or
+// escaped "@" whose domain's dot is spelled, or vice versa) and a known local part typed with a
+// spelled "dot" ("joy dot hall830", no "at" at all) are still caught; the spelled "at" fold's
+// domain accepts a disguised dot in ANY listed form. The invisible-character set is wider than
+// FORMAT_CHARS (category Cf). Requiring the spelled shape's domain to end in a real TLD keeps
+// ordinary chart prose ("the dot plot", "random dot points") from becoming a manufactured "@".
 describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and more invisible characters are stripped (09 D-79 fixer round 2)', () => {
   const JOY_LOCAL = JOY.slice(0, JOY.indexOf('@'))
 
@@ -711,7 +708,7 @@ describe('T-PII-6: the bare spelled "dot" fold is restored with a TLD check, and
     const spaced = 'joy . hall830 @ protonmail . com'
     expect(findPII(`is ${spaced} engaged?`, known)).toBe('known_email')
     expect(redactEmails(`is ${spaced} engaged?`).text).toBe('is [email] engaged?')
-    // One-side-spaced dots (the adversarial review of 46fdc9d): still the stored address, caught
+    // One-side-spaced dots: still the stored address, caught
     // by the membership check and redacted whole in a question.
     for (const oneSide of ['joy .hall830@protonmail .com', 'joy. hall830@protonmail. com', 'JOY .HALL830 @PROTONMAIL .COM']) {
       expect(findPII(`is ${oneSide} engaged?`, known), oneSide).toBe('known_email')

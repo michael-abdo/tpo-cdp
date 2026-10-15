@@ -1,15 +1,15 @@
 /**
- * The segment filter contract (design 19 §5.5, 04 §/api/segments/preview; 09 D-69): the one home
- * of the filter keys, their order, their TypeScript type, their limits and patterns, and the
+ * The segment filter contract: the one home of the filter keys, their order, their TypeScript
+ * type, their limits and patterns, and the
  * JSON-schema fragment the assistant's `segment` tool row declares; also the export's column list
- * and the order of a segment's rows (09 D-76). Imported by worker/segments/compile.ts (validation and SQL),
+ * and the order of a segment's rows. Imported by worker/segments/compile.ts (validation and SQL),
  * scripts/tool-seeds.ts (the tool's input_schema) and src/ (the form, the Previous searches label
  * and the export's "What's in the file" disclosure).
  *
  * Every string key, `source` included, is limited by an enum or a pattern, so no value can hold
- * an email address or a raw app, device or visitor id (shared/pii.ts EMAIL_REGEX, RAW_ID_REGEX;
- * 19 §3 "Model PII risk"). The page pattern bans `@` and `_`; the went-cold pattern is a word or a
- * month. `source` is folded through the same `canonicalSource` used at ingest (02 §Normalization)
+ * an email address or a raw app, device or visitor id (shared/pii.ts EMAIL_REGEX, RAW_ID_REGEX),
+ * since the model sends and reads these filters. The page pattern bans `@` and `_`; the went-cold
+ * pattern is a word or a month. `source` is folded through the same `canonicalSource` used at ingest
  * and then checked in `worker/segments/compile.ts` parseFilters against `shared/normalize.ts`
  * CANONICAL_SOURCES — capped at CANONICAL_SOURCES.length unique values before that membership
  * check ever runs, so a long list can't try to bind more SQL variables than SQLite allows — so
@@ -21,7 +21,7 @@
  * hand-edited-storage backstop).
  *
  * Pure data: no validation code lives here (worker/segments/compile.ts parseFilters is the one
- * validator), and the browser never normalizes a value (02 §Normalization).
+ * validator), and the browser never normalizes a value (shared/normalize.ts is the one fold).
  */
 import { SUBSCRIBER_STATUSES, type SubscriberStatus } from '../worker/ingest/quarantine'
 import { APP_EVENTS, type AppEventName } from './app-events'
@@ -29,7 +29,7 @@ import { CANONICAL_SOURCES } from './normalize'
 
 /**
  * Every filter key, in the order the canonical echo lists them and the Previous searches label
- * reads its clauses (19 §2 "Label": no-open, went cold, signed up, engagement, app account, site
+ * reads its clauses (no-open, went cold, signed up, engagement, app account, site
  * visits, app activity). The assistant's segment tool row may name only these.
  */
 export const FILTER_KEYS = [
@@ -51,9 +51,9 @@ export const FILTER_KEYS = [
 export type FilterKey = (typeof FILTER_KEYS)[number]
 
 /**
- * Columns of an exported segment row, in the 04 §/api/segments/export.csv order: email first so
- * the file imports into beehiiv unchanged, status always present (02 §Defaults export rule). One
- * home for both sides (09 D-76): worker/segments/compile.ts reads this to build the export SELECT
+ * Columns of an exported segment row, in export.csv order: email first so the file imports into
+ * beehiiv unchanged, status always present (so a list that includes unsubscribed can never pass
+ * for an email list). One home for both sides: worker/segments/compile.ts reads this to build the export SELECT
  * and export.ts's CSV header, and /segments' "What's in the file" disclosure reads it for the
  * plain-word column list and the raw headers in Technical details, so the two can never list a
  * different file.
@@ -92,11 +92,11 @@ export const MOST_ENGAGED_MIN = 50
 
 /** The validated, canonical filter object: what POST /api/segments/preview echoes as `filters`. */
 export interface SegmentFilters {
-  /** Sorted and deduped; default `['active']` (02 §Defaults, 09 D-07). */
+  /** Sorted and deduped; default `['active']` (unsubscribed are left out unless asked for, never silently). */
   status: SubscriberStatus[]
   /** Canonical source names, sorted and deduped; absent = any source. */
   source?: string[]
-  /** "no open in N days" (02 §Derived, 09 D-30); absent = no recency filter. */
+  /** "no open in N days" (the brief's own filter, not `cold`); absent = no recency filter. */
   days_since_open_gte?: number
   /** With `days_since_open_gte`, also match everyone who never opened; always false without it. */
   include_never_opened: boolean
@@ -110,28 +110,28 @@ export interface SegmentFilters {
   engagement_lte?: number
   /** `null` = either. */
   has_app: boolean | null
-  /** Visited the site in the last N days (no upper bound, 09 D-01). */
+  /** Visited the site in the last N days (no upper bound, so a live event dated after TODAY still counts). */
   site_visit_within_days?: number
   /** Visited this page; with `site_visit_within_days`, in the same visit window. */
   site_visit_page?: string
-  /** Used the app in the last N days (no upper bound, 09 D-01). */
+  /** Used the app in the last N days (no upper bound, so a live event dated after TODAY still counts). */
   app_active_within_days?: number
   /** Sent this app event; with `app_active_within_days`, inside that window. */
   app_event?: AppEventName
 }
 
-/** Smallest and largest N for every `*_within_days` key (19 §5.1). */
+/** Smallest and largest N for every `*_within_days` key. */
 export const WITHIN_DAYS_MIN = 1
 export const WITHIN_DAYS_MAX = 3650
 
-/** The stored engagement_score range (02 §Derived, 0001_core.sql CHECK). */
+/** The stored engagement_score range (0001_core.sql CHECK). */
 export const ENGAGEMENT_MIN = 0
 export const ENGAGEMENT_MAX = 100
 
-/** `any` or a calendar month `YYYY-MM` (19 §5.1). JSON-schema form: no flags, anchored. */
+/** `any` or a calendar month `YYYY-MM`. JSON-schema form: no flags, anchored. */
 export const WENT_COLD_PATTERN = '^(any|\\d{4}-(0[1-9]|1[0-2]))$'
 
-/** A site path: `/`, lowercase letters, digits, `/` and `-` only, at most 121 characters (19 §3 row 6). */
+/** A site path: `/`, lowercase letters, digits, `/` and `-` only, at most 121 characters (so it can hold no email or id). */
 export const SITE_PAGE_PATTERN = '^/[a-z0-9/-]{0,120}$'
 
 /** The `went_cold` value meaning "cold now". */
@@ -152,7 +152,7 @@ const withinDays: FilterSchema = { type: 'integer', minimum: WITHIN_DAYS_MIN, ma
 const engagement: FilterSchema = { type: 'integer', minimum: ENGAGEMENT_MIN, maximum: ENGAGEMENT_MAX }
 
 /**
- * The contract fragment (19 §5.1): one JSON-schema property per FILTER_KEYS entry, in that order.
+ * The contract fragment: one JSON-schema property per FILTER_KEYS entry, in that order.
  * The assistant's segment tool input_schema is exactly these properties plus a description each
  * (scripts/tool-seeds.ts). `source` lists the canonical names, so the model cannot send free text.
  */

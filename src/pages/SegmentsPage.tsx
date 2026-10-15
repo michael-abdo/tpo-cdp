@@ -1,22 +1,22 @@
-// /segments (06 §/segments, R3; 09 D-69, 19-segments-spec §2 and §7): "Build a segment". Previous
+// /segments: "Build a segment". Previous
 // searches first (the last 5 filter objects this browser previewed, named by segmentLabel, with the
 // brief's example always there and tagged), then the filter form in plain words: the basic filters
 // and "More filters", grouped as the brief groups a subscriber (Newsletter info, Site visits, App
 // activity). More filters starts open, so went cold, new subscribers and site visits (the brief's
-// Growth questions) are one choice away; it still collapses (19 §7 note, 2026-10-14). A search run
+// Growth questions) are one choice away; it still collapses. A search run
 // from Previous searches or "Open segment" shows its count beside the list, with a link down to the
-// result and Export CSV, and focus stays on the clicked item (19 §2). Preview (POST
+// result and Export CSV, and focus stays on the clicked item. Preview (POST
 // /api/segments/preview) shows the count as a sentence and the segment's name; Export CSV (POST
 // /api/segments/export.csv) runs on the filters the server echoed for the shown result, so the
-// file always matches the count on screen. Level 2 / Technical details (06 §UI principles 2–5):
-// per-row Details, "How these filters work" with the definitions from DEFINITIONS (02 §Derived
-// "one runtime source"), raw names and the placeholders-only SQL shape. Status defaults to active;
+// file always matches the count on screen. Level 2 / Technical details (detail one click away,
+// never on the first screen): per-row Details, "How these filters work" with the definitions from
+// DEFINITIONS (their one runtime source), raw names and the placeholders-only SQL shape. Status defaults to active;
 // the response's hidden_unsubscribed is shown in words when it is above 0. The form sends what
-// the inputs hold (02 §Normalization): labels are display maps only, and the page choices come
+// the inputs hold (the server alone normalizes): labels are display maps only, and the page choices come
 // from GET /api/segments/options. A segment from /insights (a tile or an AI answer) arrives as router state
-// {filters} ("Open segment", 06 §/insights): the form takes those filters and previews them once.
+// {filters} ("Open segment"): the form takes those filters and previews them once.
 // Every 200 preview records the echoed filters in Previous searches (src/previous-searches.ts);
-// a click on one re-runs it, so every count shown is live (03 §No-restart).
+// a click on one re-runs it, so every count shown is live, never a stored copy.
 
 import { type FormEvent, type ReactNode, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
@@ -58,7 +58,7 @@ import { useGet } from '../useGet'
 
 /** Rows a preview asks for; the full segment is what Export CSV is for. */
 const PREVIEW_LIMIT = 100
-/** Rows shown before "Show all … in preview" (principle 2: the rest is one click away). */
+/** Rows shown before "Show all … in preview" (the rest is one click away). */
 const FIRST_ROWS = 10
 
 /** The footer definitions; their raw names and formulas show in Technical details. */
@@ -67,8 +67,8 @@ const FOOTER_DEFINITIONS: readonly DefinitionKey[] = ['days_since_open', 'no_ope
 /**
  * The footer's plain list (level 2 "How these filters work"), each under its plain heading
  * (DEFINITION_LABEL). no_open_in_days and cold are left out: the level-1 hint beside the days
- * field already says them, once (09 D-72), and reconciles the brief's count with Cold
- * (09 D-30).
+ * field already says them, once, and reconciles the brief's count with Cold (the brief's
+ * "no open in N days" and `cold` are different rules, so their counts differ).
  */
 const FOOTER_PLAIN = FOOTER_DEFINITIONS.filter((key) => key !== 'no_open_in_days' && key !== 'cold')
 
@@ -78,7 +78,7 @@ function openedFilters(state: unknown): SegmentFilters | null {
   return (state as { filters: SegmentFilters }).filters
 }
 
-/** Went cold months built from TODAY: this month and the two before it (19-segments-spec §3). */
+/** Went cold months built from TODAY: this month and the two before it. */
 function coldMonthOptions(): { value: string; label: string }[] {
   const [y, m] = TODAY.split('-').map(Number)
   return [' (this month)', ' (last month)', ''].map((note, back) => {
@@ -102,7 +102,7 @@ type Origin = 'form' | 'previous' | 'opened'
 const RESULT_HEADING_ID = 'result-heading'
 const PREVIEW_ERROR_ID = 'preview-error'
 
-/** The table's columns: a column whose every row would repeat the filter is left out (principle 5). */
+/** The table's columns: a column whose every row would repeat the filter is left out (no repeats). */
 function columnsFor(filters: SegmentFilters): Column<SegmentRow>[] {
   const cols: Column<SegmentRow>[] = [{ header: COLUMN_LABEL.email, cell: (r) => <span className="break-all">{r.email}</span> }]
   if (filters.status.length > 1) cols.push({ header: COLUMN_LABEL.status, cell: (r) => statusLabel(r.status) })
@@ -122,8 +122,8 @@ const inputClass = 'block w-full min-h-9 rounded-lg border border-line-strong bg
 const numberClass = 'block min-h-9 w-24 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
 
 /**
- * The level-1 words under "Signed up in the last" (19 §3 row 2, "30 = new subscribers"; 06
- * §Vocabulary): the brief's "new subscribers" is a number of days here, so the page names it
+ * The level-1 words under "Signed up in the last" ("30 = new subscribers"): the brief's
+ * "new subscribers" is a number of days here, so the page names it
  * without the InfoTip. The 30 is DEFINITIONS.new_subscriber's window (NEW_SUBSCRIBER_DAYS).
  */
 export const NEW_SUBSCRIBERS_HINT = `${NEW_SUBSCRIBER_DAYS} days = new subscribers.`
@@ -188,10 +188,10 @@ export function DaysBox({
 const errorId = (id: string) => `${id}-error`
 
 /**
- * Five gated "More filters" (09 D-80, 22-pages/segments.md §3, 19 §5.7's parked filters): each its
+ * Five gated "More filters" (the page's coming-soon filters): each its
  * own flag under `group: 'more_filters'`, carrying no state (no Form field, no FILTER_KEYS entry),
  * so none can reach the filters object, Previous searches, Export CSV or the assistant's segment
- * tool. Placed after the working controls in the group they belong to (§B.0: working controls keep
+ * tool. Placed after the working controls in the group they belong to (working controls keep
  * their place). Every control keeps its real shape — a date pair, a number box, a checkbox, a
  * select — with a fixed, empty/unchecked value; a click, a key press or a change only reveals and
  * announces its note. Enter never submits the form (`onKeyDown` calls `preventDefault`).
@@ -349,7 +349,7 @@ export function GatedEmailDomain() {
 }
 
 /**
- * The gated "Send to beehiiv" button (09 D-80, 22-pages/segments.md §2): the result action row,
+ * The gated "Send to beehiiv" button (coming soon): the result action row,
  * right after Export CSV, in the same group — secondary, never primary (Export CSV stays the
  * page's one primary action). Shown on the same condition as Export CSV (count > 0). Activation
  * only reveals and announces the note: no outward call, no confirm panel, no log.
@@ -382,8 +382,8 @@ function describedBy(...ids: (string | undefined)[]): string | undefined {
 }
 
 /**
- * A rejected preview's problem with one box, in plain words, right under it (06 §Empty and error
- * states): it names the field and its limit as the server stated them. Not a live region: the
+ * A rejected preview's problem with one box, in plain words, right under it: it names the field
+ * and its limit as the server stated them. Not a live region: the
  * error line below the form is the alert and repeats every problem.
  */
 export function FieldError({ id, message }: { id: string; message?: string }) {
@@ -428,13 +428,14 @@ export function RowDetails({ row }: { row: SegmentRow }) {
 }
 
 /**
- * What the download has, beside Export CSV (06 §/segments, 09 D-76): every piece reads the one
+ * What the download has, beside Export CSV, so a teammate knows what they are downloading before
+ * they download it: every piece reads the one
  * home the export itself uses, so this can never describe a different file than the one that
  * downloads. SEGMENT_COLUMNS and SEGMENT_SORT (shared/segment-filters.ts) are the same arrays
  * compileSegment reads to build the export's SELECT and ORDER BY; `filters` is the
  * canonical object the server echoed for this result (POST /api/segments/preview's `filters`),
  * read through the one filters-in-words renderer (src/filters-applied.ts) the Ask bar's answer
- * card already uses. D-72: the row count repeats only as a number, in words the count sentence
+ * card already uses. One thing in one place: the row count repeats only as a number, in words the count sentence
  * and segmentLabel do not already use, naming the one new fact — whether unsubscribed subscribers
  * are part of the file.
  */
@@ -484,7 +485,7 @@ export function ExportFileDetails({ filters, count }: { filters: SegmentFilters;
 
 /**
  * What a search started from Previous searches or "Open segment" gave, shown beside the list: the
- * result sits below the form, often below the fold, and focus stays on the clicked item (19 §2),
+ * result sits below the form, often below the fold, and focus stays on the clicked item,
  * so the count and the way to Export CSV must be visible where the click was. Not a live region:
  * the page's Announcer already reads the count. The link moves to the result heading, from which
  * Tab reaches Export CSV.
@@ -506,7 +507,7 @@ export function SearchOutcome({ outcome }: { outcome: Outcome }) {
       )}
       {outcome.status === 'error' && (
         <>
-          {/* The error line below says it didn't run and why; this only points there (09 D-72). */}
+          {/* The error line below says it didn't run and why; this only points there. */}
           <a href={`#${PREVIEW_ERROR_ID}`} className={linkClass}>
             Didn't run: see why
           </a>
@@ -517,7 +518,7 @@ export function SearchOutcome({ outcome }: { outcome: Outcome }) {
 }
 
 /**
- * Previous searches (19-segments-spec §2): one button per search, named by segmentLabel, with the
+ * Previous searches: one button per search, named by segmentLabel, with the
  * brief's example tagged. Labels wrap, never truncate; nothing is hover-only.
  */
 function PreviousSearches({
@@ -587,7 +588,7 @@ export default function SegmentsPage() {
   const location = useLocation()
   const opened = openedFilters(location.state)
   const [form, setForm] = useState<Form>(() => (opened === null ? DEFAULT_FORM : toForm(opened)))
-  // Open from the start (19 §7 note): the brief's Growth filters sit here; the toggle still collapses it.
+  // Open from the start: the brief's Growth filters sit here; the toggle still collapses it.
   const [moreOpen, setMoreOpen] = useState(true)
   const [result, setResult] = useState<Result | null>(null)
   const [origin, setOrigin] = useState<Origin>('form')

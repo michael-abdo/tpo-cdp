@@ -4,11 +4,11 @@ import { defineConfig } from 'vitest/config'
 import { ONE_PLACE_SCAN, screenTextBinding, VOCABULARY_SCAN } from './test/helpers/screen-text.ts'
 
 // Tests run inside workerd against an isolated local D1 per test file, with the real
-// migrations applied in test/setup.ts (08). No mocks of our own code.
+// migrations applied in test/setup.ts. No mocks of our own code.
 // SCREEN_TEXTS: the Overview's screen text read from the TypeScript AST here in Node, because the
-// compiler cannot load inside workerd (test/helpers/screen-text.ts; 08 T-SRC-2), plus the screen
-// text of every file the vocabulary guard reads (VOCABULARY_SCAN; 08 T-VOC-1) and the facts of
-// every screen file the one-place guard reads (ONE_PLACE_SCAN; 08 T-UI-ONE).
+// compiler cannot load inside workerd (test/helpers/screen-text.ts; T-SRC-2), plus the screen
+// text of every file the vocabulary guard reads (VOCABULARY_SCAN; T-VOC-1) and the facts of
+// every screen file the one-place guard reads (ONE_PLACE_SCAN; T-UI-ONE).
 async function sourceOf(scan: {
   dirs: readonly string[]
   files: readonly string[]

@@ -1,17 +1,17 @@
-// The outbound PII scanner (design 05 §Scanner; 03 §Gateway layers row 5). New in the port:
-// the origin had no model-side PII control at all (14 §3.6, §5.3).
+// The outbound PII scanner: the last check on everything sent to the model, its answers and every
+// tool result, so an email cannot reach the model even if an earlier step let one through.
 //
 // `assertNoPII` serializes a payload, normalizes it once (shared/pii.ts normalizeForScan: NFKC,
 // zero-width/soft-hyphen stripped, every %XX escape decoded, every disguised "@"/"." folded to
-// the real character — 09 D-79) and checks four things against the normalized text, in this
+// the real character) and checks four things against the normalized text, in this
 // order (the two membership checks also read "-" and "_" as ".", shared/pii.ts foldSeparators):
 //   1. known_email      — membership against every email_norm in the database (loaded per request)
 //   2. email_pattern    — the case-insensitive email regex (shared/pii.ts EMAIL_REGEX)
 //   3. raw_id           — raw app user, device or web visitor ids (shared/pii.ts RAW_ID_REGEX)
-//   4. known_local_part — a known email's local part with no "@" at all (09 D-79; this is what
-//                         closes the gap a stored email's local part took through a tool result,
+//   4. known_local_part — a known email's local part with no "@" at all (this closes the path a
+//                         stored email's local part can take through a tool result,
 //                         e.g. a webhook `link` such as "…/u/joy.hall830")
-// A hit throws `PiiBlockedError` (500 `blocked_pii`, 04 §POST /api/assistant). It never redacts
+// A hit throws `PiiBlockedError` (500 `blocked_pii`). It never redacts
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
 import { normalizeEmail, normalizeQueryFragment } from '../../../shared/normalize'
@@ -21,12 +21,12 @@ import type { AuditTrace } from '../audit/ai-audit'
 
 export type PiiCheck = 'known_email' | 'email_pattern' | 'raw_id' | 'known_local_part'
 
-/** Where the scanned payload was going (05 §Strategy diagram; 05 §Scanner "logging"). */
+/** Where the scanned payload was going, for the log line and the audit row. */
 export type PiiSite = 'model_request' | 'tool_result' | 'model_output' | 'log' | 'audit_row'
 
 /**
  * The full set of `email_norm` values, indexed for a scan that costs nothing when a payload has
- * no "@". Every email_norm holds exactly one "@" (02 §Normalization), so an email occurs in a
+ * no "@". Every email_norm holds exactly one "@" (shared/normalize.ts), so an email occurs in a
  * text only aligned to one of the text's "@" characters: for each "@" the scan slices the
  * candidate for every (local-part length, total length) shape in the set, folds it with the one
  * normalizer (shared/normalize.ts, so a raw spelling such as upper case still matches) and looks
@@ -38,7 +38,7 @@ export class KnownEmails {
   /** Every known email with "-" and "_" read as "." (shared/pii.ts foldSeparators). */
   private readonly emails: ReadonlySet<string>
   private readonly shapes: ReadonlyMap<number, readonly number[]>
-  /** The local part of every known email with at least LOCAL_PART_MIN_CHARS characters (09 D-70 #1), separators folded as above. */
+  /** The local part of every known email with at least LOCAL_PART_MIN_CHARS characters, separators folded as above. */
   private readonly localParts: ReadonlySet<string>
   /** The longest known local part: bounds the search in redactKnownLocalParts. */
   readonly maxLocalPartLength: number
@@ -68,7 +68,7 @@ export class KnownEmails {
 
   /**
    * True when `token`, folded as a lookup fragment is and with "-"/"_" read as ".", is the local
-   * part of a known email (09 D-70 #1): "joy-hall830" in a story slug is "joy.hall830".
+   * part of a known email: "joy-hall830" in a story slug is "joy.hall830".
    */
   isLocalPart(token: string): boolean {
     return this.localParts.has(foldSeparators(normalizeQueryFragment(token)))
@@ -103,8 +103,8 @@ export class KnownEmails {
 }
 
 /**
- * Every email_norm the database holds, per request (03 §No-restart: never cached). Profiles
- * carry all of them; the other tables are included so the set is "the full set" (05 §Scanner)
+ * Every email_norm the database holds, per request (never cached, so a new address is known at
+ * once). Profiles carry all of them; the other tables are included so the set is the full set
  * even if a row exists before its profile does.
  */
 export async function loadKnownEmails(db: D1Database): Promise<KnownEmails> {
@@ -128,7 +128,7 @@ function serialize(payload: unknown): string {
 }
 
 /**
- * Every normalized-text span (09 D-79) that is a known local part at a non-alphanumeric
+ * Every normalized-text span that is a known local part at a non-alphanumeric
  * boundary — the one scan both the outbound detector (findPII) and Gate 1's redaction
  * (redactKnownLocalParts) run; neither keeps its own copy. `text` must already be normalized.
  */
@@ -190,7 +190,7 @@ function applySpans(
 /**
  * The four checks, in order, over one raw text: the shape checks (email pattern, raw id) on the
  * conservative normalization, the membership checks (a stored email, a stored local part) on the
- * aggressive one, which only a real subscriber's address can match (09 D-79).
+ * aggressive one, which only a real subscriber's address can match.
  */
 function checkText(raw: string, known: KnownEmails): PiiCheck | null {
   const shape = normalizeForScan(raw).text
@@ -205,10 +205,10 @@ function checkText(raw: string, known: KnownEmails): PiiCheck | null {
 /**
  * Collects every string a person or the model actually wrote inside `payload` (every string
  * value and every object key, at any depth), so each can be normalized and scanned on its own
- * characters rather than on `JSON.stringify`'s escaped form of them (09 D-79 fixer round: a real
- * newline or tab inside a string becomes the two characters `\n`/`\t` once serialized, which the
- * `\s*`-based disguise mappings in `shared/pii.ts` never see as whitespace — "press\n[at]\nexample"
- * reached the model because only the serialized, still-escaped text was ever scanned).
+ * characters rather than on `JSON.stringify`'s escaped form of them: a real newline or tab inside
+ * a string becomes the two characters `\n`/`\t` once serialized, which the `\s*`-based disguise
+ * mappings in `shared/pii.ts` never see as whitespace, so "press\n[at]\nexample" would pass a
+ * scan of the serialized text alone.
  */
 function collectLeafStrings(payload: unknown, out: string[]): void {
   if (typeof payload === 'string') {
@@ -225,11 +225,10 @@ function collectLeafStrings(payload: unknown, out: string[]): void {
 
 /**
  * The first check `payload` fails, or null when it is clean. Pure. Checked in this order: a
- * stored email anywhere in the text, the email shape on its own, a raw id, and (09 D-79, closing
- * the gap the self-audit found) a known local part with no "@" at all — the path a webhook
- * `link` like `…/u/joy.hall830` takes.
+ * stored email anywhere in the text, the email shape on its own, a raw id, and a known local
+ * part with no "@" at all — the path a webhook `link` like `…/u/joy.hall830` takes.
  *
- * Two passes (09 D-79 fixer round): first the whole payload serialized to one string (catches a
+ * Two passes: first the whole payload serialized to one string (catches a
  * match that spans two fields, or a match inside a bare string payload), then, when `payload` is
  * not already a bare string, every individual string value and object key on its own
  * (collectLeafStrings) — the pass that sees a disguise written with a real newline or tab, which
@@ -250,7 +249,7 @@ export function findPII(payload: unknown, known: KnownEmails): PiiCheck | null {
   return null
 }
 
-/** 500 `blocked_pii` (04). Carries which check fired and where; never the matched text. */
+/** 500 `blocked_pii`. Carries which check fired and where; never the matched text. */
 export class PiiBlockedError extends ApiError {
   readonly check: PiiCheck
   readonly site: PiiSite
@@ -267,7 +266,7 @@ export class PiiBlockedError extends ApiError {
   }
 }
 
-/** Throws `PiiBlockedError` if `payload` fails any check (05 §Scanner). Pure. */
+/** Throws `PiiBlockedError` if `payload` fails any check. Pure. */
 export function assertNoPII(payload: unknown, known: KnownEmails, site: PiiSite): void {
   const check = findPII(payload, known)
   if (check !== null) throw new PiiBlockedError(check, site)
@@ -275,8 +274,8 @@ export function assertNoPII(payload: unknown, known: KnownEmails, site: PiiSite)
 
 /**
  * `assertNoPII` plus the loud half of a block: one log line naming the check and the site, and
- * an awaited `ai_audit` row `kind=blocked, status=blocked` under the request's trace (05
- * §Scanner, 03 row 11). The row stores no payload, because the payload is what failed.
+ * an awaited `ai_audit` row `kind=blocked, status=blocked` under the request's trace. The row
+ * stores no payload, because the payload is what failed.
  */
 export async function guardPayload(
   trace: AuditTrace,
@@ -296,15 +295,15 @@ export async function guardPayload(
   }
 }
 
-/** The only way to log a model payload (05 §Scanner): scanned first, so an email is never logged. */
+/** The only way to log a model payload: scanned first, so an email is never logged. */
 export function logModelPayload(at: string, payload: unknown, known: KnownEmails): void {
   assertNoPII(payload, known, 'log')
   console.log(JSON.stringify({ at, payload }))
 }
 
 /**
- * Gate 1's email redaction of user text (03 row 2): every email-shaped span, including a
- * disguised one (09 D-79, shared/pii.ts normalizeForScan), becomes `[email]`; everything else in
+ * Gate 1's email redaction of user text: every email-shaped span, including a
+ * disguised one (shared/pii.ts normalizeForScan), becomes `[email]`; everything else in
  * `text` is copied back exactly as typed (applySpans). The shared regex has no `g` flag
  * (shared/pii.ts), so a global copy is made here per call.
  */
@@ -318,7 +317,7 @@ export function redactEmails(text: string): { text: string; count: number } {
 }
 
 /**
- * Gate 1's local-part redaction (09 D-70 #1): a known email's local part typed without its
+ * Gate 1's local-part redaction: a known email's local part typed without its
  * domain ("is joy.hall830 engaged?"), disguised or not, becomes `[email]` too. Only whole tokens
  * count: a maximal run of local-part characters (shared/pii.ts LOCAL_PART_TOKEN), as typed or
  * less any leading or trailing `. _ % + -` (sentence punctuation, "joy.hall830-"), must equal a
@@ -328,7 +327,7 @@ export function redactEmails(text: string): { text: string; count: number } {
  */
 export function redactKnownLocalParts(text: string, known: KnownEmails): { text: string; count: number } {
   // On the membership normalization, so a stored address spaced any way ("joy .hall830@protonmail
-  // .com") is redacted whole, not just its local part (09 D-79, self-audit at 1200107).
+  // .com") is redacted whole, not just its local part.
   const normalized = normalizeForMembership(text)
   const spans = [...knownEmailSpans(normalized.text, known), ...findLocalPartSpans(normalized.text, known)].sort((a, b) => a[0] - b[0])
   const merged: Array<readonly [number, number]> = []
@@ -351,7 +350,7 @@ function knownEmailSpans(text: string, known: KnownEmails): Array<readonly [numb
 }
 
 /**
- * A redaction for a 400 `details` line or a `console.warn`/`console.error` log (09 D-70 item 1):
+ * A redaction for a 400 `details` line or a `console.warn`/`console.error` log:
  * normalizes first (shared/pii.ts normalizeForScan, so a disguised "@" redacts exactly as a
  * plain one would), then runs `redactEmails`, then masks any `RAW_ID_REGEX` match (`u_`/`d_`/`v_`
  * + hex) as `[id]`. Still incomplete on its own: `RAW_ID_REGEX`'s `\b` never fires between two
@@ -360,7 +359,7 @@ function knownEmailSpans(text: string, known: KnownEmails): Array<readonly [numb
  * with no "@" passes through untouched.
  *
  * `worker/routes/segments.ts` (readBody's unknown field, filtersFrom's rethrown problems) runs
- * every detail through this function, but as a backstop only (fixer round 4): the real defense
+ * every detail through this function, but as a backstop only: the real defense
  * there is that an unknown filter key or body field is never interpolated into the message text
  * at all ("unknown filter" / "unknown field", with no key), so none of this function's blind
  * spots can leak through that route. A future caller that does interpolate client text should not

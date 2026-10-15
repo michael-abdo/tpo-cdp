@@ -1,13 +1,11 @@
-// Gate 2, the tool authorizer (design 03 §Gateway layers row 7; 14 §3.5, §7 "gate2-tool-authorizer.ts
-// ← gateway/gate2-tool-authorizer.ts L157-191, L321-373"). Every tool call the model makes passes
+// Gate 2, the tool authorizer. Every tool call the model makes passes
 // here first (tool-executor.ts):
-//   - authorizeToolCall: a name that is not a loaded tool is denied (origin L157-191); the input
-//     is validated server-side against the row's `input_schema`, which the origin never did
-//     (09 D-24 "missing server-side input_schema validation → added")
-//   - validateSqlAgainstViews: every relation the SQL reads must be one of the `v_*` views
-//     (01 §PII-free views, discovered by schema-context.ts); write and statement keywords are
-//     denied; every column is checked against the views' `PRAGMA table_info` columns, which the
-//     origin advertised but never did (`knownColumns` unused, 14 §3.5; D-24 "→ implemented")
+//   - authorizeToolCall: a name that is not a loaded tool is denied; the input is validated
+//     server-side against the row's `input_schema`, so the model cannot send fields or values
+//     the tool never declared
+//   - validateSqlAgainstViews: every relation the SQL reads must be one of the PII-free `v_*`
+//     views (discovered by schema-context.ts); write and statement keywords are
+//     denied; every column is checked against the views' `PRAGMA table_info` columns
 //   - a relation is a view named by a bare word or a `(SELECT …)` subquery; a parenthesized
 //     table or join (`FROM (subscribers)`) and a string used as a table name (`FROM 'subscribers'`,
 //     which SQLite accepts) are denied, so no hidden table is read under a subquery's alias
@@ -15,13 +13,13 @@
 //     relation, a FROM list ends only at a keyword that cannot be an alias, and `IN <name>` (SQLite
 //     reads a table there) is denied, so the model writes `IN (…)`; WINDOW is denied, since a
 //     named window's name is no view column and `AS window` would otherwise look like a clause
-//   - the wall clock is denied (02 §Time): 'now', CURRENT_DATE/TIME/TIMESTAMP, and any date
+//   - the wall clock is denied (business dates use the fixed TODAY): 'now', CURRENT_DATE/TIME/TIMESTAMP, and any date
 //     function whose time value is missing or computed (`date()`, `strftime('%Y')`,
 //     `date('n'||'ow')`), since SQLite reads the clock for those; the time value must be a date
 //     literal or a stored date column of a view (dateTimeValueProblems)
 //
 // Gate 2 is stricter than JSON Schema in one way: a property the schema does not declare is
-// denied unless the schema sets `additionalProperties`. Tool rows are data (09 D-41); the loader
+// denied unless the schema sets `additionalProperties`. Tool rows are data anyone can add; the loader
 // already refuses a schema that declares a property its handler does not read (tool-loader.ts),
 // so an undeclared property is never one a handler would use.
 //
@@ -129,7 +127,7 @@ export type Authorization =
   | { allowed: false; reason: 'unknown_tool' }
   | { allowed: false; reason: 'input_schema'; tool: LoadedTool; problems: string[] }
 
-/** Gate 2 for one tool_use block (03 row 7). Pure. */
+/** Gate 2 for one tool_use block. Pure. */
 export function authorizeToolCall(tools: LoadedTools, call: { name: string; input: unknown }): Authorization {
   const tool = tools.byName.get(call.name)
   if (tool === undefined) return { allowed: false, reason: 'unknown_tool' }
@@ -141,9 +139,9 @@ export function authorizeToolCall(tools: LoadedTools, call: { name: string; inpu
 // ── validateSqlAgainstViews ──────────────────────────────────────────────────────────────
 
 /**
- * Write and statement keywords (03 row 7); Gate 3 refuses PRAGMA, ATTACH, DETACH and WITH again on
- * its own. Plus WINDOW: a named window's name is no view column, so a WINDOW clause never passed
- * the column check, and as an alias (`FROM v_funnel AS window`) it used to end the FROM list
+ * Write and statement keywords; Gate 3 refuses PRAGMA, ATTACH, DETACH and WITH again on
+ * its own. Plus WINDOW: a named window's name is no view column, so a WINDOW clause never passes
+ * the column check, and as an alias (`FROM v_funnel AS window`) it would end the FROM list
  * early and hide the next JOIN or comma relation from the view check.
  */
 const DENIED_WORDS = new Set([
@@ -152,7 +150,7 @@ const DENIED_WORDS = new Set([
   'SAVEPOINT', 'RELEASE', 'GRANT', 'REVOKE', 'WITH', 'RECURSIVE', 'TRIGGER', 'INDEX', 'VALUES', 'WINDOW',
 ])
 
-/** The wall clock; business dates use TODAY (02 §Time), which the system prompt gives the model. */
+/** The wall clock; business dates use TODAY, which the system prompt gives the model. */
 const WALL_CLOCK_WORDS = new Set(['CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP'])
 
 /** Words of a read-only SELECT. A word not here, not a function call and not a name is denied. */
@@ -187,13 +185,13 @@ const TIME_VALUE_ARGUMENT = new Map([
   ['strftime', 1],
 ])
 
-/** A date or UTC timestamp literal, as stored (02 §Time): `YYYY-MM-DD`, optionally with a time and zone. */
+/** A date or UTC timestamp literal, as stored: `YYYY-MM-DD`, optionally with a time and zone. */
 const ISO_DATE_LITERAL = /^'\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?'$/
 
 /**
- * A view column that stores a date or timestamp, by 01's naming (signup_date, last_open_date,
+ * A view column that stores a date or timestamp, by the schema's naming (signup_date, last_open_date,
  * cold_since, app_created_at, event_ts). These hold normalized ISO values written by the seed,
- * shared/derive.ts or the webhook (02 §Time, 09 D-16, D-38), never 'now'; a free-text column
+ * shared/derive.ts or the webhook (all stored in UTC), never 'now'; a free-text column
  * (page, utm_source, story) can hold anything a webhook sent, so it is no time value.
  * T-GATE-2 checks every such column's seeded values are ISO dates.
  */
@@ -225,7 +223,7 @@ const isName = (t: SqlToken | undefined): t is SqlToken => {
 }
 
 /**
- * Gate 2's SQL check (03 row 7). Pure: `views` are the `v_*` views with their PRAGMA columns
+ * Gate 2's SQL check. Pure: `views` are the `v_*` views with their PRAGMA columns
  * (schema-context.ts). Returns the views read, or throws GateDenied('gate2') listing every problem.
  */
 export function validateSqlAgainstViews(sql: string, views: readonly ViewSchema[]): ValidatedSql {
@@ -363,7 +361,7 @@ export function validateSqlAgainstViews(sql: string, views: readonly ViewSchema[
 }
 
 /**
- * The wall clock through a date function (02 §Time): every date(), datetime(), julianday() and
+ * The wall clock through a date function: every date(), datetime(), julianday() and
  * strftime() call needs its time value, and that value must be a date literal or a stored date
  * column of a view the query reads, named so it cannot be a renamed expression: not an alias
  * anywhere in the query, and not in a query with UNION/INTERSECT/EXCEPT (a compound subquery

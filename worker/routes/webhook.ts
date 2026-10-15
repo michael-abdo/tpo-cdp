@@ -1,13 +1,12 @@
-// POST /webhooks/app (04 §Webhook; R4.1–R4.8, D3). Mounted outside /api/*, so no session
-// cookie applies; auth is the HMAC headers only (04 §Auth). Never calls the model or the assistant
-// loop (03 §Other request flows); it borrows only the shared PII detector, for story and link.
-// Origin: palisade app/api/webhooks/[provider]/route.ts L24-98 (14 §7).
+// POST /webhooks/app. Mounted outside /api/*, so no session cookie applies; auth is the HMAC
+// headers only. Never calls the model or the assistant loop; it borrows only the shared PII
+// detector, for story and link.
 //
 // Order, cheapest refusal first: rate limit (429) → JSON content type (415) → body ≤ 64 KB (413)
 // → signature over the raw bytes, before any parsing (401) → JSON parse + schema (400) → personal
 // data in properties.story or properties.link (400) → store (202 {accepted, event_id}; 200
 // {accepted, duplicate} for an event_id already stored). Every refusal is logged with its reason
-// and no header or body values (CLAUDE.md fail loud; 04 §Error envelope).
+// and no header or body values (fail loud, but never log what a sender wrote).
 
 import { Hono } from 'hono'
 import { ApiError, requireJson } from '../auth/middleware'
@@ -17,7 +16,7 @@ import { ingestEvent } from '../webhooks/ingest'
 import { APP_EVENTS, parseWebhookEvent, type SchemaIssue } from '../webhooks/schema'
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, verifyWebhook } from '../webhooks/verify'
 
-/** 04 §Webhook body and validation: body ≤ 64 KB. */
+/** The body cap: 64 KB, far above one event, so an oversized body is refused before it is read. */
 export const MAX_BODY_BYTES = 64 * 1024
 
 const INVALID_EVENT_MESSAGE = `Send one JSON object with event_id, event (one of ${APP_EVENTS.join(', ')}), device_id, timestamp, and optionally user_id and properties.`
@@ -67,7 +66,7 @@ async function readBodyCapped(request: Request, max: number): Promise<Uint8Array
   return body
 }
 
-/** Wall clock in whole seconds; 02 §Time allows it for the replay window and received_at, 09 D-70 #3 for the future bound. */
+/** Wall clock in whole seconds, for the replay window, received_at and the future bound (bookkeeping, never a business date). */
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
@@ -123,8 +122,8 @@ webhookRoutes.post('/app', async (c) => {
       { field: 'body', issue: 'body must be UTF-8 JSON' },
     ])
   }
-  // Wall clock: the bound on how far an event time may run ahead of it (09 D-70 #3), beside the
-  // replay window and received_at on the 02 §Time allow-list.
+  // Wall clock: the bound on how far an event time may run ahead of it, beside the
+  // replay window and received_at; none of them is a business date.
   const parsed = parseWebhookEvent(body, nowSeconds() * 1000)
   if (!parsed.ok) throw invalidEvent('schema validation failed', parsed.details)
   // story and link reach the assistant through v_app_events, so personal data in them is refused

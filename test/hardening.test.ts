@@ -17,8 +17,9 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { eventIdPool, nowSeconds, sendWebhook } from './helpers/webhook'
 
-// T-HARD-1..3, 5..7 (08; 09 D-70 items 1, 2, 3, 5, 6, 7): the fixes for findings of the practice
-// self-audit. The test D1 holds the real seed of data/*.csv (test/helpers/seed.ts); no network
+// T-HARD-1..3, 5..7 (08; 09 D-70 items 1, 2, 3, 5, 6, 7): hardening of known local parts, webhook
+// free text, future timestamps, CSV export, rate limits and the score re-run on a duplicate. The
+// test D1 holds the real seed of data/*.csv (test/helpers/seed.ts); no network
 // (09 D-54). Every 02 §Counts number these tests touch stays as 02 states it.
 // Inputs and where they come from:
 // - T-HARD-1: joy.hall830 and julia.evans230 are the local parts of the demo subjects

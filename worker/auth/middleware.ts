@@ -1,5 +1,4 @@
-// Session and content-type guards for /api/* (04 §Auth; 03 layer 1).
-// Origin: palisade website/middleware.ts L21-38, L107-111 (14 §7).
+// Session and content-type guards for /api/*.
 
 import type { MiddlewareHandler } from 'hono'
 import { getCookie } from 'hono/cookie'
@@ -7,7 +6,7 @@ import { type AppEnv, requireSecret } from '../env'
 import { SESSION_COOKIE, verifySession } from './session'
 
 /**
- * An expected client-facing failure. worker/index.ts `onError` renders it as the 04 §Error
+ * An expected client-facing failure. worker/index.ts `onError` renders it as the error
  * envelope; `message` is plain English and must never carry secrets, SQL values or row contents.
  */
 export class ApiError extends Error {
@@ -23,12 +22,13 @@ export class ApiError extends Error {
   }
 }
 
-/** /api/* paths open without a session (04 §Auth). GET /health sits outside /api/* and is never guarded. */
+/** /api/* paths open without a session. GET /health sits outside /api/* and is never guarded. */
 const OPEN_API_POSTS = new Set(['/api/login', '/api/logout'])
 
 /**
- * Every /api/* POST must be JSON: with the Strict cookie this is the CSRF defence (04 §Auth).
- * PATCH (PATCH /api/insights/:id, 04 §/api/insights board) carries a body too and is held to the same rule.
+ * Every /api/* POST must be JSON: with the Strict cookie this is the CSRF defence (a cross-site
+ * form cannot send a JSON content type without a preflight).
+ * PATCH (PATCH /api/insights/:id) carries a body too and is held to the same rule.
  */
 export const requireJson: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.req.method === 'POST' || c.req.method === 'PATCH') {

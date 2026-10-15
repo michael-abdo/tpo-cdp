@@ -3,7 +3,7 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-// One Worker serves the SPA (static assets) and the Hono API (03 §A1 paragraph).
+// One Worker serves the SPA (static assets) and the Hono API, so there is one deploy.
 export default defineConfig({
   plugins: [react(), tailwindcss(), cloudflare()],
 })

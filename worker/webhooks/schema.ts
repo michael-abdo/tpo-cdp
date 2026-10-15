@@ -1,26 +1,26 @@
-// The app webhook body (04 §Webhook body and validation; R4.2–R4.4, 09 D-22, D-38, D-70 #2, #3).
-// Exactly the brief's shape, one event per request; unknown fields are ignored (zod strips them).
-// Issue texts are written here and never echo a submitted value or a sender-chosen property key
-// (04 §Error envelope); `story` and `link` are our keys (v_app_events reads them), so an issue
+// The app webhook body. Exactly the brief's shape, one event per request; unknown fields are
+// ignored (zod strips them). Issue texts are written here and never echo a submitted value or a
+// sender-chosen property key (either could hold PII); `story` and `link` are our keys
+// (v_app_events reads them), so an issue
 // about one names it as `properties.story` / `properties.link`.
 
 import { z } from 'zod'
 import { APP_EVENTS, type AppEventName } from '../../shared/app-events'
 
-/** The four events the app sends (R4.3); their one home is shared/app-events.ts. */
+/** The four events the app sends, as the brief lists them; their one home is shared/app-events.ts. */
 export { APP_EVENTS, type AppEventName }
 
 export const ID_MAX_CHARS = 64
 export const PROPERTY_VALUE_MAX_CHARS = 200
 
 /**
- * `properties.story` (09 D-70 #2): a lowercase slug, as the brief's `supreme-court-ruling-explained`.
+ * `properties.story`: a lowercase slug, as the brief's `supreme-court-ruling-explained`.
  * v_app_events exposes it to the model, so free text (a name, an instruction) is refused here.
  */
 export const STORY_PATTERN = /^[a-z0-9-]{1,120}$/
 
 /**
- * `properties.link` (09 D-70 #2): an http(s) URL with no "@" anywhere (no userinfo, no address in
+ * `properties.link`: an http(s) URL with no "@" anywhere (no userinfo, no address in
  * a path or query). v_app_events exposes it to the model, and the outbound PII scan looks for a
  * literal "@", so the "@" test also sees through the spellings that scan would miss: printable
  * ASCII only (no whitespace, control, bidi or fullwidth characters, so no "＠"), and no "@" after
@@ -40,9 +40,9 @@ export function isAllowedLink(value: string): boolean {
 }
 
 /**
- * How far the event time may run ahead of the server clock (09 D-70 #3). A later time would win
+ * How far the event time may run ahead of the server clock. A later time would win
  * every device_identity comparison and pin the device to its user for good. Events after TODAY
- * within this bound are stored and count as 0 days old (09 D-01).
+ * within this bound are stored and count as 0 days old, so a real live event is never rejected.
  */
 export const MAX_FUTURE_MS = 24 * 60 * 60 * 1000
 
@@ -51,7 +51,8 @@ const EVENT_TIMESTAMP =
 
 /**
  * An ISO-8601 event time parsed leniently and normalized to UTC `YYYY-MM-DDTHH:MM:SSZ`, the same
- * form the seed stores (02 §Time, 09 D-38): `Z`, a `±HH:MM`/`±HHMM`/`±HH` offset, or no zone
+ * form the seed stores (real senders vary, so parsing is lenient but the stored form is one):
+ * `Z`, a `±HH:MM`/`±HHMM`/`±HH` offset, or no zone
  * (= UTC); `T` or a space between date and time. Fractional seconds are accepted and dropped, so
  * every stored event_ts has one width and sorts as text. Returns null for anything else, including
  * dates that do not exist on the calendar and a date with no time of day (an event time needs one;
@@ -122,7 +123,7 @@ export const PERSON_ID_PATTERN = new RegExp(`^[A-Za-z0-9_-]{1,${ID_MAX_CHARS}}$`
 
 /**
  * user_id and device_id: trimmed, the same as the CSV import trims them, then held to
- * PERSON_ID_PATTERN. Without the trim, " u_2b6447a3 " was a new, unknown user and got its own
+ * PERSON_ID_PATTERN. Without the trim, " u_2b6447a3 " would be a new, unknown user with its own
  * stub profile. A blank id is refused, never stored as empty.
  */
 const personId = (field: string) =>
@@ -146,11 +147,11 @@ const personId = (field: string) =>
       return trimmed
     })
 
-/** The schema for a request received at `nowMs` (wall clock; 09 D-70 #3). */
+/** The schema for a request received at `nowMs` (wall clock, for the future-time bound). */
 const eventSchema = (nowMs: number) => z.object({
   event_id: id('event_id'),
   event: z.enum(APP_EVENTS, { error: `event must be one of ${APP_EVENTS.join(', ')}` }),
-  // R4.4: a string, null, or absent. Empty is rejected: no app user has an empty id.
+  // A string, null, or absent (the brief allows an anonymous event). Empty is rejected: no app user has an empty id.
   user_id: personId('user_id').nullable().optional(),
   device_id: personId('device_id'),
   timestamp: z
@@ -172,14 +173,15 @@ const eventSchema = (nowMs: number) => z.object({
       }
       return normalized
     }),
-  // 04: "properties object or absent; any string value > 200 chars → 400" (09 D-22). Any JSON
+  // properties: an object or absent; any string value over 200 characters is a 400, not
+  // truncated (fail loud, and it bounds what can reach the model). Any JSON
   // value may sit inside the object; the cap reaches nested strings so nesting cannot dodge it.
   properties: z
     .record(z.string(), z.unknown(), { error: 'properties must be an object' })
     .superRefine((value, ctx) => {
       const problem = propertiesProblem(value)
       if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
-      // 09 D-70 #2: the two keys v_app_events exposes must be slugs; other keys are stored only.
+      // The two keys v_app_events exposes must be slugs; other keys are stored only.
       if ('story' in value && !(typeof value.story === 'string' && STORY_PATTERN.test(value.story))) {
         ctx.addIssue({ code: 'custom', path: ['story'], message: 'properties.story must be a slug: a-z, 0-9 and "-", 1 to 120 characters' })
       }
@@ -214,8 +216,8 @@ export type ParseResult = { ok: true; event: WebhookEvent } | { ok: false; detai
 const NAMED_PROPERTIES = ['story', 'link']
 
 /**
- * Validates an already JSON-parsed body received at `nowMs` (wall clock, the bound of 09 D-70 #3).
- * An array is "one event per request" (04).
+ * Validates an already JSON-parsed body received at `nowMs` (wall clock, for the future-time bound).
+ * An array is refused: one event per request.
  */
 export function parseWebhookEvent(body: unknown, nowMs: number): ParseResult {
   if (Array.isArray(body)) return { ok: false, details: [{ field: 'body', issue: 'one event per request' }] }

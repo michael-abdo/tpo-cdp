@@ -1,41 +1,39 @@
-// The static registry of builtin tool handlers (design 03 §Gateway layers row 9; 14 §2.3, §4
-// "builtin-handlers.ts: replace"). An assistant_tools row with handler_type `builtin` names one
-// of these by `execution_config.handler_name`; the loader refuses a row that names anything else
-// (tool-loader.ts, 09 D-41). The rows themselves are data (scripts/tool-seeds.ts); this file only
-// holds the code they may point at. The executor has already passed every call through Gate 2's
-// authorizeToolCall (input_schema) before a handler runs (tool-executor.ts, 03 row 7).
+// The static registry of builtin tool handlers. An assistant_tools row with handler_type
+// `builtin` names one of these by `execution_config.handler_name`; the loader refuses a row that
+// names anything else (tool-loader.ts). The rows themselves are data (scripts/tool-seeds.ts); this
+// file only holds the code they may point at. The executor has already passed every call through
+// Gate 2's authorizeToolCall (input_schema) before a handler runs (tool-executor.ts).
 //
-// Every handler returns pk_ keys, never an email or a raw id (05 §Strategy). The executor scans
-// each result before the model sees it (tool-executor.ts, 03 row 9).
+// Every handler returns pk_ keys, never an email or a raw id, so nothing the model reads names a
+// person. The executor scans each result before the model sees it (tool-executor.ts).
 //
-// - `segment` takes exactly the 04 §/api/segments/preview filters object, parsed by the builder's
+// - `segment` takes exactly the POST /api/segments/preview filters object, parsed by the builder's
 //   parseFilters and compiled by the builder's WHERE translation (compileModelSegment in
-//   worker/segments/compile.ts) over v_profiles, so it reads only a PII-free view (05 §Exactly
-//   what the model receives, "Structural"; 07 §H) and applies the builder's rules. Its count and
-//   hidden-unsubscribed count equal the builder's (T-AI-3 pins 177 / 55). Its site-visit and
-//   app-activity filters are IN-subqueries on v_web_events and v_app_events, also PII-free views
-//   (09 D-69); `definitions_used` names every definition the filters applied. Rows come out most
-//   engaged first (stored engagement_score descending, then pkey; 09 D-56), the path for "our
-//   most engaged readers" (R5.2).
+//   worker/segments/compile.ts) over v_profiles, so it reads only a PII-free view and applies the
+//   builder's rules. Its count and hidden-unsubscribed count equal the builder's (T-AI-3 pins
+//   177 / 55). Its site-visit and
+//   app-activity filters are IN-subqueries on v_web_events and v_app_events, also PII-free views;
+//   `definitions_used` names every definition the filters applied. Rows come out most
+//   engaged first (stored engagement_score descending, then pkey), the path for the brief's "our
+//   most engaged readers" question.
 // - `aggregate` also reads only v_* views. Every value is a bound parameter; every SQL fragment
 //   comes from the fixed METRICS table below, never from the input. Cold comparisons use the
-//   `DEFINITIONS.cold.sql` fragment from shared/derive.ts, the one runtime source (02 §Derived).
-// - `query_sql` runs one SELECT the model wrote (the origin's query_data, 14 §1.2, §4.2): Gate 2's
-//   validateSqlAgainstViews (views only, no write keywords, PRAGMA-checked columns), then Gate 3's
-//   runReadOnlySelect (SELECT only, one statement, LIMIT ≤ 100, one attempt). It can read only
-//   the v_* views, which select pkey and visitor_hash (both pk_ keys, 05 §Pseudonymous key) and
-//   no PII column (01 §PII denylist), so its rows reference subjects by pk_ keys only (T-AI-2);
-//   the executor's scan is the second, independent check (05 §Scanner).
+//   `DEFINITIONS.cold.sql` fragment from shared/derive.ts, the one runtime source.
+// - `query_sql` runs one SELECT the model wrote: Gate 2's validateSqlAgainstViews (views only, no
+//   write keywords, PRAGMA-checked columns), then Gate 3's runReadOnlySelect (SELECT only, one
+//   statement, LIMIT ≤ 100, one attempt). It can read only the v_* views, which select pkey and
+//   visitor_hash (both keyed hashes) and no PII column (shared/pii.ts PII_COLUMNS), so its rows
+//   reference subjects by pk_ keys only (T-AI-2); the executor's scan is the second, independent
+//   check.
 //
-// - `describe_schema` (14 §4.2 draft, the origin's explain_database_schema; 16 §If time remains
-//   item 1) returns the v_* view names and their PRAGMA columns with declared types, as
-//   schema-context.ts discovered them (it refuses any view that selects a 01 §PII denylist
+// - `describe_schema` returns the v_* view names and their PRAGMA columns with declared types, as
+//   schema-context.ts discovered them (it refuses any view that selects a PII
 //   column). It reads no row of any view or table, so the result holds names and types only; the
-//   executor's scan still runs on it. The same lists are in the system prompt (05 §What the model
-//   receives item 1); the tool lets the model re-read one view's exact columns before query_sql.
+//   executor's scan still runs on it. The same lists are in the system prompt; the tool lets the
+//   model re-read one view's exact columns before query_sql.
 //
-// `queryHandler` is not in the registry: it runs an assistant_tools row of handler_type `query`
-// (03 row 9, 09 D-41), the way Growth adds a question type as a row with no deploy. The loader
+// `queryHandler` is not in the registry: it runs an assistant_tools row of handler_type `query`,
+// the way Growth adds a question type as a row with no deploy. The loader
 // has already checked the row's template and rewritten its `:name` placeholders to `?`
 // (tool-loader.ts); here each `?` is bound from the input field mapped to it, never spliced into
 // the text, and the SQL goes through Gate 2's validateSqlAgainstViews and Gate 3's
@@ -67,7 +65,7 @@ import {
 export type Cell = string | number | boolean | null
 export type ResultRow = Record<string, Cell>
 
-/** One tool's result: the full rows kept server-side for the UI table (04, 09 D-42) and a summary for the model. */
+/** One tool's result: the full rows kept server-side for the UI table (never model-written) and a summary for the model. */
 export interface ToolOutput {
   tool: string
   columns: string[]
@@ -78,7 +76,7 @@ export interface ToolOutput {
   summary: Record<string, unknown>
   /** Set by the segment handler: the filters as validated and the builder's count. */
   segment?: { filters: SegmentFilters; count: number }
-  /** Set by query_sql: the SQL that ran, LIMIT forced (ai_audit.sql, 01). */
+  /** Set by query_sql: the SQL that ran, LIMIT forced (ai_audit.sql). */
   sql?: string
 }
 
@@ -135,13 +133,13 @@ async function countModelSegment(db: D1Database, segment: CompiledModelSegment):
   return n
 }
 
-/** True when "signed up in the last N days" is exactly the new_subscriber window (02 §Derived). */
+/** True when "signed up in the last N days" is exactly the new_subscriber window (shared/derive.ts). */
 function isNewSubscriberWindow(days: number): boolean {
   const { from } = lastNDays(days)
   return DEFINITIONS.new_subscriber.fn(from) && !DEFINITIONS.new_subscriber.fn(addDays(from, -1))
 }
 
-/** The definitions a segment's filters applied, in FILTER_KEYS order (19 §4 "Assistant"). */
+/** The definitions a segment's filters applied, in FILTER_KEYS order, so the answer can say which it used. */
 function segmentDefinitions(filters: SegmentFilters): DefinitionKey[] {
   const used: DefinitionKey[] = []
   if (filters.days_since_open_gte !== undefined) used.push('no_open_in_days', 'days_since_open')
@@ -203,7 +201,7 @@ type GroupName = (typeof GROUP_NAMES)[number]
 
 interface MetricSpec {
   relation: 'v_profiles' | 'v_funnel' | 'v_app_events'
-  /** Subscriber metrics take status (default active, 02 §Defaults) and source; the others take neither. */
+  /** Subscriber metrics take status (default active, as everywhere) and source; the others take neither. */
   subscriberFilters: boolean
   /** The aggregate columns, fixed SQL. */
   select: string
@@ -408,10 +406,10 @@ function namedRows(result: ReadOnlyResult): ResultRow[] {
 
 /**
  * Gate 3 runs the SQL once; a database refusal goes back to the model as query_failed, a timeout
- * or an over-cap row scan as its own reason code (09 D-81 #2, #3), so ai_audit tells the three
+ * or an over-cap row scan as its own reason code, so ai_audit tells the three
  * apart even though the model/UI sentence is the same plain "too heavy" message either way.
  * Exported only so a test can inject `options.timeoutMs`/`rowsReadCap` against a real query
- * (09 D-81's own test instructions: a parameter, never mocking D1); query_sql and a `query` row
+ * (a parameter, never mocking D1); query_sql and a `query` row
  * both call it with no options (the production defaults, SQL_TIME_LIMIT_MS/SQL_ROWS_READ_CAP).
  */
 export async function runChecked(db: D1Database, sql: string, params: readonly SqlValue[] = [], options?: { timeoutMs?: number; rowsReadCap?: number }): Promise<ReadOnlyResult> {
@@ -491,7 +489,7 @@ const describeSchemaHandler: BuiltinHandler = {
 
 /** A query row's template as the loader checked it (tool-loader.ts). */
 export interface QueryTemplate {
-  /** The row's SQL with every `:name` placeholder rewritten to `?` (09 D-45). */
+  /** The row's SQL with every `:name` placeholder rewritten to `?` (D1 binds by position). */
   sql: string
   /** The input field bound to each `?`, in order; a field used twice appears twice. */
   inputs: readonly string[]
@@ -507,7 +505,7 @@ function boundValue(field: string, value: unknown): SqlValue {
 }
 
 /**
- * The handler for one `query` row (03 row 9): binds the mapped inputs to the template's `?`
+ * The handler for one `query` row: binds the mapped inputs to the template's `?`
  * markers and runs it through Gate 2 and Gate 3. `name` is the row's name.
  */
 export function queryHandler(name: string, template: QueryTemplate): BuiltinHandler {
@@ -517,7 +515,7 @@ export function queryHandler(name: string, template: QueryTemplate): BuiltinHand
     async run(db, input) {
       const params = template.inputs.map((field) => boundValue(field, input[field]))
       // The loader ran Gate 2 on this text already; it runs again here so a query row's SQL
-      // never reaches D1 without both gates in the same call (03 rows 7-8).
+      // never reaches D1 without both gates in the same call.
       validateSqlAgainstViews(template.sql, await viewSchemas(db))
       const result = await runChecked(db, template.sql, params)
       const rows = namedRows(result)
@@ -538,7 +536,7 @@ export function queryHandler(name: string, template: QueryTemplate): BuiltinHand
   }
 }
 
-/** Handler names an assistant_tools `builtin` row may use (03 row 9). */
+/** Handler names an assistant_tools `builtin` row may use. */
 export const BUILTIN_HANDLERS: Readonly<Record<string, BuiltinHandler>> = {
   segment: segmentHandler,
   aggregate: aggregateHandler,

@@ -102,7 +102,7 @@ describe('POST /api/events/test (09 D-73)', () => {
       email: KNOWN_USER_EMAIL,
     })
     expect(body.event.event_id).toMatch(/^evt_[0-9a-f]+$/)
-    // 8 random bytes (16 hex chars), not fewer (09 D-73 amended, round-4 fixer): a short id can
+    // 8 random bytes (16 hex chars), not fewer (09 D-73): a short id can
     // collide with an existing device (real or anonymous) and silently re-point its identity.
     expect(body.event.device_id).toMatch(/^d_[0-9a-f]{16}$/)
     // 09 D-01 / 02 §Time: a demo event's timestamp is TODAY (shared/config.ts) plus the current
@@ -167,7 +167,7 @@ describe('POST /api/events/test (09 D-73)', () => {
         device_id: row?.device_id,
         timestamp: row?.event_ts,
         // No properties key at all for this event: storedEventBody() omits it when null,
-        // never sends a literal `null` (M15-adjacent: that would still be a changed shape).
+        // never sends a literal `null` (that would still be a changed shape).
       })
     } finally {
       spy.mockRestore()

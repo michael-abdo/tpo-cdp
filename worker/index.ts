@@ -17,7 +17,7 @@ import { sourceRoutes } from './routes/sources'
 import { webhookRoutes } from './routes/webhook'
 
 /**
- * The one renderer of the 04 §Error envelope {error, message, details?}. Bodies never carry
+ * The one renderer of the error envelope {error, message, details?}. Bodies never carry
  * secrets, SQL values, row contents or stacks; an unexpected error's stack goes to the log as
  * one JSON line instead. Exported so test-local apps render errors exactly as production does.
  */
@@ -34,7 +34,7 @@ export function onError(err: Error, c: Context<AppEnv>): Response {
   return c.json({ error: 'internal_error', message: 'Something went wrong on the server. The error has been logged.' }, 500)
 }
 
-// Hono app mounted in front of the static assets; routes are added per 03 §Module layout.
+// Hono app mounted in front of the static assets; one route module per area.
 const app = new Hono<AppEnv>()
 
 // Security headers and Cache-Control: no-store on every Worker response, refusals included; then
@@ -42,38 +42,38 @@ const app = new Hono<AppEnv>()
 app.use('*', securityHeaders)
 app.use('*', httpsOnly)
 
-// Fail fast (11 §Deploy): every request, before routing, names any missing binding or secret.
+// Fail fast: every request, before routing, names any missing binding or secret.
 app.use('*', async (c, next) => {
   assertBindings(c.env)
   await next()
 })
 
-// 04 §Auth: JSON-only POSTs, then the session guard (open: POST /api/login, POST /api/logout).
+// JSON-only POSTs (the CSRF defence), then the session guard (open: POST /api/login, POST /api/logout).
 app.use('/api/*', requireJson, requireSession)
 app.route('/api', loginRoutes)
 app.route('/api', overviewRoutes)
-// GET /api/sources: each registry source's last sync, status, records and run history (04, 09 D-63).
+// GET /api/sources: each registry source's last sync, status, records and run history.
 app.route('/api', sourceRoutes)
-// GET /api/quarantine?reason=&file=: the rows the import set aside, as written (04, 09 D-61, D-63); raw emails, so session only.
+// GET /api/quarantine?reason=&file=: the rows the import set aside, as written; raw emails, so session only.
 app.route('/api', quarantineRoutes)
-// GET /api/duplicates and POST /api/duplicates/:pair_id/review: the scored possible-duplicates review (04, 09 D-62);
-// raw emails, so session only; it records a verdict and never merges (D-13).
+// GET /api/duplicates and POST /api/duplicates/:pair_id/review: the scored possible-duplicates review;
+// raw emails, so session only; it records a verdict and never merges.
 app.route('/api', duplicateRoutes)
 app.route('/api', lookupRoutes)
 app.route('/api', segmentRoutes)
 app.route('/api', eventRoutes)
-// /api/insights: the board (GET, POST pin, PATCH/DELETE /:id; 09 D-64) and the four panel GETs (04, 06 §/insights; R5, R6).
+// /api/insights: the board (GET, POST pin, PATCH/DELETE /:id) and the four panel GETs.
 app.route('/api', insightRoutes)
-// GET /api/audit?limit= and /api/audit/:trace_id: the ai_audit viewer, session only (04, 05 §Proof surfaces).
+// GET /api/audit?limit= and /api/audit/:trace_id: the ai_audit viewer, session only.
 app.route('/api', auditRoutes)
-// POST /api/assistant: session + 100 calls/hour/session (04 §Auth); the model is called directly (09 D-03).
+// POST /api/assistant: session + 100 calls/hour/session; the model is called directly.
 app.route('/api', assistantRoutes())
 
 // POST /webhooks/app sits outside /api/*, so neither the session guard nor requireJson's
-// mount applies: HMAC headers are its only auth (04 §Auth, §Webhook).
+// mount applies: HMAC headers are its only auth.
 app.route('/webhooks', webhookRoutes)
 
-// Open path (04 §Auth). Reports whether D1 answers and which "today" the app is running with.
+// Open path. Reports whether D1 answers and which "today" the app is running with.
 app.get('/health', async (c) => {
   let db = false
   try {

@@ -1,5 +1,5 @@
-// POST /api/login and POST /api/logout (04 §Auth, 09 D-05).
-// Origin: palisade app/api/app-auth/route.ts L30-110 (14 §3.1, §7), plus the rate limit the origin lacked.
+// POST /api/login and POST /api/logout: a login page with a signed session cookie, plus a
+// per-client rate limit on password attempts.
 
 import { Hono } from 'hono'
 import { deleteCookie, setCookie } from 'hono/cookie'
@@ -28,7 +28,7 @@ loginRoutes.post('/login', async (c) => {
   }
 
   // Log only the error's class name: V8's JSON SyntaxError message quotes the request body,
-  // which here is a password attempt (CLAUDE.md: secrets never in logs).
+  // which here is a password attempt (secrets never go in logs).
   const body: unknown = await c.req.json().catch((err: unknown) => {
     console.warn(JSON.stringify({ at: 'login', outcome: 'invalid_body', error: err instanceof Error ? err.name : 'unknown' }))
     return undefined

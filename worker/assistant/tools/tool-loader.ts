@@ -1,29 +1,29 @@
-// Tool loading (design 03 §Gateway layers row 3; 09 D-41). Origin: palisade
-// lib/chat/tool-loader.ts L28-118 (14 §2.2, §4 "copy nearly verbatim"): enabled rows ordered by
-// sort_order become the Anthropic `tools[]` (name, description, input_schema) verbatim.
+// Tool loading. Tools are data: a Growth teammate can add a question type by inserting an
+// assistant_tools row, with no deploy. Enabled rows ordered by sort_order become the Anthropic
+// `tools[]` (name, description, input_schema) verbatim.
 //
-// Added (09 D-41, D-24 "missing validation → added"): every enabled row is validated at load and
-// a failing row is a 500 `tool_config_error` that names it, never a silently missing tool:
+// Because rows are data, every enabled row is validated at load, and a failing row is a 500
+// `tool_config_error` that names it, never a silently missing tool:
 //   - name: an Anthropic tool name (letters, digits, _ and -, at most 64), description non-empty
 //   - input_schema: a JSON Schema object (`type: "object"`), checked keyword by keyword
 //     (unknown keywords are refused, so a typo such as "requred" fails here, not at call time)
 //   - builtin rows: `execution_config.handler_name` names a handler in the registry
 //     (builtin-handlers.ts), and the schema declares no property the handler does not read
-//   - query rows (03 row 9, "a question type as a row without a deploy"): `execution_config` is
+//   - query rows (a question type as a row, no deploy): `execution_config` is
 //     `{ sql, param_mapping, format? }`. `sql` is a SELECT template over the v_* views with
-//     `:name` placeholders; `param_mapping` maps each input field to one placeholder (01: "input
+//     `:name` placeholders; `param_mapping` maps each input field to one placeholder ("input
 //     field → :param"). The template's placeholders become positional `?` in the order they
-//     appear (09 D-45), each bound from the input field mapped to it. Checked here: every
+//     appear (D1's `.bind()` is positional), each bound from the input field mapped to it. Checked here: every
 //     placeholder is mapped, every mapping is used, every mapped field is a declared property
 //     with a scalar type, every declared property is mapped, and the rewritten SQL passes Gate 2's
 //     validateSqlAgainstViews against the views' PRAGMA columns and Gate 3's read-only checks with
 //     that many bound values. A broken row therefore fails at load, not when the model calls it
-//   - `passthrough` rows are refused by name: their executor is parked (16)
-// No enabled row → 500 `no_tools` (04).
+//   - `passthrough` rows are refused by name: their executor is not built
+// No enabled row → 500 `no_tools`.
 //
-// Cache (03 §No-restart): the enabled rows are read on every request, a few small rows; the
+// Cache: the enabled rows are read on every request, a few small rows; the
 // validated tool set is cached per isolate, keyed by those rows' exact contents. An inserted,
-// edited or disabled row therefore takes effect on the next request with no deploy (D-41),
+// edited or disabled row therefore takes effect on the next request with no deploy,
 // while an unchanged table is not validated again. Nothing about subscribers is cached.
 
 import { ApiError } from '../../auth/middleware'
@@ -33,7 +33,7 @@ import { GateDenied, readOnlySelect } from '../gates/gate3-readonly-sql'
 import { type ViewSchema, viewSchemas } from '../schema-context'
 import { BUILTIN_HANDLERS, type BuiltinHandler, queryHandler, type QueryTemplate } from './builtin-handlers'
 
-/** An assistant_tools row as D1 returns it (01; JSON columns still text). */
+/** An assistant_tools row as D1 returns it (JSON columns still text). */
 export interface ToolRow {
   id: string
   name: string
@@ -42,8 +42,8 @@ export interface ToolRow {
   handler_type: string
   execution_config: string
   sort_order: number
-  /** Free-form JSON (01 assistant_tools.metadata), or null; `{board_only: true}` marks a row
-   *  board.ts wrapped from a grammar-approved query_sql pin (09 D-64b). */
+  /** Free-form JSON (assistant_tools.metadata), or null; `{board_only: true}` marks a row
+   *  board.ts wrapped from a grammar-approved query_sql pin. */
   metadata: string | null
 }
 
@@ -58,7 +58,7 @@ export interface LoadedTool {
   handler: BuiltinHandler
   /** Set for a query row: its template rewritten to positional `?` and the input field bound to each. */
   query?: QueryTemplate
-  /** metadata.board_only (09 D-64b): runnable by the board's own executor, but left out of
+  /** metadata.board_only: runnable by the board's own executor, but left out of
    *  `LoadedTools.definitions`, so it is never offered to the model as a callable tool. A row a
    *  pin wraps proved its SQL safe to run and mask on the board; it never proved the row safe to
    *  hand the model as a tool it can call directly (that path skips board.ts's own re-hydration
@@ -165,7 +165,7 @@ function parseJson(text: string, column: string, problems: string[]): unknown {
 
 // ── query rows ───────────────────────────────────────────────────────────────────────────
 
-/** The execution_config keys a query row may use (01; `format` is documented only, as in the origin). */
+/** The execution_config keys a query row may use (`format` is accepted but not acted on yet). */
 const QUERY_CONFIG_KEYS = new Set(['sql', 'param_mapping', 'format'])
 
 /** A placeholder as written in a template and in param_mapping's values: a colon and a name. */
@@ -176,7 +176,7 @@ const SCALAR_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'null'])
 
 /**
  * The template with every `:name` outside a string, quoted name or comment replaced by `?`, and
- * the names in the order they appear (09 D-45). Any other text is left as written, so whatever
+ * the names in the order they appear (D1 binds by position). Any other text is left as written, so whatever
  * Gate 2 and Gate 3 refuse in a model's SQL they refuse here too. Pure.
  */
 export function rewritePlaceholders(sql: string): { sql: string; placeholders: string[] } {
@@ -244,7 +244,7 @@ function scalarProperty(schema: unknown): boolean {
   return schema.type !== undefined
 }
 
-/** A query row's template, checked (03 row 3); undefined with `problems` filled when it is broken. */
+/** A query row's template, checked; undefined with `problems` filled when it is broken. */
 function queryTemplate(
   config: Record<string, unknown>,
   schema: Record<string, unknown>,
@@ -290,7 +290,7 @@ function queryTemplate(
     if (!used.has(placeholder)) problems.push(`execution_config.param_mapping maps ${field} to ${placeholder}, which execution_config.sql never uses`)
   }
   // Gate 2 (views, columns, write words, the wall clock) and Gate 3 (read-only, one statement,
-  // LIMIT, one bound value per `?`), the same checks a model's query_sql passes (03 rows 7-8).
+  // LIMIT, one bound value per `?`), the same checks a model's query_sql passes.
   // Both run, so the error lists every problem of the row at once.
   const gates = [() => validateSqlAgainstViews(rewritten.sql, views), () => readOnlySelect(rewritten.sql, rewritten.placeholders.length)]
   for (const gate of gates) {
@@ -305,7 +305,7 @@ function queryTemplate(
   return { sql: rewritten.sql, inputs: rewritten.placeholders.map((p) => fieldByPlaceholder.get(p)!) }
 }
 
-/** 500 tool_config_error naming the row (03 row 3, 04). */
+/** 500 tool_config_error naming the row. */
 export class ToolConfigError extends ApiError {
   readonly row: string
   readonly problems: readonly string[]
@@ -363,7 +363,7 @@ export function validateToolRow(row: ToolRow, views: readonly ViewSchema[]): Loa
     problems.push(`handler_type ${JSON.stringify(row.handler_type)} is not builtin, query or passthrough`)
   }
 
-  // metadata is free-form JSON (01); a row with no metadata, or metadata that is not an object or
+  // metadata is free-form JSON; a row with no metadata, or metadata that is not an object or
   // does not set board_only, is model-facing like any other row (fail safe toward visibility, not
   // silently hiding a tool a typo'd metadata column never meant to hide).
   let boardOnly = false
@@ -396,7 +396,7 @@ export const NO_TOOLS_MESSAGE =
 export function toLoadedTools(rows: readonly ToolRow[], views: readonly ViewSchema[]): LoadedTools {
   if (rows.length === 0) throw new ApiError(500, 'no_tools', NO_TOOLS_MESSAGE)
   const tools = rows.map((row) => validateToolRow(row, views))
-  // board_only rows (09 D-64b: a wrapped grammar-pinned query) are runnable (byName), but never
+  // board_only rows (a wrapped grammar-pinned query) are runnable (byName), but never
   // part of the Anthropic tools[] the model sees (definitions) — the model cannot call a tool it
   // was never offered, however it is named.
   return { tools, definitions: tools.filter((t) => !t.boardOnly).map((t) => t.definition), byName: new Map(tools.map((t) => [t.name, t])) }
@@ -404,7 +404,7 @@ export function toLoadedTools(rows: readonly ToolRow[], views: readonly ViewSche
 
 let cached: { key: string; tools: LoadedTools } | undefined
 
-/** The enabled assistant_tools rows, validated (03 row 3). Throws 500 no_tools or tool_config_error. */
+/** The enabled assistant_tools rows, validated. Throws 500 no_tools or tool_config_error. */
 export async function loadTools(db: D1Database): Promise<LoadedTools> {
   const { results } = await db
     .prepare(
@@ -414,7 +414,7 @@ export async function loadTools(db: D1Database): Promise<LoadedTools> {
     .all<ToolRow>()
   const key = JSON.stringify(results)
   if (cached !== undefined && cached.key === key) return cached.tools
-  // The views are read only when a row needs them; their columns are cached per isolate (03 row 4).
+  // The views are read only when a row needs them; their columns are cached per isolate (schema-context.ts).
   const views = results.some((row) => row.handler_type === 'query') ? await viewSchemas(db) : []
   const tools = toLoadedTools(results, views)
   cached = { key, tools }

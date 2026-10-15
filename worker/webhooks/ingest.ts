@@ -1,31 +1,31 @@
-// Stores one validated app event (03 §Other request flows, Webhook; 07 §A–C, §G).
-// Origin: palisade app/api/webhooks/[provider]/route.ts L111-126 (14 §3.10, §7), dedupe intent only:
-// the origin read then wrote; here the event_id primary key makes the insert itself the dedupe.
+// Stores one validated app event. The event_id primary key makes the insert itself the dedupe,
+// so two copies of one event racing in can never both be stored (a read-then-write check could).
 //
 // One D1 batch, which D1 runs as a single transaction, so a stored event never lacks its stub or
 // its device mapping:
-//   1. INSERT OR IGNORE app_events by event_id (R4.8). A duplicate changes nothing: first write wins.
-//   2. device_identity upsert (01 §Identity resolution, 09 D-43), only when statement 1 inserted a
-//      row (`changes() = 1`, 07 §B) and the event carries a user_id; it overwrites only when the
-//      event_ts is not older than the stored last_seen_ts, so out-of-order arrival (R4.7) cannot
+//   1. INSERT OR IGNORE app_events by event_id. A duplicate changes nothing: first write wins.
+//   2. device_identity upsert (the device's most recent user), only when statement 1 inserted a
+//      row (`changes() = 1`) and the event carries a user_id; it overwrites only when the
+//      event_ts is not older than the stored last_seen_ts, so out-of-order arrival cannot
 //      regress the mapping.
 //   3–4. Unknown user_id → stub app_users(from_csv 0, email_norm NULL) + unknown_user_stub profile
-//      (02 §Linking 4, R4.6). Both read the stored row and are INSERT OR IGNORE, so they are
+//      (an unknown user is never dropped). Both read the stored row and are INSERT OR IGNORE, so they are
 //      no-ops for known users, for a stub that already exists, and for a duplicate whose body
 //      differs from the stored one.
-//   5. The resolved user and profile, by the read-time rule of 01 §Identity resolution (the
+//   5. The resolved user and profile, by the read-time identity rule (the
 //      same joins as v_app_events in 0002_views.sql). They drive the score recompute below and are
 //      returned to the caller; POST /webhooks/app does not put them in its public response.
 // Then profiles.engagement_score is recomputed with DEFINITIONS and stored for every profile the
-// event can change (09 D-46, R4.10): the resolved user's, and the device's previous owner's when
+// event can change, so a new event shows in lookup and segments with no re-import: the resolved
+// user's, and the device's previous owner's when
 // the event carries a user_id, since the device_identity upsert can move that device's anonymous
 // events away from them. The recompute runs after the batch has committed, so it can fail with
 // the event stored; the sender then retries and gets a 200 duplicate. A duplicate therefore
-// re-runs the recompute for the stored event (09 D-70 #7): its resolved user, and when it carries
+// re-runs the recompute for the stored event, so a failed recompute heals on the retry: its resolved user, and when it carries
 // a user_id every user with an event on its device (the previous owner is one of them, since
 // device_identity is only ever written from app_events). The recompute is deterministic, so on a
 // healthy store the re-run writes the scores already there.
-// Nothing is cached (03 §No-restart): the next lookup or segment read sees the row.
+// Nothing is cached: the next lookup or segment read sees the row.
 
 import { daysBetween, DEFINITIONS } from '../../shared/derive'
 import { pkeyForUnknownUser } from '../../shared/pseudonym'
@@ -33,7 +33,7 @@ import { resolveUserEvents } from '../identity/resolve'
 import type { WebhookEvent } from './schema'
 
 export type IngestResult =
-  /** event_id was already stored; no event, stub or mapping was written (R4.8); scores re-run (09 D-70 #7). */
+  /** event_id was already stored; no event, stub or mapping was written; scores re-run. */
   | { duplicate: true }
   /** Stored. The user the event resolves to and that user's profile key; both null when unresolved. */
   | { duplicate: false; resolved: { user_id: string | null; pkey: string | null } }
@@ -42,7 +42,7 @@ interface ResolvedRow {
   user_id: string | null
   email_norm: string | null
   email_pkey: string | null
-  /** The stored event's own user_id and device (for a duplicate: the first write's, 07 §B). */
+  /** The stored event's own user_id and device (for a duplicate: the first write's). */
   event_user_id: string | null
   device_id: string
 }
@@ -61,8 +61,8 @@ function stubFirstScore(eventTs: string): number {
 }
 
 /**
- * Writes one event. `receivedAt` is the wall-clock arrival time (02 §Time allow-list); it is the
- * stored received_at and the created_at of any stub it creates (09 D-44).
+ * Writes one event. `receivedAt` is the wall-clock arrival time (bookkeeping, not a business
+ * date); it is the stored received_at and the created_at of any stub it creates.
  */
 export async function ingestEvent(
   db: D1Database,
@@ -113,7 +113,7 @@ export async function ingestEvent(
            SELECT user_id, NULL, received_at, 0 FROM app_events WHERE event_id = ?1 AND user_id = ?2`,
         )
         .bind(event.event_id, event.user_id),
-      // INSERT ... ON CONFLICT, not INSERT OR IGNORE (09 D-78(b)): a stub created on a database
+      // INSERT ... ON CONFLICT, not INSERT OR IGNORE: a stub created on a database
       // that took webhooks before migration 0011 added profiles.user_id has that column NULL, so
       // IGNORE would leave it unhealed forever (its events would keep vanishing from v_app_events
       // at pkey NULL, with no error). The next event for the same user_id now heals it. The
@@ -175,8 +175,8 @@ export async function ingestEvent(
 }
 
 /**
- * The users whose scores the stored event could have changed when it was first written (09 D-70
- * #7): its resolved user, and for an event with a user_id every user with an event on its device.
+ * The users whose scores the stored event could have changed when it was first written: its
+ * resolved user, and for an event with a user_id every user with an event on its device.
  */
 async function duplicateAffected(db: D1Database, row: ResolvedRow): Promise<Set<string>> {
   const affected = new Set<string>()
@@ -191,12 +191,12 @@ async function duplicateAffected(db: D1Database, row: ResolvedRow): Promise<Set<
   return affected
 }
 
-/** `TODAY − 30 .. TODAY` (02 §Derived "last N days"), the window of both 30-day score inputs. */
+/** `TODAY − 30 .. TODAY` ("last N days"), the window of both 30-day score inputs. */
 const SCORE_WINDOW = DEFINITIONS.last_n_days.fn(30)
 
 /**
  * An app event counts toward app_events_last_30d when it is at most 30 days old; one newer than
- * TODAY counts as 0 days old (02 §Time, 09 D-01), so only the window's start applies.
+ * TODAY counts as 0 days old (a live event is never thrown away), so only the window's start applies.
  */
 function appEventInLast30d(eventTs: string): boolean {
   return daysBetween(SCORE_WINDOW.from, eventTs) >= 0
@@ -212,7 +212,7 @@ interface ScoreSubject {
   last_open_date: string | null
   /** Every app user of the profile: the stub's one id, or each app_users row with its email. */
   user_ids: string[]
-  /** event_ts of every web event of the profile's linked visitors (02 §Linking 2). */
+  /** event_ts of every web event of the profile's linked visitors. */
   web_event_ts: string[]
 }
 
@@ -258,7 +258,7 @@ async function scoreSubject(db: D1Database, piiKeySecret: string, userId: string
 
 /**
  * Recomputes engagement_score with DEFINITIONS for the profiles of `userIds` and stores it
- * (09 D-46). App events are counted through identity/resolve.ts, so direct and device-stitched
+ * (computed here, never in SQL). App events are counted through identity/resolve.ts, so direct and device-stitched
  * events count exactly as lookup shows them. Every UPDATE must hit its one profile row.
  */
 async function recomputeEngagement(
