@@ -1,19 +1,19 @@
 /**
- * D-75 parity harness, mode B (21 §2.6): runs `test/parity/oracle.ts` against a throwaway LOCAL
- * D1, never the dev database (21 §0 F5) and never the remote one (that is mode C, out of scope
- * for this unit — recorded below and in docs/notes.md "Known gaps"/docs/ai-log.md: it needs production
- * D1 credentials, which this round keeps out of a developer-facing npm script).
+ * Parity harness, local mode: runs `test/parity/oracle.ts` against a throwaway LOCAL
+ * D1, never the dev database and never the remote one (a remote mode is out of scope —
+ * recorded below and in docs/notes.md "Known gaps": it needs production
+ * D1 credentials, which stay out of a developer-facing npm script).
  *
  * Steps: a fresh `--persist-to` directory under the OS temp dir → `wrangler d1 migrations apply
  * --local` → `scripts/csv2sql.ts` (data/*.csv → seed/*.sql) → every seed/*.sql loaded into that
  * same directory → SELECT every seed-only table via `wrangler d1 execute --local --json` → the
- * key probe (21 §2.3) → a field-by-field diff against the oracle → the PII report scan (21 §2.4)
+ * key probe → a field-by-field diff against the oracle → the PII report scan
  * → exit 0 only when the report is empty.
  *
  * This is a Node/tsx script (not a vitest/workerd test), so every D1 access goes through the
  * `wrangler d1 execute` CLI, the same way `scripts/db-remote.ts` already does for the remote
- * database. It imports only `test/parity/oracle.ts` (21 §2.6 "modes B and C import the same
- * oracle"); the diff and report logic below is its own copy of the same small shape
+ * database. It imports only `test/parity/oracle.ts` (a remote mode would import the same
+ * oracle); the diff and report logic below is its own copy of the same small shape
  * `test/parity.test.ts` uses, since a `.test.ts` file is not an importable module for a plain
  * Node script.
  *
@@ -37,8 +37,8 @@ import {
 
 // This file is test/parity/run.ts: its own directory (dirname once) is test/parity, so two more
 // dirname calls (three total) reach the repo root. Built from fileURLToPath(import.meta.url) (a
-// string), never `new URL(...)`, because this file is compiled under tsconfig.worker.json (21 §6
-// G6/F6: it lives under test/ for the one-home scans), whose ambient Workers-runtime `URL` type
+// string), never `new URL(...)`, because this file is compiled under tsconfig.worker.json (it
+// lives under test/ for the one-home scans), whose ambient Workers-runtime `URL` type
 // is not the same `URL` node:url's fileURLToPath expects.
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 const DB = 'cdp'
@@ -71,8 +71,8 @@ function run(step: string, cmd: string, args: string[]): void {
 
 /** `wrangler d1 execute --local --persist-to <dir> --json --command`; every statement must
  * succeed; returns the last one's rows. Read-only by construction (every call here is a
- * SELECT); mode C (not built) would additionally check each response's `changed_db`/
- * `rows_written` (21 §2.6). */
+ * SELECT); a remote mode (not built) would additionally check each response's `changed_db`/
+ * `rows_written`. */
 function query<T>(persistTo: string, step: string, sql: string): T[] {
   const res = spawnSync(
     'npx',
@@ -89,7 +89,7 @@ function query<T>(persistTo: string, step: string, sql: string): T[] {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 21 §2.4 "Reporting" — a smaller copy of test/parity.test.ts's report machinery, kept in step
+// Reporting — a smaller copy of test/parity.test.ts's report machinery, kept in step
 // with it by comparing the same field sets T-PAR-2/3 use. See that file's comment for why a
 // second small copy lives here (a .test.ts file is not an importable module for a plain script).
 // ---------------------------------------------------------------------------------------------
@@ -138,7 +138,7 @@ function reportLine(m: Mismatch): string {
   return `${m.table} · pkey · ${m.key} · ${m.field} · ${m.expected} · ${m.actual}`
 }
 
-/** 21 §2.4 "Fail closed": before printing, the report is scanned for @ and raw ids. */
+/** Fail closed: before printing, the report is scanned for @ and raw ids. */
 function reportBlocked(lines: readonly string[]): boolean {
   const text = lines.join('\n')
   if (text.includes('@')) return true
@@ -190,7 +190,7 @@ async function main(): Promise<void> {
       secret,
     )
 
-    // 21 §2.3 "Key probe first".
+    // Key probe first.
     const probeRows = query<{ pkey: string; email_norm: string }>(
       persistTo,
       'key probe',
@@ -207,7 +207,7 @@ async function main(): Promise<void> {
     let missingTotal = 0
     let extraTotal = 0
 
-    // subscribers (21 §4.1 item 2; test/parity.test.ts's SUBSCRIBER_FIELDS).
+    // subscribers (test/parity.test.ts's SUBSCRIBER_FIELDS).
     {
       const fields = ['email_norm', 'email_raw', 'signup_date', 'status', 'source', 'last_open_date', 'cold_since', 'merged_count']
       const rows = query<Row>(
@@ -262,7 +262,7 @@ async function main(): Promise<void> {
       report.push(...mismatches)
     }
 
-    // quarantine (21 §4.1 item 2: 10 rows).
+    // quarantine (10 rows).
     {
       const fields = ['reason', 'raw_row']
       const rows = query<Row>(persistTo, 'select quarantine', 'SELECT file, line_no, reason, raw_row FROM quarantine')
@@ -276,7 +276,7 @@ async function main(): Promise<void> {
       report.push(...mismatches)
     }
 
-    // import_runs (21 §4.1 item 2: 3 rows).
+    // import_runs (3 rows).
     {
       const fields = ['rows_in', 'rows_out', 'merged', 'quarantined']
       const rows = query<Row>(persistTo, 'select import_runs', 'SELECT file, rows_in, rows_out, merged, quarantined FROM import_runs')
@@ -288,7 +288,7 @@ async function main(): Promise<void> {
       report.push(...mismatches)
     }
 
-    // v_profiles (21 §4.1 item 2: all 11 non-key columns, same oracle fields T-PAR-2 uses).
+    // v_profiles (all 11 non-key columns, same oracle fields T-PAR-2 uses).
     {
       const fields = [
         'has_app', 'app_created_at', 'app_after_signup', 'first_page', 'first_utm_source',
@@ -343,7 +343,7 @@ async function main(): Promise<void> {
       report.push(...mismatches)
     }
 
-    // web_visitors (21 §4.1 item 2: 2,028 visitors × 7 stored columns, keyed by visitor_hash).
+    // web_visitors (2,028 visitors × 7 stored columns, keyed by visitor_hash).
     {
       const fields = ['visitor_id', 'email_norm', 'first_seen_ts', 'first_page', 'first_utm_source', 'signup_ts']
       const rows = query<Row>(
@@ -359,7 +359,7 @@ async function main(): Promise<void> {
       report.push(...mismatches)
     }
 
-    // web_events (21 §4.1 item 2: 10,000 events × 4 stored columns, keyed by id).
+    // web_events (10,000 events × 4 stored columns, keyed by id).
     {
       const fields = ['visitor_id', 'page', 'event_ts', 'utm_source']
       const rows = query<Row>(persistTo, 'select web_events', 'SELECT id, visitor_id, page, event_ts, utm_source FROM web_events')
@@ -371,7 +371,7 @@ async function main(): Promise<void> {
       report.push(...mismatches)
     }
 
-    // app_users (21 §4.1 item 2: 930 rows × 3 stored columns, keyed by CSV line — user_id is PII).
+    // app_users (930 rows × 3 stored columns, keyed by CSV line — user_id is PII).
     {
       const fields = ['email_norm', 'created_at', 'from_csv']
       const rows = query<Row>(

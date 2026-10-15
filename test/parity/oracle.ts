@@ -1,7 +1,7 @@
 /**
- * D-75 parity oracle. A second, independent
+ * Parity oracle. A second, independent
  * recomputation of every subscriber's expected record straight from the raw CSV bytes, written
- * from 02 (data rules, derived definitions, counts), 05 (pseudonymous keys) and 09's decision log
+ * from the data rules, derived definitions, expected counts and pseudonymous-key rule
  * — never from the app's own code. T-PAR-1 (test/parity.test.ts) enforces this by reading this
  * file's text and failing on any import outside vitest, cloudflare:test and Node/Web built-ins:
  * this file imports nothing at all, so that check always passes.
@@ -12,45 +12,44 @@
  * only — nothing here is copied from the prototype or from the app.
  *
  * Every date is a plain `YYYY-MM-DD` (or `YYYY-MM-DDTHH:MM:SSZ`) string; day arithmetic reads the
- * first 10 characters and uses `Date.UTC`, never `new Date(localString)` (21 §2.1 "Dates as
- * strings").
+ * first 10 characters and uses `Date.UTC`, never `new Date(localString)`.
  */
 
 // ---------------------------------------------------------------------------------------------
-// §2.1 Its own constants
+// Its own constants
 // ---------------------------------------------------------------------------------------------
 
-/** 02 §Time: TODAY is a constant for every business-logic comparison. The test file (not this
- * one) asserts this equals shared/config.ts's TODAY, per 21 §2.1. */
+/** TODAY is a constant for every business-logic comparison. The test file (not this
+ * one) asserts this equals shared/config.ts's TODAY. */
 export const TODAY = '2026-09-28'
 
-/** 02 §Derived "cold_since": the fallback + recency window. */
+/** cold_since: the fallback + recency window. */
 const COLD_DAYS = 30
-/** 02 §Derived "new_subscriber": signed up within the last N days including today. */
+/** new_subscriber: signed up within the last N days including today. */
 const NEW_SUBSCRIBER_DAYS = 30
-/** 02 §Derived "engagement_score": the app-events cap (full credit at 10 events). */
+/** engagement_score: the app-events cap (full credit at 10 events). */
 const APP_EVENTS_CAP = 10
-/** 02 §Derived "engagement_score": the site-visits cap (full credit at 5 visits). */
+/** engagement_score: the site-visits cap (full credit at 5 visits). */
 const SITE_VISITS_CAP = 5
-// GAP: these m-values live only in worker/dedupe/score.ts (21 §6 G2); 09 D-62 calls them "a
-// documented assumption" without the numbers themselves.
-/** 09 D-62: the fuzzy-duplicate m-probabilities (a documented assumption, never measured). */
+// GAP: nothing independent of the app derives these m-values; they are the numbers
+// worker/dedupe/score.ts uses and docs/notes.md lists, "a documented assumption".
+/** The fuzzy-duplicate m-probabilities (a documented assumption, never measured). */
 const M_PROBABILITIES: Record<ScoredFieldName, number> = {
   domain: 0.8,
   signup_gap: 0.5,
   source: 0.8,
   shared_device: 0.9,
 }
-/** 09 D-62: a field with no agreeing (or no disagreeing) candidate counts half a pair short, so the weight stays finite. */
+/** A field with no agreeing (or no disagreeing) candidate counts half a pair short, so the weight stays finite. */
 const UNSEEN_AGREEMENT_PAIRS = 0.5
-/** 09 D-62: signup dates this many days apart or fewer agree. */
+/** Signup dates this many days apart or fewer agree. */
 const SIGNUP_GAP_MAX_DAYS = 7
-/** 09 D-62: score bands. */
+/** Possible-duplicate score bands. */
 const AUTO_MIN_SCORE = 90
 const REVIEW_MIN_SCORE = 50
 
 // ---------------------------------------------------------------------------------------------
-// §2.1 Its own CSV reader — strict and tiny, ASCII only, no quoted fields (the data has 0)
+// Its own CSV reader — strict and tiny, ASCII only, no quoted fields (the data has 0)
 // ---------------------------------------------------------------------------------------------
 
 export interface ParsedCsv {
@@ -103,7 +102,7 @@ function columnIndex(
   return out
 }
 
-/** Re-serializes one row as a single RFC 4180 CSV record (02 §Quarantine `raw_row`): a field is
+/** Re-serializes one row as a single RFC 4180 CSV record (the quarantine's `raw_row`): a field is
  * quoted only if it holds a comma, quote or line break, with internal quotes doubled. On this
  * data (no quotes, no embedded commas) every field passes through unchanged. */
 export function toCsvRecord(row: readonly string[]): string {
@@ -111,13 +110,13 @@ export function toCsvRecord(row: readonly string[]): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// §2.1 Own email fold, source canonicalization, date validity — restated from 02 §Normalization,
-// §Quarantine, never imported from shared/normalize.ts
+// Own email fold, source canonicalization, date validity — restated from the normalization and
+// quarantine rules, never imported from shared/normalize.ts
 // ---------------------------------------------------------------------------------------------
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
-/** `trim()` then `toLowerCase()`; nothing else (02 §Normalization). */
+/** `trim()` then `toLowerCase()`; nothing else. */
 export function fold(raw: string): string {
   return raw.trim().toLowerCase()
 }
@@ -129,7 +128,7 @@ export function normalizeEmail(raw: string): string | null {
 }
 
 /**
- * D-78: whether a web_events.csv `page` links like `/subscribe` — its own copy of
+ * Whether a web_events.csv `page` links like `/subscribe` — its own copy of
  * worker/ingest/web.ts's `isSubscribePage`, never imported. Case-insensitive on the path only;
  * any query string is dropped first and at most one trailing slash is stripped, so
  * `/subscribe?utm_source=x`, `/subscribe/` and `/Subscribe` all match, `/subscribe/about` and
@@ -142,7 +141,7 @@ export function oracleIsSubscribePage(page: string): boolean {
   return stripped === '/subscribe'
 }
 
-/** Trim, lowercase, `twitter → x`; blank → `null`; anything else passes through lowercased (02 §Normalization). */
+/** Trim, lowercase, `twitter → x`; blank → `null`; anything else passes through lowercased. */
 export function canonicalSource(raw: string): string | null {
   const folded = raw.trim().toLowerCase()
   if (folded === '') return null
@@ -152,9 +151,9 @@ export function canonicalSource(raw: string): string | null {
 
 /**
  * Optimal string alignment distance (Damerau-Levenshtein restricted to one transposition per
- * substring, the same metric `counts.py`'s `dl()` used to reproduce 02 §Counts' fuzzy-lookup
- * fixtures): insert, delete, substitute = 1; a transposition of two adjacent characters = 1.
- * Its own implementation (21 §2.1); never imports `worker/lookup/fuzzy.ts`.
+ * substring, the same metric the fuzzy-lookup fixtures were first computed with): insert, delete,
+ * substitute = 1; a transposition of two adjacent characters = 1.
+ * Its own implementation; never imports `worker/lookup/fuzzy.ts`.
  */
 export function damerauLevenshtein(a: string, b: string): number {
   const d: number[][] = []
@@ -172,7 +171,7 @@ export function damerauLevenshtein(a: string, b: string): number {
   return d[a.length][b.length]
 }
 
-/** `YYYY-MM-DD` naming a real calendar day (own implementation; same shape rule as 02 §Quarantine). */
+/** `YYYY-MM-DD` naming a real calendar day (own implementation; same shape rule as the quarantine's). */
 export function isIsoDate(value: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   if (!m) return false
@@ -200,7 +199,7 @@ export function daysBetween(a: string, b: string): number {
 }
 
 // ---------------------------------------------------------------------------------------------
-// §2.1 Its own HMAC — WebCrypto directly, never shared/pseudonym.ts
+// Its own HMAC — WebCrypto directly, never shared/pseudonym.ts
 // ---------------------------------------------------------------------------------------------
 
 async function hmacHex16(secret: string, message: string): Promise<string> {
@@ -219,7 +218,7 @@ async function hmacHex16(secret: string, message: string): Promise<string> {
   return hex
 }
 
-/** `pk_` + HMAC-SHA256(secret, emailNorm)[:16 hex] (05 §Pseudonymous key). */
+/** `pk_` + HMAC-SHA256(secret, emailNorm)[:16 hex] (the pseudonymous key). */
 export async function pkeyForEmailNorm(secret: string, emailNorm: string): Promise<string> {
   return `pk_${await hmacHex16(secret, emailNorm)}`
 }
@@ -241,20 +240,20 @@ async function sha256Hex16(message: string): Promise<string> {
   return hex
 }
 
-/** `dp_` + SHA-256(`lo|hi`)[:16 hex], pkeys sorted (09 D-62). */
+/** `dp_` + SHA-256(`lo|hi`)[:16 hex], pkeys sorted (the duplicate pair id). */
 export async function pairId(pkeyA: string, pkeyB: string): Promise<string> {
   const [lo, hi] = pkeyA < pkeyB ? [pkeyA, pkeyB] : [pkeyB, pkeyA]
   return `dp_${await sha256Hex16(`${lo}|${hi}`)}`
 }
 
 // ---------------------------------------------------------------------------------------------
-// §2.1 Exact arithmetic for the engagement score (how F1 was found; now exact sixtieths)
+// Exact arithmetic for the engagement score (in sixtieths, so a .5 tie never rounds down by float error)
 // ---------------------------------------------------------------------------------------------
 
 /**
- * 02 §Derived `engagement_score`: recency 50 × max(0, 1 − days_since_open/30) + app 25 ×
+ * `engagement_score`: recency 50 × max(0, 1 − days_since_open/30) + app 25 ×
  * min(1, app_events_last_30d/10) + site 25 × min(1, site_visits_last_30d/5), rounded half up
- * (21 §2.1 "exact arithmetic for the score"). Everything is carried in sixtieths so no float
+ * exactly. Everything is carried in sixtieths so no float
  * division ever happens: n = 100·max(0, 30 − d) + 150·min(a, 10) + 300·min(s, 5);
  * score = floor((2n + 60) / 120).
  */
@@ -272,7 +271,7 @@ function daysSinceOpen(lastOpenDate: string | null): number | null {
 }
 
 // ---------------------------------------------------------------------------------------------
-// §2.2 Canonical expected record
+// Canonical expected record
 // ---------------------------------------------------------------------------------------------
 
 export type QuarantineReason =
@@ -421,12 +420,12 @@ export interface OracleCsvs {
 
 /**
  * Builds every expected record from the raw CSV text, independent of the app's ingest, dedupe,
- * link and derive code (21 §2.1). `secret` is PII_KEY_SECRET, read by the caller the same way the
+ * link and derive code. `secret` is PII_KEY_SECRET, read by the caller the same way the
  * seed does (env, else `.dev.vars`); this file never reads `.dev.vars` or `env` itself.
  */
 export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<OracleResult> {
-  // ---- subscribers.csv (02 §Quarantine, §Dedupe; checked in this order: blank row, blank email,
-  // invalid email, other missing fields, bad date — 21 field map row "email (whole row)")
+  // ---- subscribers.csv (quarantine, then dedupe; checked in this order: blank row, blank email,
+  // invalid email, other missing fields, bad date)
   const sub = parseCsvStrict(csvs.subscribers, 'subscribers.csv')
   const subCol = columnIndex('subscribers.csv', sub.header, [
     'email',
@@ -454,7 +453,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     if (signup === '' || status === '') return q('missing_field')
     const lastOpenRaw = row[subCol.last_open_date].trim()
     if (!isIsoDate(signup) || (lastOpenRaw !== '' && !isIsoDate(lastOpenRaw))) return q('bad_date')
-    // D-78: a status that is present but not active/unsubscribed is quarantined, not thrown
+    // A status that is present but not active/unsubscribed is quarantined, not thrown
     // (the oracle's own copy of worker/ingest/quarantine.ts's classifySubscriberRow rule).
     if (status !== 'active' && status !== 'unsubscribed') return q('unknown_status')
 
@@ -478,14 +477,14 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
   const subscribers = new Map<string, ExpectedSubscriber>()
   for (const [emailNorm, group] of merging) {
     const pkey = await pkeyForEmailNorm(secret, emailNorm)
-    // email_raw: the untrimmed text of the lowest file line (02 §Dedupe "first spelling seen").
-    // GAP: no design doc says email_raw is kept verbatim, untrimmed, and never read (21 §6 G3).
+    // email_raw: the untrimmed text of the lowest file line ("first spelling seen").
+    // GAP: no written rule says email_raw is kept verbatim, untrimmed, and never read; this follows the app.
     const emailRaw = group.rawByLine.reduce((best, r) => (r.line < best.line ? r : best)).raw
     const signupDate = group.signupDates.reduce((a, b) => (b.signup < a.signup ? b : a)).signup
     const status: 'active' | 'unsubscribed' = group.statuses.includes('unsubscribed')
       ? 'unsubscribed'
       : 'active'
-    // source: earliest-signup non-blank row; tie -> earlier line (D-70 #9).
+    // source: earliest-signup non-blank row; tie -> earlier line (T-HARD-9).
     let source: string | null = null
     if (group.sourcesBySignup.length > 0) {
       const best = group.sourcesBySignup.reduce((a, b) =>
@@ -528,7 +527,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
   const subRowsIn = sub.rows.length
   const subMerged = [...merging.values()].reduce((sum, g) => sum + (g.rawByLine.length - 1), 0)
 
-  // ---- web_events.csv (02 §Linking 2, 3; D-49)
+  // ---- web_events.csv (web → subscriber linking; a visitor's first page is its earliest event's)
   const web = parseCsvStrict(csvs.webEvents, 'web_events.csv')
   const webCol = columnIndex('web_events.csv', web.header, [
     'visitor_id',
@@ -559,7 +558,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     const page = row[webCol.page].trim()
     const rawTs = row[webCol.timestamp].trim()
     const emailRaw = row[webCol.email].trim()
-    // Order mirrors worker/ingest/web.ts's classifyWebRow (09 D-78), re-derived independently:
+    // Order mirrors worker/ingest/web.ts's classifyWebRow, re-derived independently:
     // blank_row, missing_field, invalid_email, bad_date, misplaced_email.
     if (visitorId === '' || page === '' || rawTs === '') return q('missing_field')
     let emailNorm: string | null = null
@@ -571,19 +570,19 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     if (!m) return q('bad_date')
     const eventTs = `${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`
     const utm = canonicalSource(row[webCol.utm_source])
-    // D-78: a case-insensitive /subscribe match (query string and one trailing slash still
+    // A case-insensitive /subscribe match (query string and one trailing slash still
     // count), the oracle's own copy — never worker/ingest/web.ts's isSubscribePage.
     if (emailNorm !== null && !oracleIsSubscribePage(page)) return q('misplaced_email')
 
     // Stateful (needs the visitor map, so it stays here rather than in the checks above): a
     // second, different /subscribe email for a visitor that already has one is quarantined and
-    // not added as an event; the visitor keeps its first email (file order, D-78).
+    // not added as an event; the visitor keeps its first email (file order).
     const existing = visitorsBuild.get(visitorId)
     if (emailNorm !== null && existing !== undefined && existing.emails.size > 0 && !existing.emails.has(emailNorm)) {
       return q('conflicting_email')
     }
 
-    // GAP: web_events.id = 1-based index among kept rows (21 §6 G5); no design doc names this rule.
+    // GAP: web_events.id = 1-based index among kept rows; no written rule names this, it follows the app.
     events.push({ id: events.length + 1, visitor_id: visitorId, page, event_ts: eventTs, utm_source: utm })
     const v = existing ?? {
       emails: new Set<string>(),
@@ -631,7 +630,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     })
   }
 
-  // ---- app_users.csv (02 §Linking 1)
+  // ---- app_users.csv (app → subscriber linking)
   const app = parseCsvStrict(csvs.appUsers, 'app_users.csv')
   const appCol = columnIndex('app_users.csv', app.header, ['user_id', 'email', 'created_at'])
   const appUsers: ExpectedAppUser[] = []
@@ -641,7 +640,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     const q = (reason: QuarantineReason): void => {
       quarantine.push({ file: 'app_users', line_no: lineNo, reason, raw_row: toCsvRecord(row) })
     }
-    // Order mirrors worker/ingest/app.ts's classifyAppRow (09 D-78): blank_row, missing_field
+    // Order mirrors worker/ingest/app.ts's classifyAppRow: blank_row, missing_field
     // (email), invalid_email, missing_field (user_id/created_at), bad_date — then, once a row
     // can become an app user, the stateful duplicate_user_id check below.
     if (row.every((field) => field.trim() === '')) return q('blank_row')
@@ -653,7 +652,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     const createdAt = row[appCol.created_at].trim()
     if (userId === '' || createdAt === '') return q('missing_field')
     if (!isIsoDate(createdAt)) return q('bad_date')
-    // 21 §2.4: never print a raw id; cite both CSV lines instead (this one is now in the
+    // Never print a raw id; cite both CSV lines instead (this one is now in the
     // quarantine's own raw_row, same as every other reason).
     const firstLine = firstLineByUserId.get(userId)
     if (firstLine !== undefined) return q('duplicate_user_id')
@@ -667,7 +666,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
     })
   })
 
-  // ---- site visits per email in [TODAY-30 .. TODAY], both ends included, by EVENT count (02 §Derived)
+  // ---- site visits per email in [TODAY-30 .. TODAY], both ends included, by EVENT count
   const windowFrom = addDays(TODAY, -30)
   const emailByVisitorId = new Map<string, string | null>()
   for (const v of visitors.values()) emailByVisitorId.set(v.visitor_id, v.email_norm)
@@ -686,7 +685,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
   for (const v of visitors.values()) {
     if (v.email_norm === null) continue
     const pkey = subscribersByEmail.get(v.email_norm)
-    if (pkey === undefined) continue // 02 §Edge cases: a web email absent from subscribers.csv (0 on this data)
+    if (pkey === undefined) continue // a web email absent from subscribers.csv (0 on this data)
     const s = subscribers.get(pkey)
     if (s === undefined) continue
     s.web.visitor_hashes.push(v.visitor_hash)
@@ -795,7 +794,7 @@ export async function buildExpected(csvs: OracleCsvs, secret: string): Promise<O
 }
 
 // ---------------------------------------------------------------------------------------------
-// §2.3 "Webhook data in the store" — the oracle resolves app_events itself, independent of
+// Webhook data in the store — the oracle resolves app_events itself, independent of
 // worker/identity/resolve.ts. Not part of buildExpected (which is seed-only); the test file calls
 // this after sending real signed webhooks, with the store's own app_events + device_identity rows.
 // ---------------------------------------------------------------------------------------------
@@ -808,19 +807,19 @@ export interface StoredAppEvent {
 }
 
 export interface ResolvedAppEvents {
-  /** user_id -> count of events resolved to them in [TODAY-30 .. +inf) by event day (D-01: no upper bound). */
+  /** user_id -> count of events resolved to them in [TODAY-30 .. +inf) by event day (no upper bound). */
   countByUserId: Map<string, number>
-  /** device_id -> resolved owner (the identified event with the latest event_ts; D-43). */
+  /** device_id -> resolved owner (the identified event with the latest event_ts). */
   deviceOwner: Map<string, string>
-  /** device/user pairs where the resolution is ambiguous (two users tie on event_ts for one device; 21 §2.3). */
+  /** device/user pairs where the resolution is ambiguous (two users tie on event_ts for one device). */
   ambiguousDevices: string[]
 }
 
 /**
- * 01 §Identity resolution, D-43: an event's own user_id, else the device's identified user with
+ * Identity resolution: an event's own user_id, else the device's identified user with
  * the latest event_ts. A same-event_ts tie between two different users on one device cannot be
  * settled from the rows alone (arrival order wins, which the stored rows do not carry); such a
- * device is reported as ambiguous, not diffed as a mismatch (21 §2.3).
+ * device is reported as ambiguous, not diffed as a mismatch.
  */
 export function resolveAppEvents(events: readonly StoredAppEvent[]): ResolvedAppEvents {
   const byDevice = new Map<string, StoredAppEvent[]>()
@@ -848,16 +847,16 @@ export function resolveAppEvents(events: readonly StoredAppEvent[]): ResolvedApp
     if (owner === null) continue
     if (ambiguousDevices.includes(e.device_id) && e.user_id === null) continue
     const day = e.event_ts.slice(0, 10)
-    if (day >= windowFrom) countByUserId.set(owner, (countByUserId.get(owner) ?? 0) + 1) // D-01: no upper bound
+    if (day >= windowFrom) countByUserId.set(owner, (countByUserId.get(owner) ?? 0) + 1) // no upper bound
   }
   return { countByUserId, deviceOwner, ambiguousDevices }
 }
 
 // ---------------------------------------------------------------------------------------------
-// §2.5 "D-62 review" — Fellegi–Sunter scoring, independent of worker/dedupe/score.ts
+// Possible-duplicate review — Fellegi–Sunter scoring, independent of worker/dedupe/score.ts
 // ---------------------------------------------------------------------------------------------
 
-/** `first.last` before trailing digits; `null` when nothing is left (09 D-62). */
+/** `first.last` before trailing digits; `null` when nothing is left (the name stem). */
 export function nameStem(emailNorm: string): string | null {
   const at = emailNorm.lastIndexOf('@')
   const local = at < 0 ? emailNorm : emailNorm.slice(0, at)
@@ -877,7 +876,7 @@ export interface DuplicatesResult {
   weights: Record<ScoredFieldName, { m: number; u: number; agreeing: number }>
 }
 
-/** Every candidate pair, scored by the oracle's own Fellegi–Sunter port of 09 D-62.
+/** Every candidate pair, scored by the oracle's own Fellegi–Sunter port of the duplicate scoring.
  * `sharedDevicePairs`: pkey-pair keys (`a|b`, a<b) seen on one app device (identified events). */
 export async function scoreDuplicates(
   readers: readonly ExpectedPairInput[],

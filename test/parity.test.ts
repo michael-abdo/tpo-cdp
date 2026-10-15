@@ -31,11 +31,11 @@ import {
   visitorHash,
 } from './parity/oracle'
 
-// D-75 (09 decision log): a second, independent
+// Parity: a second, independent
 // implementation recomputes every subscriber's expected record straight from the raw CSV bytes
 // (test/parity/oracle.ts, never importing worker/, shared/ or src/ product code) and diffs it
 // against the real seeded store. T-PAR-1..10 below. Reports name pkeys, visitor_hash, event ids
-// and CSV line numbers only, never emails or other raw ids (21 §2.4); T-PAR-9 asserts this itself
+// and CSV line numbers only, never emails or other raw ids; T-PAR-9 asserts this itself
 // by scanning the built report text.
 
 interface Mismatch {
@@ -47,7 +47,7 @@ interface Mismatch {
   actual: string
 }
 
-/** 21 §2.4: these fields are PII; a mismatch on one prints only the two lengths, never the values. */
+/** These fields are PII; a mismatch on one prints only the two lengths, never the values. */
 const PII_FIELDS = new Set(['email_norm', 'email_raw', 'visitor_id', 'user_id', 'raw_row'])
 
 function shown(field: string, value: unknown): string {
@@ -118,7 +118,7 @@ beforeAll(async () => {
   secret = piiKeySecret()
   oracle = await buildExpected({ subscribers: subscribersCsv, webEvents: webCsv, appUsers: appCsv }, secret)
 
-  // 21 §2.3 "Key probe first": before any diff, check pkey = HMAC(secret, email_norm) on 10
+  // Key probe first: before any diff, check pkey = HMAC(secret, email_norm) on 10
   // profiles, so a wrong secret stops with one line instead of thousands of mismatches.
   const { results: probeRows } = await env.DB.prepare(
     'SELECT pkey, email_norm FROM profiles WHERE email_norm IS NOT NULL LIMIT 10',
@@ -203,7 +203,7 @@ describe('T-PAR-1 oracle independence', () => {
 
 // -------------------------------------------------------------------------------------------
 // Shared table builders — one SELECT + expected-map per table, used by T-PAR-2..5 (the real diff)
-// and T-PAR-10 (the harness-can-fail check), so the two never drift apart (21 §4.1 item 6).
+// and T-PAR-10 (the harness-can-fail check), so the two never drift apart.
 // -------------------------------------------------------------------------------------------
 
 const SUBSCRIBER_FIELDS = [
@@ -247,7 +247,7 @@ const PROFILE_FIELDS = ['kind', 'created_at', 'engagement_score', 'email_norm'] 
 
 /**
  * app_events_last_30d by email_norm, read fresh from the store every call (resolved the oracle's
- * own way, 21 §2.3 "Webhook data in the store"). On the seed this is empty, so every builder
+ * own way). On the seed this is empty, so every builder
  * below gives the same answer whether it runs before or after T-PAR-8's webhooks — the stored
  * engagement_score the builders compare against is exactly as live as the one the app keeps.
  */
@@ -296,7 +296,7 @@ async function profilesTable() {
   return { expected, got, fields: PROFILE_FIELDS }
 }
 
-// 21 §4.1 item 2: v_profiles' full 11 non-key columns, not only the app/web half.
+// v_profiles' full 11 non-key columns, not only the app/web half.
 const V_PROFILES_FIELDS = [
   'has_app',
   'app_created_at',
@@ -338,7 +338,7 @@ async function vProfilesTable() {
   }
   for (const [pkey, a] of oracle.appOnlyProfiles) {
     // app_only has no subscriber row: v_profiles LEFT JOINs subscribers, so every
-    // subscriber-sourced column is NULL (D-75: the view holds no formula either way).
+    // subscriber-sourced column is NULL (the view holds no formula either way).
     expected.set(pkey, {
       pkey,
       has_app: 1,
@@ -475,7 +475,7 @@ describe('T-PAR-3 quarantine + import_runs', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-3b (09 D-78): one planted case per new quarantine reason, each a D-47 minimal edit of a
+// T-PAR-3b: one planted case per newer quarantine reason, each a minimal edit of a
 // real CSV line, recomputed by the oracle's OWN quarantine rules (test/parity/oracle.ts; no
 // import from worker/ingest) and independently by buildSeed (the app's real pipeline) on the
 // SAME edited text, then diffed field by field. This never touches the shared seeded store
@@ -499,7 +499,7 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
    * not just the one file's quarantine rows plantedQuarantine() diffs above. A rule that quarantines
    * a row but ALSO lets it through as an event (e.g. a conflicting_email rule that still pushes
    * the row onto `events` after queuing it) passes a quarantine-only diff but fails rows_out and
-   * events.length here, on both engines reading the SAME edited text (09 D-78(b)). */
+   * events.length here, on both engines reading the SAME edited text. */
   function expectSameLinking(expected: OracleResult, seed: Seed): void {
     for (const run of expected.importRuns) {
       const seedRun = seed.runs.find((r) => r.file === run.file)
@@ -517,7 +517,7 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
   }
 
   /** A web-events case's visitor (by its real `visitor_id`, never printed raw here) must carry
-   * the same `email_norm`/`signup_ts` in both engines: the half of 02 §Linking 3/4 a
+   * the same `email_norm`/`signup_ts` in both engines: the linking half a
    * quarantine-row-only diff never recomputes. */
   async function expectSameVisitor(expected: OracleResult, seed: Seed, visitorId: string): Promise<void> {
     const hash = await visitorHash(piiKeySecret(), visitorId)
@@ -627,7 +627,7 @@ describe('T-PAR-3b planted D-78 cases, oracle vs. app, independently recomputed'
         raw_row: 'v_c9e136fd6d,/subscribe,2026-09-03 00:51:44,,julia.evans230@gmail.com',
       },
     ])
-    // Only that row is set aside (21 §D-78): the visitor keeps joy's first email/signup, never
+    // Only that row is set aside: the visitor keeps joy's first email/signup, never
     // julia's planted one, and (via plantedQuarantine's expectSameLinking) the row never also
     // becomes an event in either engine — the exact bug expectSameLinking guards against.
     await expectSameVisitor(expected, seed, 'v_c9e136fd6d')
@@ -677,15 +677,15 @@ describe('T-PAR-4 web visitors + events', () => {
     expect(withBoth.length).toBe(10)
   })
 
-  // Hardest case #6 (the strict `<` at lookup.ts:193) and case #5's pre-signup cut (21 §3) are
+  // The strict `<` at lookup.ts:193 and the pre-signup cut are
   // unguarded if only the raw tables are checked: a lookup.ts bug in how it reads those same
   // rows would still pass T-PAR-4's row-level diff above. This calls the real GET /api/lookup
   // for every linked subscriber and diffs its per-pkey events/pre_signup count against the
-  // oracle, so the 1,930 total (02 §Counts) comes from the app, not only from the oracle itself.
+  // oracle, so the 1,930 total comes from the app, not only from the oracle itself.
   it('GET /api/lookup per linked subscriber: events and pre-signup events match the oracle (M13 guard: lookup.ts:193 strict <)', async () => {
     // 1,400 real HTTP round trips through the full session + lookup pipeline; vitest's default
-    // 5s per-test timeout is tight once `npm test` runs every file's workers concurrently (21
-    // §4.2's own budget is 15s for this whole file, measured in isolation at ~2.5s above).
+    // 5s per-test timeout is tight once `npm test` runs every file's workers concurrently (the
+    // budget is 15s for this whole file, measured in isolation at ~2.5s above).
     const cookie = await loginCookie()
     const linked = [...oracle.subscribers.values()].filter((s) => s.web.visitor_hashes.length > 0)
     expect(linked.length).toBe(1400)
@@ -742,7 +742,7 @@ describe('T-PAR-4 web visitors + events', () => {
     }
     expect(lookupMismatches.map(reportLine)).toEqual([])
     expect(totalEventsFromApp).toBe(linked.reduce((sum, s) => sum + s.web.events, 0))
-    expect(totalPreSignupFromApp).toBe(1930) // 02 §Counts, now read from the app, not only the oracle
+    expect(totalPreSignupFromApp).toBe(1930) // now read from the app, not only the oracle
   }, 30_000)
 })
 
@@ -755,7 +755,7 @@ describe('T-PAR-5 app users', () => {
     const { missing, extra } = diffAndAssert('app_users', 'csv_line', expected, got, fields, report)
     expect(missing).toEqual([])
     expect(extra).toEqual([])
-    expect(extraUserIds.length).toBe(0) // never prints the raw ids themselves (21 §2.4)
+    expect(extraUserIds.length).toBe(0) // never prints the raw ids themselves
     expect(oracle.appUsers.length).toBe(930)
     const subscriberEmails = new Set([...oracle.subscribers.values()].map((s) => s.email_norm))
     const linked = oracle.appUsers.filter((u) => subscriberEmails.has(u.email_norm))
@@ -778,7 +778,7 @@ describe('T-PAR-5 app users', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-6: every 02 §Counts number, from the oracle alone (plus two read-time checks against
+// T-PAR-6: every seed count, from the oracle alone (plus two read-time checks against
 // the real API/handler, guarding against small changes to the derived-value SQL)
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
@@ -965,7 +965,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
       })
     expect(bySplit(visitedShadrachs)).toEqual({ active: 366, unsub: 40 })
 
-    // D-69 items 2+3+6 combined, and the brief preset combined with #3/#6 (02 §Counts; 21 §4.1 item 3).
+    // Filters combined: new subscriber + the page, and the brief preset + site visits or the page.
     expect(bySplit((s) => s.new_subscriber && visitedShadrachs(s))).toEqual({ active: 120, unsub: 10 })
     const preset = (s: (typeof subs)[number]) =>
       s.source === 'instagram' && (s.days_since_open === null || s.days_since_open >= 30)
@@ -1006,7 +1006,7 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
   })
 
   // Read-time derived values, checked against the real segment endpoints, not only recomputed
-  // inside the oracle (21 §2.5 "Derived"). Guards against a +1 in days_since_open.sql and a
+  // inside the oracle. Guards against a +1 in days_since_open.sql and a
   // `<=` → `<` in cold.sql: both would move these counts but leave the oracle-only tests above untouched.
   it('the brief preset and the built-in cold metric match the real segment endpoints: 177/55, 147/41', async () => {
     const cookie = await loginCookie()
@@ -1038,10 +1038,10 @@ describe('T-PAR-6 02 §Counts numbers reproduced by the oracle alone', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-6b: 21 §3 #17 "absent today, guarded anyway" — a non-zero here names the case and
+// T-PAR-6b: "absent today, guarded anyway" — a non-zero here names the case and
 // fails, so a future CSV cannot silently exercise an unproven merge/edge rule. Non-ASCII bytes,
 // quoted fields, a repeated user_id, 2 emails on one visitor and web/app quarantine are already
-// guarded: buildExpected() in beforeAll would have thrown on any of them (21 §2.1).
+// guarded: buildExpected() in beforeAll would have thrown on any of them.
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-6b absent-today guards (21 §3 #17)', () => {
   it('plus-addressing and Gmail dot aliases: 0 on this data', () => {
@@ -1125,8 +1125,8 @@ describe('T-PAR-6b absent-today guards (21 §3 #17)', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-6c: 21 §3 hardest cases #9 (never opened) and #10 (TODAY boundaries), each a named
-// assertion of every count the spec lists for that case, from the oracle alone.
+// T-PAR-6c: the never-opened and TODAY-boundary cases, each a named
+// assertion of every count for that case, from the oracle alone.
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-6c hardest cases #9 and #10 (21 §3)', () => {
   it('#9 never opened: 470 (155 unsubscribed; 325 cold now; 145 not cold yet); 152 still score > 0 from site visits', () => {
@@ -1153,8 +1153,8 @@ describe('T-PAR-6c hardest cases #9 and #10 (21 §3)', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-6d: partial/fuzzy lookup fixtures (02 §Counts lines 64/66, D-52/D-59). The oracle never
-// imports worker/lookup/fuzzy.ts (21 §2.1) — "partial" is its own substring match over every
+// T-PAR-6d: partial/fuzzy lookup fixtures. The oracle never
+// imports worker/lookup/fuzzy.ts — "partial" is its own substring match over every
 // profile email (subscriber + app_only, the same set GET /api/lookup/search's grp 0/1 reads) and
 // a matching app_users.user_id prefix (grp 2); "fuzzy" is its own damerauLevenshtein, the same
 // metric the fixtures were first computed with.
@@ -1195,7 +1195,7 @@ describe('T-PAR-6d partial/fuzzy lookup fixtures (21 §4.1 item 3)', () => {
 })
 
 // -------------------------------------------------------------------------------------------
-// T-PAR-7: D-62 table equals GET /api/duplicates
+// T-PAR-7: the possible-duplicates table equals GET /api/duplicates
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-7 D-62 possible duplicates', () => {
   it('1,704 candidate pairs over 788 stems (1,977 emails); 0 auto, 16 review (each 76); the chance check (≈17 by chance, ≈97 without the device weight, the device weight itself ≈ -3.32)', async () => {
@@ -1215,8 +1215,8 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
     const reviewPairs = result.pairs.filter((x) => x.band === 'review')
     for (const p of reviewPairs) expect(p.score).toBe(76)
 
-    // 09 D-62 "the chance check": pairs agreeing on all three soft fields vs what independence
-    // alone would predict, and what the shared_device field alone is worth (21 §4.1 item 3).
+    // The chance check: pairs agreeing on all three soft fields vs what independence
+    // alone would predict, and what the shared_device field alone is worth.
     const allSoftAgree = result.pairs.filter(
       (p) => p.agreement.domain && p.agreement.signup_gap && p.agreement.source,
     ).length
@@ -1263,14 +1263,14 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
     const gotPairIds = new Set(body.review.map((p) => p.pair_id))
     expect(gotPairIds).toEqual(expectedPairIds)
 
-    // Per-pair scores, exact (21 §2.5).
+    // Per-pair scores, exact.
     const expectedScoreByPairId = new Map(
       result.pairs.filter((p) => p.band !== 'hidden').map((p) => [p.pair_id, p.score]),
     )
     const gotScoreByPairId = new Map(body.review.map((p) => [p.pair_id, p.score]))
     expect(gotScoreByPairId).toEqual(expectedScoreByPairId)
 
-    // Weights, within 1e-9 (21 §2.3 "D-62 weights").
+    // Weights, within 1e-9.
     for (const field of ['domain', 'signup_gap', 'source', 'shared_device'] as const) {
       const expectedField = result.weights[field]
       const gotField = body.weights[field]
@@ -1288,7 +1288,7 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
     const target = listBody.review[0]
     if (target === undefined) throw new Error('parity: no review-band pair available to submit a decision on')
 
-    // 21 §2.5 "a review changes no other table": every table a review could plausibly touch,
+    // A review changes no other table: every table a review could plausibly touch,
     // not only subscribers/profiles.
     const countsBefore = await Promise.all(
       ['subscribers', 'profiles', 'web_visitors', 'web_events', 'app_users', 'import_runs', 'quarantine'].map(
@@ -1327,16 +1327,16 @@ describe('T-PAR-7 D-62 possible duplicates', () => {
 describe('T-PAR-8 store-side (webhook) cases', () => {
   const nextEventId = eventIdPool()
 
-  // 02 §Counts line 63 ("used the app in the last 7 days"), computed from the ORACLE's own
-  // resolveAppEvents (21 §2.3), never from a store SQL count: every event this describe block
+  // "Used the app in the last 7 days", computed from the ORACLE's own
+  // resolveAppEvents, never from a store SQL count: every event this describe block
   // sends is recorded here in file order, and the count below re-resolves ownership from that
   // in-memory list alone. Before any send it is the CSV-only oracle set (0 app events, by
   // construction); each sendWebhook call below also pushes here, right after a 202.
   const sentAppEvents: StoredAppEvent[] = []
 
   /** Distinct resolved user_ids with an event at or after TODAY-6 (7 days inclusive), from the
-   * oracle's own device resolution over `sentAppEvents` alone (D-69 item 5, simplified: the
-   * app_active_within_days segment filter lives on the `segments` branch, not this one, 21 §7). */
+   * oracle's own device resolution over `sentAppEvents` alone (a simplified check of the
+   * app_active_within_days segment filter). */
   function activeLast7FromOracle(): number {
     const resolved = resolveAppEvents(sentAppEvents)
     const cutoff = `${addDays(TODAY, -6)}T00:00:00Z`
@@ -1349,7 +1349,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
   }
 
   /** The subscriber a real app_users.csv user_id links to, by the oracle's own fold (never an
-   * email local part in the error, 21 §2.4). */
+   * email local part in the error). */
   function subscriberForUserId(userId: string) {
     const emailNorm = oracle.appUsers.find((u) => u.user_id === userId)?.email_norm
     return emailNorm === undefined
@@ -1358,7 +1358,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
   }
 
   it("julia.evans230's engagement recomputes exactly (hardest case #1, the .5-tie formula) after one signed read_story: 28 -> 31 (02 §Counts)", async () => {
-    // Real app_users.csv row (09 D-11, D-47): u_2b6447a3, no web history.
+    // Real app_users.csv row: u_2b6447a3, no web history.
     const userId = 'u_2b6447a3'
     const subscriber = subscriberForUserId(userId)
     if (subscriber === undefined) throw new Error('parity: expected app_users.csv line 1 fixture missing from the oracle')
@@ -1366,10 +1366,10 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       .bind(subscriber.pkey)
       .first<{ engagement_score: number }>()
     expect(before?.engagement_score).toBe(subscriber.profile.engagement_score)
-    expect(before?.engagement_score).toBe(28) // 02 §Counts, 09 D-53
+    expect(before?.engagement_score).toBe(28)
 
-    // 02 §Counts line 63: "used the app in the last 7 days: 0 on the seed (no app events)" —
-    // from the oracle's own set (0 from the CSV-only oracle set; 21 §2.3), not a store SQL count.
+    // "Used the app in the last 7 days: 0 on the seed (no app events)" —
+    // from the oracle's own set (0 from the CSV-only oracle set), not a store SQL count.
     expect(activeLast7FromOracle()).toBe(0)
 
     const eventId = nextEventId()
@@ -1392,22 +1392,22 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       .first<{ engagement_score: number }>()
     const expectedAfter = engagementScore(subscriber.days_since_open, 1, subscriber.web.site_visits_30d)
     expect(after?.engagement_score).toBe(expectedAfter)
-    expect(after?.engagement_score).toBe(31) // 02 §Counts, 09 D-53
+    expect(after?.engagement_score).toBe(31)
 
-    // 1 right after, by running the oracle's own resolveAppEvents over the sent events (21 §2.3),
+    // 1 right after, by running the oracle's own resolveAppEvents over the sent events,
     // never a store SQL count.
     expect(activeLast7FromOracle()).toBe(1)
   })
 
   it('F1 repro (hardest case #1, ranked first): emily.green827 at exactly 24 days since open, 0 site visits, scores the exact half-up 13 after one app event, never the float-rounded 12', async () => {
-    // Real app_users.csv line 12 (09 D-11, D-47): u_ffe05a36, last_open_date 2026-09-04 (24 days
-    // before TODAY), 0 web history. This is 21 §3 case 1's own example data point.
+    // Real app_users.csv line 12: u_ffe05a36, last_open_date 2026-09-04 (24 days
+    // before TODAY), 0 web history: the .5-tie case's own example data point.
     const userId = 'u_ffe05a36'
     const subscriber = subscriberForUserId(userId)
     if (subscriber === undefined) throw new Error('parity: expected app_users.csv line 12 fixture missing from the oracle')
     expect(subscriber.days_since_open).toBe(24)
     expect(subscriber.web.site_visits_30d).toBe(0)
-    expect(subscriber.profile.engagement_score).toBe(10) // seed: 0 app events, matches 21 §3 case 1
+    expect(subscriber.profile.engagement_score).toBe(10) // seed: 0 app events
 
     const res = await sendWebhook(
       JSON.stringify({
@@ -1430,8 +1430,8 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
   })
 
   it('T-PAR-8 app-events cap (M A2 guard): 11 real signed webhooks for one real linked subscriber store the exact capped-at-10 score, never an 11th-event score', async () => {
-    // Real app_users.csv line 568 (09 D-11, D-47): u_9ecb49d6, hope.hall130@gmail.com — a
-    // different real linked subscriber than julia.evans230's test above, as this item requires.
+    // Real app_users.csv line 568: u_9ecb49d6, hope.hall130@gmail.com — a
+    // different real linked subscriber than julia.evans230's test above.
     const userId = 'u_9ecb49d6'
     const subscriber = subscriberForUserId(userId)
     if (subscriber === undefined) throw new Error('parity: expected app_users.csv line 568 fixture missing from the oracle')
@@ -1458,7 +1458,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
       .bind(subscriber.pkey)
       .first<{ engagement_score: number }>()
     // The oracle's own cap: min(APP_EVENTS_CAP, 11) === min(APP_EVENTS_CAP, 10), so 11 real events
-    // must store exactly the same score as the cap itself (21 §2.1 "exact arithmetic"). A mutant
+    // must store exactly the same score as the cap itself (exact arithmetic). A mutant
     // that lowers the app cap below 10 (e.g. Math.min(10 -> 9) in shared/derive.ts) stores a
     // different number here and fails this assertion.
     const expectedAfter = engagementScore(subscriber.days_since_open, EVENT_COUNT, subscriber.web.site_visits_30d)
@@ -1469,7 +1469,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
   })
 
   it('an unknown webhook user_id creates a stub profile with no email and a pkey the oracle can reproduce (hardest case #14/#16)', async () => {
-    // A real id (app_users.csv u_3380b6e6) with its last character removed (09 D-47): never occurs in the CSVs.
+    // A real id (app_users.csv u_3380b6e6) with its last character removed: never occurs in the CSVs.
     const unknownUserId = 'u_3380b6e'
     const res = await sendWebhook(
       JSON.stringify({
@@ -1489,7 +1489,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     const anyEmailPkeys = new Set([...oracle.subscribers.keys(), ...oracle.appOnlyProfiles.keys()])
     expect(anyEmailPkeys.has(expectedStubPkey)).toBe(false)
 
-    // 09 D-78(b): v_app_events — the view the assistant's app-activity counts read — resolves
+    // v_app_events — the view the assistant's app-activity counts read — resolves
     // this stub's own event to the independently recomputed stub pkey, matching Look up and
     // /events, instead of pkey NULL under the old email-only join (NULL = NULL is never true).
     const { results: stubViewRows } = await env.DB.prepare('SELECT event FROM v_app_events WHERE pkey = ?')
@@ -1500,7 +1500,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
 
   it('v_app_events: a second stub in the store, and the WHOLE view independently rebuilt and diffed (M5b guard: a stub join must match by user_id, never fan out to every stub)', async () => {
     // A second, distinct unknown user_id: app_users.csv:7's real u_c0d06d19 with its last
-    // character removed (09 D-47), unused anywhere earlier in this file.
+    // character removed, unused anywhere earlier in this file.
     const secondUnknown = 'u_c0d06d1'
     const secondDevice = 'd_c0d06d1'
     const res = await sendWebhook(
@@ -1583,7 +1583,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
         event: 'login',
         user_id: userId,
         device_id: device,
-        timestamp: `${TODAY}T12:00:00Z`, // same second as the anonymous app_open (21 §3 #6/#16)
+        timestamp: `${TODAY}T12:00:00Z`, // same second as the anonymous app_open
       }),
     )
     expect(loginRes.status, await loginRes.clone().text()).toBe(202)
@@ -1670,7 +1670,7 @@ describe('T-PAR-8 store-side (webhook) cases', () => {
     expect(resolved.ambiguousDevices).toEqual([])
     const storedOwners = new Map(identity.map((r) => [r.device_id, r.user_id]))
 
-    // Masked (never printed raw, 21 §2.4), both directions: the oracle names no device the
+    // Masked (never printed raw), both directions: the oracle names no device the
     // store lacks, and the store names no device the oracle lacks.
     const resolvedPairs = await Promise.all(
       [...resolved.deviceOwner].map(async ([d, o]) => `${await mask(d)}:${await mask(o)}`),
@@ -1751,12 +1751,12 @@ describe('T-PAR-9 report scan', () => {
 // -------------------------------------------------------------------------------------------
 // T-PAR-10: planted single-value swaps are each reported (the harness can fail), for every
 // compared column of every table — not only subscribers.source — all done in memory on a copy
-// of the already-fetched rows, so the real test database is never written (21 §4.1 item 6).
+// of the already-fetched rows, so the real test database is never written.
 // -------------------------------------------------------------------------------------------
 describe('T-PAR-10 the harness can fail', () => {
   /** The first two keys whose real values for `field` differ, or null when every row agrees
    * (e.g. app_users.from_csv, which this data holds as 1 on every row: nothing real to swap in,
-   * and 09 D-47 forbids inventing one). */
+   * and inventing one is not allowed). */
   function firstDifferingPair(got: Map<string, Row>, field: string): [string, unknown] | null {
     let first: { key: string; value: unknown } | undefined
     for (const [key, row] of got) {
@@ -1799,7 +1799,7 @@ describe('T-PAR-10 the harness can fail', () => {
     const { expected, got, fields } = await build()
     for (const field of fields) {
       const found = firstDifferingPair(got, field)
-      if (found === null) continue // no second real value exists for this column on this data (09 D-47)
+      if (found === null) continue // no second real value exists for this column on this data
       const [key, otherValue] = found
       assertSwapCaught(label, keyKind, expected, got, key, field, otherValue)
     }
