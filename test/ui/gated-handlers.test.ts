@@ -38,6 +38,22 @@ function skipLiteral(text: string, i: number): number {
   return i + 1
 }
 
+/** If a line comment or a block comment starts at `text[i]`, the index of its last character; else -1.
+ * The scanners below skip comments so an apostrophe in prose (`the page's`) is never read as the
+ * start of a string literal. */
+function commentEnd(text: string, i: number): number {
+  if (text[i] !== '/') return -1
+  if (text[i + 1] === '/') {
+    const nl = text.indexOf('\n', i)
+    return nl < 0 ? text.length - 1 : nl
+  }
+  if (text[i + 1] === '*') {
+    const close = text.indexOf('*/', i + 2)
+    return close < 0 ? text.length - 1 : close + 1
+  }
+  return -1
+}
+
 /** `export function Name(` ... `) { … }`'s body. Finds the parameter list's matching `)` by
  * counting parens (skipping literals, so a type like `{ source: CsvSource }` inside the params
  * never confuses this count), then brace-counts from the first `{` after it — these components
@@ -45,13 +61,20 @@ function skipLiteral(text: string, i: number): number {
  * Throws loud if the name isn't found or nothing closes — this guard must not silently scan
  * nothing. */
 function exportedFunctionBody(text: string, name: string): string {
-  const sigStart = text.indexOf(`export function ${name}(`)
-  if (sigStart < 0) throw new Error(`gated-handlers: export function ${name} not found`)
+  // Exported or not: a page-local component that gates a control is held to the same rules.
+  const sig = new RegExp(`(?:^|\\n)(?:export )?function ${name}\\(`).exec(text)
+  if (sig === null) throw new Error(`gated-handlers: function ${name} not found`)
+  const sigStart = sig.index
   const parenStart = text.indexOf('(', sigStart)
   let depth = 0
   let i = parenStart
   for (; i < text.length; i++) {
     const c = text[i]
+    const ce = commentEnd(text, i)
+    if (ce >= 0) {
+      i = ce
+      continue
+    }
     if (c === '"' || c === "'" || c === '`') {
       i = skipLiteral(text, i) - 1
       continue
@@ -69,6 +92,11 @@ function exportedFunctionBody(text: string, name: string): string {
   i = bodyStart
   for (; i < text.length; i++) {
     const c = text[i]
+    const ce = commentEnd(text, i)
+    if (ce >= 0) {
+      i = ce
+      continue
+    }
     if (c === '"' || c === "'" || c === '`') {
       i = skipLiteral(text, i) - 1
       continue
@@ -87,7 +115,7 @@ function exportedFunctionBody(text: string, name: string): string {
  * entirely is caught by the per-page gated tests' own markup checks, not this file. */
 function gatedComponentNames(text: string): string[] {
   const names: string[] = []
-  for (const m of text.matchAll(/export function (\w+)\(/g)) {
+  for (const m of text.matchAll(/^(?:export )?function (\w+)\(/gm)) {
     // A function this simple paren/brace counter cannot bound (an unusual signature) is skipped,
     // not thrown: this scan only needs to find the components that DO call useGated, and every one
     // of them (checked by hand below) has a plain signature this counter bounds correctly.
@@ -113,6 +141,11 @@ function tagEnd(body: string, from: number): number {
   let depth = 0
   for (let i = from; i < body.length; i++) {
     const c = body[i]
+    const ce = commentEnd(body, i)
+    if (ce >= 0) {
+      i = ce
+      continue
+    }
     if (c === '"' || c === "'" || c === '`') {
       i = skipLiteral(body, i) - 1
       continue
@@ -132,6 +165,11 @@ function attributeBraceValue(body: string, attrStart: number): string {
   let depth = 0
   for (let i = open; i < body.length; i++) {
     const c = body[i]
+    const ce = commentEnd(body, i)
+    if (ce >= 0) {
+      i = ce
+      continue
+    }
     if (c === '"' || c === "'" || c === '`') {
       i = skipLiteral(body, i) - 1
       continue
@@ -219,6 +257,8 @@ describe('T-GATE-3: every gated handler does nothing but activate (source scan, 
 
   it('finds at least one gated component per feature id (sanity: the scan sees real components, not zero)', () => {
     const allBodies = files.flatMap(([, text]) => gatedComponentNames(text).map((n) => exportedFunctionBody(text, n)))
-    expect(allBodies.length).toBeGreaterThanOrEqual(Object.keys(FEATURES).length - 1) // work_sign_in's two homes are two components for one id
+    // One component can gate several features, so check ids, not a count of components.
+    const unseen = Object.keys(FEATURES).filter((id) => !allBodies.some((body) => body.includes(`useGated('${id}')`)))
+    expect(unseen).toEqual([])
   })
 })
