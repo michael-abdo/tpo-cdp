@@ -424,12 +424,23 @@ describe('09 D-81 #2: the time limit', () => {
     await expect(raceTimeout(neverWithinTest, 20)).rejects.toThrow()
   })
 
-  it('raceTimeout, given ms > 0, resolves normally (and clears its timer) when the promise wins the race', async () => {
+  // `toHaveBeenCalled()` alone passes for a clearTimeout call on *any* handle, including
+  // `clearTimeout(undefined)` — a shadowed or never-assigned `timer` leaks the real 3 s timer on
+  // every successful query (M4b, verified in a scratch worktree at HEAD d0430ca: kills the plain
+  // `clearTimeout(timer)` deletion too, M4, and passes 27/27 without this). Capturing the exact
+  // handle `setTimeout` returned and asserting `clearTimeout` was called with that same handle
+  // proves the timer this run actually started is the one cleared, not merely that some call to
+  // clearTimeout happened.
+  it('raceTimeout, given ms > 0, resolves normally and clears the exact timer it started when the promise wins the race', async () => {
+    const setSpy = vi.spyOn(globalThis, 'setTimeout')
     const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
     try {
       await expect(raceTimeout(Promise.resolve('ok'), 1000)).resolves.toBe('ok')
-      expect(clearSpy).toHaveBeenCalled()
+      const handle = setSpy.mock.results.find((r) => r.type === 'return')?.value
+      expect(handle).toBeDefined()
+      expect(clearSpy).toHaveBeenCalledWith(handle)
     } finally {
+      setSpy.mockRestore()
       clearSpy.mockRestore()
     }
   })
