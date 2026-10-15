@@ -1,12 +1,12 @@
 /**
- * What counts as PII for the model boundary (design 01 §PII denylist, 05 §What counts as
- * PII, 05 §Scanner, 09 D-17). Imported by the view introspection test (T-PII-2) and the
- * scanner; defined nowhere else.
+ * What counts as PII for the model boundary: emails, plus the raw user, device and visitor ids
+ * (stricter than needed, and it costs nothing). Imported by the view introspection test (T-PII-2)
+ * and the scanner; defined nowhere else.
  */
 
 import { INVISIBLE_CHARS } from './sql-sign'
 
-/** Columns no `v_*` view may select (01 §PII denylist). */
+/** Columns no `v_*` view may select. */
 export const PII_COLUMNS = [
   'email_norm',
   'email_raw',
@@ -26,7 +26,7 @@ export const EMAIL_REGEX = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 
 /**
  * One run of EMAIL_REGEX's local-part characters: the token Gate 1 compares with the known
- * local parts (09 D-70 #1). No `g` flag, as above.
+ * local parts. No `g` flag, as above.
  */
 export const LOCAL_PART_TOKEN = /[a-z0-9._%+-]+/i
 
@@ -41,7 +41,7 @@ export function foldSeparators(value: string): string {
 }
 
 /**
- * The shortest known local part Gate 1 redacts on its own (09 D-70 #1). Every local part in
+ * The shortest known local part Gate 1 redacts on its own. Every local part in
  * data/*.csv is longer (name, dot, surname, digits); a shorter one could be an ordinary word.
  */
 export const LOCAL_PART_MIN_CHARS = 6
@@ -58,7 +58,8 @@ export const RAW_ID_REGEX = /\b[udv]_[0-9a-f]{6,}\b/i
 const INVISIBLE_CHAR_TEST = new RegExp(INVISIBLE_CHARS.source, 'u')
 
 /**
- * The one normalizer every PII check runs text through first (09 D-79), in three stages so a
+ * The one normalizer every PII check runs text through first, so "can an email reach the model?"
+ * stays "no" for disguised addresses too. It runs in three stages so a
  * disguise cannot hide inside what an earlier stage folds (a full-width "ａｔ" inside "[ａｔ]" must
  * become plain "at" before the bracket mapping below can see it; a zero-width character spliced
  * into the middle of the word "at" must be dropped before the same mapping sees it; and a spelled
@@ -69,7 +70,7 @@ const INVISIBLE_CHAR_TEST = new RegExp(INVISIBLE_CHARS.source, 'u')
  *     (`shared/sql-sign.ts` `INVISIBLE_CHARS` — category `Cf` (U+00AD, U+180E, U+200B-U+200D,
  *     U+2060, the bidi controls U+202A-202E/U+2066-2069, U+FEFF and the rest) plus every other
  *     `Default_Ignorable_Code_Point` (U+034F, U+FE0F, U+180B, U+115F, U+3164 and the rest) —
- *     09 D-79 fixer round item 2: `Cf` alone missed these, which a model can still splice into
+ *     `Cf` alone misses these, and a model can still splice them into
  *     the middle of a disguise) is dropped, then Unicode NFKC folds what is left (the full-width
  *     `＠` U+FF20 and the small `﹫` U+FE6B to plain "@" on their own, full-width letters to
  *     ASCII, and so on).
@@ -85,8 +86,8 @@ const INVISIBLE_CHAR_TEST = new RegExp(INVISIBLE_CHARS.source, 'u')
  *     inside the brackets, their surrounding whitespace folded away too) — and, on its own, a
  *     BARE spelled "dot" between two labels (`data dot com` → `data.com`): safe unconditionally,
  *     because a dot alone, with no "@" anywhere, is never an email shape. A bare spelled "at" is
- *     deliberately left alone here (09 D-79 fixer round: folding every lone "at" on its own is
- *     what made "signed up at instagram.com" read as local "up", domain "instagram.com"). Every
+ *     deliberately left alone here (folding every lone "at" on its own would make "signed up at
+ *     instagram.com" read as local "up", domain "instagram.com"). Every
  *     "." this stage produces is marked as a disguised one, whether it came from a bracket/escape
  *     form or the bare spelled fold.
  *  3. Over stage 2's text (`AT_SHAPE_RE`): the full spoken shape "<local> at <domain>" — word-
@@ -145,10 +146,10 @@ const DOTTED = `${LABEL}(?:\\.${LABEL})*`
 const DOTTED_WITH_DOT = `${LABEL}(?:\\.${LABEL})+`
 
 /**
- * The top-level domains stage 2b's spelled "at" fold accepts as a disguised domain's TLD (09 D-79):
+ * The top-level domains stage 2b's spelled "at" fold accepts as a disguised domain's TLD:
  * every two-letter country code (`de`, `ai`, `ca`, `uk`…) plus the common generic ones, so a
- * spelled address with any of them ("press at example dot de") folds; an 11-entry list let
- * those through (the closure review's regression). One home, so ordinary prose that merely contains the word
+ * spelled address with any of them ("press at example dot de") folds; a short list would let
+ * the rest through. One home, so ordinary prose that merely contains the word
  * "dot" before some other noun ("Look at the dot plot below.", "Click at random dot points.")
  * never manufactures an "@" that was never there — its last label ("plot", "points") is not a
  * real TLD, so the match stays prose; a genuine disguised address ("protonmail dot com", "gmail
@@ -172,7 +173,7 @@ const DISGUISE_TOKEN_RE = new RegExp(
     '|(?<dotBr>\\s*(?:\\[\\s*dot\\s*\\]|\\(\\s*dot\\s*\\)|\\{\\s*dot\\s*\\})\\s*)' +
     '|(?<dotSpelled>(?<=[\\p{L}\\p{N}_-])\\s+dot\\s+(?=[\\p{L}\\p{N}_-]))' +
     // A literal "@" or "." padded with spaces between word characters ("joy . hall830 @
-    // protonmail . com"), the self-audit's unlisted spelling (09 D-79): folded like the others.
+    // protonmail . com"), another real way to write an address: folded like the others.
     // A "@" glued to the name with spaces after it ("press@ example.com") always folds; one with
     // a space before it folds only when the name looks like an address part (holds a ".", digit,
     // "_" or "+", or follows a spaced dot), so "visit us @ pourover.com" stays prose.
@@ -188,8 +189,8 @@ const DISGUISE_TOKEN_RE = new RegExp(
 // already hold only literal "."s, whichever stage 2a folded them from); word-bounded,
 // whitespace-separated only, so a hyphen or slash next to "at" never counts (LABEL already
 // swallows it: "look-at-this" is one label, never three words around whitespace). The trailing
-// negative lookahead rejects a match immediately followed by another "\s+at\s+<word>" (09 D-79
-// fixer round: see normalizeForScan's doc comment for "write to her at joy dot hall830 at
+// negative lookahead rejects a match immediately followed by another "\s+at\s+<word>" (see
+// normalizeForScan's doc comment for "write to her at joy dot hall830 at
 // protonmail dot com"). Matched with 'd' (hasIndices) so the caller can read where the domain
 // group actually falls, to check it for a disguised "." before folding anything.
 const AT_SHAPE_RE = new RegExp(`\\b(${DOTTED})\\s+at\\s+(${DOTTED_WITH_DOT})\\b(?!\\s+at\\s+${LABEL})`, 'gidu')
@@ -353,7 +354,7 @@ function foldDisguises(stage1: readonly FoldedToken[]): DisguiseToken[] {
 /**
  * Pure. Stage 2b (see AT_SHAPE_RE above): over stage 2a's tokens (each exactly one output
  * character), folds every "\s+at\s+" infix whose match's domain group both holds at least one
- * disguised "." and ends in a real TLD (DISGUISED_EMAIL_TLD_RE, 09 D-79 fixer round item 5) into
+ * disguised "." and ends in a real TLD (DISGUISED_EMAIL_TLD_RE) into
  * one "@" token; every other token passes through unchanged, so a plain domain's "at" (no
  * disguise found) and an ordinary "<word> dot <word>" whose last word is not a real TLD (chart
  * prose: "the dot plot", "random dot points") are never touched.
@@ -404,7 +405,7 @@ export function normalizeForScan(raw: string): NormalizedScan {
  * ("joy .hall830@protonmail .com" → "joy.hall830@protonmail.com"). Used ONLY for membership
  * checks against stored values (a known email, a known local part), which can match nothing but
  * a real subscriber's address, so this aggressive fold adds no false positive; the email-shape
- * pattern keeps running on normalizeForScan's conservative text (09 D-79, self-audit at 1200107).
+ * pattern keeps running on normalizeForScan's conservative text.
  */
 export function normalizeForMembership(raw: string): NormalizedScan {
   const tokens = applyAtShape(foldDisguises(decodePercent(foldChars(raw))))
