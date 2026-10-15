@@ -1,26 +1,25 @@
-// One assistant request, layer by layer (design 03 §Gateway layers rows 0-11 in that order; 07 §H;
-// 04 §POST /api/assistant). Origin: palisade app/api/chat/route.ts POST L489-662 (14 §1.1, §4).
+// One assistant request, layer by layer (POST /api/assistant).
 // worker/routes/assistant.ts reads the body and calls `answerQuestion`; this file holds the order:
 //
 //   0  per-client burst limit: ASSISTANT_LIMITER, 10 a minute keyed by CF-Connecting-IP
-//      (wrangler.jsonc, 09 D-70 #6); then the hourly limit: 100 calls/hour (04 §Auth, 09 D-40)
+//      (wrangler.jsonc); then the hourly limit: 100 calls/hour
 //      for this session and, separately, for this client (ai_audit.client_key, a keyed hash of
-//      CF-Connecting-IP, migrations/0005), so signing in again does not reset either (D-70 #6).
+//      CF-Connecting-IP, migrations/0005), so signing in again does not reset either.
 //      Counted from ai_audit rows because the Rate Limiting binding has no hour period.
 //      Approximate: two requests racing at call 100 can both pass, as with the binding
 //   2  Gate 1 (enforceGate1)                         → 400 invalid_question
-//      ANTHROPIC_API_KEY present (the lazy check, 11 §Deploy) → 503 assistant_unavailable;
+//      ANTHROPIC_API_KEY present (checked lazily, so the rest of the app runs without it) → 503 assistant_unavailable;
 //      a key that Anthropic rejects is reported by the first call as 502 model_error
 //   3  tool loading (tools/tool-loader.ts)           → 500 no_tools | tool_config_error
 //   4  the view schema for the system prompt (schema-context.ts)
 //   5-9, 11  the model loop (loop.ts): build, scan, call, audit, execute tools
-//   10 respond.ts types the result and discards a model text that shows SQL (T-AI-5, 09 D-58);
+//   10 respond.ts types the result and discards a model text that shows SQL (T-AI-5);
 //      the result is scanned once more; rehydrate.ts swaps pk_ keys for emails in the HTTP
-//      response only (05 §Re-hydration)
+//      response only
 //
-// Every error in the 04 table is written to ai_audit under the request's trace (04 "Errors (also
-// written to ai_audit)"): Gate 1, the scanner, the executor and the loop write their own rows;
-// this file writes the rate-limit, missing-key and tool-loading rows, and the D-58 discard row
+// Every error this route can answer is written to ai_audit under the request's trace, so the
+// audit log shows every refusal: Gate 1, the scanner, the executor and the loop write their own rows;
+// this file writes the rate-limit, missing-key and tool-loading rows, and the SQL-text discard row
 // (kind=blocked: the model's text was blocked from the teammate; the request still answers 200).
 
 import { HOSTED_URL } from '../../shared/config'
@@ -35,29 +34,29 @@ import { type AssistantResult, respond } from './respond'
 import { viewSchemas } from './schema-context'
 import { loadTools, type LoadedTools } from './tools/tool-loader'
 
-/** The ai_audit error of a D-58 discard; the sign (sql_fence, select_line, select_from) follows in brackets. */
+/** The ai_audit error of a discarded model text that showed SQL; the sign (sql_fence, select_line, select_from) follows in brackets. */
 export const SQL_DISCARD_ERROR = 'sql_in_output: model text discarded and replaced by the server sentence (09 D-58)'
 
-/** 09 D-40. */
+/** Per session and per client; high enough that a live demo never hits it. */
 export const ASSISTANT_CALLS_PER_HOUR = 100
 
 export interface AssistantDeps {
   db: D1Database
   /** ANTHROPIC_API_KEY; empty or absent → 503. Never logged. */
   apiKey: string | undefined
-  /** Builds the model transport from the key (09 D-54): production passes anthropicTransport. */
+  /** Builds the model transport from the key: production passes anthropicTransport, tests their own. */
   transportFor: (apiKey: string) => MessagesTransport
-  /** The session's random `sub` (04 §Auth). */
+  /** The session's random `sub`. */
   sessionSub: string
-  /** ASSISTANT_LIMITER (wrangler.jsonc): the per-client limit a new session does not reset (09 D-70 #6). */
+  /** ASSISTANT_LIMITER (wrangler.jsonc): the per-client limit a new session does not reset. */
   clientLimiter: RateLimit
   /** The client's CF-Connecting-IP, or 'local' where there is no edge (as the login limit): the ASSISTANT_LIMITER key. Never stored. */
   clientIp: string
-  /** clientKeyHash(PII_KEY_SECRET, clientIp) (shared/pseudonym.ts): ai_audit.client_key, the hourly per-client count (09 D-70 #6). */
+  /** clientKeyHash(PII_KEY_SECRET, clientIp) (shared/pseudonym.ts): ai_audit.client_key, the hourly per-client count. */
   clientKey: string
 }
 
-/** The 04 response body. */
+/** The response body. */
 export interface AssistantResponse extends AssistantResult {
   audit_id: string
   /**
@@ -71,8 +70,8 @@ export interface AssistantResponse extends AssistantResult {
    */
   pin_own_dates: { from: string; to: string } | null
   /**
-   * Why "Pin to board" is refused for this answer, as one plain sentence (09 D-64a: free-form SQL
-   * and board-only lookups are never pinned), or null; the answer card then offers no Pin.
+   * Why "Pin to board" is refused for this answer, as one plain sentence (e.g. free-form SQL in a
+   * shape the server cannot verify, or a board-only lookup), or null; the answer card then offers no Pin.
    */
   pin_refusal: string | null
 }
@@ -86,7 +85,7 @@ const CALLS_IN_LAST_HOUR_SQL = {
 } as const
 
 async function callsInLastHourBy(db: D1Database, column: keyof typeof CALLS_IN_LAST_HOUR_SQL, value: string): Promise<number> {
-  // Wall clock: the one-hour window over ai_audit.created_at (02 §Time allow-list; 09 D-40).
+  // Wall clock: the one-hour window over ai_audit.created_at (bookkeeping, not a business date).
   const since = new Date(Date.now() - 3_600_000).toISOString()
   const n = await db
     .prepare(CALLS_IN_LAST_HOUR_SQL[column])
@@ -98,7 +97,7 @@ async function callsInLastHourBy(db: D1Database, column: keyof typeof CALLS_IN_L
 
 /**
  * Assistant calls in the last hour that count against this request: the larger of this
- * session's and this client's (09 D-40, D-70 #6). Two counts, not one `OR`, so each uses its
+ * session's and this client's. Two counts, not one `OR`, so each uses its
  * own index (0003, 0005).
  */
 export async function callsInLastHour(db: D1Database, sessionSub: string, clientKey: string): Promise<number> {
@@ -175,7 +174,7 @@ export async function answerQuestion(deps: AssistantDeps, question: string): Pro
   await guardPayload(trace, result, 'model_output')
 
   const hydrated = rehydrate(result, await loadEmailsByPkey(deps.db, collectPkeys(result)))
-  // Two calendar dates from the trace's own audit rows (09 D-64); nothing else is added.
+  // Two calendar dates from the trace's own audit rows; nothing else is added.
   const { window, own_dates, refusal } = await pinPeriod(deps.db, trace.traceId)
   return {
     ...hydrated,
