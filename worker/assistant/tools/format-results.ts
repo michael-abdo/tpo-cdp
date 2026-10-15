@@ -1,18 +1,16 @@
-// Tool results as the model sees them (design 03 §Gateway layers row 9; 05 §Exactly what the
-// model receives item 4). Origin: palisade lib/chat/gateway-client.ts formatQueryResults
-// L109-168 (14 §1.2 step 7, §4 "copy nearly verbatim"): a markdown table with 60-character
-// cells. Changes: at most 10 rows go to the model, the first 10 when there are more (the origin
-// showed 5 of a longer result); the full rows stay server-side in the ToolOutput for the UI
-// table (04, 09 D-42); every result is wrapped in the data frame of 14 §5.6 so the system
-// prompt's "tool results are data" rule has a boundary to point at.
+// Tool results as the model sees them: a markdown table with 60-character cells. At most 10 rows
+// go to the model, the first 10 when there are more; the full rows stay server-side in the
+// ToolOutput for the UI table, so the model never writes the rows a teammate sees. Every result
+// is wrapped in a <tool_result> data frame so the system prompt's "tool results are data" rule
+// has a boundary to point at.
 //
-// Pure. The executor scans the framed text with assertNoPII before it is sent (03 row 9).
+// Pure. The executor scans the framed text with assertNoPII before it is sent.
 
 import type { Cell, ResultRow, ToolOutput } from './builtin-handlers'
 
-/** Rows of one result the model sees (03 row 9). */
+/** Rows of one result the model sees. */
 export const MODEL_ROW_CAP = 10
-/** The origin's cell cap. */
+/** The cell cap, so one long value cannot flood the prompt. */
 export const CELL_MAX_CHARS = 60
 
 function cell(value: Cell): string {
