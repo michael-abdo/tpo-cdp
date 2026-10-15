@@ -1,7 +1,7 @@
-// The charts of /insights (06 §/insights, 09 D-64): our own SVG, no chart library and no CDN. The
+// The charts of /insights: our own SVG, no chart library and no CDN. The
 // kind comes from the result's shape (shared/pick-chart.ts pickChart, or a tile's chart override);
 // this file only draws it. Colours are theme tokens (index.css), so light and dark both hold.
-// Every chart carries its numbers as text (06 §UI principles 7): the SVG is decoration
+// Every chart carries its numbers as text (WCAG 2.2 AA): the SVG is decoration
 // (aria-hidden) and the same rows sit in a real <table> that screen readers always read; "Show the
 // numbers" makes that table visible too, so no value lives only in a bar's length or a line's height.
 // A number and a segment are text already. Each drawing needs a column shape (shapes.ts); a stored
@@ -260,7 +260,7 @@ export function TableTile({ result, caption }: { result: ChartResult; caption: s
 }
 
 /**
- * A segment's size, who it holds in words, and the way to it; never its rows (09 D-64). The filters
+ * A segment's size, who it holds in words, and the way to it; never its rows (a tile shows a count, never emails). The filters
  * read as on the answer card's footer, through the one filters-to-words helper (src/filters-applied.ts);
  * a filter left open (null, "any") is not listed. "Open segment" loads the filters on /segments.
  */

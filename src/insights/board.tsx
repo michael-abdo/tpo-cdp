@@ -1,8 +1,8 @@
-// The board of /insights (06 §/insights, 09 D-64): tiles in sort_order, each re-run by the server
-// on every GET /api/insights through the gated executor, with no model call (04). Level 1 per tile:
+// The board of /insights: tiles in sort_order, each re-run by the server
+// on every GET /api/insights through the gated executor, with no model call. Level 1 per tile:
 // its title, the chart (the server's `chart`: an override, else pickChart on the result), the
 // time period in words and "Updated just now" (the board was fetched for this view; the exact UTC
-// time is in Technical details, so the page reads no wall clock, 02 §Time). The time period is
+// time is in Technical details, so the page reads no wall clock). The time period is
 // itself a button that opens "Change time period" directly (three clicks: period → choice → Save);
 // a lookup that sets its own dates names them ("Set by this question · Aug 29 – Sep 28, 2026", the
 // same words as the pin dialog); a tile with neither says "As of <TODAY>". One tile's error shows on
@@ -11,8 +11,8 @@
 // (not on built-in tiles, which the server refuses with 409) · Explain this (fills the Ask bar) ·
 // Technical details. Focus never drops to the page: a form takes focus when it opens, and Cancel
 // gives it back to the item that opened the form. Each change is one PATCH or DELETE; the board is then fetched
-// again, so what shows is always the server's. Inputs are sent as typed (02 §Normalization: the
-// server validates and answers with the 04 envelope, shown in words).
+// again, so what shows is always the server's. Inputs are sent as typed (the server validates
+// and answers with the error envelope, shown in words).
 
 import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { TODAY } from '../../shared/config'
@@ -35,7 +35,7 @@ type Mode = 'list' | 'window' | 'chart' | 'rename' | 'remove'
 type FormMode = Exclude<Mode, 'list'>
 
 /**
- * A failed tile always carries the server's sentence (04 `error`); one without it is a server bug,
+ * A failed tile always carries the server's sentence (`error`); one without it is a server bug,
  * logged loud here rather than covered with a copy of a server sentence.
  */
 function unexplainedError(id: string): string {
@@ -43,7 +43,7 @@ function unexplainedError(id: string): string {
   return 'This tile did not run.'
 }
 
-/** Focuses the element once, when the form that holds it opens (06 §UI principles 7). */
+/** Focuses the element once, when the form that holds it opens (keyboard users land in it). */
 function useFocusOnOpen<T extends HTMLElement>(): RefObject<T | null> {
   const ref = useRef<T>(null)
   useEffect(() => {
@@ -52,7 +52,7 @@ function useFocusOnOpen<T extends HTMLElement>(): RefObject<T | null> {
   return ref
 }
 
-/** What a finished change says (announced politely, 06 §UI principles 7). */
+/** What a finished change says (announced politely to screen readers). */
 export type Changed = (message: string) => void
 
 const panelLink =
@@ -80,7 +80,7 @@ function WindowForm({ tile, onSave, onCancel, saving }: { tile: InsightTile; onS
           A rolling period moves with today; fixed dates stay.
         </p>
         {PRESETS.map((preset) => {
-          // The dates each preset covers today, from the one shared rule (09 D-64).
+          // The dates each preset covers today, from the one shared rule.
           const dates = resolveWindow({ rolling: preset }, TODAY)
           return (
             <label key={preset} className="flex min-h-6 items-center gap-2 text-sm">
@@ -222,9 +222,9 @@ function FormButtons({ saving, onCancel, disabled = false }: { saving: boolean; 
 }
 
 /**
- * The gated "Set an alert" item (09 D-80, 22-pages/insights.md §2a), shown only on a tile with one
+ * The gated "Set an alert" item (coming soon), shown only on a tile with one
  * number (chart 'number' or 'segment'): a bar, line or table has no single number to cross a line.
- * Shares its flag and note with the board header's "Send the board" (schedules_and_digests, D-72:
+ * Shares its flag and note with the board header's "Send the board" (schedules_and_digests:
  * one flag, one note, written once). Activation only reveals and announces the note.
  */
 export function SetAlertItem() {
@@ -241,7 +241,7 @@ export function SetAlertItem() {
 }
 
 /**
- * The tile's level-2 panel. Built-in tiles have no Remove (09 D-64; the server would answer 409).
+ * The tile's level-2 panel. Built-in tiles have no Remove (the server would answer 409).
  * Moving swaps sort_order with the neighbour, one PATCH each.
  */
 export function TileActions({
@@ -444,7 +444,7 @@ function Tile({
       id={tileElementId(tile.id)}
       tabIndex={-1}
       aria-labelledby={headingId}
-      // Esc closes the open panel wherever focus is in the tile, the Options toggle included (06 §UI principles 7).
+      // Esc closes the open panel wherever focus is in the tile, the Options toggle included.
       onKeyDown={(e) => {
         if (e.key === 'Escape' && open !== null) {
           e.stopPropagation()
@@ -492,7 +492,7 @@ function Tile({
       )}
       <div className="min-w-0 flex-1">
         {tile.status === 'error' ? (
-          // The server's sentence carries its own next step; raw problems sit in Technical details (09 D-64a).
+          // The server's sentence carries its own next step; raw problems sit in Technical details.
           <ErrorLine message={tile.error ?? unexplainedError(tile.id)} />
         ) : (
           <InsightChart kind={tile.chart} result={tile.result ?? { columns: [], rows: [] }} segment={tile.segment} caption={tile.title} />
@@ -530,7 +530,7 @@ function Tile({
   )
 }
 
-/** The tiles in sort_order, two columns from 768 px, one below (06 §UI principles 9). */
+/** The tiles in sort_order, two columns from 768 px, one below (works on a phone). */
 export function BoardGrid({
   tiles,
   onChanged,

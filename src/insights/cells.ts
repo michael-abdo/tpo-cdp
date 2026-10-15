@@ -1,4 +1,4 @@
-// How a result cell reads on /insights (06 §UI principles 4): the answer card's table, every chart's
+// How a result cell reads on /insights, in plain words rather than raw codes: the answer card's table, every chart's
 // value labels and its text-alternative table use these, with the same display rules /segments uses
 // for the same columns. One home: nothing on the page formats a cell another way.
 

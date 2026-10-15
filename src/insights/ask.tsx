@@ -1,18 +1,18 @@
-// The Ask bar and its answer card on /insights (06 §/insights, R5; moved here from /assistant,
-// 09 D-64). One question box, the brief's three questions (R5.2) as one-click examples (06 §UI
-// principles 6), and one typed result from POST /api/assistant (04): the answer text (announced
-// politely, principle 7), the auto chart (shared/pick-chart.ts pickChart on the result's shape) or
+// The Ask bar and its answer card on /insights (moved here from /assistant). One question box,
+// the brief's three questions as one-click examples (so a first visit knows what to ask), and one
+// typed result from POST /api/assistant: the answer text (announced
+// politely to screen readers), the auto chart (shared/pick-chart.ts pickChart on the result's shape) or
 // the segment's count with "Open segment", which loads its filters on /segments, plus Export CSV. A
 // partial result says so. "Pin to board" opens the pin dialog (pin-dialog.tsx); an answer the server
-// says can never be pinned (`pin_refusal`, 09 D-64a: free-form SQL) shows that sentence instead.
+// says can never be pinned (`pin_refusal`, e.g. free-form SQL) shows that sentence instead.
 // Level 2 "Time period · Filters · Definitions": the window, the filters and the definitions used,
-// in words, with the definitions' plain text from DEFINITIONS (02 §Derived "one runtime source");
+// in words, with the definitions' plain text from DEFINITIONS (their one runtime source);
 // Technical details: the raw names, the result type and the trace id. The filters are the model's
-// own words, so they pass the D-58 check first and are hidden whole on any sign of SQL
-// (src/filters-applied.ts). Every answer links to its trace on /audit ("what the AI saw", 05
-// §Proof surfaces). The request takes 5–20 s (04), shown as a short text state. Errors show the 04
-// envelope's message. Single-shot: there is no conversation history (09 D-34). A question handed
-// over by "Explain this" or ?q= is filled in, never sent: the teammate presses Ask (09 D-39).
+// own words, so they pass the SQL-sign check first and are hidden whole on any sign of SQL
+// (src/filters-applied.ts). Every answer links to its trace on /audit ("what the AI saw"), the
+// proof of what the model was sent. The request takes 5–20 s, shown as a short text state. Errors
+// show the envelope's message. Single-shot: there is no conversation history. A question handed
+// over by "Explain this" or ?q= is filled in, never sent: the teammate presses Ask.
 
 import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router'
@@ -42,7 +42,7 @@ import { InsightChart, SegmentTile, TableTile } from './charts'
 import { PinDialog } from './pin-dialog'
 import { BRIEF_QUESTIONS, tileElementId } from './questions'
 
-/** Next steps for the 04 errors that have one; the message itself is the envelope's. */
+/** Next steps for the API errors that have one; the message itself is the envelope's. */
 function nextStep(code: string | null): string | undefined {
   switch (code) {
     case 'invalid_question':
@@ -68,7 +68,7 @@ function plainMessage(code: string | null, message: string): string {
 }
 
 /**
- * The gated "Ask a follow-up" field (09 D-80, 22-pages/insights.md §2b): the foot of the answer
+ * The gated "Ask a follow-up" field (coming soon): the foot of the answer
  * card, after "Time period · Filters · Definitions". No `<form>` while gated, so Enter can never
  * submit; the input is readOnly and both it and the button point at the same note (one flag, one
  * note). Activation = a click or Enter/Space on the button, or the first keystroke in the box.
@@ -122,7 +122,7 @@ export function AnswerCard({
   onPinned: (tile: InsightTile, note: string | null) => void
   /**
    * The Ask bar now holds another question ("Explain this"): the card gets a dashed border and says
-   * so in words. No opacity: every text and control keeps its full contrast (06 §UI principles 7).
+   * so in words. No opacity: every text and control keeps its full contrast (WCAG 2.2 AA).
    */
   stale?: boolean
 }) {
@@ -134,7 +134,7 @@ export function AnswerCard({
   const seeTile = useRef<HTMLButtonElement>(null)
 
   // The Pin button is gone once pinned, so focus moves to the control that replaced it, never to
-  // the page body (06 §UI principles 7, WCAG 2.4.3).
+  // the page body (WCAG 2.4.3).
   useEffect(() => {
     if (pinnedId !== null) seeTile.current?.focus()
   }, [pinnedId])
@@ -166,7 +166,7 @@ export function AnswerCard({
     tile.focus({ preventScroll: true })
   }
 
-  // The model writes filters_applied; any D-58 sign of SQL in it hides it whole (src/filters-applied.ts).
+  // The model writes filters_applied; any sign of SQL in it hides it whole (src/filters-applied.ts).
   const filters = filtersAppliedView(data.filters_applied)
   const hasHow = data.window !== null || filters.status === 'hidden' || filters.fields.length > 0 || data.definitions_used.length > 0
   const result = data.table ?? { columns: [], rows: [] }
