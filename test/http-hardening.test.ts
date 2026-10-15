@@ -129,7 +129,7 @@ describe('/webhooks/app answers a non-POST with 405 and Allow: POST', () => {
 
 describe('plain http to the deployed host goes to https; other hosts are left alone', () => {
   it('a GET or HEAD is redirected with 301 to the same path on https', async () => {
-    expect(HOSTED_HOST).toBe(new URL(HOSTED_URL).host)
+    expect(HOSTED_HOST).toBe(new URL(HOSTED_URL).hostname)
     for (const method of ['GET', 'HEAD']) {
       const res = await SELF.fetch(`http://${HOSTED_HOST}/health?probe=1`, { method, redirect: 'manual' })
       expect(res.status, method).toBe(301)
@@ -167,5 +167,34 @@ describe('plain http to the deployed host goes to https; other hosts are left al
       const res = await SELF.fetch(url, { redirect: 'manual' })
       expect(res.status, url).toBe(200)
     }
+  })
+})
+
+describe('the https rule matches the deployed host by name: any port, and the trailing-dot spelling', () => {
+  it('http on another port, or to "<host>." is redirected to https at the host itself', async () => {
+    for (const host of [`${HOSTED_HOST}:8080`, `${HOSTED_HOST}.`, `${HOSTED_HOST}.:80`]) {
+      const res = await SELF.fetch(`http://${host}/health?probe=2`, { redirect: 'manual' })
+      expect(res.status, host).toBe(301)
+      expect(res.headers.get('location'), host).toBe(`https://${HOSTED_HOST}/health?probe=2`)
+    }
+  })
+
+  it('a POST to either spelling is refused with 403 https_required', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const host of [`${HOSTED_HOST}:8080`, `${HOSTED_HOST}.`]) {
+      const res = await SELF.fetch(`http://${host}/api/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'cf-connecting-ip': documentationIp() },
+        body: JSON.stringify({ password: env.SITE_PASSWORD }),
+      })
+      expect(res.status, host).toBe(403)
+      expect(res.headers.get('set-cookie')).toBeNull()
+    }
+    warn.mockRestore()
+  })
+
+  it('a host that only ends with the deployed name is not it', async () => {
+    const res = await SELF.fetch(`http://x${HOSTED_HOST}/health`, { redirect: 'manual' })
+    expect(res.status).toBe(200)
   })
 })

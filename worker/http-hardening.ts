@@ -41,21 +41,29 @@ export const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.res.headers.set('Cache-Control', WORKER_CACHE_CONTROL)
 }
 
-/** The deployed host. Plain http to it is moved to https; any other host (local dev, tests) is left alone. */
-export const HOSTED_HOST = new URL(HOSTED_URL).host
+/**
+ * The deployed host's name, without a port. Plain http to it is moved to https; any other host
+ * (local dev, tests) is left alone.
+ */
+export const HOSTED_HOST = new URL(HOSTED_URL).hostname
+
+/** A request's host name as it is compared: no port, and no trailing "." (the fully qualified spelling). */
+function hostnameOf(url: URL): string {
+  return url.hostname.replace(/\.$/, '')
+}
 
 /**
- * Plain http to the deployed host: a GET or HEAD is redirected (301) to the same URL on https; any
+ * Plain http to the deployed host, on any port and with or without a trailing "." on its name: a
+ * GET or HEAD is redirected (301) to the same path and query on https at the host's own name; any
  * other method is refused with 403 `https_required` before it is read, since a redirect would send
  * a body (a password, a signed event) over plain http a second time. http://localhost and every
  * other host keep working, so `npm run dev` is unaffected.
  */
 export const httpsOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
   const url = new URL(c.req.url)
-  if (url.protocol === 'http:' && url.host === HOSTED_HOST) {
+  if (url.protocol === 'http:' && hostnameOf(url) === HOSTED_HOST) {
     if (c.req.method === 'GET' || c.req.method === 'HEAD') {
-      url.protocol = 'https:'
-      return c.redirect(url.toString(), 301)
+      return c.redirect(`https://${HOSTED_HOST}${url.pathname}${url.search}`, 301)
     }
     // The method only: a path is the sender's text and could hold anything.
     console.warn(JSON.stringify({ at: 'https-only', outcome: 'refused', status: 403, method: c.req.method }))
