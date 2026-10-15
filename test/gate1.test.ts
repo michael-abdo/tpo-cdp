@@ -14,8 +14,8 @@ import { ApiError } from '../worker/auth/middleware'
 import type { AppEnv } from '../worker/env'
 import { onError } from '../worker/index'
 
-// T-GATE-1 (08): Gate 1 cases ported from the origin's regex set (the origin source file, see
-// ORIGIN_PATTERNS below; 14 §3.4; 03 §Gateway layers row 2): DDL, UNION SELECT, injection phrases, SSN/card/passport shapes blocked; an email in
+// T-GATE-1 (08): Gate 1 cases for its 19 regexes (pinned to the reference copy in
+// ORIGIN_PATTERNS below; 03 §Gateway layers row 2): DDL, UNION SELECT, injection phrases, SSN/card/passport shapes blocked; an email in
 // the text redacted, not blocked. Plus the blocked half of T-AI-4: a Gate 1 block writes an
 // ai_audit row kind=blocked, status=blocked under the request's trace_id, with no payload.
 //
@@ -23,7 +23,7 @@ import { onError } from '../worker/index'
 // - Benign questions are the brief's three example questions (00 R5.2), verbatim.
 // - Emails are real: joy.hall830@protonmail.com (subscribers.csv:902), julia.evans230@gmail.com
 //   (subscribers.csv:373) and the raw spelling PAUL.GARCIA558@GMAIL.COM (app_users.csv:8).
-// - Attack probes are the phrases the origin's patterns name (14 §3.4), not business data. The
+// - Attack probes are the phrases the patterns name, not business data. The
 //   SSN, card and passport probes are all zeros (and "XX" for the letters), so no real
 //   person's number can appear in the repo; data/*.csv holds no such numbers.
 // - This file seeds nothing: Gate 1 reads no data, and the audit trace's known-email set is the
@@ -35,7 +35,7 @@ const BRIEF_QUESTIONS = [
   'which pages do new subscribers hit first?',
 ]
 
-/** One probe per origin pattern, in GATE1_PATTERNS order. */
+/** One probe per pattern, in GATE1_PATTERNS order. */
 const PROBES: Record<string, string> = {
   sql_ddl: 'DROP TABLE subscribers',
   sql_grant_revoke: 'GRANT ALL ON subscribers TO everyone',
@@ -279,7 +279,7 @@ describe('T-GATE-1: order, case and an awaited audit row (review fixes)', () => 
 
   it('runs the patterns before redaction: an SSN shape inside an email-shaped span still blocks', () => {
     // The SSN probe joined to a real address by a ".". The "." is a word boundary, so the
-    // origin's \b...\b SSN shape matches, and the email regex's local part takes "-" and ".", so
+    // \b...\b SSN shape matches, and the email regex's local part takes "-" and ".", so
     // redaction run first would swallow the SSN into "[email]" and let the question through.
     const ssn = PROBES.pii_ssn.split(' ').at(-1)
     const smuggled = `who is ${ssn}.joy.hall830@protonmail.com`
@@ -304,10 +304,9 @@ describe('T-GATE-1: order, case and an awaited audit row (review fixes)', () => 
   })
 })
 
-// The origin's 19 regexes, copied from palisade packages/workflows/src/gateway/
-// gate1-input-sanitizer.ts L20-48 (the source file, not 14 §3.4's transcription, which drops the
-// \b anchors). This is the test's oracle: a port that edits a pattern, drops an alternation
-// branch, a flag or a word boundary fails here.
+// The 19 reference regexes, written out again here with every \b anchor. This is the test's
+// oracle: a change that edits a pattern, drops an alternation branch, a flag or a word boundary
+// fails here.
 const ORIGIN_PATTERNS: Record<string, RegExp> = {
   sql_ddl: /\b(DROP|DELETE|TRUNCATE|ALTER|CREATE|INSERT|UPDATE)\s+(TABLE|DATABASE|INDEX|ROLE|USER|SCHEMA|TRIGGER|FUNCTION)/i,
   sql_grant_revoke: /\b(GRANT|REVOKE)\s+\w/i,
@@ -396,7 +395,7 @@ describe('T-GATE-1: the port is the origin, word for word (review fixes 2)', () 
     })
   }
 
-  // Questions a news brand's team will ask, where a pattern without the origin's \b would fire
+  // Questions a news brand's team will ask, where a pattern without its \b would fire
   // inside a longer word: "miGRANT story", "impACT AS", "contACT AS", a card-shaped run of digits
   // glued to a word.
   const BENIGN = [

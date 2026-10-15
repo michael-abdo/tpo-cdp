@@ -26,7 +26,7 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { eventIdPool, sendWebhook } from './helpers/webhook'
 
-// T-AI-3, T-AI-4, T-AI-5 (08, band A Thu) and the loader/route checks of unit H2. Designs: 03
+// T-AI-3, T-AI-4, T-AI-5 (08) and the loader/route checks. Designs: 03
 // §Gateway layers rows 3, 6, 9, 10, 11 and §No-restart; 04 §POST /api/assistant and
 // §/api/segments/preview; 05 §Re-hydration, §Leak paths; 07 §H; 09 D-41, D-42, D-54.
 //
@@ -944,7 +944,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
     ]
   }
 
-  // Every shape the H2 and H2b reviews found, plus the D-58 ones. None may reach the teammate.
+  // Every known way to show SQL in prose, plus the D-58 ones. None may reach the teammate.
   const shapes: Array<[string, string]> = [
     ['multi-line, with ;', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram';"],
     ['multi-line, no ;, prose after', "I ran:\nSELECT count(*)\nFROM v_profiles\nWHERE source = 'instagram'\n\nThere are 46."],
@@ -990,7 +990,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
   }
   // A listed character inside a keyword and an unlisted one at its edge: deleting both glues the
   // keyword to the next word, spacing both splits it, so only the LISTED copy (D-58 as written:
-  // delete the six, keep the rest as separators) catches these (H2c review of e1a62c4).
+  // delete the six, keep the rest as separators) catches these.
   shapes.push(
     ['U+200B inside select, U+2063 after it', 'There are 46. sel\u200Bect\u2063email from users'],
     ['U+200B inside from, U+2063 after it', 'There are 46. select email fr\u200Bom\u2063users'],
@@ -1231,8 +1231,8 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
     // text holds no literal "@" AND no contiguous known local part: loop.ts's scan of the raw
     // response.content passes clean, and only respond.ts's JSON.parse of the fenced block
     // reconstructs the real address, which route.ts:175's own guardPayload call on the parsed
-    // result then blocks. A scratch-worktree mutation of route.ts:175 to a no-op left
-    // test/assistant.test.ts and test/audit.test.ts green until this test was added.
+    // result then blocks. Without this test, turning that call into a no-op would leave
+    // test/assistant.test.ts and test/audit.test.ts green.
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const cookie = await loginCookie()
     const sub = await sessionSub(cookie)
@@ -1326,7 +1326,7 @@ describe('T-PII-4 at every scanner site through the route: a planted real email 
   })
 })
 
-// 09 D-79 fixer round, item 4: the webhook-link local-part leak proven through the REAL route
+// 09 D-79: the webhook-link local-part leak proven through the REAL route
 // (tool-executor.ts, not a direct guardPayload/framed() call in test/pii.test.ts), with a real
 // signed webhook (09 D-11) and a recorded query_sql tool call reading v_app_events.
 describe('T-PII-5 at the route: a webhook link holding a known local part is blocked at the tool executor, before the model sees it', () => {

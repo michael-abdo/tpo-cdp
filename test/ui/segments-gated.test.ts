@@ -15,7 +15,7 @@ import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../hel
 import { DEFAULT_FORM, toFilters } from '../../src/segment-form'
 import { recordSearch, type SearchStore } from '../../src/previous-searches'
 
-// Segments' gated future features (09 D-80, 22-pages/segments.md): Send to beehiiv, and the five
+// Segments' gated future features (09 D-80): Send to beehiiv, and the five
 // "More filters" (one flag each, group: 'more_filters'). None carries state: none has a key in
 // FILTER_KEYS, so none can reach the filters object, Previous searches or the export.
 

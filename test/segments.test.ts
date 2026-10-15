@@ -355,8 +355,7 @@ describe('segment request errors', () => {
 // redactDetail unit tests (worker/assistant/gates/pii-guard.ts): both segments.ts call sites now
 // feed it only key-less literals ("unknown filter" / "unknown field", above), so these test the
 // function directly — it is still a documented backstop, and must stay correct on its own merits.
-// (fixer round 4, closing the fixer-round-2 mutation gaps O2a/O2b/O2c, which were about this
-// function's call sites in segments.ts before the key echo was removed.)
+// (segments.ts no longer echoes the key at all, so these no longer go through its call sites.)
 describe('redactDetail (worker/assistant/gates/pii-guard.ts), tested directly', () => {
   it('masks every raw id in a string, not only the first (kills a g->i flag mutant)', () => {
     const text = `${OWN_ACCOUNT} and v_c9e136fd6d both matched`
@@ -711,7 +710,7 @@ describe('T-SEG-10 site visits', () => {
     // Copies of a real row (09 D-47): one linked visitor's own /our-staff visit (web_events.csv),
     // repeated until /our-staff has more visit rows, and more rows with a pkey, than the page
     // ranked just above it. Its distinct subscribers do not change, so neither may its rank; a
-    // ranking by count(*) or count(pkey) (mutant M15) would move it up.
+    // ranking by count(*) or count(pkey) would move it up.
     const rank = async () => (await (await SELF.fetch('http://cdp.test/api/segments/options', { headers: { cookie } })).json<{ pages: string[] }>()).pages
     const before = await rank()
     const at = before.indexOf('/our-staff')
@@ -973,9 +972,9 @@ describe('T-SEG-11 + T-SEG-9 webhook events move segment counts with no restart 
   })
 })
 
-// The page's side of a preview, against the real Worker (09 D-69 review gaps 2 and 4). previewAndRecord
+// The page's side of a preview, against the real Worker (09 D-69). previewAndRecord
 // (src/segment-preview.ts) is what /segments runs; pagePost is postJson's rule (2xx → JSON, else
-// the envelope as the same ApiError, src/api-error.ts toApiError). The form values are the review's
+// the envelope as the same ApiError, src/api-error.ts toApiError). The form values are
 // error-path values (0, -5, 2.5, 99999; engagement from above to) and the brief's preset.
 
 /** postJson for POST /api/segments/preview, over SELF. */
