@@ -342,7 +342,7 @@ describe('T-HARD-5: the segment CSV export neutralizes formula cells (09 D-70 #5
     expect(text).not.toContain('"')
   })
 
-  it("prefixes ' to a cell starting with = + - or @ and keeps RFC 4180 quoting", async () => {
+  it("prefixes ' to a cell starting with = + - @, a tab or a carriage return and keeps RFC 4180 quoting", async () => {
     const preview = await segmentsPost('preview', { filters: { status: ['active'], source: ['google'] }, limit: 1 }, await loginCookie())
     const [real] = (await preview.json<{ rows: SegmentRow[] }>()).rows
     expect(real.source).toBe('google')
@@ -352,6 +352,8 @@ describe('T-HARD-5: the segment CSV export neutralizes formula cells (09 D-70 #5
       { ...real, email: `+${real.email}` },
       { ...real, email: `-${real.email}` },
       { ...real, email: `=${real.email},${real.source}` },
+      { ...real, email: `\t${real.email}` },
+      { ...real, email: `\r${real.email}` },
     ]
     const records = segmentCsv(rows).slice(0, -2).split(CRLF).slice(1)
     const rest = segmentCsv([real]).slice(0, -2).split(CRLF)[1].slice(real.email.length)
@@ -361,6 +363,8 @@ describe('T-HARD-5: the segment CSV export neutralizes formula cells (09 D-70 #5
       `'+${real.email}${rest}`,
       `'-${real.email}${rest}`,
       `"'=${real.email},${real.source}"${rest}`,
+      `'\t${real.email}${rest}`,
+      `"'\r${real.email}"${rest}`,
     ])
   })
 })

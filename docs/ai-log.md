@@ -658,3 +658,9 @@ Built in Claude Code throughout. Each entry: what was asked, what the AI got wro
 ## 2026-10-15 — README split (09 D-82)
 
 - **Asked:** make the README only about running the app (it had grown to 19,204 words), with everything else in a second file. **Checked rather than assumed:** two tests read README sections that moved — T-GATE-5 (Known gaps names every gated feature) and T-VOC-1 (no retired term) — so both now read `docs/notes.md` (T-VOC-1 reads both files); each was mutation-checked (a dropped flag and a planted retired term both fail). A line-by-line diff of the old README against README + notes shows nothing lost. Older entries in this log say "README" for sections that now live in `docs/notes.md`; they stay as written, since each describes the README of its day.
+
+## 2026-10-15 — self-audit at 3647a5a
+
+- **Asked:** split the README (D-82). **Wrong:** the move left two lines in `docs/notes.md` saying "this README" and "the README Known-gaps section" for text that now lives in the notes; a fresh self-audit caught one of them. **Fix:** both now point within the notes.
+- **Asked:** one named constant for every fixed value (CLAUDE.md). **Wrong:** `DEFINITIONS.last_month` wrote "2026-08-01 to 2026-08-31" by hand in its doc and formula, and the system prompt renders them, so a new `TODAY` would have told the model the wrong month. Caught by the same self-audit. **Fix:** both strings come from `lastMonth()`; a one-home test pins them and refuses any date written into a `DEFINITIONS` string (mutation-checked). The rendered text is unchanged.
+- **Asked:** CSV formula neutralization (D-70 #5). **Wrong:** it covered `= + - @` but not a leading tab or carriage return, which OWASP's CSV-injection guidance also lists. Caught by the same self-audit. **Fix:** both added to `FORMULA_PREFIXES`; T-HARD-5 covers them (mutation-checked). The real 2,900-row export is unchanged.

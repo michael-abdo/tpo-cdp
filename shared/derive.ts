@@ -209,6 +209,9 @@ export interface Definition {
 }
 
 /** One entry per row of 02 §Derived, in that order. */
+/** "Last month" on TODAY, so the definition's words below can never name another month. */
+const LAST_MONTH = lastMonth()
+
 export const DEFINITIONS = {
   days_since_open: {
     name: 'days_since_open',
@@ -279,8 +282,8 @@ export const DEFINITIONS = {
   },
   last_month: {
     name: 'last month',
-    doc: 'The previous calendar month relative to today, 2026-08-01 to 2026-08-31.',
-    formula: 'previous calendar month relative to TODAY = 2026-08-01..31',
+    doc: `The previous calendar month relative to today, ${LAST_MONTH.from} to ${LAST_MONTH.to}.`,
+    formula: `previous calendar month relative to TODAY = ${LAST_MONTH.from}..${LAST_MONTH.to.slice(8)}`,
     fn: lastMonth,
   },
   last_n_days: {

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from 'vitest'
 import { TODAY } from '../shared/config'
-import { addDays, COLD_DAYS, coldSince, DEFINITIONS, goingColdRisk, isCold, isNewSubscriber, NEW_SUBSCRIBER_DAYS } from '../shared/derive'
+import { addDays, COLD_DAYS, coldSince, DEFINITIONS, goingColdRisk, isCold, isNewSubscriber, lastMonth, NEW_SUBSCRIBER_DAYS } from '../shared/derive'
 
 // One home per definition (09 D-68, D-46; 18-settings-spec §1 rows 2, 4, 13 and §7 Tier 0;
 // 02 §Derived "One runtime source"). Static scans over the product source, read at transform time
@@ -128,6 +128,17 @@ describe('the cold window has one home (09 D-68)', () => {
     expect(DEFINITIONS.cold.doc).toContain(`${COLD_DAYS} or more days`)
     expect(DEFINITIONS.going_cold_risk.doc).toContain(`last ${days}`)
     expect(DEFINITIONS.going_cold_risk.formula).toContain(`last ${days}`)
+  })
+
+  it('"last month" names the dates lastMonth() gives on TODAY, and no DEFINITIONS string writes a date itself', () => {
+    const { from, to } = lastMonth()
+    expect(DEFINITIONS.last_month.doc).toBe(`The previous calendar month relative to today, ${from} to ${to}.`)
+    expect(DEFINITIONS.last_month.formula).toBe(`previous calendar month relative to TODAY = ${from}..${to.slice(8)}`)
+    const derive = code['../shared/derive.ts'] ?? ''
+    const block = derive.slice(derive.indexOf('export const DEFINITIONS'))
+    expect(block.length).toBeGreaterThan(100)
+    const dated = block.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*\*)/.test(line) && /\b20\d\d-\d\d-\d\d\b/.test(line))
+    expect(dated).toEqual([])
   })
 
   it('the Lookup cold line renders the number from COLD_DAYS', () => {

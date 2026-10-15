@@ -12,11 +12,11 @@ import { SEGMENT_COLUMNS, type SegmentRow } from './compile'
 /** RFC 4180 record separator. */
 const CRLF = '\r\n'
 
-/** The first characters with which a spreadsheet starts a formula (09 D-70 #5). */
-export const FORMULA_PREFIXES = ['=', '+', '-', '@'] as const
+/** The first characters with which a spreadsheet starts a formula, plus tab and carriage return (OWASP CSV injection; 09 D-70 #5). */
+export const FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r'] as const
 
 /**
- * CSV formula injection (09 D-70 #5): a cell starting with `= + - @` gets a leading `'`, so
+ * CSV formula injection (09 D-70 #5): a cell starting with `= + - @`, a tab or a carriage return gets a leading `'`, so
  * Excel, Sheets and Numbers show it as text instead of evaluating it. Quoting stays RFC 4180.
  */
 function neutralized(cell: string): string {
