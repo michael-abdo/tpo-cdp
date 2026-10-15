@@ -69,7 +69,7 @@ export interface RawSegmentRow extends Omit<SegmentRow, 'engagement_score' | 'ha
  */
 export function toSegmentRow(raw: RawSegmentRow): SegmentRow {
   if (raw.engagement_score === null) {
-    throw new Error('segments: a subscriber row has no profile, so no engagement_score (02 §Linking)')
+    throw new Error('segments: a subscriber row has no profile, so no engagement_score')
   }
   if (raw.has_app !== 0 && raw.has_app !== 1) {
     throw new Error(`segments: has_app must be 0 or 1, got ${JSON.stringify(raw.has_app)}`)

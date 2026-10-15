@@ -35,7 +35,7 @@ import { viewSchemas } from './schema-context'
 import { loadTools, type LoadedTools } from './tools/tool-loader'
 
 /** The ai_audit error of a discarded model text that showed SQL; the sign (sql_fence, select_line, select_from) follows in brackets. */
-export const SQL_DISCARD_ERROR = 'sql_in_output: model text discarded and replaced by the server sentence (09 D-58)'
+export const SQL_DISCARD_ERROR = 'sql_in_output: model text discarded and replaced by the server sentence'
 
 /** Per session and per client; high enough that a live demo never hits it. */
 export const ASSISTANT_CALLS_PER_HOUR = 100

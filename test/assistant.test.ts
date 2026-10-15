@@ -1134,7 +1134,7 @@ describe('T-AI-5: a text with a ```sql block or a SELECT statement is discarded 
       'blocked/blocked/null',
     ])
     expect(rows[3].error).toBe(`${SQL_DISCARD_ERROR} (select_line)`)
-    expect(rows[3].error).toContain('D-58')
+    expect(rows[3].error).toMatch(/^sql_in_output: /)
     // The discarded model text is never stored in the discard row.
     expect(rows[3]).toMatchObject({ request_json: null, response_json: null })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('"sql_discarded":"select_line"'))
