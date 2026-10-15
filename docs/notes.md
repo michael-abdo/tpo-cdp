@@ -520,7 +520,7 @@ git log --no-merges --format=%s d6e043c | grep -cE '^fix(\(|:)'  # 119
 - **21** have a committer date later than their author date (`git log --format='%h %at %ct' d6e043c | awk '$2 != $3'`): five committed 2026-10-13 at 12:13, five at 19:43, and eleven on 2026-10-14 at 07:41. They were rebased on local branches before they were merged, so four hashes cited in `docs/ai-log.md` changed (its hash map lists them). No pushed commit was force-rewritten.
 - **Tags** `v0-r1-r3`, `v1-r4` and `v2-all` mark plan checkpoints, and each label names the day the plan set for it ("Wed Oct 14", "Fri Oct 16"). All three were made on 2026-10-13, so `v1-r4` and `v2-all` were reached early (`git for-each-ref --format='%(refname:short) %(taggerdate:short) %(contents:subject)' refs/tags`).
 
-**Design references.** Comments and commits cite decision IDs (`D-xx`) and design sections (`02 §Counts`, `06 §UI principles`). Those design documents are kept in a private workspace; the decisions that shape behaviour are summarized under [Assumptions](#assumptions) in these notes.
+**Design references.** The code carries no references to the private design notes. Commit messages and the historical entries in [`docs/ai-log.md`](ai-log.md) still cite decision IDs (`D-xx`) and design sections (`NN §…`) from a private design log kept outside this repo. The decisions that shape behaviour are summarized in these notes, mainly under [Assumptions](#assumptions).
 
 ## What I'd do next
 
