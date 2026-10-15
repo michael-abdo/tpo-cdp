@@ -4,7 +4,7 @@
 //
 // Order, cheapest refusal first: rate limit (429) → JSON content type (415) → body ≤ 64 KB (413)
 // → signature over the raw bytes, before any parsing (401) → JSON parse + schema (400) → store
-// (202 stored, 200 duplicate). Every refusal is logged with its reason and no header or body
+// (202 {accepted, event_id}; 200 {accepted, duplicate} for an event_id already stored). Every refusal is logged with its reason and no header or body
 // values (CLAUDE.md fail loud; 04 §Error envelope).
 
 import { Hono } from 'hono'
@@ -132,8 +132,7 @@ webhookRoutes.post('/app', async (c) => {
     return c.json({ accepted: true, duplicate: true }, 200)
   }
   console.info(JSON.stringify({ at: 'webhook', outcome: 'stored', status: 202, event: parsed.event.event }))
-  return c.json(
-    { accepted: true, event_id: parsed.event.event_id, duplicate: false, resolved: result.resolved },
-    202,
-  )
+  // Only what the sender already knows. Which person a device resolves to is never told to a
+  // caller of this open URL; /events and its "Send a test event" panel read it behind the session.
+  return c.json({ accepted: true, event_id: parsed.event.event_id }, 202)
 })

@@ -13,8 +13,9 @@
 //      (02 §Linking 4, R4.6). Both read the stored row and are INSERT OR IGNORE, so they are
 //      no-ops for known users, for a stub that already exists, and for a duplicate whose body
 //      differs from the stored one.
-//   5. The resolved user and profile for the response, by the read-time rule of 01 §Identity
-//      resolution (the same joins as v_app_events in 0002_views.sql).
+//   5. The resolved user and profile, by the read-time rule of 01 §Identity resolution (the
+//      same joins as v_app_events in 0002_views.sql). They drive the score recompute below and are
+//      returned to the caller; POST /webhooks/app does not put them in its public response.
 // Then profiles.engagement_score is recomputed with DEFINITIONS and stored for every profile the
 // event can change (09 D-46, R4.10): the resolved user's, and the device's previous owner's when
 // the event carries a user_id, since the device_identity upsert can move that device's anonymous

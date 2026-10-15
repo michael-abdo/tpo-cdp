@@ -9,6 +9,7 @@ import { piiKeySecret, seedDatabase } from './helpers/seed'
 import {
   eventIdPool,
   nowSeconds,
+  resolvedOf,
   sendWebhook,
   signature,
   signedRequest,
@@ -164,12 +165,8 @@ describe('T-WH-2 the brief sample payload', () => {
     const before = nowSeconds()
     const { status, json } = await post(BRIEF_SAMPLE)
     expect(status).toBe(202)
-    expect(json).toEqual({
-      accepted: true,
-      event_id: 'evt_9f3a1c',
-      duplicate: false,
-      resolved: { user_id: 'u_2b6447a3', pkey: await pkeyForEmail(piiKeySecret(), JULIA) },
-    })
+    expect(json).toEqual({ accepted: true, event_id: 'evt_9f3a1c' })
+    expect(await resolvedOf('evt_9f3a1c')).toEqual({ user_id: 'u_2b6447a3', pkey: await pkeyForEmail(piiKeySecret(), JULIA) })
     const row = await stored('evt_9f3a1c')
     expect(row).toMatchObject({
       event: 'read_story',
@@ -198,7 +195,7 @@ describe('T-WH-1 a valid signed event', () => {
 
     const { status, json } = await post(body)
     expect(status).toBe(202)
-    expect(json).toMatchObject({ accepted: true, event_id: body.event_id, duplicate: false })
+    expect(json).toEqual({ accepted: true, event_id: body.event_id })
 
     const after = await lookup('u_ceed5f12')
     expect(after.status).toBe(200)
@@ -275,12 +272,8 @@ describe('T-WH-4 user_id null or absent', () => {
     for (const body of [withNull, absent]) {
       const { status, json } = await post(body)
       expect(status).toBe(202)
-      expect(json).toEqual({
-        accepted: true,
-        event_id: body.event_id,
-        duplicate: false,
-        resolved: { user_id: null, pkey: null },
-      })
+      expect(json).toEqual({ accepted: true, event_id: body.event_id })
+      expect(await resolvedOf(body.event_id as string)).toEqual({ user_id: null, pkey: null })
       expect(await stored(body.event_id as string)).toMatchObject({ user_id: null, properties: null })
       expect(await device(body.device_id as string)).toBeNull()
     }
@@ -288,9 +281,10 @@ describe('T-WH-4 user_id null or absent', () => {
 
   it('resolves an anonymous event through its device once the device has an identified event', async () => {
     await post(event({ event: 'login', user_id: 'u_c0d06d19', device_id: 'd_c0d06d19' }))
-    const { status, json } = await post(event({ event: 'app_open', user_id: null, device_id: 'd_c0d06d19' }))
+    const anonymous = event({ event: 'app_open', user_id: null, device_id: 'd_c0d06d19' })
+    const { status } = await post(anonymous)
     expect(status).toBe(202)
-    expect(json.resolved).toEqual({
+    expect(await resolvedOf(anonymous.event_id as string)).toEqual({
       user_id: 'u_c0d06d19',
       pkey: await pkeyForEmail(piiKeySecret(), 'leah.stewart812@gmail.com'),
     })
@@ -305,9 +299,9 @@ describe('T-WH-5 a known user_id', () => {
       device_id: 'd_2b6447a3',
       properties: { link: LINK },
     })
-    const { status, json } = await post(body)
+    const { status } = await post(body)
     expect(status).toBe(202)
-    expect(json.resolved).toEqual({ user_id: 'u_2b6447a3', pkey: await pkeyForEmail(piiKeySecret(), JULIA) })
+    expect(await resolvedOf(body.event_id as string)).toEqual({ user_id: 'u_2b6447a3', pkey: await pkeyForEmail(piiKeySecret(), JULIA) })
 
     const { body: profile } = await lookup(JULIA)
     expect(profile.profile.pkey).toBe(await pkeyForEmail(piiKeySecret(), JULIA))
@@ -335,9 +329,9 @@ describe('T-WH-6 an unknown user_id', () => {
     const stubKey = await pkeyForUnknownUser(piiKeySecret(), unknown)
 
     const first = event({ user_id: unknown, device_id: 'd_4b21e8' })
-    const { status, json } = await post(first)
+    const { status } = await post(first)
     expect(status).toBe(202)
-    expect(json.resolved).toEqual({ user_id: unknown, pkey: stubKey })
+    expect(await resolvedOf(first.event_id as string)).toEqual({ user_id: unknown, pkey: stubKey })
 
     const receivedAt = (await stored(first.event_id as string))!.received_at
     const user = await env.DB.prepare('SELECT * FROM app_users WHERE user_id = ?').bind(unknown).first()
@@ -541,25 +535,26 @@ describe('09 D-46 score recompute and 01 identity resolution across one device',
     expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 1))
 
     // An anonymous event on x's device resolves to x and counts for x.
-    const anon = await post(event({ event: 'app_open', user_id: null, device_id: dev }))
-    expect(anon.json.resolved).toEqual({ user_id: x, pkey: xKey })
+    const anon = event({ event: 'app_open', user_id: null, device_id: dev })
+    expect((await post(anon)).status).toBe(202)
+    expect(await resolvedOf(anon.event_id as string)).toEqual({ user_id: x, pkey: xKey })
     expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 2))
 
     // y logs in on the device at the same event_ts: the later arrival owns it (09 D-43), the
     // anonymous event moves to y, and x, the previous owner, is rescored without it.
-    const yLogin = await post(event({ event: 'login', user_id: y, device_id: dev }))
-    expect(yLogin.json.resolved).toEqual({ user_id: y, pkey: yKey })
+    const yLogin = event({ event: 'login', user_id: y, device_id: dev })
+    expect((await post(yLogin)).status).toBe(202)
+    expect(await resolvedOf(yLogin.event_id as string)).toEqual({ user_id: y, pkey: yKey })
+    expect(await resolvedOf(anon.event_id as string)).toEqual({ user_id: y, pkey: yKey })
     expect(await device(dev)).toEqual({ user_id: y, last_seen_ts: BRIEF_TS })
     expect(await storedScore(yKey)).toBe(await expectedScore(yEmail, 2))
     expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 1))
 
     // An older event from x on y's device resolves to x, its own user_id, and leaves the device to
     // y. It is more than 30 days before TODAY, so x's score does not change.
-    const older = await post(
-      event({ event: 'read_story', user_id: x, device_id: dev, timestamp: '2026-06-30T20:45:52Z' }),
-    )
-    expect(older.status).toBe(202)
-    expect(older.json.resolved).toEqual({ user_id: x, pkey: xKey })
+    const older = event({ event: 'read_story', user_id: x, device_id: dev, timestamp: '2026-06-30T20:45:52Z' })
+    expect((await post(older)).status).toBe(202)
+    expect(await resolvedOf(older.event_id as string)).toEqual({ user_id: x, pkey: xKey })
     expect(await device(dev)).toEqual({ user_id: y, last_seen_ts: BRIEF_TS })
     expect(await storedScore(xKey)).toBe(await expectedScore(xEmail, 1))
   })
@@ -809,5 +804,61 @@ describe('T-WH-12 size and content-type caps', () => {
     expect(res.status).toBe(415)
     expect(await res.json()).toMatchObject({ error: 'unsupported_media_type' })
     expect(await count('app_events')).toBe(rows)
+  })
+})
+
+describe('user and device ids: trimmed like the CSV import, then letters, digits, "_" and "-" only', () => {
+  // Inputs are the real u_2b6447a3 / d_4b21e8 (the brief's sample) with spaces or one character
+  // added (09 D-47), never an invented id. Kept last in the file: the event-id pool is shared, so
+  // a block placed earlier would shift the ids (and the tie order) of every test after it.
+  it('a padded id is stored trimmed and resolves to the real user, with no phantom stub', async () => {
+    const users = await count('app_users')
+    const profiles = await count('profiles')
+    const body = event({ user_id: ' u_2b6447a3 ', device_id: '\td_4b21e8 ' })
+    const { status, json } = await post(body)
+    expect(status).toBe(202)
+    expect(json).toEqual({ accepted: true, event_id: body.event_id })
+    expect(await stored(body.event_id as string)).toMatchObject({ user_id: 'u_2b6447a3', device_id: 'd_4b21e8' })
+    expect(await resolvedOf(body.event_id as string)).toEqual({ user_id: 'u_2b6447a3', pkey: await pkeyForEmail(piiKeySecret(), JULIA) })
+    expect(await count('app_users')).toBe(users)
+    expect(await count('profiles')).toBe(profiles)
+    expect(await count("app_users WHERE user_id <> trim(user_id)")).toBe(0)
+  })
+
+  it('a blank or odd id is 400 invalid_event naming the field, and stores nothing', async () => {
+    const base = { user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }
+    const cases: [Body, string, string][] = [
+      [event({ ...base, user_id: '   ' }), 'user_id', 'user_id must not be empty or only spaces'],
+      [event({ ...base, device_id: ' \t ' }), 'device_id', 'device_id must not be empty or only spaces'],
+      [event({ ...base, user_id: 'u_2b6447a3;' }), 'user_id', 'user_id must be 1 to 64 letters, digits, "_" or "-"'],
+      [event({ ...base, user_id: 'u_2b64 47a3' }), 'user_id', 'user_id must be 1 to 64 letters, digits, "_" or "-"'],
+      [event({ ...base, device_id: 'd_4b21e8/' }), 'device_id', 'device_id must be 1 to 64 letters, digits, "_" or "-"'],
+      [event({ ...base, device_id: 'd_4b21e8\u0000' }), 'device_id', 'device_id must be 1 to 64 letters, digits, "_" or "-"'],
+      [event({ ...base, device_id: 'ｄ_4b21e8' }), 'device_id', 'device_id must be 1 to 64 letters, digits, "_" or "-"'],
+    ]
+    const rows = await count('app_events')
+    const users = await count('app_users')
+    for (const [body, field, issue] of cases) {
+      const { status, json } = await post(body)
+      expect(status, issue).toBe(400)
+      expect(json.error).toBe('invalid_event')
+      expect(json.details).toEqual([{ field, issue }])
+      expect(JSON.stringify(json)).not.toContain('2b6447a3')
+      expect(JSON.stringify(json)).not.toContain('4b21e8')
+    }
+    expect(await count('app_events')).toBe(rows)
+    expect(await count('app_users')).toBe(users)
+  })
+
+  it('the public 202 never says which person a device belongs to', async () => {
+    // Her login on the brief's device first, so an anonymous event on it resolves to her.
+    expect((await post(event({ event: 'login', user_id: 'u_2b6447a3', device_id: 'd_4b21e8' }))).status).toBe(202)
+    const anonymous = event({ event: 'app_open', user_id: null, device_id: 'd_4b21e8' })
+    const { status, json } = await post(anonymous)
+    expect(status).toBe(202)
+    expect(json).toEqual({ accepted: true, event_id: anonymous.event_id })
+    expect(JSON.stringify(json)).not.toMatch(/pk_|u_2b6447a3/)
+    // The session-only feed still knows who it is.
+    expect((await resolvedOf(anonymous.event_id as string)).user_id).toBe('u_2b6447a3')
   })
 })

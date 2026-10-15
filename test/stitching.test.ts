@@ -4,7 +4,7 @@ import { TODAY } from '../shared/config'
 import { pkeyForEmail } from '../shared/pseudonym'
 import { loginCookie } from './helpers/auth'
 import { piiKeySecret, seedDatabase } from './helpers/seed'
-import { eventIdPool, sendWebhook } from './helpers/webhook'
+import { eventIdPool, resolvedOf, sendWebhook } from './helpers/webhook'
 
 // Read-time login stitching (01 §Identity resolution, 07 §D and §E, 09 D-18, D-43): T-WH-9a and
 // T-WH-9b (08). T-WH-9c (07 §F, the shared-device miss) is band P, parked, and not here. Every
@@ -50,10 +50,11 @@ function sequence(userId: string, deviceId: string) {
   }
 }
 
-async function post(body: Body): Promise<Body> {
+/** Sends one event (202 expected) and returns who it resolves to right after it is stored. */
+async function post(body: Body): Promise<{ user_id: string | null; pkey: string | null }> {
   const res = await sendWebhook(JSON.stringify(body))
   expect(res.status, await res.clone().text()).toBe(202)
-  return res.json()
+  return resolvedOf(body.event_id as string)
 }
 
 async function lookup(q: string): Promise<Body> {
@@ -97,7 +98,7 @@ describe('T-WH-9a 07 §D: anonymous events first, login later', () => {
 
     // 1–2: stored; nothing names the device yet, so each resolves to "anonymous device".
     for (const e of [s.appOpen, s.readStory]) {
-      expect((await post(e)).resolved).toEqual({ user_id: null, pkey: null })
+      expect(await post(e)).toEqual({ user_id: null, pkey: null })
       expect(await feedRow(e.event_id as string)).toMatchObject({
         user_id: null,
         attached_via: null,
@@ -108,7 +109,7 @@ describe('T-WH-9a 07 §D: anonymous events first, login later', () => {
     expect((await lookup(user)).app).toMatchObject({ devices: [], events: [] })
 
     // 3: the login names the device; no stored event is rewritten (resolution is at read time).
-    expect((await post(s.login)).resolved).toEqual({ user_id: user, pkey })
+    expect(await post(s.login)).toEqual({ user_id: user, pkey })
     const stored = await env.DB.prepare(
       'SELECT event_id, user_id FROM app_events WHERE device_id = ? ORDER BY event_ts',
     )
@@ -159,9 +160,9 @@ describe('T-WH-9b 07 §E: login first, anonymous events late', () => {
     expect((await lookup(user)).app).toMatchObject({ devices: [], events: [] })
 
     // 07 §E: the login arrives first; each late anonymous event resolves the moment it is stored.
-    expect((await post(s.login)).resolved).toEqual({ user_id: user, pkey })
-    expect((await post(s.appOpen)).resolved).toEqual({ user_id: user, pkey })
-    expect((await post(s.readStory)).resolved).toEqual({ user_id: user, pkey })
+    expect(await post(s.login)).toEqual({ user_id: user, pkey })
+    expect(await post(s.appOpen)).toEqual({ user_id: user, pkey })
+    expect(await post(s.readStory)).toEqual({ user_id: user, pkey })
 
     expect(await lookup(user)).toEqual(fromD)
   })

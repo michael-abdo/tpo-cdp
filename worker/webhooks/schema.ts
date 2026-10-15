@@ -114,13 +114,45 @@ const id = (field: string) =>
     .min(1, { error: `${field} must not be empty` })
     .max(ID_MAX_CHARS, { error: `${field} must be at most ${ID_MAX_CHARS} characters` })
 
+/**
+ * The characters a user or device id may hold once trimmed: letters, digits, "_" and "-", 1 to
+ * ID_MAX_CHARS of them. The CSV ids (`u_2b6447a3`) and the brief's device (`d_4b21e8`) fit.
+ */
+export const PERSON_ID_PATTERN = new RegExp(`^[A-Za-z0-9_-]{1,${ID_MAX_CHARS}}$`)
+
+/**
+ * user_id and device_id: trimmed, the same as the CSV import trims them, then held to
+ * PERSON_ID_PATTERN. Without the trim, " u_2b6447a3 " was a new, unknown user and got its own
+ * stub profile. A blank id is refused, never stored as empty.
+ */
+const personId = (field: string) =>
+  z
+    .string({
+      error: (iss) => (iss.input === undefined ? `${field} is required` : `${field} must be a string`),
+    })
+    .transform((value, ctx) => {
+      const trimmed = value.trim()
+      if (trimmed === '') {
+        ctx.addIssue({ code: 'custom', message: `${field} must not be empty or only spaces` })
+        return z.NEVER
+      }
+      if (!PERSON_ID_PATTERN.test(trimmed)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${field} must be 1 to ${ID_MAX_CHARS} letters, digits, "_" or "-"`,
+        })
+        return z.NEVER
+      }
+      return trimmed
+    })
+
 /** The schema for a request received at `nowMs` (wall clock; 09 D-70 #3). */
 const eventSchema = (nowMs: number) => z.object({
   event_id: id('event_id'),
   event: z.enum(APP_EVENTS, { error: `event must be one of ${APP_EVENTS.join(', ')}` }),
   // R4.4: a string, null, or absent. Empty is rejected: no app user has an empty id.
-  user_id: id('user_id').nullable().optional(),
-  device_id: id('device_id'),
+  user_id: personId('user_id').nullable().optional(),
+  device_id: personId('device_id'),
   timestamp: z
     .string({
       error: (iss) => (iss.input === undefined ? 'timestamp is required' : 'timestamp must be a string'),
@@ -158,7 +190,7 @@ const eventSchema = (nowMs: number) => z.object({
     .optional(),
 })
 
-/** A validated event: ids as sent, `user_id` null when absent, `timestamp` normalized UTC. */
+/** A validated event: user and device ids trimmed, `user_id` null when absent, `timestamp` normalized UTC. */
 export interface WebhookEvent {
   event_id: string
   event: AppEventName
