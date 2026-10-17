@@ -22,6 +22,9 @@ describe('an unknown field name never reaches the server log', () => {
     ['/api/duplicates/x/review', { verdict: 'same', [EMAIL_KEY]: 1 }],
     ['/api/events/test', { user_id: 'u_2b6447a3', event: 'app_open', [EMAIL_KEY]: 1 }],
     ['/api/events/test', { resend: 'evt_x', [EMAIL_KEY]: 1 }],
+    ['/api/events/test', { same_device_as: 'evt_x', user_id: null, event: 'app_open', [EMAIL_KEY]: 1 }],
+    // A value is client text too: an unknown same_device_as is refused without logging it.
+    ['/api/events/test', { event: 'app_open', user_id: null, same_device_as: EMAIL_KEY }],
   ] as const) {
     it(`${path} ${Object.keys(body)[0]}: 400, and no log line holds the key`, async () => {
       const logged: string[] = []
