@@ -9,7 +9,7 @@ import { documentationIp, loginCookie } from './helpers/auth'
 import { seedDatabase } from './helpers/seed'
 import { sendWebhook, signature as independentSignature, webhookSecret } from './helpers/webhook'
 
-// POST /api/events/test: the "Send a test event" panel's server route. T-WH-PANEL-1..12. The test
+// POST /api/events/test: the "Send a test event" panel's server route. T-WH-PANEL-1..17. The test
 // D1 holds the real seed of data/*.csv (test/helpers/seed.ts); no network.
 // Inputs (real ids, minimal edits for the refusal paths):
 // - u_2b6447a3 is julia.evans230@gmail.com (app_users.csv:2, a demo subject): a real
