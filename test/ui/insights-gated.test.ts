@@ -6,7 +6,14 @@ import { SetAlertItem, TileActions } from '../../src/insights/board'
 import { FollowUpField } from '../../src/insights/ask'
 import { SendTheBoardButton } from '../../src/pages/InsightsPage'
 import type { InsightTile } from '../../src/types'
-import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
+import {
+  describedByResolvesTo,
+  elementText,
+  gatedControlTags,
+  hasDisabledAttribute,
+  showsComingSoonChip,
+  wearsGatedLook,
+} from '../helpers/gated-assertions'
 
 // Insights' gated future features: Schedules and digests (the
 // board header's "Send the board" and a tile's "Set an alert", one shared flag) and Follow-up
@@ -107,4 +114,18 @@ describe('Insights: Ask a follow-up (follow_up_questions)', () => {
     expect(elementText(html, 'label')).toBe(FEATURES.follow_up_questions.controls![0])
     expect(elementText(html, 'button')).toBe(FEATURES.follow_up_questions.controls![1])
   })
+})
+
+describe('Insights: no "Coming soon" chip; every gated control wears the shared greyed look', () => {
+  const cases: [string, () => string][] = [
+    ['Send the board', () => renderToString(createElement(SendTheBoardButton))],
+    ['Set an alert (on its tile)', () => actionsHtml(NUMBER_TILE)],
+    ['Ask a follow-up (input and button)', () => renderToString(createElement(FollowUpField))],
+  ]
+  for (const [name, render] of cases)
+    it(name, () => {
+      const html = render()
+      expect(showsComingSoonChip(html)).toBe(false)
+      for (const tag of gatedControlTags(html)) expect(wearsGatedLook(tag), tag).toBe(true)
+    })
 })

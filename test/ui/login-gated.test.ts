@@ -5,7 +5,13 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 import { AccountButton } from '../../src/App'
 import LoginPage from '../../src/pages/LoginPage'
-import { describedByResolvesTo, hasDisabledAttribute } from '../helpers/gated-assertions'
+import {
+  describedByResolvesTo,
+  gatedControlTags,
+  hasDisabledAttribute,
+  showsComingSoonChip,
+  wearsGatedLook,
+} from '../helpers/gated-assertions'
 
 // "Your own sign-in" (work_sign_in): one flag, two placements — the
 // /login button and the top bar's "Your account". Both render the exact same canonical note
@@ -71,4 +77,17 @@ describe('Top bar: Your account (work_sign_in)', () => {
     expect(html).toContain(FEATURES.work_sign_in.controls![1])
     expect(html).not.toMatch(/@/)
   })
+})
+
+describe('Your own sign-in: no "Coming soon" chip; every gated control wears the shared greyed look', () => {
+  const cases: [string, () => string][] = [
+    ['/login: Sign in with your work account', rendered],
+    ['Top bar: Your account', () => renderToString(createElement(AccountButton))],
+  ]
+  for (const [name, render] of cases)
+    it(name, () => {
+      const html = render()
+      expect(showsComingSoonChip(html)).toBe(false)
+      for (const tag of gatedControlTags(html)) expect(wearsGatedLook(tag), tag).toBe(true)
+    })
 })

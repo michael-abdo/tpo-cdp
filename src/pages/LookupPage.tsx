@@ -40,7 +40,6 @@ import { ListboxOption } from '../listbox'
 import {
   Announcer,
   Button,
-  ComingSoonTag,
   Disclosure,
   ErrorLine,
   EventName,
@@ -54,7 +53,7 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
-import { useGated } from '../use-gated'
+import { GATED_BOX, GATED_LOOK, useGated } from '../use-gated'
 import { capitalized, humanDate, humanDateTime, utc } from '../format'
 import type { Lookup, LookupAppAccount, LookupSearch, LookupVisitor } from '../types'
 
@@ -138,7 +137,7 @@ function Column({
 
 /**
  * The gated "App revenue" column (coming soon): a fourth column, last, right
- * after App activity. Level 1 shows only the title and the gated "Details" toggle with its chip —
+ * after App activity. Level 1 shows only the title and the greyed, gated "Details" toggle —
  * no summary lines, no fake "$0" or sample plan (the CDP does not know this fact yet). Activating
  * the toggle (it is not a <details>, so it cannot open) only opens the shared "Coming soon" pop-up.
  */
@@ -150,12 +149,11 @@ function AppRevenue() {
         type="button"
         {...gated.bind}
         onClick={gated.activate}
-        className="inline-flex min-h-6 items-center gap-1 rounded-md py-0.5 text-sm font-medium text-ink-subtle"
+        className={`inline-flex min-h-6 items-center gap-1 rounded-md py-0.5 text-sm font-medium ${GATED_LOOK}`}
       >
         <Icon icon={ICONS.navCaret} className="size-4 -rotate-90" />
         {gated.feature.controls![0]}
       </button>
-      <ComingSoonTag />
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </Column>
   )
@@ -175,12 +173,11 @@ function DeletePerson() {
           type="button"
           {...gated.bind}
           onClick={gated.activate}
-          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-subtle"
+          className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium ${GATED_BOX}`}
         >
           <Icon icon={Trash2} />
           {gated.feature.label}
         </button>
-        <ComingSoonTag />
       </div>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>

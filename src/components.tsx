@@ -639,24 +639,29 @@ export function Tag({
   )
 }
 
+/** The words for a gated feature's state, written once: the pop-up's chip and the controls' hidden cue. */
+const COMING_SOON = 'Coming soon'
+
 /**
- * A visible, always-in-the-name "Coming soon" chip, the one home of its words: every
- * gated control sits beside exactly one of these, so the state is never shown by colour alone.
+ * The "Coming soon" chip. It shows only in the shared pop-up (src/coming-soon-dialog.tsx): a gated
+ * control itself carries no chip, only the greyed look (GATED_LOOK, src/use-gated.ts) and the
+ * hidden cue in its GatedNote.
  */
 export function ComingSoonTag() {
-  return <Tag tone="neutral">Coming soon</Tag>
+  return <Tag tone="neutral">{COMING_SOON}</Tag>
 }
 
 /**
- * The note `useGated` (src/use-gated.ts) describes: always in the DOM with its real text and
- * always `sr-only`, so `aria-describedby` resolves from the first render and a screen reader hears
- * what the control will do before it is activated. The note is shown on screen only in the
- * "Coming soon" pop-up (src/coming-soon-dialog.tsx), which is read out when it opens.
+ * The description `useGated` (src/use-gated.ts) names: always in the DOM and always `sr-only`, so
+ * `aria-describedby` resolves from the first render and a screen reader hears "Coming soon." and
+ * what the control will do before it is activated (the greyed look alone would say it by sight
+ * only). The note is shown on screen only in the shared pop-up (src/coming-soon-dialog.tsx),
+ * which is read out when it opens.
  */
 export function GatedNote({ id, text }: { id: string; text: string }) {
   return (
     <p id={id} className="sr-only">
-      {text}
+      {`${COMING_SOON}. ${text}`}
     </p>
   )
 }

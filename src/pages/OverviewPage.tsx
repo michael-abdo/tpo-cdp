@@ -30,7 +30,6 @@ import { errorMessage, getJson, postJson } from '../api'
 import {
   Announcer,
   Button,
-  ComingSoonTag,
   EmptyState,
   ErrorLine,
   Field,
@@ -48,7 +47,7 @@ import {
   TechnicalDetails,
   type LucideIcon,
 } from '../components'
-import { useGated } from '../use-gated'
+import { GATED_BOX, useGated } from '../use-gated'
 import { capitalized, humanDate, humanDateTime, utc } from '../format'
 import { sourceLabel } from '../labels'
 import { asWritten, csvName, needsReview, type QuarantinedRow, reviewGroups } from '../needs-review'
@@ -290,7 +289,7 @@ function RunCard({ source, run }: { source: CsvSource; run: SourceRun }) {
 /**
  * The gated load bar (coming soon): first child of a CSV source's
  * History tab, above the run cards. "Upload a new file" and "Run again" share one gate
- * (`csv_upload`: one chip, one note for the feature); "Automatic daily sync" is a second,
+ * (`csv_upload`: one flag, one note for the feature); "Automatic daily sync" is a second,
  * separate gate, shown only on the sources DAILY_SYNC_SOURCE_IDS names. Gated now: activating any
  * control only opens the shared "Coming soon" pop-up — no file input exists, no switch moves,
  * no request goes out.
@@ -299,8 +298,7 @@ export function LoadBar({ source }: { source: CsvSource }) {
   const upload = useGated('csv_upload')
   const sync = useGated('daily_sync')
   const showSync = DAILY_SYNC_SOURCE_IDS.includes(source.id)
-  const muted =
-    'inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-muted'
+  const muted = `inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium ${GATED_BOX}`
   return (
     <div className="space-y-2 rounded-lg border border-line bg-surface p-3">
       <div className="flex flex-wrap items-start gap-3">
@@ -313,7 +311,6 @@ export function LoadBar({ source }: { source: CsvSource }) {
             <Icon icon={ICONS.refresh} />
             {upload.feature.controls![1]}
           </button>
-          <ComingSoonTag />
         </div>
         {showSync && (
           <div className="flex items-center gap-2 sm:ml-auto">
@@ -321,7 +318,6 @@ export function LoadBar({ source }: { source: CsvSource }) {
               <Icon icon={ICONS.schedule} />
               {sync.feature.label}
             </button>
-            <ComingSoonTag />
           </div>
         )}
       </div>
@@ -880,12 +876,11 @@ export function SettingsButton() {
           type="button"
           {...gated.bind}
           onClick={gated.activate}
-          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-muted"
+          className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium ${GATED_BOX}`}
         >
           <Icon icon={ICONS.settings} />
           {gated.feature.label}
         </button>
-        <ComingSoonTag />
       </div>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>

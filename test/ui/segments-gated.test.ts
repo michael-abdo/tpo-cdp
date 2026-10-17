@@ -11,7 +11,14 @@ import {
   SendToBeehiiv,
 } from '../../src/pages/SegmentsPage'
 import { FILTER_KEYS, type SegmentFilters } from '../../shared/segment-filters'
-import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
+import {
+  describedByResolvesTo,
+  elementText,
+  gatedControlTags,
+  hasDisabledAttribute,
+  showsComingSoonChip,
+  wearsGatedLook,
+} from '../helpers/gated-assertions'
 import { DEFAULT_FORM, toFilters } from '../../src/segment-form'
 import { recordSearch, type SearchStore } from '../../src/previous-searches'
 
@@ -37,7 +44,7 @@ describe('Segments: the five gated "More filters"', () => {
     }
   })
 
-  it('each filter\'s own VISIBLE text (legend or label, "Coming soon" aside) equals its features.ts label exactly', () => {
+  it('each filter\'s own VISIBLE text (legend or label) equals its features.ts label exactly', () => {
     expect(elementText(renderToString(createElement(GatedSignedUpBetween)), 'legend')).toBe(FEATURES.filter_signed_up_between.label)
     expect(elementText(renderToString(createElement(GatedOpenedWithinDays)), 'label')).toBe(FEATURES.filter_opened_within_days.label)
     expect(elementText(renderToString(createElement(GatedSiteVisitsAtLeast)), 'label')).toBe(FEATURES.filter_site_visits_gte.label)
@@ -133,4 +140,17 @@ describe('Segments: Send to beehiiv', () => {
     const html = renderToString(createElement(SendToBeehiiv))
     expect(elementText(html, 'button')).toBe(FEATURES.send_to_beehiiv.label)
   })
+})
+
+describe('Segments: no "Coming soon" chip; every gated control wears the shared greyed look', () => {
+  const cases: [string, () => string][] = [
+    ...MORE_FILTERS.map(({ Component, id }): [string, () => string] => [id, () => renderToString(createElement(Component))]),
+    ['send_to_beehiiv', () => renderToString(createElement(SendToBeehiiv))],
+  ]
+  for (const [name, render] of cases)
+    it(name, () => {
+      const html = render()
+      expect(showsComingSoonChip(html)).toBe(false)
+      for (const tag of gatedControlTags(html)) expect(wearsGatedLook(tag), tag).toBe(true)
+    })
 })

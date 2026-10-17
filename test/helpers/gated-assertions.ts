@@ -4,6 +4,36 @@
 // that must resolve to the FEATURES note's exact text) is written once and every gated test
 // inherits it, instead of each page's test re-deriving its own, weaker version.
 
+import { GATED_LOOK } from '../../src/use-gated'
+
+/** The hidden cue every gated control's description starts with (GatedNote, src/components.tsx). */
+export const COMING_SOON_CUE = 'Coming soon. '
+
+/**
+ * Every gated control's opening tag in `html`: each `<button>`, `<input>` or `<select>` carrying
+ * `aria-disabled="true"`. Throws loud if there are none, so a page that lost its gated controls
+ * fails instead of passing an empty check.
+ */
+export function gatedControlTags(html: string): string[] {
+  const tags = [...html.matchAll(/<(?:button|input|select)\b[^>]*aria-disabled="true"[^>]*>/g)].map((m) => m[0])
+  if (tags.length === 0) throw new Error('gated-assertions: no aria-disabled control in rendered HTML')
+  return tags
+}
+
+/** True if this opening tag's class list holds every class of the shared greyed look (GATED_LOOK). */
+export function wearsGatedLook(tag: string): boolean {
+  const classes = (/\sclass="([^"]*)"/.exec(tag)?.[1] ?? '').split(/\s+/)
+  return GATED_LOOK.split(' ').every((c) => classes.includes(c))
+}
+
+/**
+ * True if `html` shows a visible "Coming soon" chip: an element whose whole text is those words.
+ * The hidden cue (`Coming soon. <note>`) never matches; only the pop-up may show the chip.
+ */
+export function showsComingSoonChip(html: string): boolean {
+  return />\s*Coming soon\s*</.test(html.replaceAll('<!-- -->', ''))
+}
+
 /**
  * Catches `disabled` as a real HTML attribute (`disabled`, `disabled=""`, `disabled="disabled"`)
  * but never a class name, a prop that merely contains the word, or `aria-disabled`. A plain
@@ -20,7 +50,8 @@ export function hasDisabledAttribute(html: string): boolean {
 
 /**
  * True if `html` has exactly one `aria-describedby="<id>"` naming `id`, and an element with that
- * id whose full text content equals `expectedText` exactly (not merely "contains"). Catches a
+ * id whose full text content equals the hidden cue then `expectedText`, exactly (not merely
+ * "contains"). Catches a
  * describedby that targets the wrong id (a hard-coded id, or `noteId + 'x'`) as well as a note
  * element whose text has drifted from `shared/features.ts`.
  */
@@ -32,7 +63,7 @@ export function describedByResolvesTo(html: string, expectedText: string): boole
   if (elMatch === null) return false
   // renderToString escapes a few characters inside text nodes (notably `"`); the comparison
   // normalizes the expected text the same way rather than the raw string.
-  const escapedExpected = expectedText.replaceAll('"', '&quot;')
+  const escapedExpected = `${COMING_SOON_CUE}${expectedText}`.replaceAll('"', '&quot;')
   // Strip the leading icon's empty comment node / nested tags, keep inner text runs only.
   const text = elMatch[1].replace(/<[^>]*>/g, '').trim()
   return text === escapedExpected
@@ -56,9 +87,8 @@ function normalizeText(raw: string): string {
  * The Nth (0-indexed; negative counts back from the end, so `-1` is the last one) `<tag>…</tag>`
  * element's own VISIBLE text: any nested `sr-only` span (a hidden disambiguating suffix, such as
  * FollowUpField's " a follow-up") dropped WHOLE, every remaining tag and comment node stripped
- * out, the fixed "Coming soon" chip text dropped if the chip sits inside this same element (some
- * controls nest it — a `<legend>`, a checkbox `<label>` — others render it as a sibling),
- * whitespace collapsed. Used to pin a control's exact rendered text against shared/features.ts's
+ * out, whitespace collapsed (a gated control carries no "Coming soon" chip, so none is dropped:
+ * one nested by mistake makes the text differ). Used to pin a control's exact rendered text against shared/features.ts's
  * own `label`/`controls` strings — not merely "the text shows up somewhere on the page"
  * (`toContain`), which a mutant that renames the control AND removes the old text could still
  * satisfy by accident, but never "this exact element reads exactly this". Throws loud if `tag`
@@ -76,8 +106,6 @@ export function elementText(html: string, tag: string, n = 0): string {
       .replace(/<span class="[^"]*\bsr-only\b[^"]*"[^>]*>[\s\S]*?<\/span>/g, '')
       .replace(/<[^>]*>/g, ''),
   )
-    .replaceAll('Coming soon', '')
-    .trim()
 }
 
 /** `text` with every `/* … *\/` block comment and `// …` line comment blanked out (replaced by

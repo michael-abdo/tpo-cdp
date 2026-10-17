@@ -31,7 +31,6 @@ import { downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
   Button,
-  ComingSoonTag,
   type Column,
   Disclosure,
   ErrorLine,
@@ -46,7 +45,7 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
-import { useGated } from '../use-gated'
+import { GATED_BOX, GATED_LOOK, useGated } from '../use-gated'
 import { filtersAppliedView } from '../filters-applied'
 import { humanDate } from '../format'
 import { columnLabel, COLUMN_LABEL, DEFINITION_LABEL, monthLabel, segmentLabel, sourceLabel, statusLabel } from '../labels'
@@ -120,6 +119,10 @@ const groupClass = 'text-sm font-semibold text-ink'
 const hintClass = 'text-sm text-gray-600'
 const inputClass = 'block w-full min-h-9 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
 const numberClass = 'block min-h-9 w-24 rounded-lg border border-line-strong bg-surface px-2 py-1 text-sm text-ink'
+// The gated filters' label, box and number box: the same layout, greyed by the shared GATED_LOOK/GATED_BOX.
+const gatedLabelClass = `block text-sm font-medium ${GATED_LOOK}`
+const gatedInputClass = `block w-full min-h-9 rounded-lg px-2 py-1 text-sm ${GATED_BOX}`
+const gatedNumberClass = `block min-h-9 w-24 rounded-lg px-2 py-1 text-sm ${GATED_BOX}`
 
 /**
  * The level-1 words under "Signed up in the last" ("30 = new subscribers"): the brief's
@@ -203,12 +206,9 @@ export function GatedSignedUpBetween() {
   return (
     <fieldset className="space-y-1">
       {/* legend must be the fieldset's first child (not wrapped in a layout div) or the fieldset
-          gets no accessible name; the chip sits inside it instead. */}
-      <legend className={`${labelClass} flex items-center gap-1`}>
-        {gated.feature.label}
-        <ComingSoonTag />
-      </legend>
-      <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
+          gets no accessible name. */}
+      <legend className={gatedLabelClass}>{gated.feature.label}</legend>
+      <div className={`flex flex-wrap items-center gap-2 text-sm ${GATED_LOOK}`}>
         <label htmlFor={from}>from</label>
         <input
           id={from}
@@ -219,7 +219,7 @@ export function GatedSignedUpBetween() {
           onClick={gated.activate}
           onKeyDown={gated.onKeyDown}
           onChange={gated.activate}
-          className={inputClass}
+          className={gatedInputClass}
         />
         <label htmlFor={to}>to</label>
         <input
@@ -231,7 +231,7 @@ export function GatedSignedUpBetween() {
           onClick={gated.activate}
           onKeyDown={gated.onKeyDown}
           onChange={gated.activate}
-          className={inputClass}
+          className={gatedInputClass}
         />
       </div>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
@@ -244,12 +244,9 @@ export function GatedOpenedWithinDays() {
   const id = useId()
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-1">
-        <label htmlFor={id} className={labelClass}>
-          {gated.feature.label}
-        </label>
-        <ComingSoonTag />
-      </div>
+      <label htmlFor={id} className={gatedLabelClass}>
+        {gated.feature.label}
+      </label>
       <div className="flex items-center gap-2">
         <input
           id={id}
@@ -260,9 +257,9 @@ export function GatedOpenedWithinDays() {
           onClick={gated.activate}
           onKeyDown={gated.onKeyDown}
           onChange={gated.activate}
-          className={numberClass}
+          className={gatedNumberClass}
         />
-        <span className="text-sm text-gray-700">days</span>
+        <span className={`text-sm ${GATED_LOOK}`}>days</span>
       </div>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
@@ -274,12 +271,9 @@ export function GatedSiteVisitsAtLeast() {
   const id = useId()
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-1">
-        <label htmlFor={id} className={labelClass}>
-          {gated.feature.label}
-        </label>
-        <ComingSoonTag />
-      </div>
+      <label htmlFor={id} className={gatedLabelClass}>
+        {gated.feature.label}
+      </label>
       <div className="flex items-center gap-2">
         <input
           id={id}
@@ -290,9 +284,9 @@ export function GatedSiteVisitsAtLeast() {
           onClick={gated.activate}
           onKeyDown={gated.onKeyDown}
           onChange={gated.activate}
-          className={numberClass}
+          className={gatedNumberClass}
         />
-        <span className="text-sm text-gray-700">times</span>
+        <span className={`text-sm ${GATED_LOOK}`}>times</span>
       </div>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
@@ -303,7 +297,7 @@ export function GatedGoingColdRisk() {
   const gated = useGated('filter_going_cold_risk')
   return (
     <div className="space-y-1">
-      <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm">
+      <label className={`flex min-h-8 items-center gap-2 text-sm ${GATED_LOOK}`}>
         <input
           type="checkbox"
           checked={false}
@@ -311,10 +305,9 @@ export function GatedGoingColdRisk() {
           onClick={gated.activate}
           onKeyDown={gated.onKeyDown}
           onChange={gated.activate}
-          className="size-4"
+          className={`size-4 opacity-60 ${GATED_LOOK}`}
         />
         {gated.feature.label}
-        <ComingSoonTag />
       </label>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
@@ -326,12 +319,9 @@ export function GatedEmailDomain() {
   const id = useId()
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-1">
-        <label htmlFor={id} className={labelClass}>
-          {gated.feature.label}
-        </label>
-        <ComingSoonTag />
-      </div>
+      <label htmlFor={id} className={gatedLabelClass}>
+        {gated.feature.label}
+      </label>
       <select
         id={id}
         value=""
@@ -339,7 +329,7 @@ export function GatedEmailDomain() {
         onClick={gated.activate}
         onKeyDown={gated.onKeyDown}
         onChange={gated.activate}
-        className={inputClass}
+        className={gatedInputClass}
       >
         <option value="">Any domain</option>
       </select>
@@ -363,12 +353,11 @@ export function SendToBeehiiv() {
           type="button"
           {...gated.bind}
           onClick={gated.activate}
-          className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-subtle"
+          className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium ${GATED_BOX}`}
         >
           <Icon icon={ICONS.send} />
           {gated.feature.label}
         </button>
-        <ComingSoonTag />
       </div>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>

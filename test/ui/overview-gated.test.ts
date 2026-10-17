@@ -4,7 +4,14 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 import { LoadBar, SettingsButton } from '../../src/pages/OverviewPage'
 import type { CsvSource } from '../../src/types'
-import { describedByResolvesTo, elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
+import {
+  describedByResolvesTo,
+  elementText,
+  gatedControlTags,
+  hasDisabledAttribute,
+  showsComingSoonChip,
+  wearsGatedLook,
+} from '../helpers/gated-assertions'
 
 // Overview's gated future features: Upload a new file + Run
 // again (csv_upload), Automatic daily sync (daily_sync, beehiiv and App accounts only — not
@@ -66,9 +73,12 @@ describe('Overview: LoadBar (csv_upload, daily_sync)', () => {
     expect(html).not.toContain('type="file"')
   })
 
-  it('shows the fixed "Coming soon" chip, never the disabled attribute, for every rendered control', () => {
+  it('shows no "Coming soon" chip; all three controls wear the shared greyed look instead', () => {
     const html = renderToString(createElement(LoadBar, { source: csv('subscribers', 'beehiiv') }))
-    expect((html.match(/Coming soon/g) ?? []).length).toBe(2) // one chip for the upload group, one for the switch
+    expect(showsComingSoonChip(html)).toBe(false)
+    const tags = gatedControlTags(html)
+    expect(tags).toHaveLength(3)
+    for (const tag of tags) expect(wearsGatedLook(tag), tag).toBe(true)
   })
 })
 
@@ -79,6 +89,12 @@ describe('Overview: SettingsButton (definition_settings)', () => {
     expect(hasDisabledAttribute(html)).toBe(false)
     expect(html).not.toContain('href="/settings"')
     expect(describedByResolvesTo(html, FEATURES.definition_settings.note)).toBe(true)
+  })
+
+  it('shows no "Coming soon" chip and the button wears the shared greyed look', () => {
+    const html = renderToString(createElement(SettingsButton))
+    expect(showsComingSoonChip(html)).toBe(false)
+    for (const tag of gatedControlTags(html)) expect(wearsGatedLook(tag), tag).toBe(true)
   })
 
   it('the button\'s own visible text equals shared/features.ts\'s definition_settings.label exactly ("Definition settings")', () => {

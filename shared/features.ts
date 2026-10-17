@@ -1,12 +1,11 @@
-// Gated future features: each saved-for-later feature is drawn where it will live, greyed out
-// with a "coming soon" note, so the screen shows where the product is going. One entry per
-// visible control. One home for every label and note: a page never retypes either; it
-// reads this file through the shared `<Gated>`/`useGated` wiring (src/components.tsx), which is the
-// only place the revealed sentence is built or shown.
+// Gated future features: each saved-for-later feature is drawn where it will live, greyed out,
+// and opens a "Coming soon" pop-up with its note, so the screen shows where the product is going.
+// One entry per visible control. One home for every label and note: a page never retypes either;
+// it reads this file through the shared `useGated` wiring (src/use-gated.ts), and the pop-up
+// (src/coming-soon-dialog.tsx) is the only place the note is shown.
 //
-// `note` is the WHOLE sentence a page reveals under the control once it is activated (it says
-// what the feature will do), so a page or a
-// test can compare it by equality with no string-building logic to duplicate. `label` is the
+// `note` is the WHOLE sentence the pop-up shows once the control is activated (it says what the
+// feature will do), so the pop-up or a test can compare it by equality with no string-building logic to duplicate. `label` is the
 // feature's plain name (used for docs/notes.md and tests, and in the rare case a control's own visible
 // text differs from it, such as Look up's "Details" toggle for `profile_revenue`). `group` marks
 // the five Segments "More filters" flags, which docs/notes.md lists once, under one line: one
@@ -23,9 +22,9 @@ export interface Feature {
   readonly page: FeaturePage
   /** The feature's plain name; used for docs/notes.md and tests. */
   readonly label: string
-  /** The whole sentence a page shows once the control is activated. States what the feature will
-   * do; never repeats "coming soon" (the chip's own
-   * words) and never starts with this entry's own `label` or a `controls` entry. */
+  /** The whole sentence the pop-up shows once the control is activated. States what the feature
+   * will do; never repeats "coming soon" (the pop-up's chip says it) and never starts with this
+   * entry's own `label` or a `controls` entry. */
   readonly note: string
   /** Segments' five saved-for-later filters share one docs/notes.md line, each ungating alone. */
   readonly group?: 'more_filters'

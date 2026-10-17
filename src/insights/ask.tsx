@@ -22,7 +22,6 @@ import { ApiError, downloadSegmentCsv, errorMessage, postJson } from '../api'
 import {
   Announcer,
   Button,
-  ComingSoonTag,
   Disclosure,
   ErrorLine,
   Field,
@@ -33,7 +32,7 @@ import {
   Tag,
   TechnicalDetails,
 } from '../components'
-import { useGated } from '../use-gated'
+import { GATED_BOX, GATED_LOOK, useGated } from '../use-gated'
 import { humanRange } from '../format'
 import { filtersAppliedView } from '../filters-applied'
 import { DEFINITION_LABEL } from '../labels'
@@ -79,10 +78,9 @@ export function FollowUpField() {
   return (
     <div className="space-y-1.5 border-t border-line pt-3">
       <div className="flex items-center gap-1">
-        <label htmlFor={id} className="block text-sm font-medium text-ink">
+        <label htmlFor={id} className={`block text-sm font-medium ${GATED_LOOK}`}>
           {gated.feature.controls![0]}
         </label>
-        <ComingSoonTag />
       </div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
@@ -94,13 +92,13 @@ export function FollowUpField() {
           onClick={gated.activate}
           onKeyDown={gated.onKeyDown}
           placeholder="and last month?"
-          className="min-h-9 w-full rounded-lg border border-dashed border-line-strong bg-page px-3 py-1.5 text-sm text-ink-subtle placeholder:text-ink-subtle"
+          className={`min-h-9 w-full rounded-lg px-3 py-1.5 text-sm ${GATED_BOX}`}
         />
         <button
           type="button"
           {...gated.bind}
           onClick={gated.activate}
-          className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-4 text-sm font-medium text-ink-subtle"
+          className={`inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-4 text-sm font-medium ${GATED_BOX}`}
         >
           {gated.feature.controls![1]}
           <span className="sr-only"> a follow-up</span>

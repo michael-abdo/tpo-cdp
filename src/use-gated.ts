@@ -1,16 +1,28 @@
 // The shared "future feature, drawn in place" wiring: a feature saved for later is drawn where it
-// will live, greyed out with a "Coming soon" chip, so the screen shows where the product is going.
+// will live, greyed out (GATED_LOOK below), so the screen shows where the product is going.
 // Kept out of src/components.tsx
 // (a components-only export, like src/nav.ts: react-refresh's only-export-components rule, oxlint)
 // because this is a hook, not a component. Render the real control with `bind` spread onto it,
 // wire `activate` as its onClick (or `onKeyDown` for a non-button element, such as a gated input),
 // and render `<GatedNote>` (src/components.tsx) right after it with `noteId` and the feature's
-// `note`. Activating the control opens the one shared "Coming soon" pop-up
-// (src/coming-soon-dialog.tsx) on that feature.
+// `note`; give the control GATED_LOOK (or GATED_BOX) in place of its own colours. Activating the
+// control opens the one shared "Coming soon" pop-up (src/coming-soon-dialog.tsx) on that feature,
+// the only place those words show on screen.
 
 import { useId } from 'react'
 import { FEATURES, type Feature, type FeatureId } from '../shared/features'
 import { useComingSoon } from './coming-soon'
+
+/**
+ * The one greyed-out look every gated control wears, written once here so no control retypes it:
+ * muted text and icon (the icons draw in currentColor), the not-allowed pointer, and no hover or
+ * active colour of its own. Still AA-legible (the muted ink token) and still focusable: the
+ * shared focus ring (src/index.css) is untouched. A control adds only its own layout classes.
+ */
+export const GATED_LOOK = 'cursor-not-allowed text-ink-subtle placeholder:text-ink-subtle'
+
+/** GATED_LOOK plus a flat, dashed box: for a gated control drawn as a box (a button, an input, a select). */
+export const GATED_BOX = `${GATED_LOOK} border border-dashed border-line-strong bg-surface-2`
 
 /** What `useGated` hands a real-looking control: never the `disabled` attribute, which would take it out of the Tab order. */
 export interface GatedBind {

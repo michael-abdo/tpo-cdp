@@ -7,8 +7,8 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, errorMessage, request } from '../api'
 import { LockKeyhole } from 'lucide-react'
-import { Announcer, Button, ComingSoonTag, ErrorLine, GatedNote, ICONS, Icon } from '../components'
-import { useGated } from '../use-gated'
+import { Announcer, Button, ErrorLine, GatedNote, ICONS, Icon } from '../components'
+import { GATED_BOX, useGated } from '../use-gated'
 
 const ERROR_ID = 'login-error'
 const NOTICE_ID = 'login-limit'
@@ -95,12 +95,11 @@ export default function LoginPage() {
             type="button"
             {...sso.bind}
             onClick={sso.activate}
-            className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3.5 py-1.5 text-sm font-medium text-ink-muted"
+            className={`inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium ${GATED_BOX}`}
           >
             <Icon icon={ICONS.workSignIn} />
             {sso.feature.controls![0]}
           </button>
-          <ComingSoonTag />
           <GatedNote id={sso.noteId} text={sso.feature.note} />
         </div>
       </form>

@@ -11,8 +11,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { errorMessage, getJson } from '../api'
-import { Announcer, Button, ComingSoonTag, EmptyState, ErrorLine, GatedNote, ICONS, Icon, Loading, PageHeader } from '../components'
-import { useGated } from '../use-gated'
+import { Announcer, Button, EmptyState, ErrorLine, GatedNote, ICONS, Icon, Loading, PageHeader } from '../components'
+import { GATED_BOX, useGated } from '../use-gated'
 import { AskSection } from '../insights/ask'
 import { BoardGrid } from '../insights/board'
 import { PREFILL_PARAM } from '../insights/questions'
@@ -31,12 +31,11 @@ export function SendTheBoardButton() {
         type="button"
         {...gated.bind}
         onClick={gated.activate}
-        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-2.5 py-1.5 text-sm font-medium text-ink-subtle"
+        className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium ${GATED_BOX}`}
       >
         <Icon icon={ICONS.digest} />
         {gated.feature.controls![0]}
       </button>
-      <ComingSoonTag />
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </span>
   )

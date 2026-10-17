@@ -15,8 +15,8 @@ import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigat
 import { TODAY } from '../shared/config'
 import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
-import { ComingSoonTag, ErrorLine, GatedNote, Icon, ICONS } from './components'
-import { useGated } from './use-gated'
+import { ErrorLine, GatedNote, Icon, ICONS } from './components'
+import { GATED_LOOK, useGated } from './use-gated'
 import { ComingSoonProvider } from './coming-soon-dialog'
 import {
   closesOnPointer,
@@ -181,12 +181,16 @@ export function AccountButton() {
   return (
     <div className="flex flex-col items-start gap-1">
       <span className="inline-flex items-center gap-1.5">
-        <button type="button" {...gated.bind} onClick={gated.activate} className={quietButton}>
+        <button
+          type="button"
+          {...gated.bind}
+          onClick={gated.activate}
+          className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm whitespace-nowrap ${GATED_LOOK}`}
+        >
           <Icon icon={ICONS.account} />
           {gated.feature.controls![1]}
           <Icon icon={ICONS.navCaret} className="size-3.5" />
         </button>
-        <ComingSoonTag />
       </span>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>

@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES, featuresOn, type Feature, type FeatureId } from '../../shared/features'
 import { ComingSoonContext, type ComingSoon } from '../../src/coming-soon'
 import { ComingSoonTag, GatedNote } from '../../src/components'
-import { isActivatingKey, useGated } from '../../src/use-gated'
+import { GATED_LOOK, isActivatingKey, useGated } from '../../src/use-gated'
+import { showsComingSoonChip, wearsGatedLook } from '../helpers/gated-assertions'
 
 // Shared gated-feature wiring: the scaffolding every page's gated controls share
 // (T-GATE-1..5). A page's own gate test (test/ui/*-gated.test.ts) checks
@@ -19,9 +20,8 @@ function Sample({ feature }: { feature: FeatureId }) {
     null,
     createElement(
       'button',
-      { type: 'button', ...gated.bind, onClick: gated.activate },
+      { type: 'button', ...gated.bind, onClick: gated.activate, className: GATED_LOOK },
       gated.feature.label,
-      createElement(ComingSoonTag),
     ),
     createElement(GatedNote, { id: gated.noteId, text: gated.feature.note }),
   )
@@ -41,8 +41,8 @@ describe('shared/features.ts', () => {
     }
   })
 
-  // One thing in one place: the "Coming soon" chip (ComingSoonTag) is the only place
-  // that phrase appears; the note says only what the feature will do, and never retypes this
+  // One thing in one place: the pop-up's "Coming soon" chip (ComingSoonTag) and the hidden cue
+  // (GatedNote) say that phrase; the note says only what the feature will do, and never retypes this
   // entry's own `label` or any of its `controls` at its very start.
   it('no note says "coming soon" (that is the chip\'s own, only, job)', () => {
     for (const [key, f] of Object.entries(FEATURES)) expect(f.note.toLowerCase(), key).not.toMatch(/coming soon/i)
@@ -89,10 +89,17 @@ describe('useGated / GatedNote (T-GATE-1, T-GATE-2)', () => {
     }
   })
 
-  it('the note is sr-only (never shown under the control) and the chip is always visible', () => {
+  it('the description is sr-only and starts with the hidden "Coming soon." cue; no chip shows beside the control', () => {
     const html = rendered('csv_upload')
-    expect(html).toMatch(/<p id="[^"]+" class="sr-only">/)
-    expect(html).toContain('Coming soon')
+    expect(html).toMatch(/<p id="[^"]+" class="sr-only">Coming soon\. /)
+    expect(showsComingSoonChip(html)).toBe(false)
+  })
+
+  it('GATED_LOOK greys the control (muted ink, not-allowed pointer) with no hover colour of its own', () => {
+    expect(GATED_LOOK.split(' ')).toEqual(expect.arrayContaining(['cursor-not-allowed', 'text-ink-subtle']))
+    expect(GATED_LOOK).not.toMatch(/hover:|active:/)
+    expect(wearsGatedLook(`<button class="px-2 ${GATED_LOOK}">`)).toBe(true)
+    expect(wearsGatedLook('<button class="px-2 text-ink">')).toBe(false)
   })
 })
 
@@ -108,9 +115,9 @@ describe('useGated activation (T-GATE-3): shape, not DOM — the live check cove
 })
 
 describe('GatedNote (T-GATE-2 continued)', () => {
-  it('is one always-sr-only paragraph holding the note once, with no live region of its own (the pop-up is read when it opens)', () => {
+  it('is one always-sr-only paragraph: the "Coming soon." cue then the note, once, with no live region of its own (the pop-up is read when it opens)', () => {
     const html = renderToString(createElement(GatedNote, { id: 'n', text: 'X does the thing.' }))
-    expect(html).toBe('<p id="n" class="sr-only">X does the thing.</p>')
+    expect(html).toBe('<p id="n" class="sr-only">Coming soon. X does the thing.</p>')
     expect(html).not.toContain('role="status"')
   })
 })
@@ -263,5 +270,13 @@ describe('ComingSoonTag', () => {
   it('renders the fixed chip text once', () => {
     const html = renderToString(createElement(ComingSoonTag))
     expect(html).toContain('Coming soon')
+  })
+
+  it('only the pop-up renders the chip: no page or control in src renders <ComingSoonTag>', () => {
+    const sources = import.meta.glob<string>('../../src/**/*.tsx', { query: '?raw', import: 'default', eager: true })
+    const sites = Object.entries(sources).flatMap(([p, text]) =>
+      (text.match(/<ComingSoonTag\b/g) ?? []).map(() => p.replace(/^(\.\.\/)+/, '')),
+    )
+    expect(sites).toEqual(['src/coming-soon-dialog.tsx'])
   })
 })

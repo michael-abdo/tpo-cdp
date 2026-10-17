@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { FEATURES } from '../../shared/features'
 import { Profile } from '../../src/pages/LookupPage'
 import type { Lookup } from '../../src/types'
-import { elementText, hasDisabledAttribute } from '../helpers/gated-assertions'
+import { elementText, gatedControlTags, hasDisabledAttribute, showsComingSoonChip, wearsGatedLook } from '../helpers/gated-assertions'
 
 // Look up's gated future features: App revenue (a fourth column)
 // and Delete this person (a quiet row at the end). T-FEAT-LK-1..4.
@@ -103,8 +103,11 @@ describe('Look up: App revenue (profile_revenue) and Delete this person (delete_
     expect(html).not.toContain('text-danger')
   })
 
-  it('shows exactly one "Coming soon" chip per gated control (two total)', () => {
+  it('shows no "Coming soon" chip; both gated controls wear the shared greyed look instead', () => {
     const html = rendered()
-    expect((html.match(/Coming soon/g) ?? []).length).toBe(2)
+    expect(showsComingSoonChip(html)).toBe(false)
+    const tags = gatedControlTags(html)
+    expect(tags).toHaveLength(2)
+    for (const tag of tags) expect(wearsGatedLook(tag), tag).toBe(true)
   })
 })

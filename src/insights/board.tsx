@@ -18,8 +18,8 @@ import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } fr
 import { TODAY } from '../../shared/config'
 import { resolveWindow } from '../../shared/insight-window'
 import { errorMessage, patchJson, request } from '../api'
-import { Button, ComingSoonTag, ErrorLine, GatedNote, ICONS, Icon, TechnicalDetails } from '../components'
-import { useGated } from '../use-gated'
+import { Button, ErrorLine, GatedNote, ICONS, Icon, TechnicalDetails } from '../components'
+import { GATED_LOOK, useGated } from '../use-gated'
 import { humanDate, humanRange, utc } from '../format'
 import type { ChartChoice, InsightPatch, InsightTile } from '../types'
 import { InsightChart } from './charts'
@@ -231,9 +231,13 @@ export function SetAlertItem() {
   const gated = useGated('schedules_and_digests')
   return (
     <li className="space-y-1">
-      <button type="button" {...gated.bind} onClick={gated.activate} className={`${panelLink} text-ink-subtle`}>
+      <button
+        type="button"
+        {...gated.bind}
+        onClick={gated.activate}
+        className={`inline-flex min-h-8 w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm ${GATED_LOOK}`}
+      >
         <Icon icon={ICONS.notify} /> {gated.feature.controls![1]}
-        <ComingSoonTag />
       </button>
       <GatedNote id={gated.noteId} text={gated.feature.note} />
     </li>
