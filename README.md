@@ -141,6 +141,27 @@ flowchart TD
   class G,L ok
 ```
 
+## Where the AI was wrong
+
+Every AI mistake that was caught is logged in [`docs/ai-log.md`](docs/ai-log.md): what was asked, what was wrong, how it was caught, and the fix.
+
+> **The one to read first: a timeout is not a cancel.**
+> In production, the assistant wrote a comma join, `SELECT COUNT(*) FROM v_profiles, v_web_events WHERE v_profiles.status = 'active'`: about 26 million row pairs. The 3-second timer fired and the user saw "too heavy", but D1 can't cancel a query, so it kept running until D1's CPU limit reset the database.
+> **The fix stops the bad shape before it runs:** a JOIN may match only on the person key (`pkey` or `visitor_hash`) and must link the view it brings in; no comma lists, no OR in a join, no view joined to itself; a correlated lookup only by an identity column (commit `1200107` and the rounds after it; details in [Known gaps](docs/notes.md#known-gaps)).
+
+## One security concern: the AI's database user
+
+D1 is SQLite, which has no users or roles. So the SQL the model writes runs on the same database connection as the raw tables that hold emails, and only my code (Gates 2 and 3) keeps it to the email-free views. In production I'd use Postgres with a read-only user for the AI:
+
+```sql
+CREATE ROLE ai_reader LOGIN;
+GRANT SELECT ON v_profiles, v_web_events, v_app_events, v_funnel, v_source_app_conversion TO ai_reader;
+-- no grant on the raw tables (subscribers, profiles, app_users, web_events, app_events, …)
+ALTER ROLE ai_reader SET statement_timeout = '3s';
+```
+
+Then the database itself refuses the raw tables, and its statement timeout really cancels a slow query. The code gates become a second wall instead of the only one.
+
 ## More
 
 Everything past running it lives in [`docs/notes.md`](docs/notes.md): how it is built, how each requirement is met, the data rules, the webhook spec, the PII design, the tests, the known gaps, and how AI built it. [`docs/ai-log.md`](docs/ai-log.md) records every AI mistake that was caught.
