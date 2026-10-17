@@ -111,6 +111,7 @@ describe('Gate 1 masks a typed subscriber name', () => {
       'is Evans Julia a subscriber?',
       'did Julia Evansworth sign up?',
       'did Xjulia Evans sign up?',
+      'is it Julia, Evans or Hall?',
     ]) {
       const question = await enforceGate1(await startTrace(env.DB), asked)
       expect(question.text, asked).toBe(asked)
@@ -166,7 +167,7 @@ describe('the scanner reports known_name', () => {
   })
 
   it('a single first name, a name no stored email spells and a longer word are clean', () => {
-    for (const text of ['Julia', 'julia-', 'Maria Lopez', 'bob-smith', 'Evans Julia', 'julia evansworth', 'appuser']) {
+    for (const text of ['Julia', 'julia-', 'Maria Lopez', 'bob-smith', 'Evans Julia', 'julia evansworth', 'Julia, Evans', 'julia/evans', 'appuser']) {
       expect(findPII(text, known), text).toBeNull()
     }
   })
