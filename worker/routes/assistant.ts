@@ -10,8 +10,9 @@ import { clientKeyHash } from '../../shared/pseudonym'
 import { anthropicTransport, type MessagesTransport } from '../assistant/loop'
 import { answerQuestion } from '../assistant/route'
 
-function invalidBody(details: string[]): ApiError {
-  console.warn(JSON.stringify({ at: 'assistant', outcome: 'invalid_body', details }))
+/** `logDetails` replaces `details` in the log when the details quote client text (a field name could be an email). */
+function invalidBody(details: string[], logDetails: string[] = details): ApiError {
+  console.warn(JSON.stringify({ at: 'assistant', outcome: 'invalid_body', details: logDetails }))
   return new ApiError(400, 'invalid_body', 'Send a JSON object with only "question", a string.', details)
 }
 
@@ -25,7 +26,8 @@ async function readQuestion(req: Request): Promise<string> {
   if (parseError !== undefined) throw invalidBody([`body is not JSON: ${parseError}`])
   if (typeof body !== 'object' || body === null || Array.isArray(body)) throw invalidBody(['body is not a JSON object'])
   const unknown = Object.keys(body).filter((k) => k !== 'question')
-  if (unknown.length > 0) throw invalidBody(unknown.map((k) => `unknown field: ${k}`))
+  if (unknown.length > 0)
+    throw invalidBody(unknown.map((k) => `unknown field: ${k}`), [`${unknown.length} unknown field${unknown.length === 1 ? '' : 's'}`])
   const question = (body as { question?: unknown }).question
   if (typeof question !== 'string' || question.trim() === '') throw invalidBody(['question must be a non-empty string'])
   return question

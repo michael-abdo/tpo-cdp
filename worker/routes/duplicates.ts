@@ -146,8 +146,9 @@ duplicateRoutes.get('/duplicates', async (c) => {
 
 const VERDICT_MESSAGE = 'Send a JSON object with only "verdict": "same_person" or "different_people".'
 
-function invalidVerdict(details: string[]): ApiError {
-  console.warn(JSON.stringify({ at: 'duplicates', outcome: 'invalid_verdict', details }))
+/** `logDetails` replaces `details` in the log when the details quote client text (a field name could be an email). */
+function invalidVerdict(details: string[], logDetails: string[] = details): ApiError {
+  console.warn(JSON.stringify({ at: 'duplicates', outcome: 'invalid_verdict', details: logDetails }))
   return new ApiError(400, 'invalid_verdict', VERDICT_MESSAGE, details)
 }
 
@@ -162,7 +163,8 @@ async function readVerdict(req: Request): Promise<Verdict> {
   if (typeof body !== 'object' || body === null || Array.isArray(body))
     throw invalidVerdict(['body is not a JSON object'])
   const unknown = Object.keys(body).filter((k) => k !== 'verdict')
-  if (unknown.length > 0) throw invalidVerdict(unknown.map((k) => `unknown field: ${k}`))
+  if (unknown.length > 0)
+    throw invalidVerdict(unknown.map((k) => `unknown field: ${k}`), [`${unknown.length} unknown field${unknown.length === 1 ? '' : 's'}`])
   const verdict = (body as Record<string, unknown>).verdict
   if (typeof verdict !== 'string' || !(VERDICTS as readonly string[]).includes(verdict)) {
     throw invalidVerdict(['verdict must be "same_person" or "different_people"'])

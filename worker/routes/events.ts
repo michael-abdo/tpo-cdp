@@ -45,7 +45,10 @@ const TEST_EVENT_MESSAGE =
   'Send { user_id, event } to build a new test event, or { resend: "<event_id>" } to send that one again.'
 
 function invalidTestEvent(details: { field: string; issue: string }[]): ApiError {
-  console.warn(JSON.stringify({ at: 'events/test', outcome: 'invalid_body', fields: details.map((d) => d.field) }))
+  // An unknown field's name is client text (it could be an email), so the log counts those and names only known fields.
+  const unknownCount = details.filter((d) => d.issue.startsWith('unknown field')).length
+  const fields = details.filter((d) => !d.issue.startsWith('unknown field')).map((d) => d.field)
+  console.warn(JSON.stringify({ at: 'events/test', outcome: 'invalid_body', fields, unknown_fields: unknownCount }))
   return new ApiError(400, 'invalid_body', TEST_EVENT_MESSAGE, details)
 }
 
