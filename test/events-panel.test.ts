@@ -100,10 +100,10 @@ describe('POST /api/events/test', () => {
       attached_via: 'direct',
       email: KNOWN_USER_EMAIL,
     })
-    expect(body.event.event_id).toMatch(/^evt_[0-9a-f]+$/)
+    expect(body.event.event_id).toMatch(/^evt_test_[0-9a-f]{16}$/)
     // 8 random bytes (16 hex chars), not fewer: a short id can
     // collide with an existing device (real or anonymous) and silently re-point its identity.
-    expect(body.event.device_id).toMatch(/^d_[0-9a-f]{16}$/)
+    expect(body.event.device_id).toMatch(/^d_test_[0-9a-f]{16}$/)
     // A demo event's timestamp is TODAY (shared/config.ts) plus the current
     // UTC time of day, never wall-clock "now" — a mutant that used `new Date().toISOString()`
     // directly would date the event after TODAY and fails this. The time-of-day half is also
@@ -124,7 +124,7 @@ describe('POST /api/events/test', () => {
     const first = await (await sendTest({ user_id: KNOWN_USER, event: 'app_open' })).json<TestEventResponse>()
     const second = await (await sendTest({ user_id: KNOWN_USER, event: 'login' })).json<TestEventResponse>()
     expect(second.event.device_id).not.toBe(first.event.device_id)
-    expect(second.event.device_id).toMatch(/^d_[0-9a-f]{16}$/)
+    expect(second.event.device_id).toMatch(/^d_test_[0-9a-f]{16}$/)
   })
 
   it('T-WH-PANEL-5: Send again (resend) answers 200 duplicate and leaves app_events unchanged', async () => {
@@ -273,7 +273,7 @@ describe('POST /api/events/test', () => {
       .run()
     const first = await (await sendTest({ user_id: user, event: 'login' })).json<TestEventResponse>()
     const second = await (await sendTest({ user_id: user, event: 'app_open' })).json<TestEventResponse>()
-    for (const id of [first.event.device_id, second.event.device_id]) expect(id).toMatch(/^d_[0-9a-f]{16}$/)
+    for (const id of [first.event.device_id, second.event.device_id]) expect(id).toMatch(/^d_test_[0-9a-f]{16}$/)
     expect(first.event.device_id).not.toBe('d_existing9')
     expect(second.event.device_id).not.toBe('d_existing9')
     expect(second.event.device_id).not.toBe(first.event.device_id)
@@ -466,5 +466,125 @@ describe('T-WH-PANEL-12: the same CSRF/body rules as every other session POST', 
     expect(await res.json()).toMatchObject({ error: 'unsupported_media_type' })
     const after = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
     expect(after).toBe(before)
+  })
+})
+
+// T-WH-PANEL-13..17: anonymous test events and "same device as the last test event", so the panel
+// can show the brief's login stitch: anonymous events on a device, then a login on that device,
+// after which the earlier events read as the user's. Ids the panel makes start with evt_test_ and
+// d_test_; a real device is never reused. Inputs: KNOWN_USER (u_2b6447a3, julia.evans230) as
+// above; the real devices below are `d_` + the hex of a real user id, as test/events.test.ts uses
+// (u_c0d06d19 is leah.stewart812, app_users.csv).
+interface LookupApp {
+  app: { devices: string[]; events: { event: string; event_ts: string; attached_via: string }[] } | null
+}
+
+async function lookupApp(q: string): Promise<NonNullable<LookupApp['app']>> {
+  const res = await SELF.fetch(`http://cdp.test/api/lookup?q=${encodeURIComponent(q)}`, { headers: { cookie } })
+  expect(res.status).toBe(200)
+  const body = await res.json<LookupApp>()
+  if (body.app === null) throw new Error(`${q} has no app section`)
+  return body.app
+}
+
+function issues(body: { details: { field: string; issue: string }[] }): string[] {
+  return body.details.map((d) => `${d.field}: ${d.issue}`)
+}
+
+describe('T-WH-PANEL-13..17: anonymous test events and the same test device', () => {
+  it('T-WH-PANEL-13: user_id null is 202, stored with user_id NULL on a fresh test device, listed as anonymous', async () => {
+    const res = await sendTest({ user_id: null, event: 'app_open' })
+    expect(res.status).toBe(202)
+    const body = await res.json<TestEventResponse>()
+    expect(body.outcome).toBe('received')
+    expect(body.event).toMatchObject({ event: 'app_open', user_id: null, attached_via: null, pkey: null, email: null })
+    expect(body.event.event_id).toMatch(/^evt_test_[0-9a-f]{16}$/)
+    expect(body.event.device_id).toMatch(/^d_test_[0-9a-f]{16}$/)
+    const row = await env.DB.prepare('SELECT user_id, device_id FROM app_events WHERE event_id = ?')
+      .bind(body.event.event_id)
+      .first<{ user_id: string | null; device_id: string }>()
+    expect(row).toEqual({ user_id: null, device_id: body.event.device_id })
+  })
+
+  it('T-WH-PANEL-14: an anonymous login is 400 with a plain message, and nothing is written', async () => {
+    const before = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+    const res = await sendTest({ user_id: null, event: 'login' })
+    expect(res.status).toBe(400)
+    const body = await res.json<{ error: string; details: { field: string; issue: string }[] }>()
+    expect(body.error).toBe('invalid_body')
+    expect(issues(body)).toEqual(['event: a login needs a user_id; an anonymous event can be any other event'])
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')).toBe(before)
+  })
+
+  it('T-WH-PANEL-15: anonymous app_open, anonymous read_story on the same device, then a login there: the two anonymous events read as hers', async () => {
+    const before = await lookupApp(KNOWN_USER)
+    const stitchedBefore = before.events.filter((e) => e.attached_via === 'login_stitch').length
+
+    const open = await (await sendTest({ user_id: null, event: 'app_open' })).json<TestEventResponse>()
+    const readRes = await sendTest({ user_id: null, event: 'read_story', same_device_as: open.event.event_id })
+    expect(readRes.status).toBe(202)
+    const read = await readRes.json<TestEventResponse>()
+    expect(read.event.device_id).toBe(open.event.device_id)
+    expect(read.event).toMatchObject({ user_id: null, attached_via: null })
+
+    const loginRes = await sendTest({ user_id: KNOWN_USER, event: 'login', same_device_as: read.event.event_id })
+    expect(loginRes.status).toBe(202)
+    const login = await loginRes.json<TestEventResponse>()
+    expect(login.event).toMatchObject({ device_id: open.event.device_id, user_id: KNOWN_USER, attached_via: 'direct' })
+
+    // Through the real read path: the feed resolves both anonymous events to her by login stitch...
+    const feedNow = await recent()
+    for (const id of [open.event.event_id, read.event.event_id]) {
+      expect(feedNow.find((e) => e.event_id === id)).toMatchObject({
+        user_id: KNOWN_USER,
+        attached_via: 'login_stitch',
+        email: KNOWN_USER_EMAIL,
+      })
+    }
+    // ...and Look up lists the device and both events as hers.
+    const after = await lookupApp(KNOWN_USER)
+    expect(after.devices).toContain(open.event.device_id)
+    const stitched = after.events.filter((e) => e.attached_via === 'login_stitch')
+    expect(stitched).toHaveLength(stitchedBefore + 2)
+    expect(stitched).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'app_open', event_ts: open.event.event_ts }),
+        expect.objectContaining({ event: 'read_story', event_ts: read.event.event_ts }),
+      ]),
+    )
+  })
+
+  it('T-WH-PANEL-16: same_device_as never reuses a device a real client used (400), and writes nothing', async () => {
+    const realDevice = 'd_c0d06d19'
+    const send = async (body: Record<string, unknown>) => expect((await sendWebhook(JSON.stringify(body))).status).toBe(202)
+    // A real anonymous event on a real device.
+    await send({ event_id: 'evt_panel16_real', event: 'app_open', user_id: null, device_id: realDevice, timestamp: '2026-09-27T00:00:00Z' })
+    // A real client that copied the device prefix, under its own event id.
+    await send({ event_id: 'evt_panel16_copy', event: 'app_open', user_id: null, device_id: 'd_test_c0d06d19c0d06d19', timestamp: '2026-09-27T00:00:00Z' })
+    // A test device a real client then sent its own event on.
+    const panel = await (await sendTest({ user_id: null, event: 'app_open' })).json<TestEventResponse>()
+    await send({ event_id: 'evt_panel16_mixed', event: 'read_story', user_id: null, device_id: panel.event.device_id, timestamp: '2026-09-27T00:00:00Z' })
+
+    const before = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+    for (const ref of ['evt_panel16_real', 'evt_panel16_copy', panel.event.event_id]) {
+      const res = await sendTest({ user_id: KNOWN_USER, event: 'login', same_device_as: ref })
+      expect(res.status, ref).toBe(400)
+      const body = await res.json<{ error: string; details: { field: string; issue: string }[] }>()
+      expect(issues(body)).toEqual(['same_device_as: that event is not on a test device; only a device this panel made can be reused'])
+    }
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')).toBe(before)
+    const owner = await env.DB.prepare('SELECT user_id FROM device_identity WHERE device_id = ?').bind(realDevice).first<string>('user_id')
+    expect(owner).toBeNull()
+  })
+
+  it('T-WH-PANEL-17: same_device_as naming no stored event, or not a string, is 400', async () => {
+    const before = await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')
+    for (const ref of ['evt_test_0000000000000000', '', 7, null]) {
+      const res = await sendTest({ user_id: null, event: 'read_story', same_device_as: ref })
+      expect(res.status, String(ref)).toBe(400)
+      const body = await res.json<{ error: string; details: { field: string; issue: string }[] }>()
+      expect(issues(body)).toEqual(['same_device_as: must be the event_id of an event this panel sent'])
+    }
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM app_events').first<number>('n')).toBe(before)
   })
 })

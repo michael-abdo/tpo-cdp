@@ -8,11 +8,18 @@
 // reviewer can prove live events work without a terminal. Session, CSRF and body rules come from
 // the requireJson + requireSession mount on /api/* in worker/index.ts, the same as every other
 // session POST; this route adds its own TEST_EVENT_LIMITER (keyed by client, not session, so a
-// new sign-in does not reset it). Two bodies: `{user_id, event}` builds a fresh event for a real
-// app account (user_id must exist in app_users, event one of APP_EVENTS, timestamp =
-// demoTimestamp(), a fresh `d_` device id on every send, so a test event can never
-// touch a real device's identity); `{resend: event_id}` re-sends an already-stored event's
-// exact body unchanged, device_id included, so a resend keeps the stored device. Either way
+// new sign-in does not reset it). Two bodies:
+// - `{user_id, event, same_device_as?}` builds a new event. user_id is a real app account (it must
+//   exist in app_users) or null for an anonymous event, which can be any event but login (a login
+//   needs a user). event is one of APP_EVENTS; timestamp = demoTimestamp(). The device is a fresh
+//   `d_test_` id, or, with same_device_as, the device of that stored event, but only when that
+//   event and its device were both made by this panel (TEST_EVENT_ID_PATTERN,
+//   TEST_DEVICE_ID_PATTERN, and no other kind of event on that device), so a test event never
+//   touches a real device's identity. That is how the panel shows the login stitch: anonymous
+//   events on one test device, then a login on the same device.
+// - `{resend: event_id}` re-sends an already-stored event's exact body unchanged, device_id
+//   included, so a resend keeps the stored device.
+// Either way
 // the event is signed with WEBHOOK_SECRET exactly as a client would and run through
 // POST /webhooks/app itself, in process (webhookRoutes.request, worker/routes/webhook.ts) —
 // never a second copy of verify or ingest. The secret and signature never leave this function:
@@ -38,11 +45,24 @@ eventRoutes.get('/events/recent', async (c) => {
 })
 
 type TestEventBody =
-  | { kind: 'new'; user_id: string; event: AppEventName }
+  | { kind: 'new'; user_id: string | null; event: AppEventName; same_device_as: string | null }
   | { kind: 'resend'; event_id: string }
 
 const TEST_EVENT_MESSAGE =
-  'Send { user_id, event } to build a new test event, or { resend: "<event_id>" } to send that one again.'
+  'Send { user_id, event } to build a new test event (user_id null for an anonymous one; add same_device_as: "<event_id>" to reuse that test event\'s device), or { resend: "<event_id>" } to send that one again.'
+
+/** Every event id and device id this panel makes starts with these, so its events can be told apart. */
+const TEST_EVENT_ID_PREFIX = 'evt_test_'
+const TEST_DEVICE_ID_PREFIX = 'd_test_'
+/** Random bytes in a test id: 8 (64 bits), so a fresh device never collides with an existing one. */
+const TEST_ID_RANDOM_BYTES = 8
+const TEST_EVENT_ID_PATTERN = new RegExp(`^${TEST_EVENT_ID_PREFIX}[0-9a-f]{${TEST_ID_RANDOM_BYTES * 2}}$`)
+const TEST_DEVICE_ID_PATTERN = new RegExp(`^${TEST_DEVICE_ID_PREFIX}[0-9a-f]{${TEST_ID_RANDOM_BYTES * 2}}$`)
+
+/** A login names the user who logged in, so an anonymous test event can be anything else. */
+const ANONYMOUS_REFUSED_EVENT: AppEventName = 'login'
+
+const SAME_DEVICE_ISSUE = 'must be the event_id of an event this panel sent'
 
 function invalidTestEvent(details: { field: string; issue: string }[]): ApiError {
   // An unknown field's name is client text (it could be an email), so the log counts those and names only known fields.
@@ -74,15 +94,46 @@ async function readTestEventBody(req: Request): Promise<TestEventBody> {
     return { kind: 'resend', event_id: body.resend }
   }
 
-  const extra = Object.keys(body).filter((k) => k !== 'user_id' && k !== 'event')
+  const extra = Object.keys(body).filter((k) => k !== 'user_id' && k !== 'event' && k !== 'same_device_as')
   if (extra.length > 0) throw invalidTestEvent(extra.map((k) => ({ field: k, issue: 'unknown field' })))
-  if (typeof body.user_id !== 'string' || body.user_id.length === 0) {
-    throw invalidTestEvent([{ field: 'user_id', issue: 'must be a non-empty app account id' }])
+  const anonymous = body.user_id === null
+  if (!anonymous && (typeof body.user_id !== 'string' || body.user_id.length === 0)) {
+    throw invalidTestEvent([{ field: 'user_id', issue: 'must be a non-empty app account id, or null for an anonymous event' }])
   }
   if (typeof body.event !== 'string' || !(APP_EVENTS as readonly string[]).includes(body.event)) {
     throw invalidTestEvent([{ field: 'event', issue: `must be one of ${APP_EVENTS.join(', ')}` }])
   }
-  return { kind: 'new', user_id: body.user_id, event: body.event as AppEventName }
+  if (anonymous && body.event === ANONYMOUS_REFUSED_EVENT) {
+    throw invalidTestEvent([{ field: 'event', issue: 'a login needs a user_id; an anonymous event can be any other event' }])
+  }
+  const sameDevice = body.same_device_as
+  if (sameDevice !== undefined && (typeof sameDevice !== 'string' || sameDevice.length === 0)) {
+    throw invalidTestEvent([{ field: 'same_device_as', issue: SAME_DEVICE_ISSUE }])
+  }
+  return {
+    kind: 'new',
+    user_id: anonymous ? null : (body.user_id as string),
+    event: body.event as AppEventName,
+    same_device_as: sameDevice ?? null,
+  }
+}
+
+/**
+ * The device of a stored event, for same_device_as, only when this panel made it: the event's id
+ * and its device's id carry the panel's prefixes, and every event on that device does too. A
+ * device a real client ever used (even one that copied the prefix) is refused, never reused.
+ */
+async function testPanelDevice(db: D1Database, eventId: string): Promise<string> {
+  const row = await db.prepare('SELECT device_id FROM app_events WHERE event_id = ?').bind(eventId).first<{ device_id: string }>()
+  if (row === null) throw invalidTestEvent([{ field: 'same_device_as', issue: SAME_DEVICE_ISSUE }])
+  const madeHere = TEST_EVENT_ID_PATTERN.test(eventId) && TEST_DEVICE_ID_PATTERN.test(row.device_id)
+  if (madeHere) {
+    const { results } = await db.prepare('SELECT event_id FROM app_events WHERE device_id = ?').bind(row.device_id).all<{ event_id: string }>()
+    if (results.every((r) => TEST_EVENT_ID_PATTERN.test(r.event_id))) return row.device_id
+  }
+  throw invalidTestEvent([
+    { field: 'same_device_as', issue: 'that event is not on a test device; only a device this panel made can be reused' },
+  ])
 }
 
 interface StoredEventRow {
@@ -136,19 +187,24 @@ eventRoutes.post('/events/test', async (c) => {
     }
     bodyText = stored
   } else {
-    const known = await c.env.DB.prepare('SELECT 1 FROM app_users WHERE user_id = ?').bind(body.user_id).first()
-    if (known === null) {
-      throw invalidTestEvent([{ field: 'user_id', issue: 'must be the id of a known app account' }])
+    if (body.user_id !== null) {
+      const known = await c.env.DB.prepare('SELECT 1 FROM app_users WHERE user_id = ?').bind(body.user_id).first()
+      if (known === null) {
+        throw invalidTestEvent([{ field: 'user_id', issue: 'must be the id of a known app account' }])
+      }
     }
     bodyText = JSON.stringify({
-      event_id: freshId('evt_', 8),
+      event_id: freshId(TEST_EVENT_ID_PREFIX, TEST_ID_RANDOM_BYTES),
       event: body.event,
       user_id: body.user_id,
-      // Always fresh: a test send must never re-point an
-      // existing device's identity, real or anonymous, at this account or any other.
-      // 8 bytes (64 bits), not 4: a fresh id must not collide with an existing device and
-      // silently stitch that device's events to this account.
-      device_id: freshId('d_', 8),
+      // Fresh unless the operator asked for the last test event's device: a test send must never
+      // re-point a real device's identity, real or anonymous, at this account or any other.
+      // 8 random bytes, not 4: a fresh id must not collide with an existing device and silently
+      // stitch that device's events to this account.
+      device_id:
+        body.same_device_as === null
+          ? freshId(TEST_DEVICE_ID_PREFIX, TEST_ID_RANDOM_BYTES)
+          : await testPanelDevice(c.env.DB, body.same_device_as),
       timestamp: demoTimestamp(),
     })
   }
