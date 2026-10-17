@@ -75,6 +75,72 @@ Under "Time period · Filters · Definitions", each answer lists the time period
 
 Open the app and sign in on its login page with the site password. The password and the webhook signing secret come in the submission email; neither is in this repo. A session lasts 12 hours; "Log out" ends it sooner **in that browser** — it only clears that browser's cookie, so a copied cookie stays valid until its own 12-hour expiry (see [Known security gaps](docs/notes.md#known-security-gaps) #1, until per-person sessions ship). More than ten sign-in attempts a minute from one address get a "wait a minute" message.
 
+## How it was built
+
+**1. Brief → claims → tests.** Each line of the brief became a claim (what must be true), and each claim became a test that passes only if the claim is true. Those tests are what the AI agents built against.
+
+```mermaid
+flowchart LR
+  subgraph B["<b>Brief</b> · what TPO asked"]
+    direction TB
+    B1["“Look up a subscriber<br/>in one view”"]
+    B2["“Events can arrive twice”"]
+  end
+  subgraph C["<b>Claims</b> · what must be true"]
+    direction TB
+    C1["joy.hall830 shows<br/>newsletter + visits + app"]
+    C2["same event_id<br/>is stored once"]
+  end
+  subgraph T["<b>Tests</b> · pass only if true"]
+    direction TB
+    T1["look up joy →<br/>9 visits · app ✓"]
+    T2["send twice →<br/>202, then 200 ✓"]
+  end
+  B1 --> C1 --> T1
+  B2 --> C2 --> T2
+
+  classDef ex fill:#ffffff,stroke:#d8d2c6,color:#1c1b19
+  classDef pass fill:#e8f6ed,stroke:#93d2ab,color:#0d4a24
+  class B1,B2,C1,C2 ex
+  class T1,T2 pass
+  style B fill:#fdf1e1,stroke:#e9b77c,color:#5a2a00
+  style C fill:#fdf1e1,stroke:#e9b77c,color:#5a2a00
+  style T fill:#e8f6ed,stroke:#93d2ab,color:#0d4a24
+```
+
+**2. The build loop.** A builder agent wrote the code, reviewer agents tried to break it, and a fixer closed what they proved. Work that stayed stuck after repeated rounds was checked against the claims; a real design question came to me and became a logged decision. Nothing deployed without my go-ahead, and a live finding fed back in as a new claim and test. Every caught AI mistake is in [`docs/ai-log.md`](docs/ai-log.md); the full story is in [`docs/notes.md`](docs/notes.md#how-this-was-built).
+
+```mermaid
+flowchart TD
+  ME1["<b>ME</b><br/>brief → claims → tests<br/><i>a test passes only if the claim is true<br/>= the source of truth</i>"]
+  B["<b>Builder agent</b><br/>writes code + tests"]
+  R{"<b>Reviewer agents</b><br/>try to break it<br/>spec · rules · tests"}
+  F["<b>Fixer agent</b><br/>closes what they proved"]
+  S{"Stuck after repeated rounds?<br/>check the source of truth"}
+  ME2["<b>ME: design call</b><br/>logged as a decision"]
+  G["All tests green"]
+  D["<b>ME: deploy</b><br/>nothing ships without my go-ahead"]
+  L["Live check<br/><i>e.g. the query that reset the database</i>"]
+  LOG[("docs/ai-log.md<br/>every caught mistake")]
+
+  ME1 --> B --> R
+  R -- "found a bug" --> F --> R
+  R -- "clean" --> G --> D --> L
+  R -- "still stuck" --> S
+  S -- "answered in the claims" --> B
+  S -- "design question" --> ME2 --> ME1
+  L -- "live finding → new claim + test" --> ME1
+  F -.-> LOG
+  R -.-> LOG
+
+  classDef me fill:#fdf1e1,stroke:#e9b77c,color:#5a2a00
+  classDef agent fill:#eaf1ff,stroke:#9db8f5,color:#0b2a7a
+  classDef ok fill:#e8f6ed,stroke:#93d2ab,color:#0d4a24
+  class ME1,ME2,D me
+  class B,R,F,S agent
+  class G,L ok
+```
+
 ## More
 
 Everything past running it lives in [`docs/notes.md`](docs/notes.md): how it is built, how each requirement is met, the data rules, the webhook spec, the PII design, the tests, the known gaps, and how AI built it. [`docs/ai-log.md`](docs/ai-log.md) records every AI mistake that was caught.
