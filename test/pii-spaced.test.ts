@@ -50,7 +50,7 @@ const QUESTIONS = [
   ...BRIEF_QUESTIONS,
   'show signups from 2026 08 29',
   'top 10 sources in 2026',
-  'how did Julia Evans find us?',
+  'how did Julia find us?',
   'how many readers opened in the last 30 days, and how many of them have the app?',
   'compare signups on 2026 09 28 with 2026 09 21 by source',
 ]
@@ -137,17 +137,19 @@ describe('a known local part typed as words with spaces between them', () => {
   })
 
   it('stays clean: near misses, which only a whole-word, letter-for-letter match could catch', () => {
-    for (const text of [
-      'how did Julia Evans find us?',
-      'julia evans 2300',
-      'julia evans 23',
-      'julia evans2301',
-      'xjulia evans230',
-      'julia evans230x',
-      'joy hall 831',
-      'Joy Hall opened 830 newsletters',
-    ]) {
-      expect(findPII(text, known), text).toBeNull()
+    // Never a local part. Those that hold the first and last name as whole words are the
+    // subscriber's name, so the scanner reports known_name for them (test/pii-names.test.ts).
+    for (const [text, check] of [
+      ['how did Julia Evans find us?', 'known_name'],
+      ['julia evans 2300', 'known_name'],
+      ['julia evans 23', 'known_name'],
+      ['julia evans2301', null],
+      ['xjulia evans230', null],
+      ['julia evans230x', null],
+      ['joy hall 831', 'known_name'],
+      ['Joy Hall opened 830 newsletters', 'known_name'],
+    ] as const) {
+      expect(findPII(text, known), text).toBe(check)
       expect(redactKnownLocalParts(text, known), text).toEqual({ text, count: 0 })
     }
   })

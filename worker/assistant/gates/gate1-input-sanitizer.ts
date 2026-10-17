@@ -5,6 +5,9 @@
 //   - email redaction to `[email]`: user text with an email is redacted and continues; so is the
 //     local part of a known email typed on its own (`joy.hall830`), as a whole token or as whole
 //     words with spaces between them (`joy hall 830`)
+//   - name redaction to `[name]`: a subscriber's first and last name as their email spells it
+//     (`Julia Evans` for julia.evans230), any case, also before a possessive (`Julia Evans's`);
+//     a single first name, or a name no stored email spells, stays as typed
 //   - a pattern hit or an over-long question is a 400 `invalid_question` with a loud log line and
 //     an ai_audit row kind=blocked, never a quiet 200 that would hide the block
 //   - there is no conversation-length check: the assistant is single-shot, so there is no
@@ -15,7 +18,7 @@
 
 import type { AuditTrace } from '../audit/ai-audit'
 import { ApiError } from '../../auth/middleware'
-import { type KnownEmails, redactEmails, redactKnownLocalParts } from './pii-guard'
+import { type KnownEmails, redactEmails, redactKnownLocalParts, redactKnownNames } from './pii-guard'
 
 /** The length cap: a longer question is length_exceeded. */
 export const QUESTION_MAX_CHARS = 2000
@@ -58,12 +61,12 @@ export const GATE1_PATTERNS: readonly Gate1Pattern[] = [
 declare const gate1Passed: unique symbol
 
 /**
- * A question that passed Gate 1, emails and known local parts redacted. Only `sanitizeQuestion` makes one, so the
+ * A question that passed Gate 1, emails, known local parts and known names redacted. Only `sanitizeQuestion` makes one, so the
  * request builder (build-request.ts) cannot be handed raw user text by mistake.
  */
 export interface SanitizedQuestion {
   readonly text: string
-  /** Email-shaped spans plus known local parts replaced by `[email]`. */
+  /** Email-shaped spans plus known local parts replaced by `[email]` (names replaced by `[name]` are not counted). */
   readonly emailsRedacted: number
   readonly [gate1Passed]: true
 }
@@ -75,7 +78,8 @@ export type Gate1Result =
 
 /**
  * Pure. Order: length, then the patterns in list order, then redaction:
- * email-shaped spans first, then the local parts of `known` (the request's known-email set).
+ * email-shaped spans first, then the local parts of `known` (the request's known-email set),
+ * then the names those local parts spell.
  */
 export function sanitizeQuestion(raw: string, known: KnownEmails): Gate1Result {
   if (raw.length > QUESTION_MAX_CHARS) return { ok: false, reason: 'length_exceeded', length: raw.length }
@@ -86,7 +90,8 @@ export function sanitizeQuestion(raw: string, known: KnownEmails): Gate1Result {
   // percent- or entity-encoded, bracketed, or spelled out — redacts as an email.
   const emails = redactEmails(raw)
   const locals = redactKnownLocalParts(emails.text, known)
-  return { ok: true, question: { text: locals.text, emailsRedacted: emails.count + locals.count } as SanitizedQuestion }
+  const names = redactKnownNames(locals.text, known)
+  return { ok: true, question: { text: names.text, emailsRedacted: emails.count + locals.count } as SanitizedQuestion }
 }
 
 /**
