@@ -66,8 +66,8 @@ const ONE_OF_THESE = 'Did you mean one of these?'
 const PURPOSE = 'Finds anyone: newsletter info, site visits and app activity in one view.'
 const LISTBOX_ID = 'lookup-suggestions'
 const HINT_ID = 'lookup-hint'
-/** A real subscriber from the seed data, shown as the placeholder: the one place the example lives. */
-const EXAMPLE = 'joy.hall830@protonmail.com'
+/** The placeholder's example address: a made-up one, so no subscriber's email ships in the page code. */
+const EXAMPLE = 'name@example.com'
 
 const KIND_LABEL: Record<Lookup['profile']['kind'], string> = {
   subscriber: 'Subscriber',
