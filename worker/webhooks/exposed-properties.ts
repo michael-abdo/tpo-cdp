@@ -1,7 +1,8 @@
 // `properties.story` and `properties.link` are the two event values v_app_events shows the
 // assistant. The schema already holds them to a slug and an "@"-free URL (schema.ts); this check
 // refuses them when they still carry personal data in a spelling the outbound scanner reads: a
-// stored email or the name part of one ("joy-hall830-protonmail-com", "joy%2Ehall830"), any
+// stored email or the name part of one ("joy-hall830-protonmail-com", "joy%2Ehall830"), the
+// first and last name a stored email spells ("julia-evans" for julia.evans230), any
 // email shape ("new.person%20at%20example%2Ecom"), or a raw app, device or visitor id. It runs
 // the same detector as the model boundary (worker/assistant/gates/pii-guard.ts findPII), on the
 // value alone, so a value stored here can never later stop the assistant, and a disguised address

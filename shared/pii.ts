@@ -130,10 +130,10 @@ const INVISIBLE_CHAR_TEST = new RegExp(INVISIBLE_CHARS.source, 'u')
  *     leftmost, with domain "joy.hall830", and leave "at protonmail.com" an orphan; the lookahead
  *     forces that wrong match to fail so the search advances to the correct one starting at "joy".
  *
- * EMAIL_REGEX, the known-email set, RAW_ID_REGEX and the known-local-part rule all run on the
- * result, never on raw text — one home, so no caller can read a disguised address by skipping
- * this step (worker/assistant/gates/pii-guard.ts findPII, KnownEmails.occursIn, redactEmails,
- * redactKnownLocalParts).
+ * EMAIL_REGEX, the known-email set, RAW_ID_REGEX and the known-local-part and known-name rules
+ * all run on the result, never on raw text — one home, so no caller can read a disguised address
+ * by skipping this step (worker/assistant/gates/pii-guard.ts findPII, KnownEmails.occursIn,
+ * redactEmails, redactKnownLocalParts, redactKnownNames).
  *
  * Returns the normalized text plus `mapToOriginal`, so a caller that must edit the ORIGINAL text
  * (Gate 1's redaction: everything the teammate did not write stays untouched) can turn a span

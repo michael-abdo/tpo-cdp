@@ -832,13 +832,13 @@ function checkedTitle(value: unknown): string {
 async function assertStorable(db: D1Database, fields: Record<string, unknown>): Promise<void> {
   const known = await loadKnownEmails(db)
   for (const [field, value] of Object.entries(fields)) {
-    // findPII's own known_local_part check covers a known email's local part typed
-    // without its domain ("joy.hall830") the same way Gate 1 redacts it in a question;
-    // this call keeps no check of its own.
+    // findPII's own known_local_part and known_name checks cover a known email's local part
+    // typed without its domain ("joy.hall830") and the name it spells ("Joy Hall") the same way
+    // Gate 1 redacts them in a question; this call keeps no check of its own.
     const check = findPII(value ?? '', known)
     if (check !== null) {
       console.warn(JSON.stringify({ at: 'insights-board', outcome: 'blocked_pii', field, check }))
-      throw new ApiError(400, 'blocked_pii', `The ${field} contains an email address or a raw id, so it cannot be saved.`, [{ field, check }])
+      throw new ApiError(400, 'blocked_pii', `The ${field} contains an email address, a subscriber's name or a raw id, so it cannot be saved.`, [{ field, check }])
     }
   }
 }

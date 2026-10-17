@@ -3,8 +3,8 @@
 //
 // `assertNoPII` serializes a payload, normalizes it once (shared/pii.ts normalizeForScan: NFKC,
 // zero-width/soft-hyphen stripped, every %XX escape decoded, every disguised "@"/"." folded to
-// the real character) and checks four things against the normalized text, in this
-// order (the two membership checks also read every dash, "_", "·" and "。" as ".",
+// the real character) and checks five things against the normalized text, in this
+// order (the membership checks also read every dash, "_", "·" and "。" as ".",
 // shared/pii.ts foldSeparators):
 //   1. known_email      — membership against every email_norm in the database (loaded per request)
 //   2. email_pattern    — the case-insensitive email regex (shared/pii.ts EMAIL_REGEX)
@@ -14,6 +14,10 @@
 //                         them ("joy hall 830"); this closes the path a stored email's local part
 //                         can take through a tool result, e.g. a webhook `link` such as
 //                         "…/u/joy.hall830"
+//   5. known_name       — a subscriber's first and last name as their email spells it
+//                         ("julia.evans230" → "Julia Evans"), any case, as whole words with
+//                         spaces, dots, dashes, "_" or "+" between them ("julia-evans" in a
+//                         story slug); a single first name is never one
 // A hit throws `PiiBlockedError` (500 `blocked_pii`). It never redacts
 // and retries, never degrades, and never echoes the matched value in a message or a log line.
 
@@ -33,7 +37,7 @@ import {
 import { ApiError } from '../../auth/middleware'
 import type { AuditTrace } from '../audit/ai-audit'
 
-export type PiiCheck = 'known_email' | 'email_pattern' | 'raw_id' | 'known_local_part'
+export type PiiCheck = 'known_email' | 'email_pattern' | 'raw_id' | 'known_local_part' | 'known_name'
 
 /** Where the scanned payload was going, for the log line and the audit row. */
 export type PiiSite = 'model_request' | 'tool_result' | 'model_output' | 'log' | 'audit_row'
@@ -69,12 +73,18 @@ export class KnownEmails {
    * after every character ("j.u.l.i.a…"). Bounds the search in findLocalPartSpans.
    */
   readonly maxLocalPartSpan: number
+  /**
+   * Every name the local parts spell (localPartName), as its words, keyed by the first word:
+   * "julia" → [["julia", "evans"], ["julia", "peterson"], …].
+   */
+  private readonly namesByFirstWord: ReadonlyMap<string, ReadonlyArray<readonly string[]>>
 
   constructor(emails: Iterable<string>) {
     const set = new Set<string>()
     const shapes = new Map<number, Set<number>>()
     const localParts = new Set<string>()
     const localPartLetters = new Set<string>()
+    const names = new Map<string, string[]>()
     for (const email of emails) {
       const at = email.indexOf('@')
       if (at <= 0 || at !== email.lastIndexOf('@') || normalizeEmail(email) !== email) {
@@ -87,6 +97,8 @@ export class KnownEmails {
         const letters = lettersAndDigits(email.slice(0, at))
         if (letters.length >= LOCAL_PART_MIN_CHARS && /[a-z]/.test(letters) && /[0-9]/.test(letters)) localPartLetters.add(letters)
       }
+      const name = localPartName(email.slice(0, at))
+      if (name !== null) names.set(name.join(' '), name)
       let lengths = shapes.get(at)
       if (lengths === undefined) shapes.set(at, (lengths = new Set()))
       lengths.add(email.length)
@@ -99,6 +111,18 @@ export class KnownEmails {
     this.maxLocalPartLetters = Math.max(0, ...[...localPartLetters].map((l) => l.length))
     this.maxLocalPartLength = Math.max(0, ...[...localParts].map((l) => l.length))
     this.maxLocalPartSpan = 2 * this.maxLocalPartLength
+    const byFirst = new Map<string, string[][]>()
+    for (const name of names.values()) {
+      const list = byFirst.get(name[0]!)
+      if (list === undefined) byFirst.set(name[0]!, [name])
+      else list.push(name)
+    }
+    this.namesByFirstWord = byFirst
+  }
+
+  /** The known names (as words) that start with `word` (lower case), or undefined when none does. */
+  namesStartingWith(word: string): ReadonlyArray<readonly string[]> | undefined {
+    return this.namesByFirstWord.get(word)
   }
 
   /**
@@ -167,6 +191,62 @@ export async function loadKnownEmails(db: D1Database): Promise<KnownEmails> {
     )
     .all<{ email_norm: string }>()
   return new KnownEmails(results.map((row) => row.email_norm))
+}
+
+/**
+ * The name a stored local part spells, as its words in order, or null: split on ".", "+", "%"
+ * and every separator the membership checks fold (shared/pii.ts foldSeparators), digits dropped,
+ * and only words of two or more letters kept. At least two words make a name, so
+ * "julia.evans230" is ["julia", "evans"] while "appuser12" and a single first name are none.
+ */
+function localPartName(local: string): string[] | null {
+  const words = foldSeparators(local)
+    .split(/[.+%]+/)
+    .map((part) => part.replace(/[0-9]/g, ''))
+    .filter((part) => /^[a-z]{2,}$/.test(part))
+  return words.length >= 2 ? words : null
+}
+
+/** What may stand between two words of a name: whitespace, "." (every folded separator) or "+". */
+const NAME_GAP = /^[\s.+]+$/u
+
+/**
+ * Every span of `text` (already normalized for membership) that is a known name: its words in
+ * order, each a whole word with no letter or digit touching it (so "xjulia evans",
+ * "julia evansx" and "joy.hall8301" stay as typed), any case, with only whitespace, "." or "+"
+ * between them. A possessive after the last word ("Julia Evans's") stays outside the span.
+ * The one scan both the outbound detector (findPII) and Gate 1's redaction (redactKnownNames) run.
+ */
+function findNameSpans(text: string, known: KnownEmails): Array<readonly [number, number]> {
+  const spans: Array<readonly [number, number]> = []
+  // Each run of letters and digits; a run holding a digit never equals a name's word.
+  const words = [...text.matchAll(/[\p{L}\p{N}]+/gu)]
+  let i = 0
+  while (i < words.length) {
+    const names = known.namesStartingWith(normalizeQueryFragment(words[i]![0]))
+    let last = -1
+    if (names !== undefined) {
+      // The longest name from this word wins.
+      for (const name of names) {
+        if (i + name.length - 1 <= last || i + name.length > words.length) continue
+        let matched = true
+        for (let k = 1; k < name.length && matched; k += 1) {
+          const before = words[i + k - 1]!
+          const word = words[i + k]!
+          matched =
+            NAME_GAP.test(text.slice(before.index + before[0].length, word.index)) && normalizeQueryFragment(word[0]) === name[k]
+        }
+        if (matched) last = i + name.length - 1
+      }
+    }
+    if (last === -1) {
+      i += 1
+      continue
+    }
+    spans.push([words[i]!.index, words[last]!.index + words[last]![0].length])
+    i = last + 1
+  }
+  return spans
 }
 
 /** The scanner's view of a payload: strings as they are, anything else as its JSON. */
@@ -290,9 +370,9 @@ function applySpans(
 }
 
 /**
- * The four checks, in order, over one raw text: the shape checks (email pattern, raw id) on the
- * conservative normalization, the membership checks (a stored email, a stored local part) on the
- * aggressive one, which only a real subscriber's address can match.
+ * The five checks, in order, over one raw text: the shape checks (email pattern, raw id) on the
+ * conservative normalization, the membership checks (a stored email, a stored local part, a
+ * subscriber's name) on the aggressive one, which only a real subscriber's address can match.
  */
 function checkText(raw: string, known: KnownEmails): PiiCheck | null {
   const shape = normalizeForScan(raw).text
@@ -301,6 +381,7 @@ function checkText(raw: string, known: KnownEmails): PiiCheck | null {
   if (EMAIL_REGEX.test(shape)) return 'email_pattern'
   if (RAW_ID_REGEX.test(shape) || RAW_ID_REGEX.test(shape.replace(UNICODE_DASHES, '-'))) return 'raw_id'
   if (findLocalPartSpans(member, known).length > 0) return 'known_local_part'
+  if (findNameSpans(member, known).length > 0) return 'known_name'
   return null
 }
 
@@ -327,28 +408,33 @@ function collectLeafStrings(payload: unknown, out: string[]): void {
 
 /**
  * The first check `payload` fails, or null when it is clean. Pure. Checked in this order: a
- * stored email anywhere in the text, the email shape on its own, a raw id, and a known local
- * part with no "@" at all — the path a webhook `link` like `…/u/joy.hall830` takes.
+ * stored email anywhere in the text, the email shape on its own, a raw id, a known local
+ * part with no "@" at all — the path a webhook `link` like `…/u/joy.hall830` takes — and a
+ * subscriber's first and last name ("Julia Evans", "julia-evans").
  *
  * Two passes: first the whole payload serialized to one string (catches a
  * match that spans two fields, or a match inside a bare string payload), then, when `payload` is
  * not already a bare string, every individual string value and object key on its own
  * (collectLeafStrings) — the pass that sees a disguise written with a real newline or tab, which
  * JSON.stringify would otherwise turn into the two characters `\`+`n`/`\`+`t` before any check
- * ran. Every text normalizeForScan sees is normalized once, never raw.
+ * ran. Every text normalizeForScan sees is normalized once, never raw. A known_name hit is
+ * reported only when no text of either pass fails an earlier check, so "joy hall\t830" in a JSON
+ * value is still known_local_part, not the name its first two words spell.
  */
 export function findPII(payload: unknown, known: KnownEmails): PiiCheck | null {
   const wholeHit = checkText(serialize(payload), known)
-  if (wholeHit !== null) return wholeHit
+  if (wholeHit !== null && wholeHit !== 'known_name') return wholeHit
+  let nameHit = wholeHit
   if (typeof payload !== 'string') {
     const leaves: string[] = []
     collectLeafStrings(payload, leaves)
     for (const leaf of leaves) {
       const hit = checkText(leaf, known)
-      if (hit !== null) return hit
+      if (hit === 'known_name') nameHit = hit
+      else if (hit !== null) return hit
     }
   }
-  return null
+  return nameHit
 }
 
 /** 500 `blocked_pii`. Carries which check fired and where; never the matched text. */
@@ -441,6 +527,17 @@ export function redactKnownLocalParts(text: string, known: KnownEmails): { text:
     else merged.push(span)
   }
   return applySpans(text, normalized, merged, '[email]')
+}
+
+/**
+ * Gate 1's name redaction: a subscriber's first and last name as their email spells it, typed
+ * in a question ("is Julia Evans engaged?"), becomes `[name]`; a possessive after it stays
+ * ("[name]'s last open"). Run after redactKnownLocalParts, so "julia evans230" is already
+ * `[email]`. Shares `findNameSpans` with the outbound detector (findPII), so the two never drift.
+ */
+export function redactKnownNames(text: string, known: KnownEmails): { text: string; count: number } {
+  const normalized = normalizeForMembership(text)
+  return applySpans(text, normalized, findNameSpans(normalized.text, known), '[name]')
 }
 
 /** Every normalized-text span that is a stored email (the same lookup as KnownEmails.occursIn). */
