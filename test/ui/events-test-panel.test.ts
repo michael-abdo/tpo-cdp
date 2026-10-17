@@ -3,7 +3,9 @@ import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { APP_EVENTS } from '../../shared/app-events'
 import { TestEventPanel } from '../../src/events-test-panel'
+import { ANONYMOUS_CHOICE, eventChoices, lookupAfterLogin, newEventRequest } from '../../src/events-test-choices'
 import { resultText } from '../../src/events-test-words'
+import type { RecentEvent } from '../../src/types'
 import { ListboxOption } from '../../src/listbox'
 
 const panelSource = import.meta.glob<string>('../../src/events-test-panel.tsx', { query: '?raw', import: 'default', eager: true })['../../src/events-test-panel.tsx']
@@ -90,7 +92,9 @@ describe('the account field is the shared listbox contract (../listbox; WCAG 2.2
   it('both callers pass the real highlighted index to ListboxOption, so the bar and fill follow the arrow keys (WCAG 2.4.7)', () => {
     // The render test above proves ListboxOption styles active=true; this pins that each caller
     // computes active from its own keyboard index rather than a constant.
-    expect(panelSource).toMatch(/<ListboxOption[\s\S]{0,400}?active=\{i === nav\.active\}/)
+    // Option 0 is "Anonymous (no user)", so account match i is option i + 1.
+    expect(panelSource).toMatch(/<ListboxOption[\s\S]{0,400}?active=\{nav\.active === 0\}/)
+    expect(panelSource).toMatch(/<ListboxOption[\s\S]{0,400}?active=\{i \+ 1 === nav\.active\}/)
     expect(lookupSource).toMatch(/const isActive = i === active\b/)
     expect(lookupSource).toMatch(/<ListboxOption[\s\S]{0,400}?active=\{isActive\}/)
   })
@@ -210,5 +214,89 @@ describe('Send is the only primary button while the panel is open (one main acti
     expect(panelSource).toMatch(/onOpenChange\?\.\(open\)/)
     expect(eventsPageSource).toMatch(/<TestEventPanel onSent=\{\(\) => void load\('sent'\)\} onOpenChange=\{setTestPanelOpen\}/)
     expect(eventsPageSource).toMatch(/variant=\{testPanelOpen \? 'secondary' : 'primary'\}/)
+  })
+})
+
+// Anonymous test events and "Same device as the last test event": the operator sends anonymous
+// events on one device, then a login on that device, and Look up shows the earlier events as the
+// account's. u_2b6447a3 is julia.evans230@gmail.com (app_users.csv:2), the demo subject.
+describe('"Anonymous (no user)" and the same test device', () => {
+  const anonymous = { kind: 'anonymous' } as const
+  const julia = { kind: 'account', user_id: 'u_2b6447a3' } as const
+
+  it('the account list\'s first choice is "Anonymous (no user)", rendered before every account match', () => {
+    expect(ANONYMOUS_CHOICE).toBe('Anonymous (no user)')
+    const list = /<ul\s+id=\{LISTBOX_ID\}[^]*?<\/ul>/.exec(panelSource)?.[0] ?? ''
+    expect(list.indexOf('{ANONYMOUS_CHOICE}')).toBeGreaterThan(-1)
+    expect(list.indexOf('{ANONYMOUS_CHOICE}')).toBeLessThan(list.indexOf('matches.map('))
+    expect(list).toMatch(/id=\{optionId\(LISTBOX_ID, 0\)\}[^]*?onPick=\{pickAnonymous\}/)
+    // The keyboard reaches it too: option 0 picks anonymous, the rest pick account match i - 1.
+    expect(panelSource).toMatch(/itemCount: matches\.length \+ 1/)
+    expect(panelSource).toMatch(/i === 0 \? pickAnonymous\(\) : pick\(matches\[i - 1\]\)/)
+    // It is offered as soon as the field has focus, before anything is typed.
+    expect(panelSource).toMatch(/const listShown = sender === null && \(focused \|\| suggestions\.status !== 'idle'\)/)
+    expect(panelSource).toMatch(/onFocus=\{\(\) => setFocused\(true\)\}/)
+  })
+
+  it('anonymous offers only app_open, read_story and link_click; an account (or nothing picked yet) offers all four', () => {
+    expect(eventChoices(anonymous)).toEqual(['app_open', 'read_story', 'link_click'])
+    expect(eventChoices(julia)).toEqual(APP_EVENTS)
+    expect(eventChoices(null)).toEqual(APP_EVENTS)
+    // The radios come from eventChoices, and picking anonymous moves a chosen login to app_open.
+    expect(panelSource).toMatch(/\{events\.map\(\(name\) => \(/)
+    expect(panelSource).toMatch(/if \(!eventChoices\(anonymous\)\.includes\(eventName\)\) setEventName\(eventChoices\(anonymous\)\[0\]\)/)
+  })
+
+  it('the body: user_id null for anonymous, same_device_as only when the box is ticked, nothing before a pick', () => {
+    expect(newEventRequest(anonymous, 'app_open', null)).toEqual({ user_id: null, event: 'app_open' })
+    expect(newEventRequest(anonymous, 'read_story', 'evt_test_00ff00ff00ff00ff')).toEqual({
+      user_id: null,
+      event: 'read_story',
+      same_device_as: 'evt_test_00ff00ff00ff00ff',
+    })
+    expect(newEventRequest(julia, 'login', 'evt_test_00ff00ff00ff00ff')).toEqual({
+      user_id: 'u_2b6447a3',
+      event: 'login',
+      same_device_as: 'evt_test_00ff00ff00ff00ff',
+    })
+    expect(newEventRequest(null, 'app_open', null)).toBeNull()
+    expect(panelSource).toMatch(/newEventRequest\(sender, eventName, sameDeviceAs\)/)
+  })
+
+  it('"Same device as the last test event" renders off and unusable until this panel has sent an event', () => {
+    const page = html()
+    const box = /<input[^>]*id="test-event-same-device"[^>]*>/.exec(page)?.[0] ?? ''
+    expect(box).toContain('type="checkbox"')
+    expect(box).toMatch(/\sdisabled=""/)
+    expect(box).not.toMatch(/\schecked=""/)
+    expect(box).toContain('aria-describedby="test-event-same-device-note"')
+    expect(page).toMatch(/<label[^>]*for="test-event-same-device"[^>]*>[^]*?Same device as the last test event<\/label>/)
+    expect(page).toContain('Available after this panel sends its first event.')
+    // Unlocked by a successful send (kept across new picks), never by a pick alone.
+    expect(panelSource).toMatch(/disabled=\{lastSentId === null\}/)
+    const send = /async function send\([^]*?\n  \}\n/.exec(panelSource)?.[0] ?? ''
+    expect(send).toMatch(/const data = await postJson[^]*?setLastSentId\(data\.event\.event_id\)[^]*?catch/)
+    expect(panelSource.match(/setLastSentId\(/g)).toHaveLength(1)
+  })
+
+  it('after a login, a link opens that account in Look up; any other event shows none', () => {
+    const event: RecentEvent = {
+      event_id: 'evt_test_00ff00ff00ff00ff',
+      event: 'login',
+      device_id: 'd_test_00ff00ff00ff00ff',
+      event_ts: '2026-09-28T14:22:05Z',
+      received_at: '2026-09-28T14:22:05Z',
+      user_id: 'u_2b6447a3',
+      attached_via: 'direct',
+      pkey: null,
+      email: 'julia.evans230@gmail.com',
+    }
+    expect(lookupAfterLogin(event)).toEqual({ href: '/lookup?q=u_2b6447a3', label: 'julia.evans230@gmail.com' })
+    expect(lookupAfterLogin({ ...event, email: null })).toEqual({ href: '/lookup?q=u_2b6447a3', label: 'u_2b6447a3' })
+    expect(lookupAfterLogin({ ...event, event: 'read_story' })).toBeNull()
+    expect(lookupAfterLogin({ ...event, event: 'app_open', user_id: null, attached_via: null, email: null })).toBeNull()
+    expect(panelSource).toMatch(/setLookupLink\(lookupAfterLogin\(data\.event\)\)/)
+    expect(panelSource).toMatch(/<Link\s+to=\{lookupLink\.href\}/)
+    expect(panelSource).toContain('Earlier events on this device now count for this account:')
   })
 })
