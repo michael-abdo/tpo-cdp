@@ -140,7 +140,7 @@ function Column({
  * The gated "App revenue" column (coming soon): a fourth column, last, right
  * after App activity. Level 1 shows only the title and the gated "Details" toggle with its chip —
  * no summary lines, no fake "$0" or sample plan (the CDP does not know this fact yet). Activating
- * the toggle (it is not a <details>, so it cannot open) only reveals and announces the note.
+ * the toggle (it is not a <details>, so it cannot open) only opens the shared "Coming soon" pop-up.
  */
 function AppRevenue() {
   const gated = useGated('profile_revenue')
@@ -156,7 +156,7 @@ function AppRevenue() {
         {gated.feature.controls![0]}
       </button>
       <ComingSoonTag />
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </Column>
   )
 }
@@ -164,7 +164,7 @@ function AppRevenue() {
 /**
  * The gated "Delete this person" row (coming soon): a quiet row at the very end
  * of the profile, split off by a thin rule, away from everyday controls. Muted grey, never red — a
- * gated button has no real consequence yet. Activation only reveals and announces the note.
+ * gated button has no real consequence yet. Activation only opens the shared "Coming soon" pop-up.
  */
 function DeletePerson() {
   const gated = useGated('delete_person')
@@ -182,7 +182,7 @@ function DeletePerson() {
         </button>
         <ComingSoonTag />
       </div>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }

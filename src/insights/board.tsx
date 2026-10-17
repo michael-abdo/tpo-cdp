@@ -225,7 +225,7 @@ function FormButtons({ saving, onCancel, disabled = false }: { saving: boolean; 
  * The gated "Set an alert" item (coming soon), shown only on a tile with one
  * number (chart 'number' or 'segment'): a bar, line or table has no single number to cross a line.
  * Shares its flag and note with the board header's "Send the board" (schedules_and_digests:
- * one flag, one note, written once). Activation only reveals and announces the note.
+ * one flag, one note, written once). Activation only opens the shared "Coming soon" pop-up.
  */
 export function SetAlertItem() {
   const gated = useGated('schedules_and_digests')
@@ -235,7 +235,7 @@ export function SetAlertItem() {
         <Icon icon={ICONS.notify} /> {gated.feature.controls![1]}
         <ComingSoonTag />
       </button>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </li>
   )
 }

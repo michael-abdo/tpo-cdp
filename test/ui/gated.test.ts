@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { FEATURES, featuresOn, type Feature, type FeatureId } from '../../shared/features'
+import { ComingSoonContext, type ComingSoon } from '../../src/coming-soon'
 import { ComingSoonTag, GatedNote } from '../../src/components'
 import { isActivatingKey, useGated } from '../../src/use-gated'
 
@@ -22,7 +23,7 @@ function Sample({ feature }: { feature: FeatureId }) {
       gated.feature.label,
       createElement(ComingSoonTag),
     ),
-    createElement(GatedNote, { id: gated.noteId, activated: gated.activated, text: gated.feature.note }),
+    createElement(GatedNote, { id: gated.noteId, text: gated.feature.note }),
   )
 }
 
@@ -66,10 +67,11 @@ describe('shared/features.ts', () => {
 })
 
 describe('useGated / GatedNote (T-GATE-1, T-GATE-2)', () => {
-  it('renders aria-disabled="true", never the disabled attribute, with an aria-describedby that resolves', () => {
+  it('renders aria-disabled="true" and aria-haspopup="dialog", never the disabled attribute, with an aria-describedby that resolves', () => {
     for (const id of Object.keys(FEATURES) as FeatureId[]) {
       const html = rendered(id)
       expect(html).toContain('aria-disabled="true"')
+      expect(html).toContain('aria-haspopup="dialog"')
       expect(html).not.toContain(' disabled')
       const idMatch = /aria-describedby="([^"]+)"/.exec(html)
       expect(idMatch).not.toBeNull()
@@ -87,9 +89,9 @@ describe('useGated / GatedNote (T-GATE-1, T-GATE-2)', () => {
     }
   })
 
-  it('the note starts sr-only (visually hidden) and the chip is always visible', () => {
+  it('the note is sr-only (never shown under the control) and the chip is always visible', () => {
     const html = rendered('csv_upload')
-    expect(html).toContain('sr-only')
+    expect(html).toMatch(/<p id="[^"]+" class="sr-only">/)
     expect(html).toContain('Coming soon')
   })
 })
@@ -101,29 +103,98 @@ describe('useGated activation (T-GATE-3): shape, not DOM — the live check cove
   }
   it("activate takes no argument it could pass on, so a control can wire only this page's own state to it — never a fetch, a navigation or a route it doesn't already call", () => {
     const html = renderToString(createElement(Shape, { feature: 'csv_upload' }))
-    expect(html).toContain('feature,activated,noteId,bind,activate,onKeyDown')
+    expect(html).toContain('feature,noteId,bind,activate,onKeyDown')
   })
 })
 
 describe('GatedNote (T-GATE-2 continued)', () => {
-  it('activation drops sr-only from the visible description; the separate live-announcer paragraph stays sr-only (announced, never shown)', () => {
-    const before = renderToString(createElement(GatedNote, { id: 'n', activated: false, text: 'X does the thing.' }))
-    const after = renderToString(createElement(GatedNote, { id: 'n', activated: true, text: 'X does the thing.' }))
-    // Before: both paragraphs are sr-only (the description not yet revealed; the announcer has no
-    // text to announce), so the sentence reads zero times visibly.
-    expect(before).toMatch(/<p id="n" class="sr-only">/)
-    // After: the id="n" paragraph (what aria-describedby names) is the visible one; the announcer
-    // (role="status") stays sr-only — the sentence is read twice (description + one announcement)
-    // but shown on screen once.
-    expect(after).toMatch(/<p id="n" class="flex items-start/)
-    expect(after).toMatch(/<p role="status"[^>]*class="sr-only">X does the thing\.<\/p>/)
-    expect((after.match(/X does the thing\./g) ?? []).length).toBe(2)
+  it('is one always-sr-only paragraph holding the note once, with no live region of its own (the pop-up is read when it opens)', () => {
+    const html = renderToString(createElement(GatedNote, { id: 'n', text: 'X does the thing.' }))
+    expect(html).toBe('<p id="n" class="sr-only">X does the thing.</p>')
+    expect(html).not.toContain('role="status"')
   })
 })
 
-describe('isActivatingKey (the Tab-reveals-every-note regression)', () => {
-  it('activates on Enter, Space and a single printable character', () => {
-    for (const key of ['Enter', ' ', 'a', 'A', '1', '?']) expect(isActivatingKey(key), key).toBe(true)
+/**
+ * Drives the real hook with a stand-in pop-up: renders a control inside a ComingSoonContext whose
+ * `open` records each call, keeps the hook's own result, and then calls its handlers the way the
+ * browser would (no DOM inside workerd, so the handlers are called directly).
+ */
+/** A gated button that hands its hook result to `keep` (a prop call, so nothing outside is reassigned). */
+function Control({ feature, keep }: { feature: FeatureId; keep: (gated: ReturnType<typeof useGated>) => void }) {
+  const gated = useGated(feature)
+  keep(gated)
+  return createElement('button', { type: 'button', ...gated.bind, onClick: gated.activate }, gated.feature.label)
+}
+
+function driven(feature: FeatureId): { gated: ReturnType<typeof useGated>; opened: FeatureId[] } {
+  const opened: FeatureId[] = []
+  const popUp: ComingSoon = { open: (f) => opened.push(f) }
+  const kept: ReturnType<typeof useGated>[] = []
+  renderToString(
+    createElement(ComingSoonContext, { value: popUp }, createElement(Control, { feature, keep: (g) => kept.push(g) })),
+  )
+  if (kept.length !== 1) throw new Error('gated test: the control did not render exactly once')
+  return { gated: kept[0], opened }
+}
+
+/** A keydown as the hook sees it, recording whether its default was prevented. */
+function key(k: string): { key: string; preventDefault: () => void; prevented: boolean } {
+  const e = {
+    key: k,
+    prevented: false,
+    preventDefault() {
+      e.prevented = true
+    },
+  }
+  return e
+}
+
+describe('activating a gated control opens the shared pop-up on its own feature', () => {
+  it('a click (activate) opens the pop-up on exactly this feature, once per click, for every feature', () => {
+    for (const id of Object.keys(FEATURES) as FeatureId[]) {
+      const { gated, opened } = driven(id)
+      expect(opened).toEqual([])
+      gated.activate()
+      expect(opened).toEqual([id])
+    }
+  })
+
+  it('Enter and Space open it, and their default is prevented (no form submit, no checkbox toggle)', () => {
+    for (const k of ['Enter', ' ']) {
+      const { gated, opened } = driven('filter_opened_within_days')
+      const e = key(k)
+      gated.onKeyDown(e)
+      expect(opened, JSON.stringify(k)).toEqual(['filter_opened_within_days'])
+      expect(e.prevented, JSON.stringify(k)).toBe(true)
+    }
+  })
+
+  it('Tab, Escape, arrows and a typed character open nothing and keep their default (a gated input stays read-only)', () => {
+    for (const k of ['Tab', 'Escape', 'ArrowDown', 'Shift', 'a', 'Z', '1', '?']) {
+      const { gated, opened } = driven('follow_up_questions')
+      const e = key(k)
+      gated.onKeyDown(e)
+      expect(opened, k).toEqual([])
+      expect(e.prevented, k).toBe(false)
+    }
+  })
+
+  it('outside a ComingSoonProvider, activating fails loud instead of silently doing nothing', () => {
+    const kept: ReturnType<typeof useGated>[] = []
+    renderToString(createElement(Control, { feature: 'csv_upload', keep: (g) => kept.push(g) }))
+    expect(kept).toHaveLength(1)
+    expect(() => kept[0].activate()).toThrow(/ComingSoonProvider/)
+  })
+})
+
+describe('isActivatingKey (the Tab-opens-every-pop-up regression)', () => {
+  it('activates on Enter and Space only', () => {
+    for (const key of ['Enter', ' ']) expect(isActivatingKey(key), key).toBe(true)
+  })
+
+  it('never activates on a typed character (a gated text input stays read-only, no pop-up per keystroke)', () => {
+    for (const key of ['a', 'A', '1', '?', '.']) expect(isActivatingKey(key), key).toBe(false)
   })
 
   it('never activates on Tab or the other navigation/modifier keys', () => {
@@ -163,13 +234,13 @@ describe('isActivatingKey (the Tab-reveals-every-note regression)', () => {
   // tests only check markup; T-GATE-3's source scan only walks each PAGE component's body, never
   // the hook's own). activate() is the hook's only state-changing
   // function, so its body is read directly here.
-  it('activate() touches nothing but setActivated — no fetch, postJson, request, navigate or window.location', () => {
+  it("activate() only calls the pop-up's open(feature) — no fetch, postJson, request, navigate or window.location", () => {
     const [useGatedSource] = Object.values(
       import.meta.glob<string>('../../src/use-gated.ts', { query: '?raw', import: 'default', eager: true }),
     )
     const start = useGatedSource.indexOf('function activate()')
     const body = useGatedSource.slice(start, useGatedSource.indexOf('\n  }', start))
-    expect(body).toContain('setActivated(true)')
+    expect(body.replace('function activate() {', '').trim()).toBe('open(feature)')
     for (const pattern of [/\bfetch\(/, /\bpostJson\(/, /\brequest\(/, /\bnavigate\(/, /window\.location/]) expect(body).not.toMatch(pattern)
   })
 

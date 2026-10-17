@@ -205,10 +205,9 @@ export function PageHeader({
           {purpose !== undefined && <p className="max-w-prose text-sm text-ink-muted">{purpose}</p>}
         </div>
       </div>
-      {/* min-w-0 max-w-full: a gated action's revealed note is a long sentence with no width of
-          its own, so without a cap here the flex item's content-based width (shrink-0) stays as
-          wide as the note's one unwrapped line, pushing the page into sideways scroll on phone
-          widths (e.g. Overview's Settings for definitions). Capped, the note wraps instead. */}
+      {/* min-w-0 max-w-full: without a cap here the flex item's content-based width (shrink-0)
+          stays as wide as its content's one unwrapped line, which can push the page into
+          sideways scroll on phone widths. Capped, a long line wraps instead. */}
       {action !== undefined && <div className="min-w-0 max-w-full shrink-0">{action}</div>}
     </div>
   )
@@ -649,20 +648,16 @@ export function ComingSoonTag() {
 }
 
 /**
- * The note `useGated` (src/use-gated.ts) describes: always in the DOM with its real text (so `aria-describedby`
- * resolves from the first render), `sr-only` until `activated`. A separate, always-`sr-only`
- * `Announcer` fires the one polite announcement on activation, kept apart from this
- * paragraph so the sentence is never shown twice on screen — only ever read twice.
+ * The note `useGated` (src/use-gated.ts) describes: always in the DOM with its real text and
+ * always `sr-only`, so `aria-describedby` resolves from the first render and a screen reader hears
+ * what the control will do before it is activated. The note is shown on screen only in the
+ * "Coming soon" pop-up (src/coming-soon-dialog.tsx), which is read out when it opens.
  */
-export function GatedNote({ id, activated, text }: { id: string; activated: boolean; text: string }) {
+export function GatedNote({ id, text }: { id: string; text: string }) {
   return (
-    <>
-      <p id={id} className={activated ? 'flex items-start gap-1.5 text-sm text-ink-muted' : 'sr-only'}>
-        <Icon icon={ICONS.info} className="mt-0.5 size-4" />
-        <span>{text}</span>
-      </p>
-      <Announcer message={activated ? text : ''} />
-    </>
+    <p id={id} className="sr-only">
+      {text}
+    </p>
   )
 }
 

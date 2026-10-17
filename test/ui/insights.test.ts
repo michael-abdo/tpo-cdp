@@ -314,7 +314,8 @@ describe('answers and tiles that cannot be pinned or run say so in plain words',
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
     expect(text).toContain(sentence)
-    expect(html).not.toContain('aria-haspopup="dialog"')
+    // The gated "Ask a follow-up" controls open the "Coming soon" pop-up (aria-disabled); no other dialog opener.
+    expect(html).not.toMatch(/<button(?![^>]*aria-disabled)[^>]*aria-haspopup="dialog"/)
     expect(html).not.toContain('<dialog')
     expect(text).not.toContain('Pin to board')
     expect(text).not.toContain('Request approval')
@@ -336,7 +337,8 @@ describe('answers and tiles that cannot be pinned or run say so in plain words',
       pin_refusal: NOT_PINNABLE_SHAPE_MESSAGE,
     }
     const { html, text } = render(createElement(AnswerCard, { data, question: BRIEF_Q1, onPinned: () => {} }))
-    expect(html).not.toContain('aria-haspopup="dialog"')
+    // The gated "Ask a follow-up" controls open the "Coming soon" pop-up (aria-disabled); no other dialog opener.
+    expect(html).not.toMatch(/<button(?![^>]*aria-disabled)[^>]*aria-haspopup="dialog"/)
     expect(text).not.toContain('Pin to board')
     expect(text).not.toContain('Request approval')
     expect(text).not.toContain('approval')

@@ -71,7 +71,7 @@ function plainMessage(code: string | null, message: string): string {
  * The gated "Ask a follow-up" field (coming soon): the foot of the answer
  * card, after "Time period · Filters · Definitions". No `<form>` while gated, so Enter can never
  * submit; the input is readOnly and both it and the button point at the same note (one flag, one
- * note). Activation = a click or Enter/Space on the button, or the first keystroke in the box.
+ * note). Activation = a click, Enter or Space on either; a typed character does nothing.
  */
 export function FollowUpField() {
   const gated = useGated('follow_up_questions')
@@ -106,7 +106,7 @@ export function FollowUpField() {
           <span className="sr-only"> a follow-up</span>
         </button>
       </div>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }

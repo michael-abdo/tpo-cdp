@@ -101,7 +101,7 @@ export default function LoginPage() {
             {sso.feature.controls![0]}
           </button>
           <ComingSoonTag />
-          <GatedNote id={sso.noteId} activated={sso.activated} text={sso.feature.note} />
+          <GatedNote id={sso.noteId} text={sso.feature.note} />
         </div>
       </form>
     </main>

@@ -37,7 +37,7 @@ export function SendTheBoardButton() {
         {gated.feature.controls![0]}
       </button>
       <ComingSoonTag />
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </span>
   )
 }

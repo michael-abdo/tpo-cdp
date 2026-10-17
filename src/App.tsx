@@ -8,6 +8,7 @@
 // "Techy": App events and AI audit log fold into one dropdown, last in the nav, so the top level
 // keeps the four screens Growth staff use. It follows the WAI-ARIA disclosure-navigation pattern
 // (NavGroupMenu below).
+// Every gated "Coming soon" control opens the one shared pop-up mounted here (ComingSoonProvider).
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router'
@@ -16,6 +17,7 @@ import { humanDate } from './format'
 import { errorMessage, request, setUnauthorizedHandler } from './api'
 import { ComingSoonTag, ErrorLine, GatedNote, Icon, ICONS } from './components'
 import { useGated } from './use-gated'
+import { ComingSoonProvider } from './coming-soon-dialog'
 import {
   closesOnPointer,
   escapeAction,
@@ -186,7 +188,7 @@ export function AccountButton() {
         </button>
         <ComingSoonTag />
       </span>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }
@@ -368,21 +370,25 @@ export default function App() {
     setUnauthorizedHandler(() => navigate('/login', { replace: true }))
   }, [navigate])
 
+  // One "Coming soon" pop-up for the whole app, around every route: the shell's pages and /login
+  // (which sits outside the shell) share it, so a page never holds two.
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route element={<Shell />}>
-        <Route index element={<OverviewPage />} />
-        <Route path="lookup" element={<LookupPage />} />
-        <Route path="segments" element={<SegmentsPage />} />
-        <Route path="events" element={<EventsPage />} />
-        <Route path="insights" element={<InsightsPage />} />
-        <Route path="assistant" element={<ToInsights />} />
-        <Route path="growth" element={<ToInsights />} />
-        <Route path="audit" element={<AuditPage />} />
-        <Route path="audit/:traceId" element={<AuditPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <ComingSoonProvider>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route element={<Shell />}>
+          <Route index element={<OverviewPage />} />
+          <Route path="lookup" element={<LookupPage />} />
+          <Route path="segments" element={<SegmentsPage />} />
+          <Route path="events" element={<EventsPage />} />
+          <Route path="insights" element={<InsightsPage />} />
+          <Route path="assistant" element={<ToInsights />} />
+          <Route path="growth" element={<ToInsights />} />
+          <Route path="audit" element={<AuditPage />} />
+          <Route path="audit/:traceId" element={<AuditPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </ComingSoonProvider>
   )
 }

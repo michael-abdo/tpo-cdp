@@ -292,8 +292,8 @@ function RunCard({ source, run }: { source: CsvSource; run: SourceRun }) {
  * History tab, above the run cards. "Upload a new file" and "Run again" share one gate
  * (`csv_upload`: one chip, one note for the feature); "Automatic daily sync" is a second,
  * separate gate, shown only on the sources DAILY_SYNC_SOURCE_IDS names. Gated now: activating any
- * control only reveals its note and announces it — no file input exists, no switch moves, no
- * request goes out.
+ * control only opens the shared "Coming soon" pop-up — no file input exists, no switch moves,
+ * no request goes out.
  */
 export function LoadBar({ source }: { source: CsvSource }) {
   const upload = useGated('csv_upload')
@@ -325,8 +325,8 @@ export function LoadBar({ source }: { source: CsvSource }) {
           </div>
         )}
       </div>
-      <GatedNote id={upload.noteId} activated={upload.activated} text={upload.feature.note} />
-      {showSync && <GatedNote id={sync.noteId} activated={sync.activated} text={sync.feature.note} />}
+      <GatedNote id={upload.noteId} text={upload.feature.note} />
+      {showSync && <GatedNote id={sync.noteId} text={sync.feature.note} />}
     </div>
   )
 }
@@ -887,7 +887,7 @@ export function SettingsButton() {
         </button>
         <ComingSoonTag />
       </div>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }

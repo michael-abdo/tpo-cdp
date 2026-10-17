@@ -193,8 +193,8 @@ const errorId = (id: string) => `${id}-error`
  * so none can reach the filters object, Previous searches, Export CSV or the assistant's segment
  * tool. Placed after the working controls in the group they belong to (working controls keep
  * their place). Every control keeps its real shape — a date pair, a number box, a checkbox, a
- * select — with a fixed, empty/unchecked value; a click, a key press or a change only reveals and
- * announces its note. Enter never submits the form (`onKeyDown` calls `preventDefault`).
+ * select — with a fixed, empty/unchecked value; a click, Enter or Space only opens the shared
+ * "Coming soon" pop-up. Enter never submits the form (`onKeyDown` calls `preventDefault`).
  */
 export function GatedSignedUpBetween() {
   const gated = useGated('filter_signed_up_between')
@@ -234,7 +234,7 @@ export function GatedSignedUpBetween() {
           className={inputClass}
         />
       </div>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </fieldset>
   )
 }
@@ -264,7 +264,7 @@ export function GatedOpenedWithinDays() {
         />
         <span className="text-sm text-gray-700">days</span>
       </div>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }
@@ -294,7 +294,7 @@ export function GatedSiteVisitsAtLeast() {
         />
         <span className="text-sm text-gray-700">times</span>
       </div>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }
@@ -316,7 +316,7 @@ export function GatedGoingColdRisk() {
         {gated.feature.label}
         <ComingSoonTag />
       </label>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }
@@ -343,7 +343,7 @@ export function GatedEmailDomain() {
       >
         <option value="">Any domain</option>
       </select>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }
@@ -352,7 +352,7 @@ export function GatedEmailDomain() {
  * The gated "Send to beehiiv" button (coming soon): the result action row,
  * right after Export CSV, in the same group — secondary, never primary (Export CSV stays the
  * page's one primary action). Shown on the same condition as Export CSV (count > 0). Activation
- * only reveals and announces the note: no outward call, no confirm panel, no log.
+ * only opens the shared "Coming soon" pop-up: no outward call, no confirm panel, no log.
  */
 export function SendToBeehiiv() {
   const gated = useGated('send_to_beehiiv')
@@ -370,7 +370,7 @@ export function SendToBeehiiv() {
         </button>
         <ComingSoonTag />
       </div>
-      <GatedNote id={gated.noteId} activated={gated.activated} text={gated.feature.note} />
+      <GatedNote id={gated.noteId} text={gated.feature.note} />
     </div>
   )
 }
